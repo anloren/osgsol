@@ -402,18 +402,28 @@ git commit -m "fix: drain layer UI commands on frame thread"
 - Consumes: `MediaManager::update()` as the sole live video-state owner.
 - Preserves: AI tool calls that already execute during main-thread drain.
 
-- [ ] **Step 1: Add the failing pure queue test**
+- [ ] **Step 1: Add the failing queue and runtime-wiring test**
 
 Create `tests/media_threading_tests.cpp` with a header-only queue test seam declared in `ai_media.h`:
 
 ```cpp
 #include <applications/earth_explorer/ai_media.h>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <iterator>
+#include <string>
 
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ << ": " #x << "\n"; \
     return 1; } } while (0)
+
+static std::string readSourceFile(const std::string& relative)
+{
+    std::ifstream input(std::string(OSGVERSE_SOURCE_DIR) + "/" + relative);
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
+}
 
 int main()
 {
@@ -431,6 +441,16 @@ int main()
     CHECK(drained[0].lla == osg::Vec3d(1.0, 2.0, 3.0));
     CHECK(drained[1].kind == VideoUiRequest::Cancel);
     CHECK(queue.drain().empty());
+
+    const std::string ui = readSourceFile("applications/earth_explorer/ai_ui.cpp");
+    const std::string media = readSourceFile("applications/earth_explorer/ai_media.cpp");
+    CHECK(ui.find("enqueueVideoRequest(") != std::string::npos);
+    CHECK(ui.find("media->beginVideoCapture(") == std::string::npos);
+    CHECK(ui.find("media->captureVideoEnd(") == std::string::npos);
+    CHECK(ui.find("media->confirmVideo(") == std::string::npos);
+    CHECK(ui.find("media->cancelVideo(") == std::string::npos);
+    CHECK(media.find("_videoRequests.drain()") != std::string::npos);
+    CHECK(media.find("videoUiSnapshot() const") != std::string::npos);
     std::cout << "[OK] media UI request queue\n";
     return 0;
 }
@@ -440,6 +460,8 @@ Register it:
 
 ```cmake
 NEW_CTEST(osgVerse_Test_MediaThreading media_threading_tests.cpp offline 30)
+TARGET_COMPILE_DEFINITIONS(osgVerse_Test_MediaThreading PRIVATE
+                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 ```
 
 - [ ] **Step 2: Configure/build and verify RED**
@@ -497,7 +519,18 @@ Add `<atomic>`, `<deque>`, `<mutex>`, and `<vector>` includes. Add this snapshot
         };
 ```
 
-- [ ] **Step 4: Add MediaManager publication APIs**
+- [ ] **Step 4: Verify the queue is GREEN while runtime wiring remains RED**
+
+Run:
+
+```bash
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_Test_MediaThreading -j2
+/Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core/bin/osgVerse_Test_MediaThreading
+```
+
+Expected: the target now compiles, the queue assertions pass, and the binary exits non-zero because `ai_ui.cpp` does not yet contain `enqueueVideoRequest(`.
+
+- [ ] **Step 5: Add MediaManager publication APIs**
 
 Add:
 
@@ -517,7 +550,7 @@ Add private storage:
 
 Remove the old plain `int _hudHideCount`. Implement `isHudHidden()` with `_hudHideCount.load()` and update `hudHide`/`hudRestore` with atomic fetch operations without allowing the count to go below zero.
 
-- [ ] **Step 5: Drain requests at the start of update and publish at the end**
+- [ ] **Step 6: Drain requests at the start of update and publish at the end**
 
 At the beginning of `MediaManager::update()`, drain FIFO requests and dispatch them on the FRAME owner:
 
@@ -563,7 +596,7 @@ Publish the current phase and pending information under `_videoSnapshotMutex` af
 
 Implement the getter as a locked value copy.
 
-- [ ] **Step 6: Convert ai_ui.cpp to enqueue-only behavior**
+- [ ] **Step 7: Convert ai_ui.cpp to enqueue-only behavior**
 
 Read one snapshot at the start of the video-control section:
 
@@ -583,7 +616,7 @@ media->enqueueVideoRequest(request);
 
 Use `CaptureEnd`, `Confirm`, and `Cancel` for the other buttons. Render `video.commandError` in the Modal and use `video.pending` for coordinates/prompt. `ai_ui.cpp` must contain no direct calls to `beginVideoCapture`, `captureVideoEnd`, `confirmVideo`, or `cancelVideo` after this step.
 
-- [ ] **Step 7: Verify the new test, EarthExplorer build, and offline gate**
+- [ ] **Step 8: Verify the new test, EarthExplorer build, and offline gate**
 
 Run:
 
@@ -596,7 +629,7 @@ ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_
 
 Expected: media test exits 0, EarthExplorer builds, and the offline gate is green.
 
-- [ ] **Step 8: Commit Task 3**
+- [ ] **Step 9: Commit Task 3**
 
 ```bash
 git add applications/earth_explorer/ai_media.h \
