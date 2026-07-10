@@ -134,7 +134,7 @@ namespace earthsat
 }
 ```
 
-- [ ] **Step 1: Add failing pure behavior tests**
+- [x] **Step 1: Add failing pure behavior tests**
 
 Create `tests/geospatial_tests.cpp` and register
 `osgVerse_Test_Geospatial` as an `offline` CTest. Follow the existing satellite
@@ -189,7 +189,7 @@ Also test:
 Append corresponding satellite helper tests to `tests/satellite_tests.cpp` so
 the existing satellite target owns its ECEF contract too.
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 ```bash
 cmake --build build/osgsol_core --target \
@@ -199,7 +199,7 @@ cmake --build build/osgsol_core --target \
 Expected: compilation or linking fails because the new helpers and test target
 inputs do not exist.
 
-- [ ] **Step 3: Implement only the pure helpers**
+- [x] **Step 3: Implement only the pure helpers**
 
 Implementation requirements:
 
@@ -222,7 +222,7 @@ Implementation requirements:
   stable order; non-empty duplicates keep the first occurrence.
 - Satellite ECEF extrapolation is exactly `ecef + velocity * max(0, dt)`.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 ```bash
 cmake --build build/osgsol_core --target \
@@ -259,7 +259,7 @@ git commit -m "test: add geospatial correctness seams"
 - Add `std::atomic<bool> _preciseRefetchRequested` and
   `takePreciseRefetchRequest()` mirroring the existing Starlink request.
 
-- [ ] **Step 1: Add a failing production-wiring regression**
+- [x] **Step 1: Add a failing production-wiring regression**
 
 Give `osgVerse_Test_Satellite` the existing
 `OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"` convention and inspect function
@@ -281,7 +281,7 @@ Assert:
 Run the satellite target and confirm the binary fails on the first missing
 runtime-wiring assertion.
 
-- [ ] **Step 2: Wire render and pick to one position function**
+- [x] **Step 2: Wire render and pick to one position function**
 
 Change `interpolateOne()` to write:
 
@@ -296,7 +296,7 @@ Change `pickAt()` to calculate `P` with the identical call and the click frame's
 only when no frame stamp exists. Projection, front-hemisphere rejection, and
 pixel tolerance remain otherwise unchanged.
 
-- [ ] **Step 3: Add precise-category retry**
+- [x] **Step 3: Add precise-category retry**
 
 When a precise category is toggled on after a completed fetch and that category
 has no entry in `_allPrecise`, publish `_preciseRefetchRequested=true`. Do not
@@ -313,7 +313,7 @@ performs the retry. Keep Starlink retry and both propagation intervals intact.
 Update `fetchErrorText()` comments to state that all four categories support a
 toggle-off/on retry; do not claim automatic retries.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 cmake --build build/osgsol_core --target \
@@ -344,7 +344,7 @@ git commit -m "fix: align satellite picking and retry state"
 - `FlightLayerImpl::pickAt(..., double refTime)` and `interpolate()` both call
   `extrapolateFlightPosition()`.
 
-- [ ] **Step 1: Add failing runtime-wiring tests**
+- [x] **Step 1: Add failing runtime-wiring tests**
 
 Use the `OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"` definition registered in
 Task 1, assert every file read is non-empty, and extract the relevant function
@@ -368,13 +368,13 @@ bodies. Assert:
 
 Run `osgVerse_Test_Geospatial` and confirm a wiring assertion fails.
 
-- [ ] **Step 2: Use stable aircraft identity**
+- [x] **Step 2: Use stable aircraft identity**
 
 Require a valid non-empty string at state index `0` when parsing OpenSky rows.
 Store it as `icao24`. Keep the existing airborne, coordinate, altitude,
 velocity, heading, callsign, and country filters.
 
-- [ ] **Step 3: Query both sides of the date line**
+- [x] **Step 3: Query both sides of the date line**
 
 Keep fixture handling at the top-level fetch function so it reads once.
 For network mode:
@@ -390,14 +390,14 @@ not change failure-preserves-data semantics; that belongs to Batch 3.
 Remove the final longitude clamp from `FlightBBoxHandler`. Latitude clamps and
 the `thetaDeg >= 80` global fallback stay unchanged.
 
-- [ ] **Step 4: Pick the rendered flight position**
+- [x] **Step 4: Pick the rendered flight position**
 
 Use `elapsed = max(0, refTime - _t0)` and one call to
 `extrapolateFlightPosition()` per flight in both vertex update and pick. When a
 flight is selected, publish the extrapolated lat/lon in `FlightInfo`, not the
 stale snapshot coordinates. Other metadata remains from the same track.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 cmake --build build/osgsol_core --target \
@@ -435,7 +435,7 @@ git commit -m "fix: preserve flight coverage across the date line"
 - `_subscribedBBox` remains the unwrapped inflated interval used by
   `bboxNeedsResubscribe()`.
 
-- [ ] **Step 1: Add failing AIS bbox and JSON tests**
+- [x] **Step 1: Add failing AIS bbox and JSON tests**
 
 Extend `tests/ais_tests.cpp` with:
 
@@ -465,7 +465,7 @@ Add source-wiring assertions that:
 
 Run `osgVerse_Test_Ais` and confirm RED.
 
-- [ ] **Step 2: Preserve unwrapped subscription state**
+- [x] **Step 2: Preserve unwrapped subscription state**
 
 Refactor `inflateBBox()` to use `earthgeo::inflateUnwrappedBBox()`. Store that
 raw interval in `_subscribedBBox`; pass its split vector only to JSON creation.
@@ -482,7 +482,7 @@ std::string sub = earthais::buildSubscriptionJson(_apiKey, boxes);
 
 All boxes must use official AISStream coordinate order `[lat, lon]`.
 
-- [ ] **Step 3: Publish the raw camera longitude interval**
+- [x] **Step 3: Publish the raw camera longitude interval**
 
 Remove only the `[-180,180]` longitude clamp in `ShipViewStateHandler`.
 Continue clamping latitude, limiting `lonHalf <= 180`, preserving the high-alt
@@ -492,7 +492,7 @@ The existing `_store` map keyed by MMSI remains the deduplication owner;
 `_ships` remains only the rendered main-thread vector. Do not introduce a
 second per-box ship collection.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 cmake --build build/osgsol_core --target \
@@ -516,7 +516,7 @@ git commit -m "fix: split live view boxes at the date line"
 
 - Modify: `docs/superpowers/plans/2026-07-10-osgsol-v020-geospatial-correctness.md`
 
-- [ ] **Step 1: Rebuild all affected targets**
+- [x] **Step 1: Rebuild all affected targets**
 
 ```bash
 cmake --build build/osgsol_core --target \
@@ -524,7 +524,7 @@ cmake --build build/osgsol_core --target \
   osgVerse_Test_Feeds osgVerse_Test_MediaThreading osgVerse_EarthExplorer -j2
 ```
 
-- [ ] **Step 2: Run the complete offline gate**
+- [x] **Step 2: Run the complete offline gate**
 
 ```bash
 ctest --test-dir build/osgsol_core -L offline --output-on-failure
@@ -533,7 +533,7 @@ ctest --test-dir build/osgsol_core -L offline --output-on-failure
 Expected: 100% pass; the total grows by one because of
 `osgVerse_Test_Geospatial`.
 
-- [ ] **Step 3: Run a fresh offscreen smoke**
+- [x] **Step 3: Run a fresh offscreen smoke**
 
 ```bash
 rm -f /tmp/earth_capture_0.png /tmp/osgsol-v020-geospatial-smoke.png
@@ -545,7 +545,7 @@ test -s /tmp/osgsol-v020-geospatial-smoke.png
 
 Record process exit, context line, image dimensions, byte count, and SHA-256.
 
-- [ ] **Step 4: Run source regressions**
+- [x] **Step 4: Run source regressions**
 
 ```bash
 rg -n 'extrapolateSatelliteEcef|extrapolateFlightPosition|splitAntimeridianBBox|mergeFlightsByIcao24|BoundingBoxes' \
@@ -557,7 +557,7 @@ rg -n 'resolveImGuiWheelAmount|OSGSOL_HAS_PHOTO_REQUEST|_videoRequests.drain' \
 Confirm no runtime pick path projects a raw stale snapshot position and no
 camera handler clamps the raw longitude interval.
 
-- [ ] **Step 5: Mark completed boxes and commit the record**
+- [x] **Step 5: Mark completed boxes and commit the record**
 
 ```bash
 git add docs/superpowers/plans/2026-07-10-osgsol-v020-geospatial-correctness.md
