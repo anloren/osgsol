@@ -14,6 +14,7 @@
 #include <readerwriter/EarthManipulator.h>
 #include <VerseCommon.h>
 #include <iostream>
+#include <algorithm>
 #include <vector>
 #include <picojson.h>
 #include "3rdparty/libhv/all/client/requests.h"
@@ -23,15 +24,16 @@
 #include <cstdio>
 #include <cmath>
 #include "flight_data.h"
+#include "flight_math.h"
+#include "geo_bbox.h"
 
 namespace
 {
-    struct Flight { double lon, lat, altM, velMS, headingRad; std::string callsign, country; osg::Vec3d ecef; };
     static const double kFlightLiftMeters = 0.0;
 
-    std::vector<Flight> parseOpenSky(const std::string& text)
+    std::vector<earthflight::FlightTrack> parseOpenSky(const std::string& text)
     {
-        std::vector<Flight> out;
+        std::vector<earthflight::FlightTrack> out;
         picojson::value root; std::string err = picojson::parse(root, text);
         if (!err.empty() || !root.is<picojson::object>()) { std::cout << "[Flight] JSON err: " << err << "\n"; return out; }
         const picojson::value& states = root.get("states");
@@ -42,9 +44,13 @@ namespace
             if (!arr[i].is<picojson::array>()) continue;
             const picojson::array& s = arr[i].get<picojson::array>();
             if (s.size() < 11) continue;
+            if (!s[0].is<std::string>()) continue;
+            const std::string& icao24 = s[0].get<std::string>();
+            if (icao24.empty()) continue;
             if (s[8].is<bool>() && s[8].get<bool>()) continue;          // on_ground
             if (!s[5].is<double>() || !s[6].is<double>()) continue;     // 缺经纬度
-            Flight f;
+            earthflight::FlightTrack f;
+            f.icao24 = icao24;
             f.lon = s[5].get<double>(); f.lat = s[6].get<double>();
             f.altM = s[7].is<double>() ? s[7].get<double>() : 0.0;
             f.velMS = s[9].is<double>() ? s[9].get<double>() : 0.0;
@@ -58,30 +64,48 @@ namespace
         return out;
     }
 
-    std::vector<Flight> fetchFlights(double latMin, double lonMin, double latMax, double lonMax)
+    std::vector<earthflight::FlightTrack> fetchFlights(
+        double latMin, double lonMin, double latMax, double lonMax)
     {
         const char* fixtureFile = getenv("EARTH_FLIGHTS_FILE");
         if (fixtureFile && *fixtureFile)
         {
             std::ifstream in(fixtureFile);
-            if (!in) { std::cout << "[Flight] fixture open failed\n"; return std::vector<Flight>(); }
+            if (!in) { std::cout << "[Flight] fixture open failed\n";
+                return std::vector<earthflight::FlightTrack>(); }
             std::stringstream ss; ss << in.rdbuf();
-            std::vector<Flight> fs = parseOpenSky(ss.str());
+            std::vector<earthflight::FlightTrack> fs = parseOpenSky(ss.str());
             std::cout << "[Flight] Parsed " << fs.size() << " flights (fixture)\n";
             return fs;
         }
-        char url[256];
-        snprintf(url, sizeof(url),
-            "https://opensky-network.org/api/states/all?lamin=%.4f&lomin=%.4f&lamax=%.4f&lomax=%.4f",
-            latMin, lonMin, latMax, lonMax);
-        requests::Request req(new HttpRequest);
-        req->method = HTTP_GET; req->url = url; req->timeout = 20;
-        requests::Response resp = requests::request(req);
-        if (!resp || resp->status_code != 200)
-        { std::cout << "[Flight] fetch failed status=" << (resp ? (int)resp->status_code : -1) << "\n"; return std::vector<Flight>(); }
-        std::vector<Flight> fs = parseOpenSky(resp->body);
-        std::cout << "[Flight] Parsed " << fs.size() << " flights (network)\n";
-        return fs;
+
+        earthgeo::GeoBBox bbox;
+        bbox.latMin = latMin; bbox.lonMin = lonMin;
+        bbox.latMax = latMax; bbox.lonMax = lonMax;
+        std::vector<earthgeo::GeoBBox> queryBoxes =
+            earthgeo::splitAntimeridianBBox(bbox);
+        std::vector<earthflight::FlightTrack> merged;
+        for (size_t i = 0; i < queryBoxes.size(); ++i)
+        {
+            const earthgeo::GeoBBox& queryBox = queryBoxes[i];
+            char url[256];
+            snprintf(url, sizeof(url),
+                "https://opensky-network.org/api/states/all?lamin=%.4f&lomin=%.4f&lamax=%.4f&lomax=%.4f",
+                queryBox.latMin, queryBox.lonMin, queryBox.latMax, queryBox.lonMax);
+            requests::Request req(new HttpRequest);
+            req->method = HTTP_GET; req->url = url; req->timeout = 20;
+            requests::Response resp = requests::request(req);
+            if (!resp || resp->status_code != 200)
+            {
+                std::cout << "[Flight] fetch failed status="
+                          << (resp ? (int)resp->status_code : -1) << "\n";
+                continue;
+            }
+            std::vector<earthflight::FlightTrack> fetched = parseOpenSky(resp->body);
+            merged = earthflight::mergeFlightsByIcao24(merged, fetched);
+        }
+        std::cout << "[Flight] Parsed " << merged.size() << " flights (network)\n";
+        return merged;
     }
 
     // 点精灵:VS 写 gl_PointSize(取自 texcoord0.x)+ headingRad(texcoord0.y)。
@@ -136,8 +160,9 @@ namespace
 #define GL_PROGRAM_POINT_SIZE 0x8642
 #endif
 
-    // 由一批 Flight 构建一个 Geode(GL_POINTS)。
-    osg::Geode* buildFlightGeode(const std::vector<Flight>& fs, osg::StateSet* sharedSS)
+    // 由一批 FlightTrack 构建一个 Geode(GL_POINTS)。
+    osg::Geode* buildFlightGeode(const std::vector<earthflight::FlightTrack>& fs,
+                                 osg::StateSet* sharedSS)
     {
         osg::ref_ptr<osg::Geometry> geom = new osg::Geometry;
         osg::ref_ptr<osg::Vec3Array> verts = new osg::Vec3Array;
@@ -212,29 +237,36 @@ namespace
         { OpenThreads::ScopedLock<OpenThreads::Mutex> lk(_selMutex); _selected = FlightInfo(); }
 
         // 屏幕拾取:相机 + 窗口鼠标坐标(y 向上)。选最近的前半球航班。仅主线程调用。
-        void pickAt(osg::Camera* cam, float mx, float my)
+        void pickAt(osg::Camera* cam, float mx, float my, double refTime)
         {
             if (!_enabled || _flights.empty() || !cam->getViewport()) return;
+            double elapsed = std::max(0.0, refTime - _t0);
             osg::Vec3d eye, center, up; cam->getViewMatrixAsLookAt(eye, center, up);
             osg::Matrixd VPW = cam->getViewMatrix() * cam->getProjectionMatrix()
                              * cam->getViewport()->computeWindowMatrix();
             double bestD2 = 1e18; int best = -1;
+            earthflight::FlightPosition bestPosition;
             for (size_t i = 0; i < _flights.size(); ++i)
             {
-                const osg::Vec3d& P = _flights[i].ecef;
+                const earthflight::FlightTrack& flight = _flights[i];
+                earthflight::FlightPosition position =
+                    earthflight::extrapolateFlightPosition(flight, elapsed);
+                const osg::Vec3d& P = position.ecef;
                 if ((eye * P) <= (P * P)) continue;          // 前半球
                 osg::Vec3d win = P * VPW;
                 double d2 = (win.x()-mx)*(win.x()-mx) + (win.y()-my)*(win.y()-my);
                 float tol = 14.0f;
-                if (d2 < (double)(tol*tol) && d2 < bestD2) { bestD2 = d2; best = (int)i; }
+                if (d2 < (double)(tol*tol) && d2 < bestD2)
+                { bestD2 = d2; best = (int)i; bestPosition = position; }
             }
             if (best >= 0)
             {
-                const Flight& f = _flights[best];
+                const earthflight::FlightTrack& flight = _flights[best];
                 FlightInfo info; info.valid = true;
-                info.callsign = f.callsign; info.country = f.country;
-                info.lon = f.lon; info.lat = f.lat; info.altM = f.altM;
-                info.velMS = f.velMS; info.headingDeg = osg::RadiansToDegrees(f.headingRad);
+                info.callsign = flight.callsign; info.country = flight.country;
+                info.lon = bestPosition.lon; info.lat = bestPosition.lat;
+                info.altM = flight.altM; info.velMS = flight.velMS;
+                info.headingDeg = osg::RadiansToDegrees(flight.headingRad);
                 OpenThreads::ScopedLock<OpenThreads::Mutex> lk(_selMutex); _selected = info;
             }
         }
@@ -285,20 +317,20 @@ namespace
             hist["<2km"] = picojson::value((double)nLow); hist["2-8km"] = picojson::value((double)nMid);
             hist[">=8km"] = picojson::value((double)nHigh);
             r["altHistogram"] = picojson::value(hist);
-            const Flight& fastest = _flights[fastestIdx];
+            const earthflight::FlightTrack& fastest = _flights[fastestIdx];
             r["fastestCallsign"] = picojson::value(fastest.callsign);
             r["fastestSpeedMS"] = picojson::value(fastest.velMS);
             return picojson::value(r).serialize();
         }
 
         // 后台线程交付新快照(加锁)。
-        void postSnapshot(const std::vector<Flight>& fs)
+        void postSnapshot(const std::vector<earthflight::FlightTrack>& fs)
         { OpenThreads::ScopedLock<OpenThreads::Mutex> lk(_mutex); _pending = fs; _dirty = true; }
 
         // 主线程(update 遍历)调用:若有新数据则重建 geode，并重置插值基准时刻。
         void syncIfDirty(double refTime)
         {
-            std::vector<Flight> fs;
+            std::vector<earthflight::FlightTrack> fs;
             { OpenThreads::ScopedLock<OpenThreads::Mutex> lk(_mutex);
               if (!_dirty) return; fs = _pending; _dirty = false; }
             _t0 = refTime;
@@ -312,22 +344,15 @@ namespace
         void interpolate(double refTime)
         {
             if (!_geode.valid() || _flights.empty()) return;
-            double elapsed = refTime - _t0; if (elapsed < 0.0) elapsed = 0.0;
-            const double R = 6371000.0;
+            double elapsed = std::max(0.0, refTime - _t0);
             osg::Geometry* g = _geode->getDrawable(0)->asGeometry(); if (!g) return;
             osg::Vec3Array* va = static_cast<osg::Vec3Array*>(g->getVertexArray()); if (!va) return;
             for (size_t i = 0; i < _flights.size() && i < va->size(); ++i)
             {
-                const Flight& f = _flights[i];
-                double dist = f.velMS * elapsed;                  // 米
-                double dLat = (dist * cos(f.headingRad)) / R;     // 北向弧度增量
-                double dLon = (dist * sin(f.headingRad)) /
-                              (R * cos(osg::DegreesToRadians(f.lat)));  // 东向弧度增量
-                double lat2 = f.lat + osg::RadiansToDegrees(dLat);
-                double lon2 = f.lon + osg::RadiansToDegrees(dLon);
-                (*va)[i] = osgVerse::Coordinate::convertLLAtoECEF(osg::Vec3d(
-                    osg::DegreesToRadians(lat2), osg::DegreesToRadians(lon2),
-                    f.altM + kFlightLiftMeters));
+                const earthflight::FlightTrack& flight = _flights[i];
+                earthflight::FlightPosition position =
+                    earthflight::extrapolateFlightPosition(flight, elapsed);
+                (*va)[i] = position.ecef;
             }
             va->dirty(); g->dirtyBound();
         }
@@ -362,7 +387,7 @@ namespace
         osg::Group* _root;   // 裸指针:由返回节点经 UserData 拥有,本对象不拥有(无引用环)
         osg::ref_ptr<osg::Geode> _geode;
         osg::ref_ptr<osg::StateSet> _ss;
-        std::vector<Flight> _flights, _pending;
+        std::vector<earthflight::FlightTrack> _flights, _pending;
         OpenThreads::Mutex _mutex;
         std::atomic<bool> _enabled;   // 主线程 setEnabled() 写 / 抓取线程 run() 读,跨线程
         bool _dirty;                  // 只在 _mutex 保护下跨线程访问(postSnapshot/syncIfDirty),已同步,不需 atomic
@@ -430,7 +455,6 @@ namespace
             double lonHalf = thetaDeg / cosLat; if (lonHalf > 180.0) lonHalf = 180.0;
             double lonMin = lon0 - lonHalf, lonMax = lon0 + lonHalf;
             if (latMin < -85.0) latMin = -85.0; if (latMax > 85.0) latMax = 85.0;
-            if (lonMin < -180.0) lonMin = -180.0; if (lonMax > 180.0) lonMax = 180.0;
             _owner->setViewBBox(latMin, lonMin, latMax, lonMax);
             return false;
         }
@@ -464,7 +488,9 @@ namespace
                         float my = ea.getY();
                         if (ea.getMouseYOrientation() == osgGA::GUIEventAdapter::Y_INCREASING_DOWNWARDS)
                             my = vp->height() - my;
-                        _owner->pickAt(cam, ea.getX(), my);
+                        const osg::FrameStamp* frameStamp = view->getFrameStamp();
+                        double refTime = frameStamp ? frameStamp->getReferenceTime() : 0.0;
+                        _owner->pickAt(cam, ea.getX(), my, refTime);
                     }
                 }
                 _pushed = false;
