@@ -48,7 +48,7 @@
 - Changes: `setEnabled`, `setOpacity`, and `applyPreset` publish ordered commands; callbacks execute only from `drainPending()`.
 - Changes: `lastAppliedPreset()` returns `std::string` by value.
 
-- [ ] **Step 1: Add the failing deferred-apply and snapshot test**
+- [x] **Step 1: Add the failing deferred-apply and snapshot test**
 
 Append this block beside the existing LayerManager tests in `tests/feed_layer_tests.cpp`:
 
@@ -89,7 +89,7 @@ Append this block beside the existing LayerManager tests in `tests/feed_layer_te
     }
 ```
 
-- [ ] **Step 2: Run the target and verify RED**
+- [x] **Step 2: Run the target and verify RED**
 
 Run:
 
@@ -99,7 +99,7 @@ cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_cor
 
 Expected: compilation fails because `layersSnapshot`, `drainPending`, and `setSubtitle` do not exist.
 
-- [ ] **Step 3: Add synchronized storage and command types**
+- [x] **Step 3: Add synchronized storage and command types**
 
 Add `<deque>` and `<mutex>`, then add these private members to `LayerManager`:
 
@@ -152,7 +152,7 @@ Replace internal searches with a private `findUnlocked()` used only while the ca
     }
 ```
 
-- [ ] **Step 4: Convert mutations into queued commands**
+- [x] **Step 4: Convert mutations into queued commands**
 
 Implement `setEnabled` and `setOpacity` so the desired value is visible immediately in snapshots but callbacks are deferred:
 
@@ -207,7 +207,7 @@ Implement `applyPreset()` as validation plus queue publication. It must update d
     }
 ```
 
-- [ ] **Step 5: Drain callbacks on the FRAME owner**
+- [x] **Step 5: Drain callbacks on the FRAME owner**
 
 Implement `drainPending()` so each command is removed FIFO, the relevant layer copy is created under lock, and its callback runs after unlocking. Presets must call every non-exempt layer in two phases (all off, then enabled IDs) and set `_lastAppliedPreset` while locked:
 
@@ -236,11 +236,11 @@ Implement `drainPending()` so each command is removed FIFO, the relevant layer c
 
 `applyLayerCommandNow()` and `applyPresetNow()` must copy both the `OverlayLayer` value and its `std::function` while locked, then invoke the copied function after releasing `_mutex`. They must apply the value stored in each command rather than reading a later desired value.
 
-- [ ] **Step 6: Update old tests for deferred callbacks**
+- [x] **Step 6: Update old tests for deferred callbacks**
 
 After every existing test call that expects `applyCount` or `lastAppliedPreset` to change, insert `lm.drainPending()`. State-only assertions may continue before drain because queued commands publish desired state immediately.
 
-- [ ] **Step 7: Verify GREEN and the full offline gate**
+- [x] **Step 7: Verify GREEN and the full offline gate**
 
 Run:
 
@@ -252,7 +252,7 @@ ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_
 
 Expected: `osgVerse_Test_Feeds` exits 0 and all offline tests pass.
 
-- [ ] **Step 8: Commit Task 1**
+- [x] **Step 8: Commit Task 1**
 
 ```bash
 git add applications/earth_explorer/LayerManager.h tests/feed_layer_tests.cpp
@@ -272,7 +272,7 @@ git commit -m "fix: marshal layer changes onto frame thread"
 - Consumes: `layersSnapshot`, `setSubtitle`, `drainPending`, and value-returning `lastAppliedPreset` from Task 1.
 - Produces: `LayerManagerDrainHandler`, which is the sole runtime callback executor.
 
-- [ ] **Step 1: Add a source-wiring regression**
+- [x] **Step 1: Add a source-wiring regression**
 
 Add a source-root compile definition for `osgVerse_Test_Feeds` in `tests/CMakeLists.txt`:
 
@@ -303,7 +303,7 @@ static std::string readSourceFile(const std::string& relative)
     }
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run:
 
@@ -315,7 +315,7 @@ cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_cor
 
 Expected: the source-wiring assertion fails because UI still calls `layers()` and no FRAME drain exists.
 
-- [ ] **Step 3: Render LayerManager values from snapshots**
+- [x] **Step 3: Render LayerManager values from snapshots**
 
 In `EarthControlUI.h`, replace both mutable vector reads with local value snapshots:
 
@@ -327,7 +327,7 @@ Iterate the local vector and continue publishing changes through `_layers->setEn
 
 In `ai_setup.cpp`, replace runtime `layers()` scans with `layersSnapshot()` and use `setEnabled()`/`setOpacity()` to publish changes. In `event_ticker.h`, store the result of `lastAppliedPreset()` in a local `std::string`.
 
-- [ ] **Step 4: Synchronize dynamic subtitles**
+- [x] **Step 4: Synchronize dynamic subtitles**
 
 Replace direct writes in `SatFetchStatusHandler` and `ShipViewStateHandler` with:
 
@@ -337,7 +337,7 @@ _lm->setSubtitle(id, want);
 
 The handlers must not call `find()` and must not compare or mutate `OverlayLayer::subtitle` through a raw pointer.
 
-- [ ] **Step 5: Install the FRAME drain handler**
+- [x] **Step 5: Install the FRAME drain handler**
 
 Add this event handler near the existing FRAME handlers in `earth_main.cpp`:
 
@@ -363,7 +363,7 @@ Register one instance after `LayerManager layerMgr;` is constructed and before r
 viewer.addEventHandler(new LayerManagerDrainHandler(&layerMgr));
 ```
 
-- [ ] **Step 6: Verify target, build EarthExplorer, and run offscreen smoke**
+- [x] **Step 6: Verify target, build EarthExplorer, and run offscreen smoke**
 
 Run:
 
@@ -377,7 +377,7 @@ EARTH_OFFSCREEN=1 EARTH_IME=0 EARTH_AUTOCAP=60 \
 
 Expected: tests exit 0; EarthExplorer logs the offscreen context and exits after capture without a crash.
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 ```bash
 git add applications/earth_explorer/EarthControlUI.h \
@@ -402,7 +402,7 @@ git commit -m "fix: drain layer UI commands on frame thread"
 - Consumes: `MediaManager::update()` as the sole live video-state owner.
 - Preserves: AI tool calls that already execute during main-thread drain.
 
-- [ ] **Step 1: Add the failing queue and runtime-wiring test**
+- [x] **Step 1: Add the failing queue and runtime-wiring test**
 
 Create `tests/media_threading_tests.cpp` with a header-only queue test seam declared in `ai_media.h`:
 
@@ -464,7 +464,7 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_MediaThreading PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 ```
 
-- [ ] **Step 2: Configure/build and verify RED**
+- [x] **Step 2: Configure/build and verify RED**
 
 Run:
 
@@ -475,7 +475,7 @@ cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_cor
 
 Expected: compilation fails because `VideoUiRequestQueue` and `VideoUiRequest` do not exist.
 
-- [ ] **Step 3: Implement the request queue and immutable snapshot types**
+- [x] **Step 3: Implement the request queue and immutable snapshot types**
 
 Add these public value types to `ai_media.h`:
 
@@ -519,7 +519,7 @@ Add `<atomic>`, `<deque>`, `<mutex>`, and `<vector>` includes. Add this snapshot
         };
 ```
 
-- [ ] **Step 4: Verify the queue is GREEN while runtime wiring remains RED**
+- [x] **Step 4: Verify the queue is GREEN while runtime wiring remains RED**
 
 Run:
 
@@ -530,7 +530,7 @@ cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_cor
 
 Expected: the target now compiles, the queue assertions pass, and the binary exits non-zero because `ai_ui.cpp` does not yet contain `enqueueVideoRequest(`.
 
-- [ ] **Step 5: Add MediaManager publication APIs**
+- [x] **Step 5: Add MediaManager publication APIs**
 
 Add:
 
@@ -550,7 +550,7 @@ Add private storage:
 
 Remove the old plain `int _hudHideCount`. Implement `isHudHidden()` with `_hudHideCount.load()` and update `hudHide`/`hudRestore` with atomic fetch operations without allowing the count to go below zero.
 
-- [ ] **Step 6: Drain requests at the start of update and publish at the end**
+- [x] **Step 6: Drain requests at the start of update and publish at the end**
 
 At the beginning of `MediaManager::update()`, drain FIFO requests and dispatch them on the FRAME owner:
 
@@ -596,7 +596,7 @@ Publish the current phase and pending information under `_videoSnapshotMutex` af
 
 Implement the getter as a locked value copy.
 
-- [ ] **Step 7: Convert ai_ui.cpp to enqueue-only behavior**
+- [x] **Step 7: Convert ai_ui.cpp to enqueue-only behavior**
 
 Read one snapshot at the start of the video-control section:
 
@@ -616,7 +616,7 @@ media->enqueueVideoRequest(request);
 
 Use `CaptureEnd`, `Confirm`, and `Cancel` for the other buttons. Render `video.commandError` in the Modal and use `video.pending` for coordinates/prompt. `ai_ui.cpp` must contain no direct calls to `beginVideoCapture`, `captureVideoEnd`, `confirmVideo`, or `cancelVideo` after this step.
 
-- [ ] **Step 8: Verify the new test, EarthExplorer build, and offline gate**
+- [x] **Step 8: Verify the new test, EarthExplorer build, and offline gate**
 
 Run:
 
@@ -629,7 +629,7 @@ ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_
 
 Expected: media test exits 0, EarthExplorer builds, and the offline gate is green.
 
-- [ ] **Step 9: Commit Task 3**
+- [x] **Step 9: Commit Task 3**
 
 ```bash
 git add applications/earth_explorer/ai_media.h \
@@ -650,7 +650,7 @@ git commit -m "fix: marshal video UI actions onto frame thread"
 - Produces: `VideoPollDisposition classifyVideoPollHttp(bool, int)`.
 - Changes: network absence, 429, and 5xx return `done=false`; other 4xx remain terminal.
 
-- [ ] **Step 1: Add failing classification tests**
+- [x] **Step 1: Add failing classification tests**
 
 Append:
 
@@ -664,7 +664,7 @@ Append:
     CHECK(classifyVideoPollHttp(true, 200) == VIDEO_POLL_PARSE_BODY);
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run:
 
@@ -674,7 +674,7 @@ cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_cor
 
 Expected: compilation fails because the disposition API does not exist.
 
-- [ ] **Step 3: Implement the pure classifier**
+- [x] **Step 3: Implement the pure classifier**
 
 Add to `ai_media.h`:
 
@@ -694,7 +694,7 @@ Add to `ai_media.h`:
     }
 ```
 
-- [ ] **Step 4: Apply classification in VeoVideoProvider::poll**
+- [x] **Step 4: Apply classification in VeoVideoProvider::poll**
 
 Replace the current `!resp || status != 200` terminal block with:
 
@@ -718,7 +718,7 @@ Replace the current `!resp || status != 200` terminal block with:
 
 Keep parse errors in successful 200 bodies terminal, because repeated parsing of the same malformed response cannot self-heal.
 
-- [ ] **Step 5: Verify GREEN and run the full gate**
+- [x] **Step 5: Verify GREEN and run the full gate**
 
 Run:
 
@@ -731,7 +731,7 @@ ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_
 
 Expected: all commands exit 0.
 
-- [ ] **Step 6: Commit Task 4**
+- [x] **Step 6: Commit Task 4**
 
 ```bash
 git add applications/earth_explorer/ai_media.h \
@@ -748,7 +748,7 @@ git commit -m "fix: retry transient veo polling failures"
 - Consumes: Tasks 1-4.
 - Produces: verified first-batch checkpoint ready for the geospatial correctness plan.
 
-- [ ] **Step 1: Rebuild all first-batch targets**
+- [x] **Step 1: Rebuild all first-batch targets**
 
 ```bash
 cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target \
@@ -758,7 +758,7 @@ cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_cor
 
 Expected: build exits 0.
 
-- [ ] **Step 2: Run all offline tests**
+- [x] **Step 2: Run all offline tests**
 
 ```bash
 ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core \
@@ -767,28 +767,28 @@ ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_
 
 Expected: 100% pass, including `osgVerse_Test_MediaThreading`.
 
-- [ ] **Step 3: Run an offscreen smoke**
+- [x] **Step 3: Run an offscreen smoke**
 
 ```bash
-rm -f /tmp/osgsol-v020-thread-smoke.png
+rm -f /tmp/earth_capture_0.png /tmp/osgsol-v020-thread-smoke.png
 EARTH_OFFSCREEN=1 EARTH_IME=0 EARTH_AUTOCAP=120 \
-EARTH_AUTOCAP_PATH=/tmp/osgsol-v020-thread-smoke.png \
   /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core/bin/osgVerse_EarthExplorer
+mv /tmp/earth_capture_0.png /tmp/osgsol-v020-thread-smoke.png
 test -s /tmp/osgsol-v020-thread-smoke.png
 ```
 
 Expected: process exits 0 and the capture is non-empty.
 
-- [ ] **Step 4: Verify the v0.1 regressions remain wired**
+- [x] **Step 4: Verify the v0.1 regressions remain wired**
 
 ```bash
-rg -n 'scroll panel down then back up|independent photo target|OSGSOL_HAS_PHOTO_REQUEST' \
+rg -n 'resolveImGuiWheelAmount|generate_photo independent target tests OK|OSGSOL_HAS_PHOTO_REQUEST' \
   tests applications/earth_explorer
 ```
 
 Expected: both wheel and independent-photo regression coverage remain present.
 
-- [ ] **Step 5: Mark completed checkboxes and commit the verification record**
+- [x] **Step 5: Mark completed checkboxes and commit the verification record**
 
 Update completed plan steps from `- [ ]` to `- [x]`, then run:
 
