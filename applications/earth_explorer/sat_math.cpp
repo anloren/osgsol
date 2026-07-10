@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 #include <picojson.h>
@@ -133,6 +134,20 @@ std::vector<osg::Vec3d> buildFootprintVertices(double centerLatDeg, double cente
             lat * kDeg2Rad, lon * kDeg2Rad, 0.0)));
     }
     return out;
+}
+
+osg::Vec3d extrapolateSatelliteEcef(const osg::Vec3d& ecef,
+                                    const osg::Vec3d& velocity,
+                                    double lastUpdateRefTime,
+                                    double refTime)
+{
+    return ecef + velocity * std::max(0.0, refTime - lastUpdateRefTime);
+}
+
+bool shouldRequestPreciseRefetch(bool enabling, bool fetchDone,
+                                 bool categoryHasData)
+{
+    return enabling && fetchDone && !categoryHasData;
 }
 
 // 一颗特殊卫星(ISS/天宫)的位置对象;p 为空 → {found:false}。

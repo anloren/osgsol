@@ -61,6 +61,13 @@ namespace earthsat
     std::vector<osg::Vec3d> buildFootprintVertices(double centerLatDeg, double centerLonDeg,
                                                    double radiusKm, int n);
 
+    osg::Vec3d extrapolateSatelliteEcef(const osg::Vec3d& ecef,
+                                        const osg::Vec3d& velocity,
+                                        double lastUpdateRefTime,
+                                        double refTime);
+    bool shouldRequestPreciseRefetch(bool enabling, bool fetchDone,
+                                     bool categoryHasData);
+
     // ===== 卫星汇总(供 AI get_satellites_summary)=====
     // 最小输入结构(不依赖 sat_data 的 SatCategory 枚举,category 用 int,枚举序一致:
     // 0=空间站 1=导航 2=气象 3=Starlink)。抽成纯函数便于单测。

@@ -1,7 +1,8 @@
 SET(EXE_NAME osgVerse_EarthExplorer)
 SET(EXECUTABLE_FILES
     earth_main.cpp ui.cpp render_effects.cpp
-    city_data.cpp ReaderWriterCSV.cpp precip_data.cpp flight_data.cpp tiles3d_data.cpp sat_math.cpp sat_data.cpp ais_math.cpp ais_data.cpp
+    city_data.cpp ReaderWriterCSV.cpp precip_data.cpp flight_data.cpp flight_math.cpp
+    tiles3d_data.cpp sat_math.cpp sat_data.cpp ais_math.cpp ais_data.cpp
     earth_config.cpp marker_style.cpp
     ai_chat.cpp ai_setup.cpp ai_ui.cpp ai_cards.cpp ai_media.cpp ai_query.cpp ai_world_tools.cpp
     feed_layer.cpp feeds/gdacs_feed.cpp feeds/usgs_quakes_feed.cpp feeds/eonet_feed.cpp

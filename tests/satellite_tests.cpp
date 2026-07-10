@@ -159,6 +159,27 @@ int main(int, char**)
         std::cout << "[OK] buildSatelliteSummaryJson\n";
     }
 
+    // ---- deterministic runtime safety seams ----
+    {
+        using namespace earthsat;
+        osg::Vec3d ecef(1000.0, -2000.0, 3000.0);
+        osg::Vec3d velocity(10.0, 20.0, -30.0);
+        osg::Vec3d zero = extrapolateSatelliteEcef(ecef, velocity, 25.0, 25.0);
+        CHECK((zero - ecef).length() < 1e-12);
+        osg::Vec3d positive = extrapolateSatelliteEcef(ecef, velocity, 25.0, 30.0);
+        CHECK((positive - osg::Vec3d(1050.0, -1900.0, 2850.0)).length() < 1e-12);
+        osg::Vec3d negative = extrapolateSatelliteEcef(ecef, velocity, 25.0, 20.0);
+        CHECK((negative - ecef).length() < 1e-12);
+
+        for (int enabling = 0; enabling < 2; ++enabling)
+            for (int fetchDone = 0; fetchDone < 2; ++fetchDone)
+                for (int categoryHasData = 0; categoryHasData < 2; ++categoryHasData)
+                    CHECK(shouldRequestPreciseRefetch(enabling != 0, fetchDone != 0,
+                                                      categoryHasData != 0) ==
+                          (enabling != 0 && fetchDone != 0 && categoryHasData == 0));
+        std::cout << "[OK] satellite extrapolation and precise-refetch predicate\n";
+    }
+
     std::cout << "[satellite_tests] all OK (Task 1 subset)" << std::endl;
     return 0;
 }
