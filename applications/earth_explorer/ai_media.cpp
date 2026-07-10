@@ -821,28 +821,37 @@ namespace earthai
     void MediaManager::update()
     {
         std::vector<VideoUiRequest> requests = _videoRequests.drain();
-        std::string commandError;
         for (size_t i = 0; i < requests.size(); ++i)
         {
             const VideoUiRequest& request = requests[i];
+            VideoUiDispatchResult result;
+            result.dispatched = true;
+            result.kind = request.kind;
             if (request.kind == VideoUiRequest::Begin)
             {
-                if (!beginVideoCapture(request.lla, request.style))
-                    commandError = "video capture is not idle";
+                result.succeeded = beginVideoCapture(request.lla, request.style);
+                if (!result.succeeded) result.error = "video capture is not idle";
             }
             else if (request.kind == VideoUiRequest::CaptureEnd)
             {
-                if (!captureVideoEnd(request.lla)) commandError = "video is not waiting for B";
+                result.succeeded = captureVideoEnd(request.lla);
+                if (!result.succeeded) result.error = "video is not waiting for B";
             }
             else if (request.kind == VideoUiRequest::Confirm)
             {
-                picojson::value result = confirmVideo();
-                if (result.is<picojson::object>() && result.contains("error") &&
-                    result.get("error").is<std::string>())
-                    commandError = result.get("error").get<std::string>();
+                picojson::value response = confirmVideo();
+                result.succeeded = !(response.is<picojson::object>() &&
+                                     response.contains("error") &&
+                                     response.get("error").is<std::string>());
+                if (!result.succeeded)
+                    result.error = response.get("error").get<std::string>();
             }
             else if (request.kind == VideoUiRequest::Cancel)
+            {
                 cancelVideo();
+                result.succeeded = true;
+            }
+            _videoCommandError = reduceVideoCommandError(_videoCommandError, result);
         }
 
         // 快门期间每 tick 重申补光(对抗"真实时间太阳"每帧重写,见 hudHide 注释)
@@ -853,7 +862,7 @@ namespace earthai
         VideoUiSnapshot snapshot;
         snapshot.phase = videoPhase();
         snapshot.pending = pendingVideoInfo();
-        snapshot.commandError = commandError;
+        snapshot.commandError = _videoCommandError;
         {
             std::lock_guard<std::mutex> lock(_videoSnapshotMutex);
             _videoSnapshot = snapshot;

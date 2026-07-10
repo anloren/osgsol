@@ -153,6 +153,23 @@ namespace earthai
         std::deque<VideoUiRequest> _requests;
     };
 
+    struct VideoUiDispatchResult
+    {
+        VideoUiRequest::Kind kind = VideoUiRequest::Begin;
+        bool dispatched = false;
+        bool succeeded = false;
+        std::string error;
+    };
+
+    inline std::string reduceVideoCommandError(const std::string& previous,
+                                               const VideoUiDispatchResult& result)
+    {
+        if (!result.dispatched) return previous;
+        if (result.kind == VideoUiRequest::Cancel || result.succeeded)
+            return std::string();
+        return result.error;
+    }
+
     // 生成式媒体管线总控:Job 驱动,每帧 update() 由 AIFrameHandler 调用(主线程)。
     // 照片与视频各自只支持"单个 pending 任务"——与真实使用场景(用户点一次等一次)相符,
     // 并发第二个请求会被 startPhotoJob/beginVideoCapture 拒绝,避免状态机复杂化。
@@ -322,6 +339,7 @@ namespace earthai
         VideoJob* _video;  // 指针以避免本头文件暴露 VideoJob 定义(pimpl 风格,video 专属状态)
 
         VideoUiRequestQueue _videoRequests;
+        std::string _videoCommandError;
         mutable std::mutex _videoSnapshotMutex;
         VideoUiSnapshot _videoSnapshot;
 
