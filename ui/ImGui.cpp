@@ -16,6 +16,7 @@
 #include <imgui/imgui_impl_opengl3.h>
 #include <imgui/ImGuizmo.h>
 #include "ImGui.h"
+#include "ImGuiInputQueue.h"
 #include "ImGui.Styles.h"
 #include "pipeline/Utilities.h"
 #include <cstdio>    // popen/pclose: macOS 剪贴板接线用
@@ -241,39 +242,94 @@ int convertImGuiSpecialKey(int key)
     }
 }
 
+void applyImGuiInputEvents(ImGuiIO& io, const std::vector<osgVerse::ImGuiInputEvent>& events)
+{
+    for (std::vector<osgVerse::ImGuiInputEvent>::const_iterator it = events.begin();
+         it != events.end(); ++it)
+    {
+        const osgVerse::ImGuiInputEvent& event = *it;
+        if (event.type == osgVerse::ImGuiInputEvent::Key)
+        {
+            const unsigned int mod = event.modifiers;
+            io.AddKeyEvent(ImGuiMod_Ctrl, (mod & osgGA::GUIEventAdapter::MODKEY_CTRL) != 0);
+            io.AddKeyEvent(ImGuiMod_Shift, (mod & osgGA::GUIEventAdapter::MODKEY_SHIFT) != 0);
+            io.AddKeyEvent(ImGuiMod_Alt, (mod & osgGA::GUIEventAdapter::MODKEY_ALT) != 0);
+            io.AddKeyEvent(ImGuiMod_Super, (mod & osgGA::GUIEventAdapter::MODKEY_SUPER) != 0);
+
+            const int specialKey = convertImGuiSpecialKey(event.key);
+            if (specialKey > 0)
+                io.AddKeyEvent((ImGuiKey)specialKey, event.down);
+            else if (event.key > 0 && event.key < 0xFF)
+            {
+                io.AddKeyEvent((ImGuiKey)convertImGuiCharacterKey(event.key), event.down);
+                if (event.down) io.AddInputCharacter((unsigned short)event.key);
+            }
+            else if (event.key >= 0x100 && event.key < 0xE000 &&
+                     (event.key < 0xD800 || event.key > 0xDFFF) && event.down)
+                io.AddInputCharacter((unsigned int)event.key);
+        }
+        else if (event.type == osgVerse::ImGuiInputEvent::MousePosition)
+            io.AddMousePosEvent(event.x, io.DisplaySize.y - event.y);
+        else if (event.type == osgVerse::ImGuiInputEvent::MouseButtons)
+        {
+            io.AddMousePosEvent(event.x, io.DisplaySize.y - event.y);
+            io.AddMouseButtonEvent(0, (event.buttonMask & osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON) != 0);
+            io.AddMouseButtonEvent(1, (event.buttonMask & osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON) != 0);
+            io.AddMouseButtonEvent(2, (event.buttonMask & osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON) != 0);
+        }
+        else if (event.type == osgVerse::ImGuiInputEvent::MouseWheel)
+            io.AddMouseWheelEvent(0.0f, event.wheel);
+        else if (event.type == osgVerse::ImGuiInputEvent::VirtualMouse)
+        {
+            io.AddMousePosEvent(io.DisplaySize.x * event.x, io.DisplaySize.y * event.y);
+            io.AddMouseButtonEvent(0, (event.buttonMask & osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON) != 0);
+            io.AddMouseButtonEvent(1, (event.buttonMask & osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON) != 0);
+            io.AddMouseButtonEvent(2, (event.buttonMask & osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON) != 0);
+            io.AddMouseWheelEvent(0.0f, event.wheel);
+        }
+    }
+}
+
 class ImGuiHandler : public osgGA::GUIEventHandler
 {
 public:
     std::map<std::string, ImFont*> _fonts;
-    bool _mousePressed[3];
-    float _mouseWheel;
+    osgVerse::ImGuiInputQueue _input;
 
-    ImGuiHandler() : _mouseWheel(0.0f)
-    {
-        _mousePressed[0] = false;
-        _mousePressed[1] = false;
-        _mousePressed[2] = false;
-    }
+    ImGuiHandler() : _started(false) {}
 
     void start(ImGuiManager* manager)
-    { startImGuiContext(manager, _fonts); }
-
-    void release(ImGuiManager* manager)
     {
+        if (!_started && !manager->isShutdownRequested())
+        { startImGuiContext(manager, _fonts); _started = true; }
+    }
+
+    void drain(ImGuiIO& io)
+    { applyImGuiInputEvents(io, _input.takeAll()); }
+
+    void publishCapture()
+    {
+        if (!ImGui::GetCurrentContext()) return;
+        ImGuiIO& io = ImGui::GetIO();
+        _input.publishCapture(io.WantCaptureMouse || ImGuizmo::IsUsing(), io.WantCaptureKeyboard);
+    }
+
+    void releaseOnDrawThread()
+    {
+        if (!_started) return;
 #if defined(OSG_GLES1_AVAILABLE) || defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
         ImGui_ImplOpenGL3_Shutdown();
 #else
         if (s_useImguiLoaderGL3) ImGui_ImplOpenGL3_Shutdown();
         else ImGui_ImplOpenGL2_Shutdown();
 #endif
+        ImGui::DestroyContext(); _started = false;
     }
 
     virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa)
     {
-        ImGuiIO& io = ImGui::GetIO();
-        bool wantCaptureMouse = io.WantCaptureMouse;
-        bool wantCaptureKeyboard = io.WantCaptureKeyboard;
-        wantCaptureMouse |= ImGuizmo::IsUsing();
+        const bool wantCaptureMouse = _input.wantsMouse();
+        const bool wantCaptureKeyboard = _input.wantsKeyboard();
 
         switch (ea.getEventType())
         {
@@ -282,55 +338,23 @@ public:
             //if (wantCaptureKeyboard)
             {
                 const bool isKeyDown = ea.getEventType() == osgGA::GUIEventAdapter::KEYDOWN;
-                const int c = ea.getKey(); const int special_key = convertImGuiSpecialKey(c);
-                // 修饰键必须走 AddKeyEvent(ImGuiMod_*):imgui 1.87+ 起 io.KeyCtrl 等由
-                // NewFrame 从键事件流重算,直接赋值会被覆盖(等于从没设上),导致
-                // Ctrl/Cmd+A/C/V 等文本框快捷键一律失效。对每个按键事件同步一次修饰位,
-                // 且不能只在 special_key 分支里做——'v' 这类字符键也要带上 Cmd/Ctrl 状态。
-                const unsigned int mod = ea.getModKeyMask();
-                io.AddKeyEvent(ImGuiMod_Ctrl, (mod & osgGA::GUIEventAdapter::MODKEY_CTRL) != 0);
-                io.AddKeyEvent(ImGuiMod_Shift, (mod & osgGA::GUIEventAdapter::MODKEY_SHIFT) != 0);
-                io.AddKeyEvent(ImGuiMod_Alt, (mod & osgGA::GUIEventAdapter::MODKEY_ALT) != 0);
-                io.AddKeyEvent(ImGuiMod_Super, (mod & osgGA::GUIEventAdapter::MODKEY_SUPER) != 0);
-                if (special_key > 0)
-                {
-                    io.AddKeyEvent((ImGuiKey)special_key, isKeyDown);
-                }
-                else if (c > 0 && c < 0xFF)
-                {
-                    io.AddKeyEvent((ImGuiKey)convertImGuiCharacterKey(c), isKeyDown);
-                    if (isKeyDown) io.AddInputCharacter((unsigned short)c);
-                }
-                else if (c >= 0x100 && c < 0xE000 && (c < 0xD800 || c > 0xDFFF))
-                {
-                    // 平台层送达的已组合非 ASCII 字符(如 Windows WM_CHAR 的中文):
-                    // 无键位可映射,只喂字符流。上限取 0xE000:排除 PUA(苹果功能键
-                    // 0xF700+)与 X11 功能/修饰键 keysym 区(0xFE00-0xFFFF),否则按
-                    // Ctrl/方向键会往输入框塞乱码。CJK 基本区(0x4E00-0x9FFF)完整覆盖。
-                    // macOS Cocoa 窗口无 NSTextInputClient,IME 不会组字,此分支在 mac
-                    // 上不触发——中文输入见剪贴板粘贴通道。
-                    // T2 复审carry-forward(cheap):额外排除 UTF-16 代理区 0xD800-0xDFFF——
-                    // 这段本身不是合法码点(只在 UTF-16 里用一对高低代理凑一个增补平面字符),
-                    // 单个代理值送进 AddInputCharacter 会被当成孤立码点,产生非法/乱码字符。
-                    if (isKeyDown) io.AddInputCharacter((unsigned int)c);
-                }
+                _input.push(osgVerse::ImGuiInputEvent::keyEvent(
+                    ea.getKey(), isKeyDown, ea.getModKeyMask()));
                 return wantCaptureKeyboard;
             }
         case osgGA::GUIEventAdapter::DOUBLECLICK:
         case osgGA::GUIEventAdapter::RELEASE:
         case osgGA::GUIEventAdapter::PUSH:
-            io.MousePos = ImVec2(ea.getX(), io.DisplaySize.y - ea.getY());
-            _mousePressed[0] = ea.getButtonMask() & osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON;
-            _mousePressed[1] = ea.getButtonMask() & osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON;
-            _mousePressed[2] = ea.getButtonMask() & osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON;
+            _input.push(osgVerse::ImGuiInputEvent::mouseButtonsEvent(
+                ea.getX(), ea.getY(), ea.getButtonMask()));
             return wantCaptureMouse;
         case osgGA::GUIEventAdapter::DRAG:
         case osgGA::GUIEventAdapter::MOVE:
-            io.MousePos = ImVec2(ea.getX(), io.DisplaySize.y - ea.getY());
+            _input.push(osgVerse::ImGuiInputEvent::mousePositionEvent(ea.getX(), ea.getY()));
             return wantCaptureMouse;
         case osgGA::GUIEventAdapter::SCROLL:
-            if (wantCaptureMouse)
-                _mouseWheel = (ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP ? 1.0f : -1.0f);
+            _input.push(osgVerse::ImGuiInputEvent::mouseWheelEvent(
+                ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP ? 1.0f : -1.0f));
             return wantCaptureMouse;
         default: return false;
         }
@@ -340,30 +364,25 @@ public:
 protected:
     virtual ~ImGuiHandler()
     {
-        //if (s_useImguiLoaderGL3) ImGui_ImplOpenGL3_Shutdown();  // FIXME
-        //else ImGui_ImplOpenGL2_Shutdown();
-        ImGui::DestroyContext();
     }
+
+private:
+    bool _started;
 };
 
 struct ImGuiNewFrameCallback : public CameraDrawCallback
 {
-    ImGuiNewFrameCallback(osgGA::GUIEventHandler* h) : _handler(h), _time(-1.0f) {}
+    ImGuiNewFrameCallback(ImGuiManager* m, osgGA::GUIEventHandler* h)
+        : _handler(h), _manager(m), _time(-1.0f) {}
     osg::observer_ptr<osgGA::GUIEventHandler> _handler;
+    ImGuiManager* _manager;
     mutable double _time;
 
     virtual void operator()(osg::RenderInfo& renderInfo) const override
     {
-        newImGuiFrame(renderInfo, _time, [&](ImGuiIO& io) {
-            ImGuiHandler* handler = static_cast<ImGuiHandler*>(_handler.get());
-            if (handler)
-            {
-                io.MouseDown[0] = handler->_mousePressed[0];
-                io.MouseDown[1] = handler->_mousePressed[1];
-                io.MouseDown[2] = handler->_mousePressed[2];
-                io.MouseWheel = handler->_mouseWheel; handler->_mouseWheel = 0.0f;
-            }
-        });
+        ImGuiHandler* handler = static_cast<ImGuiHandler*>(_handler.get());
+        if (handler) { handler->start(_manager); newImGuiFrame(renderInfo, _time,
+            [&](ImGuiIO& io) { handler->drain(io); }); }
     }
 };
 
@@ -383,12 +402,18 @@ struct ImGuiRenderCallback : public CameraDrawCallback
             v->ImGuiTextures = _textureIdList; v->context = context;
             v->runInternal(_manager);
         });
+        ImGuiHandler* handler = static_cast<ImGuiHandler*>(_handler.get());
+        if (handler)
+        {
+            handler->publishCapture();
+            if (_manager->consumeReleaseRequest()) handler->releaseOnDrawThread();
+        }
     }
 };
 
 ////////////// ImGuiManager //////////////
 
-ImGuiManager::ImGuiManager()
+ImGuiManager::ImGuiManager() : _releaseRequested(false), _shutdownRequested(false)
 {}
 
 ImGuiManager::~ImGuiManager()
@@ -397,11 +422,11 @@ ImGuiManager::~ImGuiManager()
 void ImGuiManager::initializeEventHandler2D()
 {
     _imguiHandler = new ImGuiHandler;
-    static_cast<ImGuiHandler*>(_imguiHandler.get())->start(this);
 }
 
 void ImGuiManager::initialize(ImGuiContentHandler* cb, bool eventsFrom3D)
 {
+    _releaseRequested.store(false); _shutdownRequested.store(false);
     _contentHandler = cb;
     if (eventsFrom3D) initializeEventHandler3D();
     else initializeEventHandler2D();
@@ -409,14 +434,14 @@ void ImGuiManager::initialize(ImGuiContentHandler* cb, bool eventsFrom3D)
 
 void ImGuiManager::shutdown()
 {
-    if (_imguiHandler.valid())
-        static_cast<ImGuiHandler*>(_imguiHandler.get())->release(this);
+    _shutdownRequested.store(true);
+    _releaseRequested.store(true);
 }
 
 void ImGuiManager::addToView(osgViewer::View* view, osg::Camera* specCam)
 {
     osg::Camera* cam = (specCam != NULL) ? specCam : view->getCamera();
-    osg::ref_ptr<ImGuiNewFrameCallback> nfcb = new ImGuiNewFrameCallback(_imguiHandler.get());
+    osg::ref_ptr<ImGuiNewFrameCallback> nfcb = new ImGuiNewFrameCallback(this, _imguiHandler.get());
     osg::ref_ptr<ImGuiRenderCallback> rcb = new ImGuiRenderCallback(this, _imguiHandler.get());
     nfcb->setup(cam, PRE_DRAW); rcb->setup(cam, POST_DRAW);
     if (view) view->addEventHandler(_imguiHandler.get());

@@ -1,6 +1,7 @@
 #ifndef MANA_UI_IMGUI_HPP
 #define MANA_UI_IMGUI_HPP
 
+#include <atomic>
 #include <osg/Texture2D>
 #include <osgGA/GUIEventHandler>
 #include <osgViewer/View>
@@ -40,7 +41,9 @@ namespace osgVerse
         const std::string& getChineseSimplifiedFont() { return _fontData; }
 
         void initialize(ImGuiContentHandler* cb, bool eventsFrom3D = false);
-        void shutdown();  // FIXME: must have context... when to execute it?
+        void shutdown();
+        bool consumeReleaseRequest() { return _releaseRequested.exchange(false); }
+        bool isShutdownRequested() const { return _shutdownRequested.load(); }
 
         void addToView(osgViewer::View* view, osg::Camera* specCam = NULL);
         osg::Texture* addToTexture(osg::Group* parentOfRtt, int w, int h);
@@ -61,6 +64,8 @@ namespace osgVerse
         osg::ref_ptr<osgGA::GUIEventHandler> _imguiHandler;
         std::map<std::string, osg::ref_ptr<osg::Texture2D>> _textures;
         std::string _fontData;
+        std::atomic<bool> _releaseRequested;
+        std::atomic<bool> _shutdownRequested;
     };
 }
 

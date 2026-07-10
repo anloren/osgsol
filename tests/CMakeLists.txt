@@ -144,6 +144,7 @@ NEW_CTEST(osgVerse_Test_Ais ais_tests.cpp offline 120)  # P3 AIS ship layer: mes
 NEW_CTEST(osgVerse_Test_WorldTools world_tools_tests.cpp offline 120)  # P4 world-query tools: async fetcher / tool dispatch offline tests
 NEW_CTEST(osgVerse_Test_ImGuiSettings imgui_settings_tests.cpp offline 30)
 NEW_CTEST(osgVerse_Test_McpSafety mcp_safety_tests.cpp offline 30)
+NEW_CTEST(osgVerse_Test_ImGuiThreading imgui_threading_tests.cpp offline 30)
 
 IF(VERSE_BUILD_DEPRECATED_TESTS)
     IF(NOT VERSE_USE_EXTERNAL_GLES)
