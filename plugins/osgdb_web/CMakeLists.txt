@@ -1,6 +1,7 @@
 SET(LIB_NAME osgdb_verse_web)
 SET(LIBRARY_FILES
     ReaderWriterWeb.cpp
+    GzipUtils.cpp GzipUtils.h
 )
 
 ADD_DEFINITIONS(-DHV_STATICLIB)
