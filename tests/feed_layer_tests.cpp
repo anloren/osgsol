@@ -1548,6 +1548,7 @@ int main(int, char**)
         CHECK(lm.presets().size() == 2);
 
         CHECK(lm.applyPreset("onlyA") == true);      // 命中预设 → 返回 true
+        lm.drainPending();
         CHECK(lm.find("a")->enabled == true);
         CHECK(lm.find("b")->enabled == false);
         CHECK(lm.find("base")->enabled == true);     // 底图/标注组不动
@@ -1573,6 +1574,41 @@ int main(int, char**)
         lm.applyPreset("weird");   // base 是豁免层,applyPreset 全程不碰它(维持注册时的 true)
         CHECK(lm.find("base")->enabled == true && lm.find("a")->enabled == false);
         std::cout << "LayerManager preset tests OK\n";
+    }
+
+    {
+        LayerManager lm;
+        std::vector<std::string> applied;
+        OverlayLayer a; a.id = "a"; a.group = "live";
+        a.apply = [&](const OverlayLayer& layer) {
+            applied.push_back(std::string("a:") + (layer.enabled ? "1" : "0"));
+        };
+        OverlayLayer b; b.id = "b"; b.group = "live";
+        b.apply = [&](const OverlayLayer& layer) {
+            applied.push_back(std::string("b:") + (layer.enabled ? "1" : "0"));
+        };
+        lm.add(a); lm.add(b);
+
+        lm.setEnabled("a", true);
+        lm.setEnabled("b", true);
+        lm.setEnabled("a", false);
+        CHECK(applied.empty());
+
+        std::vector<OverlayLayer> beforeDrain = lm.layersSnapshot();
+        CHECK(beforeDrain.size() == 2);
+        CHECK(beforeDrain[0].enabled == false);
+        CHECK(beforeDrain[1].enabled == true);
+
+        CHECK(lm.drainPending() == 3);
+        CHECK(applied.size() == 3);
+        CHECK(applied[0] == "a:1");
+        CHECK(applied[1] == "b:1");
+        CHECK(applied[2] == "a:0");
+
+        CHECK(lm.setSubtitle("a", "fresh") == true);
+        CHECK(lm.setSubtitle("missing", "ignored") == false);
+        std::vector<OverlayLayer> snap = lm.layersSnapshot();
+        CHECK(snap[0].subtitle == "fresh");
     }
 
     // ---- FeedSelection 关层清理(Task 4 必修 B):只清"来源==本 feed"的选中 ----
@@ -1808,10 +1844,12 @@ int main(int, char**)
         Preset p2; p2.name = "clean"; lm.addPreset(p2);
         CHECK(lm.lastAppliedPreset().empty());            // 未应用过 = 空串
         CHECK(lm.applyPreset(u8"灾害"));
+        lm.drainPending();
         CHECK(lm.lastAppliedPreset() == u8"灾害");        // 成功应用 → 记录
         CHECK(!lm.applyPreset("no_such_preset"));
         CHECK(lm.lastAppliedPreset() == u8"灾害");        // 未知名失败 → 记录不变
         CHECK(lm.applyPreset("clean"));
+        lm.drainPending();
         CHECK(lm.lastAppliedPreset() == "clean");         // 再次应用 → 覆盖
         std::cout << "LayerManager lastAppliedPreset tests OK\n";
     }

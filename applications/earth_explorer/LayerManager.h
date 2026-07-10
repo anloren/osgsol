@@ -1,6 +1,8 @@
 #ifndef EARTH_LAYER_MANAGER_H
 #define EARTH_LAYER_MANAGER_H
 
+#include <deque>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <functional>
@@ -53,33 +55,74 @@ public:
     // ② needsKey / 无 apply 回调的不可交互层(UI 里也是灰显,预设不该越过它们)。
     bool applyPreset(const std::string& name)
     {
-        const Preset* p = nullptr;
-        for (size_t i = 0; i < _presets.size(); ++i)
-            if (_presets[i].name == name) { p = &_presets[i]; break; }
-        if (!p) return false;
-        _lastAppliedPreset = name;   // T8 状态带:记录最近一次成功应用的预设名
-        for (size_t i = 0; i < _layers.size(); ++i)   // 第一步:豁免层之外全关
+        std::lock_guard<std::mutex> lock(_mutex);
+        const Preset* preset = findPresetUnlocked(name);
+        if (!preset) return false;
+        for (size_t i = 0; i < _layers.size(); ++i)
+            if (!exemptFromPreset(_layers[i])) _layers[i].enabled = false;
+        for (size_t i = 0; i < preset->enabledIds.size(); ++i)
         {
-            OverlayLayer& l = _layers[i];
-            if (exemptFromPreset(l)) continue;
-            l.enabled = false; l.apply(l);
+            OverlayLayer* layer = findUnlocked(preset->enabledIds[i]);
+            if (layer && !exemptFromPreset(*layer)) layer->enabled = true;
         }
-        for (size_t i = 0; i < p->enabledIds.size(); ++i)   // 第二步:按列表逐个开
-        {
-            OverlayLayer* l = find(p->enabledIds[i]);
-            if (!l || exemptFromPreset(*l)) continue;
-            l->enabled = true; l->apply(*l);
-        }
+        PendingCommand command;
+        command.kind = PendingCommand::Preset;
+        command.id = name;
+        _pending.push_back(command);
         return true;
     }
 
     void setEnabled(const std::string& id, bool on)
     {
-        if (OverlayLayer* l = find(id)) { l->enabled = on; if (l->apply) l->apply(*l); }
+        std::lock_guard<std::mutex> lock(_mutex);
+        OverlayLayer* layer = findUnlocked(id);
+        if (!layer) return;
+        layer->enabled = on;
+        PendingCommand command;
+        command.kind = PendingCommand::Enable;
+        command.id = id;
+        command.enabled = on;
+        _pending.push_back(command);
     }
-    void setOpacity(const std::string& id, float v)
+    void setOpacity(const std::string& id, float value)
     {
-        if (OverlayLayer* l = find(id)) { l->opacity = v; if (l->apply) l->apply(*l); }
+        std::lock_guard<std::mutex> lock(_mutex);
+        OverlayLayer* layer = findUnlocked(id);
+        if (!layer) return;
+        layer->opacity = value;
+        PendingCommand command;
+        command.kind = PendingCommand::Opacity;
+        command.id = id;
+        command.opacity = value;
+        _pending.push_back(command);
+    }
+    bool setSubtitle(const std::string& id, const std::string& value)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        OverlayLayer* layer = findUnlocked(id);
+        if (!layer) return false;
+        layer->subtitle = value;
+        return true;
+    }
+    size_t drainPending()
+    {
+        size_t count = 0;
+        for (;;)
+        {
+            PendingCommand command;
+            {
+                std::lock_guard<std::mutex> lock(_mutex);
+                if (_pending.empty()) break;
+                command = _pending.front();
+                _pending.pop_front();
+            }
+            if (command.kind == PendingCommand::Preset)
+                applyPresetNow(command.id);
+            else
+                applyLayerCommandNow(command);
+            ++count;
+        }
+        return count;
     }
     OverlayLayer* find(const std::string& id)
     {
@@ -87,12 +130,90 @@ public:
             if (_layers[i].id == id) return &_layers[i];
         return nullptr;
     }
+    std::vector<OverlayLayer> layersSnapshot() const
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _layers;
+    }
     // T8 状态带:最近一次成功应用的预设名(未应用过 = 空串;applyPreset 未命中不改写)。
-    const std::string& lastAppliedPreset() const { return _lastAppliedPreset; }
+    std::string lastAppliedPreset() const
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _lastAppliedPreset;
+    }
 private:
+    struct PendingCommand
+    {
+        enum Kind { Enable, Opacity, Preset } kind = Enable;
+        std::string id;
+        bool enabled = false;
+        float opacity = 1.0f;
+    };
+
+    OverlayLayer* findUnlocked(const std::string& id)
+    {
+        for (size_t i = 0; i < _layers.size(); ++i)
+            if (_layers[i].id == id) return &_layers[i];
+        return nullptr;
+    }
+    const Preset* findPresetUnlocked(const std::string& name) const
+    {
+        for (size_t i = 0; i < _presets.size(); ++i)
+            if (_presets[i].name == name) return &_presets[i];
+        return nullptr;
+    }
+    void applyLayerCommandNow(const PendingCommand& command)
+    {
+        OverlayLayer layerCopy;
+        std::function<void(const OverlayLayer&)> apply;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            OverlayLayer* layer = findUnlocked(command.id);
+            if (!layer) return;
+            layerCopy = *layer;
+            apply = layer->apply;
+            if (command.kind == PendingCommand::Enable)
+                layerCopy.enabled = command.enabled;
+            else
+                layerCopy.opacity = command.opacity;
+        }
+        if (apply) apply(layerCopy);
+    }
+    void applyPresetNow(const std::string& name)
+    {
+        std::vector<OverlayLayer> layerCopies;
+        std::vector<std::function<void(const OverlayLayer&)> > callbacks;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            const Preset* preset = findPresetUnlocked(name);
+            if (!preset) return;
+            _lastAppliedPreset = name;
+            for (size_t i = 0; i < _layers.size(); ++i)
+            {
+                if (exemptFromPreset(_layers[i])) continue;
+                OverlayLayer layerCopy = _layers[i];
+                layerCopy.enabled = false;
+                layerCopies.push_back(layerCopy);
+                callbacks.push_back(_layers[i].apply);
+            }
+            for (size_t i = 0; i < preset->enabledIds.size(); ++i)
+            {
+                OverlayLayer* layer = findUnlocked(preset->enabledIds[i]);
+                if (!layer || exemptFromPreset(*layer)) continue;
+                OverlayLayer layerCopy = *layer;
+                layerCopy.enabled = true;
+                layerCopies.push_back(layerCopy);
+                callbacks.push_back(layer->apply);
+            }
+        }
+        for (size_t i = 0; i < callbacks.size(); ++i)
+            if (callbacks[i]) callbacks[i](layerCopies[i]);
+    }
     static bool exemptFromPreset(const OverlayLayer& l)
     { return l.group == u8"底图 / 标注" || l.needsKey || !l.apply; }
 
+    mutable std::mutex _mutex;
+    std::deque<PendingCommand> _pending;
     std::vector<OverlayLayer> _layers;
     std::vector<Preset> _presets;
     std::string _lastAppliedPreset;
