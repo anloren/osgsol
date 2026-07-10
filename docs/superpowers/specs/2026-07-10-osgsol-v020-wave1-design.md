@@ -67,7 +67,8 @@ FRAME 线程消费请求并发布不可变 `VideoUiSnapshot`。UI 只读快照�
 - 每个行为变更先写失败测试并确认按预期失败，再写最小实现。
 - 每批先跑目标测试，再跑 `ctest -L offline --output-on-failure`。
 - 任何 EarthExplorer 运行验证必须带 `EARTH_OFFSCREEN=1`；同时只运行一个 `cmake --build`。
-- 每批一个独立提交；Wave 1 全部完成前不合并 `master`、不打 `v0.2.0`。
+- 每批形成一段独立、连续、可审查的提交序列：每个可验证任务单独提交并独立复核，
+  批次末尾再提交全量验证记录；Wave 1 全部完成前不合并 `master`、不打 `v0.2.0`。
 - 最终打包拒绝 `EARTH_AI_KEY`，更新固定桌面应用后运行 smoke test，再执行 `codesign --verify --deep --strict`。
 
 ## 6. 完成标准
