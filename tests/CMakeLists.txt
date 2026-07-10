@@ -144,7 +144,11 @@ NEW_CTEST(osgVerse_Test_Ais ais_tests.cpp offline 120)  # P3 AIS ship layer: mes
 NEW_CTEST(osgVerse_Test_WorldTools world_tools_tests.cpp offline 120)  # P4 world-query tools: async fetcher / tool dispatch offline tests
 NEW_CTEST(osgVerse_Test_ImGuiSettings imgui_settings_tests.cpp offline 30)
 NEW_CTEST(osgVerse_Test_McpSafety mcp_safety_tests.cpp offline 30)
+TARGET_COMPILE_DEFINITIONS(osgVerse_Test_McpSafety PRIVATE
+                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_ImGuiThreading imgui_threading_tests.cpp offline 30)
+TARGET_COMPILE_DEFINITIONS(osgVerse_Test_ImGuiThreading PRIVATE
+                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 IF(VERSE_WITH_COMMON_LIBRARIES)
     NEW_CTEST(osgVerse_Test_InputSafety input_safety_tests.cpp offline 30)
     TARGET_LINK_LIBRARIES(osgVerse_Test_InputSafety osgdb_verse_web zlib)

@@ -17,6 +17,7 @@ extern void startImGuiContext(ImGuiManager* manager, std::map<std::string, ImFon
 extern int convertImGuiCharacterKey(int key);
 extern int convertImGuiSpecialKey(int key);
 extern void applyImGuiInputEvents(ImGuiIO& io, const std::vector<ImGuiInputEvent>& events);
+extern void shutdownImGuiRendererBackend();
 
 class ImGuiHandler3D : public osgGA::GUIEventHandler
 {
@@ -44,7 +45,9 @@ public:
 
     void releaseOnDrawThread()
     {
-        if (_started) { ImGui::DestroyContext(); _started = false; }
+        if (!_started) return;
+        shutdownImGuiRendererBackend();
+        ImGui::DestroyContext(); _started = false;
     }
 
     virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa)

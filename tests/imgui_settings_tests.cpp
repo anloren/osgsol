@@ -11,17 +11,32 @@
 int main()
 {
     const std::string path = osgVerse::defaultImGuiSettingsPath();
+#if defined(_WIN32)
+    const char* localAppData = std::getenv("LOCALAPPDATA");
+    if (localAppData && localAppData[0])
+        CHECK(path == std::string(localAppData) + "/osgVerse/imgui.ini");
+    else
+        CHECK(path.empty());
+#elif defined(__APPLE__)
     const char* home = std::getenv("HOME");
     if (home && home[0])
     {
         CHECK(!path.empty());
         CHECK(path[0] == '/');
         CHECK(path.find(".app/Contents") == std::string::npos);
-#if defined(__APPLE__)
         CHECK(path == std::string(home) +
               "/Library/Application Support/osgVerse/imgui.ini");
-#endif
     }
+#else
+    const char* xdg = std::getenv("XDG_CONFIG_HOME");
+    const char* home = std::getenv("HOME");
+    if (xdg && xdg[0])
+        CHECK(path == std::string(xdg) + "/osgVerse/imgui.ini");
+    else if (home && home[0])
+        CHECK(path == std::string(home) + "/.config/osgVerse/imgui.ini");
+    else
+        CHECK(path.empty());
+#endif
     std::cout << "[OK] ImGui settings path\n";
     return 0;
 }

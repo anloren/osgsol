@@ -32,6 +32,16 @@ extern void StyleColorsTransparent(ImGuiStyle* dst = (ImGuiStyle*)0);
 extern void StyleColorsMissionControl(ImGuiStyle* dst = (ImGuiStyle*)0);
 static bool s_useImguiLoaderGL3 = true;
 
+void shutdownImGuiRendererBackend()
+{
+#if defined(OSG_GLES1_AVAILABLE) || defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
+    ImGui_ImplOpenGL3_Shutdown();
+#else
+    if (s_useImguiLoaderGL3) ImGui_ImplOpenGL3_Shutdown();
+    else ImGui_ImplOpenGL2_Shutdown();
+#endif
+}
+
 std::string osgVerse::defaultImGuiSettingsPath()
 {
 #if defined(_WIN32)
@@ -317,12 +327,7 @@ public:
     void releaseOnDrawThread()
     {
         if (!_started) return;
-#if defined(OSG_GLES1_AVAILABLE) || defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
-        ImGui_ImplOpenGL3_Shutdown();
-#else
-        if (s_useImguiLoaderGL3) ImGui_ImplOpenGL3_Shutdown();
-        else ImGui_ImplOpenGL2_Shutdown();
-#endif
+        shutdownImGuiRendererBackend();
         ImGui::DestroyContext(); _started = false;
     }
 

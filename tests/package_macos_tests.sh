@@ -22,6 +22,14 @@ fi
 grep -q "Refusing to package while EARTH_AI_KEY is set" "$LOG"
 test ! -e "$APP"
 
+if env -u EARTH_AI_KEY OSG_ROOT="$HOME_DIR/missing-osg-runtime" \
+   OSGVERSE_SDK="$SDK" bash "$ROOT/packaging/package_macos.sh" >"$LOG" 2>&1; then
+    echo "FAIL: packaging accepted a missing OSG runtime SDK" >&2
+    exit 1
+fi
+grep -q "OSG runtime SDK is incomplete" "$LOG"
+test ! -e "$APP"
+
 env -u EARTH_AI_KEY OSGVERSE_SDK="$SDK" \
     bash "$ROOT/packaging/package_macos.sh"
 test -x "$APP/Contents/MacOS/osgVerse_EarthExplorer"

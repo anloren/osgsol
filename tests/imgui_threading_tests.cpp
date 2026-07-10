@@ -1,6 +1,9 @@
 #include <ui/ImGuiInputQueue.h>
 
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -27,6 +30,16 @@ int main()
     queue.publishCapture(true, false);
     CHECK(queue.wantsMouse());
     CHECK(!queue.wantsKeyboard());
+
+    std::ifstream sourceFile(std::string(OSGVERSE_SOURCE_DIR) + "/ui/ImGui3D.cpp");
+    std::ostringstream sourceBuffer; sourceBuffer << sourceFile.rdbuf();
+    const std::string source = sourceBuffer.str();
+    const size_t release = source.find("void releaseOnDrawThread()");
+    const size_t nextMethod = source.find("virtual bool handle(", release);
+    const size_t shutdown = source.find("shutdownImGuiRendererBackend();", release);
+    CHECK(release != std::string::npos);
+    CHECK(nextMethod != std::string::npos);
+    CHECK(shutdown != std::string::npos && shutdown < nextMethod);
     std::cout << "[OK] ImGui immutable input queue\n";
     return 0;
 }

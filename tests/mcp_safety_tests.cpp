@@ -2,8 +2,10 @@
 #include <3rdparty/libhv/all/client/requests.h>
 
 #include <chrono>
+#include <fstream>
 #include <future>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -20,6 +22,18 @@ static bool isInvalidParams(const picojson::value& value)
 
 int main()
 {
+    std::ifstream sourceFile(std::string(OSGVERSE_SOURCE_DIR) + "/ai/McpServer.cpp");
+    std::ostringstream sourceBuffer; sourceBuffer << sourceFile.rdbuf();
+    const std::string source = sourceBuffer.str();
+    const size_t handler = source.find("int handleSSE(");
+    const size_t lifecycleLock = source.find(
+        "std::lock_guard<std::mutex> lock(rpc->sseMutex);", handler);
+    const size_t runningCheck = source.find("if (!rpc->running.load())", handler);
+    const size_t threadCreation = source.find("std::make_unique<std::thread>", handler);
+    const size_t timer = source.find("hv::setInterval", handler);
+    CHECK(handler != std::string::npos && timer != std::string::npos);
+    CHECK(lifecycleLock < runningCheck && runningCheck < threadCreation && threadCreation < timer);
+
     osg::ref_ptr<osgVerse::McpServer> pagination = new osgVerse::McpServer;
     picojson::array items;
     items.push_back(picojson::value("zero"));

@@ -146,29 +146,31 @@ protected:
         if (sessionID.empty())
         {
             sessionID = generateSessionID();
-            auto thread = std::make_unique<std::thread>([rpc, ctx, sessionID]()
-                {
-                    std::stringstream ss; ss << rpc->msgEndpoint << "?session_id=" << sessionID;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                    if (!rpc->running.load() || !ctx->writer->isConnected()) return;
-                    rpc->createEventMessage(sessionID, ss.str(), "endpoint");
-
-                    int heartbeatCount = 0;
-                    while (rpc->running.load() && ctx->writer->isConnected())
-                    {
-                        bool shouldSend = true;
-                        for (int i = 0; i < 50; ++i)
-                        {
-                            if (!rpc->running.load() || !ctx->writer->isConnected())
-                            { shouldSend = false; break; }
-                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                        }
-                        if (!shouldSend || !rpc->running.load() || !ctx->writer->isConnected()) break;
-                        rpc->createEventMessage(sessionID, std::to_string(heartbeatCount++), "heartbeat");
-                    }
-                });
             {
                 std::lock_guard<std::mutex> lock(rpc->sseMutex);
+                if (!rpc->running.load())
+                    return responseStatus(ctx, 503, "Server stopping");
+                auto thread = std::make_unique<std::thread>([rpc, ctx, sessionID]()
+                    {
+                        std::stringstream ss; ss << rpc->msgEndpoint << "?session_id=" << sessionID;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                        if (!rpc->running.load() || !ctx->writer->isConnected()) return;
+                        rpc->createEventMessage(sessionID, ss.str(), "endpoint");
+
+                        int heartbeatCount = 0;
+                        while (rpc->running.load() && ctx->writer->isConnected())
+                        {
+                            bool shouldSend = true;
+                            for (int i = 0; i < 50; ++i)
+                            {
+                                if (!rpc->running.load() || !ctx->writer->isConnected())
+                                { shouldSend = false; break; }
+                                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            }
+                            if (!shouldSend || !rpc->running.load() || !ctx->writer->isConnected()) break;
+                            rpc->createEventMessage(sessionID, std::to_string(heartbeatCount++), "heartbeat");
+                        }
+                    });
                 rpc->sseThreads[sessionID] = std::move(thread);
             }
 
@@ -357,7 +359,7 @@ public:
 
     virtual int cancel()
     {
-        if (!running.exchange(false)) return 0;
+        running.store(false);
         while (true)
         {
             std::string sessionID;
@@ -463,6 +465,7 @@ public:
     void closeSession(const std::string& sessionID)
     {
         std::unique_ptr<std::thread> toRelease;
+        std::vector<std::pair<std::string, McpServer::SessionCleanupHandler>> cleanupHandlers;
         bool found = false;
         {
             std::lock_guard<std::mutex> lock(sseMutex);
@@ -474,10 +477,12 @@ public:
                 found = true;
             }
             removeSessionMember(sessionID);
+            for (std::map<std::string, McpServer::SessionCleanupHandler>::iterator it = sessionCleanups.begin();
+                 it != sessionCleanups.end(); ++it) cleanupHandlers.push_back(*it);
         }
         if (!found) return;
-        for (std::map<std::string, McpServer::SessionCleanupHandler>::iterator it = sessionCleanups.begin();
-             it != sessionCleanups.end(); ++it) it->second(it->first, sessionID);
+        for (size_t i = 0; i < cleanupHandlers.size(); ++i)
+            cleanupHandlers[i].second(cleanupHandlers[i].first, sessionID);
 
         if (toRelease && toRelease->joinable())
         {

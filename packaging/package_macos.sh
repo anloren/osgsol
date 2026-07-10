@@ -11,6 +11,13 @@ if [ -n "${EARTH_AI_KEY:-}" ]; then
     echo "[error] Refusing to package while EARTH_AI_KEY is set; unset it and use per-user configuration." >&2
     exit 64
 fi
+if [ ! -d "$OSG_RUNTIME_SDK/lib" ] ||
+   [ -z "$(find "$OSG_RUNTIME_SDK/lib" -maxdepth 1 -name 'libOpenThreads*.dylib' -print -quit)" ] ||
+   [ ! -d "$OSG_RUNTIME_SDK/lib/$PLUGVER" ] ||
+   [ -z "$(find "$OSG_RUNTIME_SDK/lib/$PLUGVER" -maxdepth 1 -name 'osgdb_*.so' -print -quit)" ]; then
+    echo "[error] OSG runtime SDK is incomplete: $OSG_RUNTIME_SDK" >&2
+    exit 66
+fi
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
@@ -23,13 +30,18 @@ cp "$SDK/bin/osgVerse_EarthExplorer" "$APP/Contents/MacOS/"
 # 2) 先复制外部 OSG 运行库，再用当前安装树中的 osgVerse 库覆盖
 # CMake install 不会重复安装 OSG_ROOT，因此 fresh install tree 需要合并两处运行库。
 for lib_root in "$OSG_RUNTIME_SDK/lib" "$SDK/lib"; do
-    cp -a "$lib_root/"*.dylib "$APP/Contents/lib/" 2>/dev/null || true
-    cp -a "$lib_root/"*.so "$APP/Contents/lib/" 2>/dev/null || true
+    for f in "$lib_root/"*.dylib "$lib_root/"*.so; do
+        [ -e "$f" ] || continue
+        cp -a "$f" "$APP/Contents/lib/"
+    done
 done
 
 # 3) 同样合并 OSG 与 osgVerse 插件；并在 Contents/bin 建同名软链（代码按 BASE_DIR/bin/osgPlugins 搜索）
 for plugin_root in "$OSG_RUNTIME_SDK/lib/$PLUGVER" "$SDK/lib/$PLUGVER"; do
-    cp -a "$plugin_root/"*.so "$APP/Contents/lib/$PLUGVER/" 2>/dev/null || true
+    for f in "$plugin_root/"*.so; do
+        [ -e "$f" ] || continue
+        cp -a "$f" "$APP/Contents/lib/$PLUGVER/"
+    done
 done
 ln -s "../lib/$PLUGVER" "$APP/Contents/bin/$PLUGVER"
 
@@ -41,6 +53,18 @@ done
 # 5) 可执行文件 rpath：删 Linux $ORIGIN，加 @executable_path/../lib
 install_name_tool -delete_rpath '$ORIGIN:$ORIGIN/../lib' "$APP/Contents/MacOS/osgVerse_EarthExplorer" 2>/dev/null || true
 install_name_tool -add_rpath '@executable_path/../lib' "$APP/Contents/MacOS/osgVerse_EarthExplorer"
+
+# Every direct @rpath dependency must exist before a successful package can be reported.
+while IFS= read -r dependency; do
+    case "$dependency" in
+        @rpath/*)
+            if [ ! -e "$APP/Contents/lib/${dependency#@rpath/}" ]; then
+                echo "[error] Missing bundled runtime dependency: $dependency" >&2
+                exit 67
+            fi
+            ;;
+    esac
+done < <(otool -L "$APP/Contents/MacOS/osgVerse_EarthExplorer" | awk 'NR > 1 {print $1}')
 
 # 6) Contents/lib 下每个 dylib/.so 加 @loader_path（同级互引用）
 for f in "$APP/Contents/lib/"*.dylib "$APP/Contents/lib/"*.so; do
