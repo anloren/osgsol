@@ -82,7 +82,8 @@ namespace earthai
 
     inline VideoPollDisposition classifyVideoPollHttp(bool hasResponse, int status)
     {
-        if (!hasResponse || status == 429 || status >= 500) return VIDEO_POLL_RETRY;
+        if (!hasResponse || status == 429 || (status >= 500 && status < 600))
+            return VIDEO_POLL_RETRY;
         if (status != 200) return VIDEO_POLL_TERMINAL_ERROR;
         return VIDEO_POLL_PARSE_BODY;
     }

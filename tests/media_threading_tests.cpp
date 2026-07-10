@@ -91,6 +91,8 @@ int main()
     CHECK(classifyVideoPollHttp(true, 429) == VIDEO_POLL_RETRY);
     CHECK(classifyVideoPollHttp(true, 500) == VIDEO_POLL_RETRY);
     CHECK(classifyVideoPollHttp(true, 503) == VIDEO_POLL_RETRY);
+    CHECK(classifyVideoPollHttp(true, 599) == VIDEO_POLL_RETRY);
+    CHECK(classifyVideoPollHttp(true, 600) == VIDEO_POLL_TERMINAL_ERROR);
     CHECK(classifyVideoPollHttp(true, 400) == VIDEO_POLL_TERMINAL_ERROR);
     CHECK(classifyVideoPollHttp(true, 401) == VIDEO_POLL_TERMINAL_ERROR);
     CHECK(classifyVideoPollHttp(true, 200) == VIDEO_POLL_PARSE_BODY);
