@@ -149,6 +149,8 @@ NEW_CTEST(osgVerse_Test_Geospatial geospatial_tests.cpp offline 120)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Geospatial PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_Ais ais_tests.cpp offline 120)  # P3 AIS ship layer: message parse / bbox decision unit tests
+TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Ais PRIVATE
+                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_WorldTools world_tools_tests.cpp offline 120)  # P4 world-query tools: async fetcher / tool dispatch offline tests
 NEW_CTEST(osgVerse_Test_ImGuiSettings imgui_settings_tests.cpp offline 30)
 NEW_CTEST(osgVerse_Test_McpSafety mcp_safety_tests.cpp offline 30)

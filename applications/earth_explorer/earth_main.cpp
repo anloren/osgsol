@@ -527,7 +527,6 @@ public:
         double lonHalf = thetaDeg / cosLat; if (lonHalf > 180.0) lonHalf = 180.0;
         double lonMin = lon0 - lonHalf, lonMax = lon0 + lonHalf;
         if (latMin < -85.0) latMin = -85.0; if (latMax > 85.0) latMax = 85.0;
-        if (lonMin < -180.0) lonMin = -180.0; if (lonMax > 180.0) lonMax = 180.0;
         _ships->setViewState(latMin, lonMin, latMax, lonMax, h);
         // kDisabled 空串不覆盖注册时的说明文案:statusText() 在图层关闭时返回 ""，
         // 若照旧每帧覆盖会把注册时写好的 u8"AISStream 实时船位" 说明文案抹掉。

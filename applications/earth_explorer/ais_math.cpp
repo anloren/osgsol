@@ -38,32 +38,34 @@ namespace earthais
 
     ShipBBox inflateBBox(const ShipBBox& b, double factor)
     {
-        double cLat = (b.latMin + b.latMax) * 0.5, cLon = (b.lonMin + b.lonMax) * 0.5;
-        double hLat = (b.latMax - b.latMin) * 0.5 * factor, hLon = (b.lonMax - b.lonMin) * 0.5 * factor;
-        ShipBBox o;
-        o.latMin = std::max(-85.0, cLat - hLat); o.latMax = std::min(85.0, cLat + hLat);
-        o.lonMin = std::max(-180.0, cLon - hLon); o.lonMax = std::min(180.0, cLon + hLon);
-        return o;
+        return earthgeo::inflateUnwrappedBBox(b, factor);
     }
 
     bool bboxNeedsResubscribe(const ShipBBox& sub, const ShipBBox& view)
     {
-        double cLat = (view.latMin + view.latMax) * 0.5, cLon = (view.lonMin + view.lonMax) * 0.5;
-        if (cLat < sub.latMin || cLat > sub.latMax || cLon < sub.lonMin || cLon > sub.lonMax) return true;
-        double vs = std::max(view.latMax - view.latMin, view.lonMax - view.lonMin);
-        double ss = std::max(sub.latMax - sub.latMin, sub.lonMax - sub.lonMin);
-        if (vs > ss) return true;          // 拉远超出订阅范围
-        if (vs < ss * 0.25) return true;   // 推近太多,订阅过宽浪费流量
-        return false;
+        return earthgeo::unwrappedBBoxNeedsRefresh(sub, view);
     }
 
-    std::string buildSubscriptionJson(const std::string& apiKey, const ShipBBox& b)
+    std::vector<ShipBBox> splitSubscriptionBoxes(const ShipBBox& b)
     {
-        picojson::array sw, ne, box, boxes;
-        sw.push_back(picojson::value(b.latMin)); sw.push_back(picojson::value(b.lonMin));
-        ne.push_back(picojson::value(b.latMax)); ne.push_back(picojson::value(b.lonMax));
-        box.push_back(picojson::value(sw)); box.push_back(picojson::value(ne));
-        boxes.push_back(picojson::value(box));
+        return earthgeo::splitAntimeridianBBox(b);
+    }
+
+    std::string buildSubscriptionJson(const std::string& apiKey,
+                                      const std::vector<ShipBBox>& subscriptionBoxes)
+    {
+        picojson::array boxes;
+        for (size_t i = 0; i < subscriptionBoxes.size(); ++i)
+        {
+            const ShipBBox& b = subscriptionBoxes[i];
+            picojson::array sw, ne, box;
+            sw.push_back(picojson::value(b.latMin));
+            sw.push_back(picojson::value(b.lonMin));
+            ne.push_back(picojson::value(b.latMax));
+            ne.push_back(picojson::value(b.lonMax));
+            box.push_back(picojson::value(sw)); box.push_back(picojson::value(ne));
+            boxes.push_back(picojson::value(box));
+        }
         picojson::object o;
         o["APIKey"] = picojson::value(apiKey);
         o["BoundingBoxes"] = picojson::value(boxes);

@@ -305,7 +305,9 @@ namespace
         bool connectWs(const earthais::ShipBBox& view)
         {
             _subscribedBBox = earthais::inflateBBox(view, 1.5);
-            std::string sub = earthais::buildSubscriptionJson(_apiKey, _subscribedBBox);
+            std::vector<earthais::ShipBBox> boxes =
+                earthais::splitSubscriptionBoxes(_subscribedBBox);
+            std::string sub = earthais::buildSubscriptionJson(_apiKey, boxes);
             _wsClosed = false; _wsOpened = false;
             _ws.reset(new hv::WebSocketClient);
             hv::WebSocketClient* c = _ws.get();   // 回调在 libhv loop 线程执行;client 对象
