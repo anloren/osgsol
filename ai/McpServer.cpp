@@ -150,16 +150,22 @@ protected:
                 {
                     std::stringstream ss; ss << rpc->msgEndpoint << "?session_id=" << sessionID;
                     std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                    if (!rpc->running.load() || !ctx->writer->isConnected()) return;
                     rpc->createEventMessage(sessionID, ss.str(), "endpoint");
 
                     int heartbeatCount = 0;
-                    while (rpc->running && ctx->writer->isConnected())
+                    while (rpc->running.load() && ctx->writer->isConnected())
                     {
-                        std::this_thread::sleep_for(std::chrono::seconds(5) + std::chrono::milliseconds(rand() % 500));
-                        if (!rpc->running || !ctx->writer->isConnected()) break;
+                        bool shouldSend = true;
+                        for (int i = 0; i < 50; ++i)
+                        {
+                            if (!rpc->running.load() || !ctx->writer->isConnected())
+                            { shouldSend = false; break; }
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        }
+                        if (!shouldSend || !rpc->running.load() || !ctx->writer->isConnected()) break;
                         rpc->createEventMessage(sessionID, std::to_string(heartbeatCount++), "heartbeat");
                     }
-                    rpc->closeSession(sessionID);
                 });
             {
                 std::lock_guard<std::mutex> lock(rpc->sseMutex);
@@ -168,10 +174,13 @@ protected:
 
             hv::setInterval(200, [rpc, ctx, sessionID](hv::TimerID timerID)
                 {
-                    if (rpc->running && ctx->writer->isConnected())
+                    if (rpc->running.load() && ctx->writer->isConnected())
                         rpc->sendEventMessage(sessionID, ctx);
                     else
+                    {
                         hv::killTimer(timerID);
+                        rpc->closeSession(sessionID);
+                    }
                 });
             OSG_NOTICE << "[JsonRpcServer] SSE-new: " << sessionID << std::endl;
             return HTTP_STATUS_UNFINISHED;
@@ -342,22 +351,24 @@ public:
     virtual void run()
     {
         server.start();
-        while (running) microSleep(15000);
+        while (running.load()) microSleep(15000);
         server.stop();
     }
 
     virtual int cancel()
     {
-        if (!running) return 0;
+        if (!running.exchange(false)) return 0;
+        while (true)
         {
-            std::lock_guard<std::mutex> lock(sseMutex);
-            while (!sseThreads.empty()) { closeSession(sseThreads.begin()->first, false); }
-            sseThreads.clear(); sseMessages.clear(); sseInitialized.clear();
+            std::string sessionID;
+            {
+                std::lock_guard<std::mutex> lock(sseMutex);
+                if (sseThreads.empty()) break;
+                sessionID = sseThreads.begin()->first;
+            }
+            closeSession(sessionID);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-
-        running = false; microSleep(20000);
-        return OpenThreads::Thread::cancel();
+        return 0;
     }
 
     void createEventMessage(const std::string& sessionID, const std::string& msg, const std::string& ev)
@@ -439,22 +450,20 @@ public:
     void removeSessionMember(const std::string& sessionID)
     {
         auto cit = clientMap.find(sessionID);
-        auto tit2 = sseMessages.find(sessionID);
         auto tit3 = sseInitialized.find(sessionID);
         auto subIt = resourceSubscriptions.find(sessionID);
         if (cit != clientMap.end()) clientMap.erase(cit);
-        if (tit2 != sseMessages.end()) sseMessages.erase(tit2);
         if (tit3 != sseInitialized.end()) sseInitialized.erase(tit3);
         if (subIt != resourceSubscriptions.end()) resourceSubscriptions.erase(subIt);
+        std::lock_guard<std::mutex> messageLock(msgMutex);
+        auto tit2 = sseMessages.find(sessionID);
+        if (tit2 != sseMessages.end()) sseMessages.erase(tit2);
     }
 
-    void closeSession(const std::string& sessionID, bool useMutex = true)
+    void closeSession(const std::string& sessionID)
     {
-        for (std::map<std::string, McpServer::SessionCleanupHandler>::iterator it = sessionCleanups.begin();
-             it != sessionCleanups.end(); ++it) it->second(it->first, sessionID);
-
         std::unique_ptr<std::thread> toRelease;
-        if (useMutex)
+        bool found = false;
         {
             std::lock_guard<std::mutex> lock(sseMutex);
             auto tit = sseThreads.find(sessionID);
@@ -462,27 +471,39 @@ public:
             {
                 toRelease = std::move(tit->second);
                 sseThreads.erase(tit);
+                found = true;
             }
             removeSessionMember(sessionID);
         }
-        else
+        if (!found) return;
+        for (std::map<std::string, McpServer::SessionCleanupHandler>::iterator it = sessionCleanups.begin();
+             it != sessionCleanups.end(); ++it) it->second(it->first, sessionID);
+
+        if (toRelease && toRelease->joinable())
         {
-            auto tit = sseThreads.find(sessionID);
-            if (tit != sseThreads.end())
-            {
-                toRelease = std::move(tit->second);
-                sseThreads.erase(tit);
-            }
-            removeSessionMember(sessionID);
+            if (toRelease->get_id() == std::this_thread::get_id()) toRelease->detach();
+            else toRelease->join();
         }
-        if (toRelease) { toRelease->join(); toRelease.release(); }
     }
 
-    std::string encodeCursor(int offset)
+    std::string encodeCursor(size_t offset)
     { return "cursor_" + std::to_string(offset); }
 
-    int decodeCursor(const std::string& cursor)
-    { if (cursor.substr(0, 7) == "cursor_") return std::stoi(cursor.substr(7)); return 0; }
+    bool decodeCursor(const std::string& cursor, size_t& offset) const
+    {
+        offset = 0;
+        if (cursor.empty()) return true;
+        if (cursor.compare(0, 7, "cursor_") != 0 || cursor.size() == 7) return false;
+        for (size_t i = 7; i < cursor.size(); ++i)
+        {
+            const char ch = cursor[i];
+            if (ch < '0' || ch > '9') return false;
+            const size_t digit = static_cast<size_t>(ch - '0');
+            if (offset > ((std::numeric_limits<size_t>::max)() - digit) / 10) return false;
+            offset = offset * 10 + digit;
+        }
+        return true;
+    }
 
     typedef std::pair<std::string, std::string> EventAndData;
     std::map<std::string, McpClientInfo> clientMap;
@@ -509,7 +530,7 @@ public:
     hv::HttpService service;
     std::string sseEndpoint, msgEndpoint;
     std::mutex clientMutex, sseMutex, msgMutex;
-    bool running;
+    std::atomic<bool> running;
 };
 
 McpServer::McpServer(const std::string& sse_endpoint, const std::string& msg_endpoint)
@@ -802,10 +823,13 @@ picojson::value McpServer::paginateResults(const picojson::array& allItems, cons
                                            int pageSize, const std::string& listType)
 {
     JsonRpcServer* server = static_cast<JsonRpcServer*>(_core.get());
-    int offset = server->decodeCursor(cursor), total = allItems.size();
+    size_t offset = 0, total = allItems.size();
+    if (pageSize <= 0 || !server->decodeCursor(cursor, offset) || offset > total)
+        return simpleJson("code", InvalidParams, "message", "Invalid pagination cursor");
 
-    picojson::array pageItems; int end = std::min(offset + pageSize, total);
-    for (int i = offset; i < end; ++i) pageItems.push_back(allItems[i]);
+    size_t end = std::min(total, offset + std::min(static_cast<size_t>(pageSize), total - offset));
+    picojson::array pageItems;
+    for (size_t i = offset; i < end; ++i) pageItems.push_back(allItems[i]);
 
     picojson::object result; result[listType] = picojson::value(pageItems);
     if (end < total) result["nextCursor"] = picojson::value(server->encodeCursor(end));

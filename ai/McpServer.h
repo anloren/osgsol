@@ -4,6 +4,10 @@
 #include <osg/ref_ptr>
 #include <osg/Referenced>
 #include <picojson.h>
+#include <atomic>
+#include <cstdio>
+#include <exception>
+#include <limits>
 #include <vector>
 #include <queue>
 #include <map>
@@ -47,7 +51,18 @@ namespace osgVerse
                                 if (_stopped && _tasks.empty()) return;
                                 task = std::move(_tasks.front()); _tasks.pop();
                             }
-                            task();
+                            try
+                            {
+                                task();
+                            }
+                            catch (const std::exception& e)
+                            {
+                                std::fprintf(stderr, "[McpServer] worker task failed: %s\n", e.what());
+                            }
+                            catch (...)
+                            {
+                                std::fprintf(stderr, "[McpServer] worker task failed: unknown exception\n");
+                            }
                         }
                     });
             }
