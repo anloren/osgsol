@@ -722,13 +722,13 @@ namespace earthai
     // "跳过 ImGui 内容"发生在 EarthControlUI::runInternal() 读 isHudHidden() 的地方。
     void MediaManager::hudHide()
     {
-        ++_hudHideCount;
+        const int previousCount = _hudHideCount.fetch_add(1);
         // 快门补光:第一次进入快门态时保存当前太阳方向,并把太阳对准相机——保证夜面/背光
         // 视角的快照也是亮的(构图参考不能是黑图)。恢复在 hudRestore() 计数归零时。
         // 注意:若用户开了"真实时间太阳",EarthControlUI 每帧会重写 WorldSunDir,可能在
         // 抓帧那一帧盖掉补光(时序取决于 ImGui 回调与渲染顺序)——该场景下补光是尽力而为;
         // update() 在快门期间每 tick 重设一次以尽量赢得竞争(见 WAITING_SNAPSHOT 分支)。
-        if (_hudHideCount == 1 && _earth && _earth->commonUniforms.count("WorldSunDir"))
+        if (previousCount == 0 && _earth && _earth->commonUniforms.count("WorldSunDir"))
         {
             _earth->commonUniforms["WorldSunDir"]->get(_savedSunDir);
             _sunDirSaved = true;
@@ -752,9 +752,10 @@ namespace earthai
 
     void MediaManager::hudRestore()
     {
-        if (_hudHideCount <= 0) return;   // 防御:不应发生,但避免计数被错误多减导致下溢
-        --_hudHideCount;
-        if (_hudHideCount == 0 && _sunDirSaved && _earth && _earth->commonUniforms.count("WorldSunDir"))
+        int count = _hudHideCount.load();
+        while (count > 0 && !_hudHideCount.compare_exchange_weak(count, count - 1)) {}
+        if (count <= 0) return;   // 防御:不应发生,但 CAS 保证计数不会下溢
+        if (count == 1 && _sunDirSaved && _earth && _earth->commonUniforms.count("WorldSunDir"))
         {
             _earth->commonUniforms["WorldSunDir"]->set(_savedSunDir);   // 快门结束:恢复原太阳
             if (_earth->commonUniforms.count("LabelOpacity"))
@@ -819,13 +820,48 @@ namespace earthai
 
     void MediaManager::update()
     {
-        // 快门期间每 tick 重申补光(对抗"真实时间太阳"每帧重写,见 hudHide 注释)
-        if (_hudHideCount > 0) applyFillLight();
-        // 视频状态机与照片状态机相互独立(两条流程可以同时进行,互不阻塞),照片状态机
-        // 下面各分支里散布着多个提前 return——先驱动一次视频状态机,避免视频推进逻辑被
-        // 挂在某个 return 之后而"post-photo-return 才执行"从而实际上跑不到。
-        updateVideoInternal();
+        std::vector<VideoUiRequest> requests = _videoRequests.drain();
+        std::string commandError;
+        for (size_t i = 0; i < requests.size(); ++i)
+        {
+            const VideoUiRequest& request = requests[i];
+            if (request.kind == VideoUiRequest::Begin)
+            {
+                if (!beginVideoCapture(request.lla, request.style))
+                    commandError = "video capture is not idle";
+            }
+            else if (request.kind == VideoUiRequest::CaptureEnd)
+            {
+                if (!captureVideoEnd(request.lla)) commandError = "video is not waiting for B";
+            }
+            else if (request.kind == VideoUiRequest::Confirm)
+            {
+                picojson::value result = confirmVideo();
+                if (result.is<picojson::object>() && result.contains("error") &&
+                    result.get("error").is<std::string>())
+                    commandError = result.get("error").get<std::string>();
+            }
+            else if (request.kind == VideoUiRequest::Cancel)
+                cancelVideo();
+        }
 
+        // 快门期间每 tick 重申补光(对抗"真实时间太阳"每帧重写,见 hudHide 注释)
+        if (_hudHideCount.load() > 0) applyFillLight();
+        updateVideoInternal();
+        updatePhotoInternal();
+
+        VideoUiSnapshot snapshot;
+        snapshot.phase = videoPhase();
+        snapshot.pending = pendingVideoInfo();
+        snapshot.commandError = commandError;
+        {
+            std::lock_guard<std::mutex> lock(_videoSnapshotMutex);
+            _videoSnapshot = snapshot;
+        }
+    }
+
+    void MediaManager::updatePhotoInternal()
+    {
         if (_state == WAITING_VIEW_RENDER)
         {
             // AIFrameHandler 同一 FRAME 内先 drainMainThread()(可能启动本任务)、再 update()。
@@ -1030,6 +1066,12 @@ namespace earthai
         info.ready = (_video->phase == VideoJob::AWAIT_CONFIRM);
         if (info.ready) info.motionPrompt = _video->motionPrompt;
         return info;
+    }
+
+    MediaManager::VideoUiSnapshot MediaManager::videoUiSnapshot() const
+    {
+        std::lock_guard<std::mutex> lock(_videoSnapshotMutex);
+        return _videoSnapshot;
     }
 
     picojson::value MediaManager::confirmVideo()

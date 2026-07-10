@@ -151,6 +151,9 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_McpSafety PRIVATE
 NEW_CTEST(osgVerse_Test_ImGuiThreading imgui_threading_tests.cpp offline 30)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_ImGuiThreading PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+NEW_CTEST(osgVerse_Test_MediaThreading media_threading_tests.cpp offline 30)
+TARGET_COMPILE_DEFINITIONS(osgVerse_Test_MediaThreading PRIVATE
+                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 IF(VERSE_WITH_COMMON_LIBRARIES)
     NEW_CTEST(osgVerse_Test_InputSafety input_safety_tests.cpp offline 30)
     TARGET_LINK_LIBRARIES(osgVerse_Test_InputSafety osgdb_verse_web zlib)

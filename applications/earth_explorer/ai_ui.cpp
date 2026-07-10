@@ -57,6 +57,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
     // 函数作用域(而非 Begin/End 块内)声明:确认 Modal 画在 AI 对话条窗口 End() 之后,
     // 需要跨过该窗口的 { } 作用域读到这个标志。
     bool openVideoModal = false;
+    earthai::MediaManager::VideoUiSnapshot video = media
+        ? media->videoUiSnapshot() : earthai::MediaManager::VideoUiSnapshot();
     if (ImGui::Begin(u8"AI 对话条", NULL, flags))
     {
         bool busy = core && core->busy();
@@ -189,7 +191,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
             }
 
             // 🎬 三态：空闲"视频" -> 已录 A"完成B点"(+取消) -> 两点都录完:自动弹确认 Modal。
-            earthai::VideoPhaseKindPublic vphase = media ? media->videoPhase() : earthai::VIDEO_IDLE;
+            earthai::VideoPhaseKindPublic vphase = video.phase;
             bool videoEnabled = (core && media && mani && !busy
                                  && (vphase == earthai::VIDEO_IDLE || vphase == earthai::VIDEO_WAIT_B));
             ImGui::SameLine();
@@ -199,11 +201,19 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
                 if (ImGui::Button(u8"完成B点", ImVec2(64.0f, 0.0f)) && mani)
                 {
                     osg::Vec3d llaB = mani->computeEyeLatLonHeight();
-                    media->captureVideoEnd(llaB);
+                    earthai::VideoUiRequest request;
+                    request.kind = earthai::VideoUiRequest::CaptureEnd;
+                    request.lla = llaB;
+                    media->enqueueVideoRequest(request);
                 }
                 if (!videoEnabled) ImGui::EndDisabled();
                 ImGui::SameLine();
-                if (ImGui::SmallButton(u8"取消") && media) media->cancelVideo();
+                if (ImGui::SmallButton(u8"取消") && media)
+                {
+                    earthai::VideoUiRequest request;
+                    request.kind = earthai::VideoUiRequest::Cancel;
+                    media->enqueueVideoRequest(request);
+                }
             }
             else
             {
@@ -212,7 +222,10 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
                 if (ImGui::Button(u8"视频", ImVec2(40.0f, 0.0f)) && mani)
                 {
                     osg::Vec3d llaA = mani->computeEyeLatLonHeight();
-                    media->beginVideoCapture(llaA);
+                    earthai::VideoUiRequest request;
+                    request.kind = earthai::VideoUiRequest::Begin;
+                    request.lla = llaA;
+                    media->enqueueVideoRequest(request);
                 }
                 if (!idleEnabled) ImGui::EndDisabled();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -230,9 +243,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
 
         // 📷 走对话代理循环（而不是直接调用 MediaManager）：保持"一切能力皆工具"的架构,
         // 且让用户在对话历史里看到这次操作的记录；FAKE 模式下 fixture 脚本需要自己调用
-        // generate_photo(见 test/ai_fake_photo.json)。🎬 走直接调用(见上面按钮),不经对话
-        // 循环——两点采集 + 确认 Modal 是强 UI 流程,硬塞进自然语言指令反而别扭
-        // (generate_video 工具走的是另一条路径,同样落到 MediaManager 同一套状态机)。
+        // generate_photo(见 test/ai_fake_photo.json)。🎬 把值类型请求入队，不经对话循环——
+        // 两点采集 + 确认 Modal 是强 UI 流程；FRAME owner 会在下一个 update() tick 执行请求。
+        // generate_video 工具仍在 main-thread drain 里直调同一套 MediaManager 状态机。
         if (photoSubmit && core) core->submit(u8"生成一张当前视角的实景照片");
         if (submitted && core) core->submit(submitText);
     }
@@ -248,7 +261,6 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
         if (openVideoModal && !ImGui::IsPopupOpen(u8"确认生成巡航视频"))
         {
             ImGui::OpenPopup(u8"确认生成巡航视频");
-            _videoConfirmError.clear();   // 每次重新打开 Modal 清空上一轮遗留的错误文案
         }
 
         ImGuiIO& ioModal = ImGui::GetIO();
@@ -258,7 +270,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
         if (ImGui::BeginPopupModal(u8"确认生成巡航视频", NULL,
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize))
         {
-            earthai::MediaManager::PendingVideoInfo info = media->pendingVideoInfo();
+            earthai::MediaManager::PendingVideoInfo info = video.pending;
             if (info.ready)
             {
                 ImGui::Text(u8"起点 A：纬度 %.4f° 经度 %.4f° 高度 %.1fm",
@@ -276,27 +288,23 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
 
                 if (ImGui::Button(u8"确认生成", ImVec2(120.0f, 0.0f)))
                 {
-                    picojson::value r = media->confirmVideo();
-                    OSG_NOTICE << "[AIChat] video confirm -> " << r.serialize() << std::endl;
-                    // review:失败（error 字段非空）时不关弹窗——用户需要看到出了什么问题，
-                    // 而不是弹窗悄悄消失、状态却没推进。错误文案存进成员，下面单独一行画出来。
-                    if (r.is<picojson::object>() && r.get("error").is<std::string>())
-                        _videoConfirmError = r.get("error").get<std::string>();
-                    else
-                        ImGui::CloseCurrentPopup();
+                    earthai::VideoUiRequest request;
+                    request.kind = earthai::VideoUiRequest::Confirm;
+                    media->enqueueVideoRequest(request);
                 }
                 ImGui::SameLine();
                 if (ImGui::Button(u8"取消", ImVec2(80.0f, 0.0f)) ||
                     ImGui::IsKeyPressed(ImGuiKey_Escape))
                 {
-                    media->cancelVideo();
-                    _videoConfirmError.clear();
+                    earthai::VideoUiRequest request;
+                    request.kind = earthai::VideoUiRequest::Cancel;
+                    media->enqueueVideoRequest(request);
                     ImGui::CloseCurrentPopup();
                 }
-                if (!_videoConfirmError.empty())
+                if (!video.commandError.empty())
                 {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-                    ImGui::TextWrapped(u8"错误：%s", _videoConfirmError.c_str());
+                    ImGui::TextWrapped(u8"错误：%s", video.commandError.c_str());
                     ImGui::PopStyleColor();
                 }
             }

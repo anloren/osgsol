@@ -12,9 +12,13 @@
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 #include <picojson.h>
+#include <atomic>
+#include <deque>
 #include <ios>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 class AICardPanel;
 
@@ -122,6 +126,33 @@ namespace earthai
         VIDEO_RUNNING            // 已确认,Job 在跑(提交/轮询/下载)
     };
 
+    struct VideoUiRequest
+    {
+        enum Kind { Begin, CaptureEnd, Confirm, Cancel } kind = Begin;
+        osg::Vec3d lla;
+        std::string style;
+    };
+
+    class VideoUiRequestQueue
+    {
+    public:
+        void push(const VideoUiRequest& request)
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _requests.push_back(request);
+        }
+        std::vector<VideoUiRequest> drain()
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            std::vector<VideoUiRequest> result(_requests.begin(), _requests.end());
+            _requests.clear();
+            return result;
+        }
+    private:
+        std::mutex _mutex;
+        std::deque<VideoUiRequest> _requests;
+    };
+
     // 生成式媒体管线总控:Job 驱动,每帧 update() 由 AIFrameHandler 调用(主线程)。
     // 照片与视频各自只支持"单个 pending 任务"——与真实使用场景(用户点一次等一次)相符,
     // 并发第二个请求会被 startPhotoJob/beginVideoCapture 拒绝,避免状态机复杂化。
@@ -157,9 +188,9 @@ namespace earthai
 
         JobManager* jobs() { return &_jobs; }
 
-        // 供 EarthControlUI::runInternal() 每帧查询:true 时本帧不画任何 ImGui 窗口内容
-        // (见构造函数注释)。主线程调用,与 hudHide()/hudRestore() 同线程约束一致。
-        bool isHudHidden() const { return _hudHideCount > 0; }
+        // 供 EarthControlUI::runInternal() 每帧查询:true 时本帧不画任何 ImGui 窗口内容。
+        // draw traversal 读取、FRAME owner 写入，因此计数必须原子发布。
+        bool isHudHidden() const { return _hudHideCount.load() > 0; }
 
         // 仅测试用(ai_setup.cpp 的 EARTH_AI_AUTOSUBMIT2 钩子):照片状态机是否已回到 IDLE
         // (上一次 generate_photo 的整条快照->生图流水线已经完全跑完,包括 DONE_HANDLED 那
@@ -215,7 +246,18 @@ namespace earthai
             osg::Vec3d llaA, llaB;
             std::string motionPrompt;   // 展示用的最终视频提示词(buildVideoPrompt 输出;字段名沿用旧称避免波及 ai_ui.cpp 之外的引用)
         };
+        struct VideoUiSnapshot
+        {
+            VideoPhaseKindPublic phase = VIDEO_IDLE;
+            PendingVideoInfo pending;
+            std::string commandError;
+        };
         PendingVideoInfo pendingVideoInfo() const;
+
+        // draw traversal 只提交值类型请求、读取不可变快照；live VideoJob 只由 FRAME update()
+        // 以及同属 FRAME owner 的 AI 工具 drain 访问。
+        void enqueueVideoRequest(const VideoUiRequest& request) { _videoRequests.push(request); }
+        VideoUiSnapshot videoUiSnapshot() const;
 
         // 用户在确认 Modal 里点「确认生成」:真正建 Job、起 worker 提交 Veo 请求。
         // 要求当前处于 AWAIT_CONFIRM 阶段,否则返回 error(不消费任何状态)。
@@ -241,10 +283,9 @@ namespace earthai
         // 而不是布尔能正确处理"多个抓帧请求重叠"的情况——计数 >0 时 isHudHidden() 为 true,
         // 只有归零那次 EarthControlUI::runInternal() 才恢复画 ImGui 窗口。不再持有任何相机
         // 指针/NodeMask(见构造函数注释:曾经的 NodeMask 方案有严重副作用,已弃用)。
-        // 注意:hudHide()/hudRestore() 只应在主线程调用(grab() 触发点 / update() 轮询
-        // ready()·超时·取消路径),与 SnapshotGrabber::grab/ready 本身的线程约束一致,不加锁;
-        // isHudHidden() 由 ImGui 的渲染回调(同样是主线程,PRE_DRAW/POST_DRAW 阶段)读取。
-        int _hudHideCount;
+        // hudHide()/hudRestore() 由 FRAME owner 写，isHudHidden() 由 draw traversal 读；原子
+        // 计数既消除数据竞争，也让 hudRestore() 可以用 CAS 保证永不下溢。
+        std::atomic<int> _hudHideCount;
         osgVerse::EarthAtmosphereOcean* _earth = nullptr;   // 快门补光用(可空)
         osg::Vec3 _savedSunDir;                              // 补光前的太阳方向(恢复用)
         float _savedLabelOpacity = 1.0f;                     // 快门前的标注层透明度(恢复用)
@@ -263,8 +304,9 @@ namespace earthai
 
         void joinWorkerIfAny();
 
-        // 每帧驱动视频状态机(照片流程用内联在 update() 里的逻辑,视频流程状态更多,
-        // 拆一个私有方法、被 update() 末尾调用,避免 update() 单个函数过长)。
+        // 照片与视频状态机各自保留原有 early return；public update() 顺序调用两个 helper，
+        // 再从单一 epilogue 发布本 tick 的视频 UI 快照。
+        void updatePhotoInternal();
         void updateVideoInternal();
 
         // 安全地把 *_video 重置为初始状态:先 join 掉可能还 joinable 的 worker 线程,
@@ -278,6 +320,10 @@ namespace earthai
         struct VideoJob;   // .cpp 内定义:review 建议的 PendingJob 提取,视频专用(字段与照片不同,
                            // 独立结构体比硬凑一个通用 PendingJob 更清楚——见 .cpp 头注释)。
         VideoJob* _video;  // 指针以避免本头文件暴露 VideoJob 定义(pimpl 风格,video 专属状态)
+
+        VideoUiRequestQueue _videoRequests;
+        mutable std::mutex _videoSnapshotMutex;
+        VideoUiSnapshot _videoSnapshot;
 
         // 独立的第二个 SnapshotGrabber:照片流程的 _grabber 与视频的 A/B 快照都可能同时
         // "在等待稳定"(用户点了视频 A 点又几乎同时点了照片按钮),共用一个 SnapshotGrabber
