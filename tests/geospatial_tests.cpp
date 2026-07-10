@@ -186,6 +186,14 @@ namespace
         CHECK(near(wrapped[1].lonMin, -180.0) && near(wrapped[1].lonMax, -179.0));
         checkTransportBoxes(wrappedInput, wrapped);
 
+        GeoBBox smallCrossingInput =
+            bbox(-10.0, 179.9999999999, 10.0, -179.9999999999);
+        std::vector<GeoBBox> smallCrossing = splitAntimeridianBBox(smallCrossingInput);
+        CHECK(smallCrossing.size() == 2);
+        CHECK(smallCrossing[0].lonMin < smallCrossing[0].lonMax);
+        CHECK(smallCrossing[1].lonMin < smallCrossing[1].lonMax);
+        checkTransportBoxes(smallCrossingInput, smallCrossing);
+
         GeoBBox westInput = bbox(-10.0, -184.0, 10.0, -174.0);
         std::vector<GeoBBox> west = splitAntimeridianBBox(westInput);
         CHECK(west.size() == 2);
@@ -215,6 +223,16 @@ namespace
             splitAntimeridianBBox(bbox(-10.0, 170.0, 10.0, 180.0));
         CHECK(eastEdge.size() == 1);
         CHECK(near(eastEdge[0].lonMin, 170.0) && near(eastEdge[0].lonMax, 180.0));
+
+        GeoBBox reconstructedEastEdgeInput = bbox(-10.0, -179.6, 10.0, 180.0);
+        std::vector<GeoBBox> reconstructedEastEdge =
+            splitAntimeridianBBox(reconstructedEastEdgeInput);
+        CHECK(reconstructedEastEdge.size() == 1);
+        CHECK(reconstructedEastEdge[0].lonMin < reconstructedEastEdge[0].lonMax);
+        CHECK(near(reconstructedEastEdge[0].lonMin, -179.6) &&
+              near(reconstructedEastEdge[0].lonMax, 180.0));
+        checkTransportBoxes(reconstructedEastEdgeInput, reconstructedEastEdge);
+
         std::vector<GeoBBox> westEdge =
             splitAntimeridianBBox(bbox(-10.0, -180.0, 10.0, -170.0));
         CHECK(westEdge.size() == 1);

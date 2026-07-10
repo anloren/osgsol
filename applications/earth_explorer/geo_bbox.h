@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace earthgeo
@@ -71,6 +72,11 @@ namespace earthgeo
 
         double start = normalizeLongitude(bbox.lonMin);
         double end = start + span;
+        const double boundaryEpsilon =
+            std::numeric_limits<double>::epsilon() * 360.0;
+        if (std::fabs(end - 180.0) <= boundaryEpsilon &&
+            normalizeLongitude(bbox.lonMax) == -180.0)
+            end = 180.0;
         if (end <= 180.0)
         {
             transport.lonMin = start;
