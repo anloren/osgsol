@@ -4,6 +4,7 @@
 #include <osg/Texture2D>
 #include <osg/MatrixTransform>
 #include <osgDB/Archive>
+#include <osgDB/FileNameUtils>
 #include <osgDB/ReadFile>
 #include <osgDB/WriteFile>
 #include <osgGA/StateSetManipulator>
@@ -18,6 +19,8 @@
 #include <readerwriter/TileCallback.h>
 #include <readerwriter/FileCache.h>
 #include <pipeline/Pipeline.h>
+#include <ui/ImGui.h>
+#include <libhv/all/hlog.h>
 #include "EarthControlUI.h"
 #include "LayerManager.h"
 #include "input_gate.h"
@@ -777,6 +780,15 @@ static void prefetchLowLODGlobe(int maxZ)
 
 int main(int argc, char** argv)
 {
+    const std::string settingsPath = osgVerse::defaultImGuiSettingsPath();
+    const std::string userDataPath = osgDB::getFilePath(settingsPath);
+    const std::string runtimeLogBase = userDataPath.empty() ? std::string()
+        : userDataPath + "/EarthExplorer/libhv";
+    if (!runtimeLogBase.empty() && osgDB::makeDirectoryForFile(runtimeLogBase))
+        hlog_set_file(runtimeLogBase.c_str());
+    else
+        hlog_disable();
+
     osgViewer::Viewer viewer;
     osg::ArgumentParser arguments = osgVerse::globalInitialize(argc, argv, osgVerse::defaultInitParameters());
     osg::setNotifyHandler(new osgVerse::ConsoleHandler(false));
