@@ -567,3 +567,29 @@ git commit -m "docs: record v0.2 geospatial verification"
 Do not package, update `/Users/USER/Desktop/osgSol Earth.app`, merge
 `master`, or create a tag after this checkpoint. The next approved batch is
 data reliability.
+
+### Verification evidence
+
+Recorded on 2026-07-11 from the isolated
+`codex/v0.2-runtime-safety` worktree:
+
+- Sequential rebuilds completed with exit `0` for
+  `osgVerse_Test_Geospatial`, `osgVerse_Test_Satellite`,
+  `osgVerse_Test_Ais`, `osgVerse_Test_Feeds`,
+  `osgVerse_Test_MediaThreading`, and `osgVerse_EarthExplorer`.
+- `ctest --test-dir build/osgsol_core -L offline --output-on-failure`
+  passed `12/12` tests with `0` failures.
+- The offscreen application exited `0` and logged
+  `[Earth] offscreen context 1920x1080` before saving the capture.
+- `/tmp/osgsol-v020-geospatial-smoke.png` was a non-empty `1920x1080` RGBA
+  PNG, `1,142,144` bytes, with SHA-256
+  `a47407c7d1191fcd3d6da15a3e76d5bd80355ea7d9c724cbf8faffd318c8978a`.
+- The required geospatial and preservation source searches returned `48` and
+  `13` matches respectively. Focused negative searches found no raw stale ECEF
+  projection in satellite or flight picking and no longitude clamp in the two
+  camera handlers.
+- Known missing Gaussian-shader/strategic-fixture and OpenGL debug-callback
+  messages remained non-blocking: the context was created, the capture was
+  written, and the process exited `0`.
+- No Desktop app was packaged or updated, no tag or merge was created, and the
+  stable checkout, old `osgverse` repository, and `master` were not modified.
