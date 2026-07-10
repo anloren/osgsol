@@ -54,6 +54,7 @@ earth_cache/
 
 # Superpowers brainstorm visual-companion artifacts
 .superpowers/
+.worktrees/
 
 # API keys / secrets — NEVER commit (e.g. Hong Kong 3D Spatial Data API key).
 # Key is injected at run time via env (EARTH_3DTILES) or a local file ignored here.
