@@ -43,6 +43,17 @@ MACRO(NEW_TEST EXECUTABLE_NAME SOURCE_FILE)
     SET_PROPERTY(TARGET ${EXECUTABLE_NAME} PROPERTY FOLDER "TESTS")
 ENDMACRO(NEW_TEST)
 
+MACRO(NEW_CTEST EXECUTABLE_NAME SOURCE_FILE TEST_LABEL TEST_TIMEOUT)
+    NEW_TEST(${EXECUTABLE_NAME} ${SOURCE_FILE})
+    IF(BUILD_TESTING)
+        ADD_TEST(NAME ${EXECUTABLE_NAME} COMMAND $<TARGET_FILE:${EXECUTABLE_NAME}>)
+        SET_TESTS_PROPERTIES(${EXECUTABLE_NAME} PROPERTIES
+            WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/bin"
+            LABELS "${TEST_LABEL}"
+            TIMEOUT "${TEST_TIMEOUT}")
+    ENDIF()
+ENDMACRO(NEW_CTEST)
+
 MACRO(NEW_EXAMPLE EXECUTABLE_NAME SOURCE_FILE)
     NEW_SIMPLE_EXECUTABLE(${EXECUTABLE_NAME} FALSE ${SOURCE_FILE})
     SET_PROPERTY(TARGET ${EXECUTABLE_NAME} PROPERTY FOLDER "EXAMPLES")
@@ -125,12 +136,12 @@ IF(NOT VERSE_USE_EXTERNAL_GLES)
     ENDIF(VERSE_SUPPORT_CPP17)
 ENDIF(NOT VERSE_USE_EXTERNAL_GLES)
 
-NEW_TEST(osgVerse_Test_Ai_Chat ai_chat_tests.cpp)  # AI Chat tool registry / job manager unit tests
-NEW_TEST(osgVerse_Test_Feeds feed_layer_tests.cpp)  # FeedLayer framework / geo primitives / LayerManager unit tests
-NEW_TEST(osgVerse_Test_TileOverlay tile_overlay_tests.cpp)  # TileCallback overlay async placeholder texture (dark-tile regression)
-NEW_TEST(osgVerse_Test_Satellite satellite_tests.cpp)  # P2 satellite layer: SGP4 vendor + sat_math unit tests
-NEW_TEST(osgVerse_Test_Ais ais_tests.cpp)  # P3 AIS ship layer: message parse / bbox decision unit tests
-NEW_TEST(osgVerse_Test_WorldTools world_tools_tests.cpp)  # P4 world-query tools: async fetcher / tool dispatch offline tests
+NEW_CTEST(osgVerse_Test_Ai_Chat ai_chat_tests.cpp offline 120)  # AI Chat tool registry / job manager unit tests
+NEW_CTEST(osgVerse_Test_Feeds feed_layer_tests.cpp offline 120)  # FeedLayer framework / geo primitives / LayerManager unit tests
+NEW_CTEST(osgVerse_Test_TileOverlay tile_overlay_tests.cpp offline 120)  # TileCallback overlay async placeholder texture (dark-tile regression)
+NEW_CTEST(osgVerse_Test_Satellite satellite_tests.cpp offline 120)  # P2 satellite layer: SGP4 vendor + sat_math unit tests
+NEW_CTEST(osgVerse_Test_Ais ais_tests.cpp offline 120)  # P3 AIS ship layer: message parse / bbox decision unit tests
+NEW_CTEST(osgVerse_Test_WorldTools world_tools_tests.cpp offline 120)  # P4 world-query tools: async fetcher / tool dispatch offline tests
 
 IF(VERSE_BUILD_DEPRECATED_TESTS)
     IF(NOT VERSE_USE_EXTERNAL_GLES)
