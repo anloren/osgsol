@@ -1,10 +1,15 @@
 #!/bin/bash
 # 把 build/sdk_core 打包成可双击运行的 EarthExplorer.app（修 rpath / 写 Info.plist）
-set -e
+set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-SDK="$REPO/build/sdk_core"
+SDK="${OSGVERSE_SDK:-$REPO/build/sdk_core}"
 APP="$REPO/dist/EarthExplorer.app"
 PLUGVER="osgPlugins-3.6.5"
+
+if [ -n "${EARTH_AI_KEY:-}" ]; then
+    echo "[error] Refusing to package while EARTH_AI_KEY is set; unset it and use per-user configuration." >&2
+    exit 64
+fi
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
@@ -66,15 +71,14 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# 8.5) 若打包环境设置了 EARTH_AI_KEY,注入 LSEnvironment 使双击启动也能读到
-#      (dist/ 在 .gitignore,key 只进本地产物;脚本本身不含任何密钥)
-if [ -n "$EARTH_AI_KEY" ]; then
-    /usr/libexec/PlistBuddy -c "Add :LSEnvironment dict" "$APP/Contents/Info.plist" 2>/dev/null || true
-    /usr/libexec/PlistBuddy -c "Add :LSEnvironment:EARTH_AI_KEY string $EARTH_AI_KEY" "$APP/Contents/Info.plist" 2>/dev/null ||     /usr/libexec/PlistBuddy -c "Set :LSEnvironment:EARTH_AI_KEY $EARTH_AI_KEY" "$APP/Contents/Info.plist"
-    echo "[info] EARTH_AI_KEY injected into app LSEnvironment"
+# 9) 运行时配置不得写入待签名 bundle
+if find "$APP" -name imgui.ini -print -quit | grep -q .; then
+    echo "[error] Refusing to sign a bundle containing imgui.ini" >&2
+    exit 65
 fi
 
-# 9) ad-hoc 代码签名
-codesign --force --deep --sign - "$APP" 2>/dev/null || echo "[warn] codesign skipped"
+# 10) ad-hoc 代码签名必须成功，并立即做严格验证
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP"
 
-echo "Built: $APP"
+echo "Built and verified: $APP"

@@ -5,6 +5,7 @@
 #include <osg/Version>
 #include <osg/Camera>
 #include <osgDB/FileNameUtils>
+#include <osgDB/FileUtils>
 #include <osgDB/ReadFile>
 #include <imgui/imgui.h>
 #if defined(OSG_GLES1_AVAILABLE) || defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
@@ -18,6 +19,7 @@
 #include "ImGui.Styles.h"
 #include "pipeline/Utilities.h"
 #include <cstdio>    // popen/pclose: macOS 剪贴板接线用
+#include <cstdlib>
 #include <cstring>
 #include <string>
 using namespace osgVerse;
@@ -28,6 +30,23 @@ extern void StyleColorsLightBlue(ImGuiStyle* dst = (ImGuiStyle*)0);
 extern void StyleColorsTransparent(ImGuiStyle* dst = (ImGuiStyle*)0);
 extern void StyleColorsMissionControl(ImGuiStyle* dst = (ImGuiStyle*)0);
 static bool s_useImguiLoaderGL3 = true;
+
+std::string osgVerse::defaultImGuiSettingsPath()
+{
+#if defined(_WIN32)
+    const char* base = std::getenv("LOCALAPPDATA");
+    return (base && base[0]) ? std::string(base) + "/osgVerse/imgui.ini" : std::string();
+#elif defined(__APPLE__)
+    const char* home = std::getenv("HOME");
+    return (home && home[0]) ? std::string(home) +
+        "/Library/Application Support/osgVerse/imgui.ini" : std::string();
+#else
+    const char* xdg = std::getenv("XDG_CONFIG_HOME");
+    if (xdg && xdg[0]) return std::string(xdg) + "/osgVerse/imgui.ini";
+    const char* home = std::getenv("HOME");
+    return (home && home[0]) ? std::string(home) + "/.config/osgVerse/imgui.ini" : std::string();
+#endif
+}
 
 void newImGuiFrame(osg::RenderInfo& renderInfo, double& time, std::function<void(ImGuiIO&)> func)
 {
@@ -132,6 +151,12 @@ void startImGuiContext(ImGuiManager* manager, std::map<std::string, ImFont*>& fo
     }
 
     ImGuiIO& io = ImGui::GetIO();
+    static std::string s_iniFilename;
+    s_iniFilename = defaultImGuiSettingsPath();
+    if (!s_iniFilename.empty() && osgDB::makeDirectoryForFile(s_iniFilename))
+        io.IniFilename = s_iniFilename.c_str();
+    else
+        io.IniFilename = NULL;
     fonts[""] = io.Fonts->AddFontDefault();
 
 #if defined(__APPLE__)

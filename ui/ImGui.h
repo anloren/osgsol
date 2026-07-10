@@ -4,6 +4,7 @@
 #include <osg/Texture2D>
 #include <osgGA/GUIEventHandler>
 #include <osgViewer/View>
+#include <string>
 
 typedef unsigned long long ImTextureID;
 struct ImFont;
@@ -11,6 +12,10 @@ struct ImGuiContext;
 
 namespace osgVerse
 {
+    /** Return an absolute per-user path for persistent ImGui settings.
+        An empty result disables persistence rather than writing relative to the executable. */
+    std::string defaultImGuiSettingsPath();
+
     class ImGuiManager;
 
     struct ImGuiContentHandler : public osg::Referenced

@@ -142,6 +142,7 @@ NEW_CTEST(osgVerse_Test_TileOverlay tile_overlay_tests.cpp offline 120)  # TileC
 NEW_CTEST(osgVerse_Test_Satellite satellite_tests.cpp offline 120)  # P2 satellite layer: SGP4 vendor + sat_math unit tests
 NEW_CTEST(osgVerse_Test_Ais ais_tests.cpp offline 120)  # P3 AIS ship layer: message parse / bbox decision unit tests
 NEW_CTEST(osgVerse_Test_WorldTools world_tools_tests.cpp offline 120)  # P4 world-query tools: async fetcher / tool dispatch offline tests
+NEW_CTEST(osgVerse_Test_ImGuiSettings imgui_settings_tests.cpp offline 30)
 
 IF(VERSE_BUILD_DEPRECATED_TESTS)
     IF(NOT VERSE_USE_EXTERNAL_GLES)
