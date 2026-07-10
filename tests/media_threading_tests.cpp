@@ -87,6 +87,14 @@ int main()
 {
     using namespace earthai;
 
+    CHECK(classifyVideoPollHttp(false, 0) == VIDEO_POLL_RETRY);
+    CHECK(classifyVideoPollHttp(true, 429) == VIDEO_POLL_RETRY);
+    CHECK(classifyVideoPollHttp(true, 500) == VIDEO_POLL_RETRY);
+    CHECK(classifyVideoPollHttp(true, 503) == VIDEO_POLL_RETRY);
+    CHECK(classifyVideoPollHttp(true, 400) == VIDEO_POLL_TERMINAL_ERROR);
+    CHECK(classifyVideoPollHttp(true, 401) == VIDEO_POLL_TERMINAL_ERROR);
+    CHECK(classifyVideoPollHttp(true, 200) == VIDEO_POLL_PARSE_BODY);
+
     VideoUiRequestQueue queue;
     VideoUiRequest first; first.kind = VideoUiRequest::Begin;
     first.lla = osg::Vec3d(1.0, 2.0, 3.0);
@@ -159,6 +167,36 @@ int main()
     const std::string setup = readSourceFile("applications/earth_explorer/ai_setup.cpp");
     CHECK(!ui.empty() && !uiHeader.empty() && !media.empty() && !mediaHeader.empty());
     CHECK(!setup.empty());
+
+    const std::string videoPoll = extractFunctionBody(
+        media, "void VeoVideoProvider::poll(");
+    CHECK(!videoPoll.empty());
+    const std::string retryPoll = extractFunctionBody(
+        videoPoll, "if (disposition == VIDEO_POLL_RETRY)");
+    const std::string terminalPoll = extractFunctionBody(
+        videoPoll, "if (disposition == VIDEO_POLL_TERMINAL_ERROR)");
+    const std::string malformedPoll = extractFunctionBody(
+        videoPoll, "if (!perr.empty() || !v.is<picojson::object>())");
+    size_t request = videoPoll.find("httpRequestRetry(req)");
+    size_t classification = videoPoll.find("classifyVideoPollHttp((bool)resp");
+    size_t retryBranch = videoPoll.find("if (disposition == VIDEO_POLL_RETRY)");
+    size_t terminalBranch = videoPoll.find(
+        "if (disposition == VIDEO_POLL_TERMINAL_ERROR)");
+    size_t parseBody = videoPoll.find("picojson::parse(v, resp->body)");
+    CHECK(request < classification && classification < retryBranch);
+    CHECK(retryBranch < terminalBranch && terminalBranch < parseBody);
+    CHECK(videoPoll.find("resp ? (int)resp->status_code : 0") != std::string::npos);
+    CHECK(videoPoll.find("if (!resp || resp->status_code != 200)") == std::string::npos);
+    CHECK(retryPoll.find("done = false;") != std::string::npos);
+    CHECK(retryPoll.find("err.clear();") != std::string::npos);
+    CHECK(retryPoll.find("done = true;") == std::string::npos);
+    CHECK(retryPoll.find("return;") != std::string::npos);
+    CHECK(terminalPoll.find("done = true;") != std::string::npos);
+    CHECK(terminalPoll.find("err = \"HTTP \"") != std::string::npos);
+    CHECK(terminalPoll.find("return;") != std::string::npos);
+    CHECK(malformedPoll.find("err = \"bad json: \"") != std::string::npos);
+    CHECK(malformedPoll.find("done = true;") != std::string::npos);
+    CHECK(malformedPoll.find("return;") != std::string::npos);
 
     const std::string update = extractFunctionBody(media, "void MediaManager::update()");
     const std::string snapshotGetter = extractFunctionBody(

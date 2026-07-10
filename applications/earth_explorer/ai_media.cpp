@@ -35,7 +35,8 @@ namespace earthai
     }
 
     // 连接层失败(resp 为空:DNS/TLS 握手/连接拒绝/超时无响应)自动重试,带线性退避。
-    // 真实 HTTP 错误码(4xx/5xx)不重试(是服务端语义,重试无益)。retries 从配置读
+    // 单次 HTTP 调用对真实错误码(4xx/5xx)不做内部重试;Veo 轮询会在下一轮
+    // 处理瞬时状态。retries 从配置读
     // (earthcfg "http.retries",默认 3)。与 ai_chat.cpp 的同名 static helper 逻辑一致。
     static requests::Response httpRequestRetry(requests::Request req)
     {
@@ -367,13 +368,19 @@ namespace earthai
         req->url = "https://generativelanguage.googleapis.com/v1beta/" + operationName + "?key=" + _apiKey;
 
         requests::Response resp = httpRequestRetry(req);
-        if (!resp || resp->status_code != 200)
+        VideoPollDisposition disposition = classifyVideoPollHttp((bool)resp,
+            resp ? (int)resp->status_code : 0);
+        if (disposition == VIDEO_POLL_RETRY)
         {
-            // resp 为空 = 连接层失败(已重试仍无响应);区分于真实 HTTP 错误码。
-            err = resp
-                ? ("HTTP " + std::to_string((int)resp->status_code) + ": " + truncate200(resp->body))
-                : u8"网络连接失败(多次重试无响应):可能网络中断 / 请求超时 / TLS 握手失败,请检查网络后重试";
-            done = true;   // HTTP 层面出错视为终态失败,不再重试(调用方按 err 非空判失败)
+            done = false;
+            err.clear();
+            return;
+        }
+        if (disposition == VIDEO_POLL_TERMINAL_ERROR)
+        {
+            done = true;
+            err = "HTTP " + std::to_string((int)resp->status_code) + ": " +
+                  truncate200(resp->body);
             return;
         }
 

@@ -73,6 +73,20 @@ namespace earthai
         std::string _apiKey;
     };
 
+    enum VideoPollDisposition
+    {
+        VIDEO_POLL_RETRY,
+        VIDEO_POLL_TERMINAL_ERROR,
+        VIDEO_POLL_PARSE_BODY
+    };
+
+    inline VideoPollDisposition classifyVideoPollHttp(bool hasResponse, int status)
+    {
+        if (!hasResponse || status == 429 || status >= 500) return VIDEO_POLL_RETRY;
+        if (status != 200) return VIDEO_POLL_TERMINAL_ERROR;
+        return VIDEO_POLL_PARSE_BODY;
+    }
+
     // Veo 首尾帧视频 Provider:输入 A/B 两帧 PNG 字节 + 运动提示词,提交长任务拿到
     // operation 名字;轮询该 operation 直到完成,取回 mp4 字节。两步都同步阻塞,
     // 供独立的轮询 worker 线程调用(不得在主线程调,轮询要跨越数十秒到数分钟)。
