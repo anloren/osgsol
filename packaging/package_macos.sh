@@ -3,6 +3,7 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDK="${OSGVERSE_SDK:-$REPO/build/sdk_core}"
+OSG_RUNTIME_SDK="${OSG_ROOT:-$REPO/build/sdk_core}"
 APP="$REPO/dist/EarthExplorer.app"
 PLUGVER="osgPlugins-3.6.5"
 
@@ -19,12 +20,17 @@ mkdir -p "$APP/Contents/bin"
 # 1) 可执行文件
 cp "$SDK/bin/osgVerse_EarthExplorer" "$APP/Contents/MacOS/"
 
-# 2) 所有 dylib/.so（含符号链接）到 Contents/lib
-cp -a "$SDK/lib/"*.dylib "$APP/Contents/lib/" 2>/dev/null || true
-cp -a "$SDK/lib/"*.so "$APP/Contents/lib/" 2>/dev/null || true
+# 2) 先复制外部 OSG 运行库，再用当前安装树中的 osgVerse 库覆盖
+# CMake install 不会重复安装 OSG_ROOT，因此 fresh install tree 需要合并两处运行库。
+for lib_root in "$OSG_RUNTIME_SDK/lib" "$SDK/lib"; do
+    cp -a "$lib_root/"*.dylib "$APP/Contents/lib/" 2>/dev/null || true
+    cp -a "$lib_root/"*.so "$APP/Contents/lib/" 2>/dev/null || true
+done
 
-# 3) 插件到 Contents/lib/osgPlugins-3.6.5；并在 Contents/bin 建同名软链（代码按 BASE_DIR/bin/osgPlugins 搜索）
-cp -a "$SDK/lib/$PLUGVER/"*.so "$APP/Contents/lib/$PLUGVER/"
+# 3) 同样合并 OSG 与 osgVerse 插件；并在 Contents/bin 建同名软链（代码按 BASE_DIR/bin/osgPlugins 搜索）
+for plugin_root in "$OSG_RUNTIME_SDK/lib/$PLUGVER" "$SDK/lib/$PLUGVER"; do
+    cp -a "$plugin_root/"*.so "$APP/Contents/lib/$PLUGVER/" 2>/dev/null || true
+done
 ln -s "../lib/$PLUGVER" "$APP/Contents/bin/$PLUGVER"
 
 # 4) 资源目录（代码按 BASE_DIR=".." 即 Contents 下查找）
@@ -40,6 +46,7 @@ install_name_tool -add_rpath '@executable_path/../lib' "$APP/Contents/MacOS/osgV
 for f in "$APP/Contents/lib/"*.dylib "$APP/Contents/lib/"*.so; do
     [ -f "$f" ] || continue
     install_name_tool -delete_rpath '$ORIGIN:$ORIGIN/../lib' "$f" 2>/dev/null || true
+    install_name_tool -delete_rpath "$OSG_RUNTIME_SDK/lib" "$f" 2>/dev/null || true
     install_name_tool -delete_rpath "$SDK/lib" "$f" 2>/dev/null || true
     install_name_tool -add_rpath '@loader_path' "$f" 2>/dev/null || true
 done
@@ -48,6 +55,7 @@ done
 for f in "$APP/Contents/lib/$PLUGVER/"*.so; do
     [ -f "$f" ] || continue
     install_name_tool -delete_rpath '$ORIGIN:$ORIGIN/../lib' "$f" 2>/dev/null || true
+    install_name_tool -delete_rpath "$OSG_RUNTIME_SDK/lib" "$f" 2>/dev/null || true
     install_name_tool -delete_rpath "$SDK/lib" "$f" 2>/dev/null || true
     install_name_tool -add_rpath '@loader_path/..' "$f" 2>/dev/null || true
 done
