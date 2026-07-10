@@ -3,6 +3,10 @@
 #include <iostream>
 #include <cstdlib>
 #include <cmath>
+#include <cctype>
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <picojson.h>
 #include "3rdparty/sgp4/Tle.h"
 #include "3rdparty/sgp4/SGP4.h"
@@ -14,6 +18,66 @@
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ << ": " #x << std::endl; \
     std::abort(); } } while (0)
+
+static std::string readSourceFile(const std::string& relative)
+{
+    std::ifstream input(std::string(OSGVERSE_SOURCE_DIR) + "/" + relative);
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
+}
+
+static std::string extractFunctionBody(const std::string& source,
+                                       const std::string& signature)
+{
+    size_t signaturePos = source.find(signature);
+    if (signaturePos == std::string::npos) return std::string();
+    size_t openingBrace = source.find('{', signaturePos + signature.size());
+    if (openingBrace == std::string::npos) return std::string();
+
+    int depth = 1;
+    bool lineComment = false, blockComment = false;
+    bool stringLiteral = false, charLiteral = false, escaped = false;
+    for (size_t i = openingBrace + 1; i < source.size(); ++i)
+    {
+        char c = source[i];
+        char next = (i + 1 < source.size()) ? source[i + 1] : '\0';
+        if (lineComment)
+        {
+            if (c == '\n') lineComment = false;
+            continue;
+        }
+        if (blockComment)
+        {
+            if (c == '*' && next == '/') { blockComment = false; ++i; }
+            continue;
+        }
+        if (stringLiteral || charLiteral)
+        {
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\') { escaped = true; continue; }
+            if ((stringLiteral && c == '"') || (charLiteral && c == '\''))
+            { stringLiteral = false; charLiteral = false; }
+            continue;
+        }
+        if (c == '/' && next == '/') { lineComment = true; ++i; continue; }
+        if (c == '/' && next == '*') { blockComment = true; ++i; continue; }
+        if (c == '"') { stringLiteral = true; continue; }
+        if (c == '\'') { charLiteral = true; continue; }
+        if (c == '{') ++depth;
+        else if (c == '}' && --depth == 0)
+            return source.substr(openingBrace + 1, i - openingBrace - 1);
+    }
+    return std::string();
+}
+
+static std::string removeWhitespace(const std::string& source)
+{
+    std::string compact;
+    compact.reserve(source.size());
+    for (size_t i = 0; i < source.size(); ++i)
+        if (!std::isspace(static_cast<unsigned char>(source[i]))) compact.push_back(source[i]);
+    return compact;
+}
 
 // 官方 SGP4 验证测试集(Vallado "Revisiting Spacetrack Report #3", CelesTrak SGP4-VER.TLE
 // 附带的标准回归用例,卫星 #5)。参考向量用独立的 Python 官方 sgp4 包(Brandon Rhodes 维护,
@@ -180,6 +244,66 @@ int main(int, char**)
         std::cout << "[OK] satellite extrapolation and precise-refetch predicate\n";
     }
 
-    std::cout << "[satellite_tests] all OK (Task 1 subset)" << std::endl;
+    // ---- runtime source wiring: render/pick position and explicit precise retry ----
+    {
+        const std::string source = readSourceFile("applications/earth_explorer/sat_data.cpp");
+        CHECK(!source.empty());
+
+        const std::string interpolate = removeWhitespace(
+            extractFunctionBody(source, "void interpolateOne("));
+        const std::string pick = removeWhitespace(
+            extractFunctionBody(source, "void pickAt("));
+        const std::string handler = removeWhitespace(
+            extractFunctionBody(source, "virtual bool handle("));
+        const std::string setCategory = removeWhitespace(
+            extractFunctionBody(source, "virtual void setCategoryEnabled("));
+        const std::string fetchRun = removeWhitespace(
+            extractFunctionBody(source, "void FetchThread::run()"));
+        CHECK(!interpolate.empty());
+        CHECK(!pick.empty());
+        CHECK(!handler.empty());
+        CHECK(!setCategory.empty());
+        CHECK(!fetchRun.empty());
+
+        const std::string interpolateCall =
+            "(*va)[i]=earthsat::extrapolateSatelliteEcef("
+            "sats[i].ecef,sats[i].ecefVelocity,sats[i].lastUpdateRefTime,refTime);";
+        CHECK(interpolate.find(interpolateCall) != std::string::npos);
+
+        const std::string pickCall =
+            "osg::Vec3dP=earthsat::extrapolateSatelliteEcef("
+            "_visiblePrecise[i].ecef,_visiblePrecise[i].ecefVelocity,"
+            "_visiblePrecise[i].lastUpdateRefTime,refTime);";
+        const size_t pickCallPos = pick.find(pickCall);
+        const size_t hemispherePos = pick.find("if((eye*P)<=(P*P))");
+        const size_t projectionPos = pick.find("osg::Vec3dwin=P*VPW;");
+        CHECK(pickCallPos != std::string::npos);
+        CHECK(hemispherePos != std::string::npos && pickCallPos < hemispherePos);
+        CHECK(projectionPos != std::string::npos && pickCallPos < projectionPos);
+        CHECK(pick.find("_visiblePrecise[i].ecef*VPW") == std::string::npos);
+        CHECK(pick.find("sat.ecef*VPW") == std::string::npos);
+
+        CHECK(handler.find("view->getFrameStamp()") != std::string::npos);
+        CHECK(handler.find("frameStamp?frameStamp->getReferenceTime():0.0") != std::string::npos);
+        CHECK(handler.find("_owner->pickAt(cam,ea.getX(),my,refTime);") != std::string::npos);
+
+        const size_t preciseCategories = setCategory.find(
+            "cat==SatCategory::Station||cat==SatCategory::Navigation||"
+            "cat==SatCategory::Weather");
+        const size_t precisePredicate = setCategory.find(
+            "earthsat::shouldRequestPreciseRefetch(on,_preciseFetchDone,categoryHasData)");
+        CHECK(preciseCategories != std::string::npos);
+        CHECK(precisePredicate != std::string::npos && preciseCategories < precisePredicate);
+
+        const size_t takePrecise = fetchRun.find(
+            "if(_owner->takePreciseRefetchRequest())preciseFetchedOnce=false;");
+        const size_t preciseGuard = fetchRun.find(
+            "if(_owner->preciseFetchTriggered()&&!preciseFetchedOnce)");
+        CHECK(takePrecise != std::string::npos);
+        CHECK(preciseGuard != std::string::npos && takePrecise < preciseGuard);
+        std::cout << "[OK] satellite runtime source wiring\n";
+    }
+
+    std::cout << "[satellite_tests] all OK" << std::endl;
     return 0;
 }

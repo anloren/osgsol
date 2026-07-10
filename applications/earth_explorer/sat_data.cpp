@@ -382,8 +382,17 @@ namespace
             case SatCategory::Starlink:   changed = (_catStarlink != on); _catStarlink = on; break;
             }
             if (!changed) return;
-            if ((cat == SatCategory::Station || cat == SatCategory::Navigation || cat == SatCategory::Weather) && on)
-                _preciseFetchTriggered = true;   // 懒加载:任一精选类目首次开启才联网
+            if (cat == SatCategory::Station || cat == SatCategory::Navigation ||
+                cat == SatCategory::Weather)
+            {
+                if (on) _preciseFetchTriggered = true;
+                // 懒加载:任一精选类目首次开启才联网。
+                bool categoryHasData = false;
+                for (size_t i = 0; i < _allPrecise.size(); ++i)
+                    if (_allPrecise[i].category == cat) { categoryHasData = true; break; }
+                if (earthsat::shouldRequestPreciseRefetch(on, _preciseFetchDone, categoryHasData))
+                    _preciseRefetchRequested = true;
+            }
             if (cat == SatCategory::Starlink && on)
             {
                 _starlinkFetchTriggered = true;  // Starlink 独立懒加载(同 hk3d 模式)
@@ -448,10 +457,8 @@ namespace
         virtual std::string fetchErrorText(SatCategory cat) const
         {
             // 措辞不写"稍后自动重试"——本模块没有后台自动重试机制(CelesTrak 明确要求
-            // 不要频繁重复请求同一分组,不适合做定时轮询重试);Starlink 支持关闭再打开
-            // 手动重试一次(见 setCategoryEnabled 的 _starlinkRefetchRequested 逻辑),
-            // 精选组三类目目前没有对应的重试通路,所以文案只说"未拉到数据"这一事实,
-            // 不承诺具体行为,两边共用同一句不会说谎。
+            // 不要频繁重复请求同一分组,不适合做定时轮询重试);四个类目都支持关闭再打开
+            // 手动重试一次(见 setCategoryEnabled 的 refetch-request 逻辑),但不会定时重试。
             static const char* kFailText = u8"本次未拉取到数据(可尝试关闭再打开重试)";
             if (cat == SatCategory::Starlink)
             {
@@ -477,7 +484,7 @@ namespace
         }
 
         // 屏幕拾取:相机 + 窗口鼠标坐标(y 向上)。选最近的前半球卫星(精选组)。仅主线程调用。
-        void pickAt(osg::Camera* cam, float mx, float my)
+        void pickAt(osg::Camera* cam, float mx, float my, double refTime)
         {
             if (_visiblePrecise.empty() || !cam->getViewport()) return;
             osg::Vec3d eye, center, up; cam->getViewMatrixAsLookAt(eye, center, up);
@@ -486,7 +493,9 @@ namespace
             double bestD2 = 1e18; int best = -1;
             for (size_t i = 0; i < _visiblePrecise.size(); ++i)
             {
-                const osg::Vec3d& P = _visiblePrecise[i].ecef;
+                osg::Vec3d P = earthsat::extrapolateSatelliteEcef(
+                    _visiblePrecise[i].ecef, _visiblePrecise[i].ecefVelocity,
+                    _visiblePrecise[i].lastUpdateRefTime, refTime);
                 if ((eye * P) <= (P * P)) continue;   // 前半球
                 osg::Vec3d win = P * VPW;
                 double d2 = (win.x()-mx)*(win.x()-mx) + (win.y()-my)*(win.y()-my);
@@ -498,6 +507,8 @@ namespace
 
         bool preciseFetchTriggered() const { return _preciseFetchTriggered; }
         bool starlinkFetchTriggered() const { return _starlinkFetchTriggered; }
+        // 取走并清零"请求重新拉取精选组"标记。
+        bool takePreciseRefetchRequest() { return _preciseRefetchRequested.exchange(false); }
         // 取走并清零"请求重新拉取 Starlink"标记(读一次即消费,同 takeRefreshNow 类既有惯例)。
         bool takeStarlinkRefetchRequest() { return _starlinkRefetchRequested.exchange(false); }
         const std::string& cacheDir() const { return _cacheDir; }
@@ -599,8 +610,9 @@ namespace
             osg::Vec3Array* va = static_cast<osg::Vec3Array*>(g->getVertexArray()); if (!va) return;
             for (size_t i = 0; i < sats.size() && i < va->size(); ++i)
             {
-                double elapsed = refTime - sats[i].lastUpdateRefTime; if (elapsed < 0.0) elapsed = 0.0;
-                (*va)[i] = sats[i].ecef + sats[i].ecefVelocity * elapsed;
+                (*va)[i] = earthsat::extrapolateSatelliteEcef(
+                    sats[i].ecef, sats[i].ecefVelocity,
+                    sats[i].lastUpdateRefTime, refTime);
             }
             va->dirty(); g->dirtyBound();
         }
@@ -720,6 +732,8 @@ namespace
         bool _catStation, _catNav, _catWeather, _catStarlink;
         std::atomic<bool> _preciseFetchTriggered, _starlinkFetchTriggered;   // 主线程 setCategoryEnabled()
                                                    // 写 / 后台 FetchThread::run() 读,跨线程。
+        // 主线程写、后台抓取线程读并清零。
+        std::atomic<bool> _preciseRefetchRequested{false};
         std::atomic<bool> _starlinkRefetchRequested{false};   // 主线程写(setCategoryEnabled 检测到"上次拉取
                                                    // 空+重新打开开关"时置位)、后台线程读并清零——
                                                    // 方向与 _preciseFetchTriggered 相反但同样是
@@ -760,6 +774,8 @@ namespace
             // 会读到主线程还没来得及消费的旧快照(仍是空的),repropagate 一个空 vector 后
             // 再 postPreciseSnapshot() 就会把刚抓到的真实卫星列表原地覆盖回空——真机上这是
             // 必现 bug(表现为"开关点了、状态变了,但地球上什么都看不到")。
+            // 精选组三类目任一在已完成但缺数据后关闭再打开,同一轮立即放行重新拉取。
+            if (_owner->takePreciseRefetchRequest()) preciseFetchedOnce = false;
             if (_owner->preciseFetchTriggered() && !preciseFetchedOnce)
             {
                 _owner->postPreciseSnapshot(fetchPreciseSatellites(_owner->cacheDir()));
@@ -830,7 +846,9 @@ namespace
                         float my = ea.getY();
                         if (ea.getMouseYOrientation() == osgGA::GUIEventAdapter::Y_INCREASING_DOWNWARDS)
                             my = vp->height() - my;
-                        _owner->pickAt(cam, ea.getX(), my);
+                        const osg::FrameStamp* frameStamp = view->getFrameStamp();
+                        double refTime = frameStamp ? frameStamp->getReferenceTime() : 0.0;
+                        _owner->pickAt(cam, ea.getX(), my, refTime);
                     }
                 }
                 _pushed = false;

@@ -142,6 +142,8 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Feeds PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_TileOverlay tile_overlay_tests.cpp offline 120)  # TileCallback overlay async placeholder texture (dark-tile regression)
 NEW_CTEST(osgVerse_Test_Satellite satellite_tests.cpp offline 120)  # P2 satellite layer: SGP4 vendor + sat_math unit tests
+TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Satellite PRIVATE
+                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # Pure bbox / flight correctness seams
 NEW_CTEST(osgVerse_Test_Geospatial geospatial_tests.cpp offline 120)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Geospatial PRIVATE
