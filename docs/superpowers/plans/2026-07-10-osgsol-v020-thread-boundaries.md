@@ -398,11 +398,15 @@ git commit -m "fix: drain layer UI commands on frame thread"
 - Modify: `tests/CMakeLists.txt`
 
 **Interfaces:**
-- Produces: `VideoUiRequest`, `VideoUiSnapshot`, `enqueueVideoRequest`, and `videoUiSnapshot`.
-- Consumes: `MediaManager::update()` as the sole live video-state owner.
-- Preserves: AI tool calls that already execute during main-thread drain.
+- Produces: `VideoUiRequest`, `VideoUiSnapshot`, `VideoUiDispatchResult`,
+  `reduceVideoCommandError`, `reduceVideoOwnerCommandError`, `enqueueVideoRequest`,
+  and `videoUiSnapshot`.
+- Consumes: the FRAME thread as the sole live video-state owner;
+  `MediaManager::update()` drains UI requests, while direct AI tool calls run
+  earlier on the same FRAME thread during main-thread drain.
+- Preserves: synchronous results from those direct AI tool calls.
 
-- [x] **Step 1: Add the failing queue and runtime-wiring test**
+- [x] **Step 1: Add the failing queue, reducer, and runtime-wiring tests**
 
 Create `tests/media_threading_tests.cpp` with a header-only queue test seam declared in `ai_media.h`:
 
@@ -442,6 +446,28 @@ int main()
     CHECK(drained[1].kind == VideoUiRequest::Cancel);
     CHECK(queue.drain().empty());
 
+    VideoUiDispatchResult failure;
+    failure.dispatched = true;
+    failure.kind = VideoUiRequest::Confirm;
+    failure.error = "provider rejected request";
+    std::string commandError = reduceVideoCommandError("stale", failure);
+    CHECK(commandError == "provider rejected request");
+    CHECK(reduceVideoCommandError(commandError, VideoUiDispatchResult()) == commandError);
+
+    VideoUiDispatchResult success;
+    success.dispatched = true;
+    success.succeeded = true;
+    success.kind = VideoUiRequest::Begin;
+    CHECK(reduceVideoCommandError(commandError, success).empty());
+    success.kind = VideoUiRequest::CaptureEnd;
+    CHECK(reduceVideoCommandError(commandError, success).empty());
+    success.kind = VideoUiRequest::Confirm;
+    CHECK(reduceVideoCommandError(commandError, success).empty());
+    success.kind = VideoUiRequest::Cancel;
+    CHECK(reduceVideoCommandError(commandError, success).empty());
+    CHECK(reduceVideoOwnerCommandError(commandError, false) == commandError);
+    CHECK(reduceVideoOwnerCommandError(commandError, true).empty());
+
     const std::string ui = readSourceFile("applications/earth_explorer/ai_ui.cpp");
     const std::string media = readSourceFile("applications/earth_explorer/ai_media.cpp");
     CHECK(ui.find("enqueueVideoRequest(") != std::string::npos);
@@ -455,6 +481,17 @@ int main()
     return 0;
 }
 ```
+
+Use the test's brace-aware `extractFunctionBody()` helper to make the source
+wiring checks discriminate the real functions rather than unrelated whole-file
+tokens. Require that `MediaManager::update()` drains first, contains no local
+`commandError`, reduces into `_videoCommandError`, has no early return, and
+publishes exactly one snapshot after both state-machine helpers. Require the
+snapshot getter to return only the locked published value; draw traversal must
+read one snapshot and enqueue all four request kinds; direct FRAME-owner
+Begin/CaptureEnd/Confirm/Cancel boundaries must preserve an old UI error on
+failure and clear it on success. The pure reducer checks must explicitly prove
+that an empty/no-request tick preserves the same error across two publications.
 
 Register it:
 
@@ -473,9 +510,9 @@ cmake -S /Users/USER/osgsol/.worktrees/v0.2-runtime-safety -B /Users/USER/osgsol
 cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_Test_MediaThreading -j2
 ```
 
-Expected: compilation fails because `VideoUiRequestQueue` and `VideoUiRequest` do not exist.
+Expected: compilation fails because the queue and reducer value types do not exist.
 
-- [x] **Step 3: Implement the request queue and immutable snapshot types**
+- [x] **Step 3: Implement the request queue, reducers, and immutable snapshot types**
 
 Add these public value types to `ai_media.h`:
 
@@ -506,6 +543,29 @@ Add these public value types to `ai_media.h`:
         std::mutex _mutex;
         std::deque<VideoUiRequest> _requests;
     };
+
+    struct VideoUiDispatchResult
+    {
+        VideoUiRequest::Kind kind = VideoUiRequest::Begin;
+        bool dispatched = false;
+        bool succeeded = false;
+        std::string error;
+    };
+
+    inline std::string reduceVideoCommandError(const std::string& previous,
+                                               const VideoUiDispatchResult& result)
+    {
+        if (!result.dispatched) return previous;
+        if (result.kind == VideoUiRequest::Cancel || result.succeeded)
+            return std::string();
+        return result.error;
+    }
+
+    inline std::string reduceVideoOwnerCommandError(const std::string& previous,
+                                                    bool succeeded)
+    {
+        return succeeded ? std::string() : previous;
+    }
 ```
 
 Add `<atomic>`, `<deque>`, `<mutex>`, and `<vector>` includes. Add this snapshot after `PendingVideoInfo`:
@@ -528,7 +588,9 @@ cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_cor
 /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core/bin/osgVerse_Test_MediaThreading
 ```
 
-Expected: the target now compiles, the queue assertions pass, and the binary exits non-zero because `ai_ui.cpp` does not yet contain `enqueueVideoRequest(`.
+Expected: the target now compiles, queue/reducer behavior passes, and the binary
+exits non-zero because runtime publication and `ai_ui.cpp` request wiring are
+not yet present.
 
 - [x] **Step 5: Add MediaManager publication APIs**
 
@@ -545,56 +607,76 @@ Add private storage:
         VideoUiRequestQueue _videoRequests;
         mutable std::mutex _videoSnapshotMutex;
         VideoUiSnapshot _videoSnapshot;
+        std::string _videoCommandError;
         std::atomic<int> _hudHideCount;
 ```
 
 Remove the old plain `int _hudHideCount`. Implement `isHudHidden()` with `_hudHideCount.load()` and update `hudHide`/`hudRestore` with atomic fetch operations without allowing the count to go below zero.
 
-- [x] **Step 6: Drain requests at the start of update and publish at the end**
+- [x] **Step 6: Drain requests, persist command errors, and publish once**
 
 At the beginning of `MediaManager::update()`, drain FIFO requests and dispatch them on the FRAME owner:
 
 ```cpp
         std::vector<VideoUiRequest> requests = _videoRequests.drain();
-        std::string commandError;
         for (size_t i = 0; i < requests.size(); ++i)
         {
             const VideoUiRequest& request = requests[i];
+            VideoUiDispatchResult result;
+            result.dispatched = true;
+            result.kind = request.kind;
             if (request.kind == VideoUiRequest::Begin)
             {
-                if (!beginVideoCapture(request.lla, request.style))
-                    commandError = "video capture is not idle";
+                result.succeeded = beginVideoCapture(request.lla, request.style);
+                if (!result.succeeded) result.error = "video capture is not idle";
             }
             else if (request.kind == VideoUiRequest::CaptureEnd)
             {
-                if (!captureVideoEnd(request.lla)) commandError = "video is not waiting for B";
+                result.succeeded = captureVideoEnd(request.lla);
+                if (!result.succeeded) result.error = "video is not waiting for B";
             }
             else if (request.kind == VideoUiRequest::Confirm)
             {
-                picojson::value result = confirmVideo();
-                if (result.is<picojson::object>() && result.contains("error") &&
-                    result.get("error").is<std::string>())
-                    commandError = result.get("error").get<std::string>();
+                picojson::value response = confirmVideo();
+                result.succeeded = !(response.is<picojson::object>() &&
+                                     response.contains("error") &&
+                                     response.get("error").is<std::string>());
+                if (!result.succeeded)
+                    result.error = response.get("error").get<std::string>();
             }
             else if (request.kind == VideoUiRequest::Cancel)
+            {
                 cancelVideo();
+                result.succeeded = true;
+            }
+            _videoCommandError = reduceVideoCommandError(_videoCommandError, result);
         }
 ```
 
-Publish the current phase and pending information under `_videoSnapshotMutex` after `updateVideoInternal()` and after all photo-state early-return paths have been rewritten to reach one publication epilogue:
+Do not clear `_videoCommandError` on a tick with no request. This makes a failed
+Confirm remain visible while the Modal is still open. Publish the current phase,
+pending information, and persistent error under `_videoSnapshotMutex` after
+`updateVideoInternal()` and after all photo-state early-return paths have been
+rewritten to reach one publication epilogue:
 
 ```cpp
         VideoUiSnapshot snapshot;
         snapshot.phase = videoPhase();
         snapshot.pending = pendingVideoInfo();
-        snapshot.commandError = commandError;
+        snapshot.commandError = _videoCommandError;
         {
             std::lock_guard<std::mutex> lock(_videoSnapshotMutex);
             _videoSnapshot = snapshot;
         }
 ```
 
-Implement the getter as a locked value copy.
+Implement the getter as a locked value copy. Add
+`applyVideoOwnerCommandResult(bool succeeded)` as the sole direct-owner error
+boundary, implemented with `reduceVideoOwnerCommandError()`. Successful direct
+FRAME-owner Begin, CaptureEnd, and Confirm calls clear `_videoCommandError`;
+their failed calls preserve the prior UI error. Direct Cancel clears the error
+before its IDLE early return. Queued Begin/CaptureEnd/Confirm success and Cancel
+clear through `reduceVideoCommandError()` using the same lifecycle contract.
 
 - [x] **Step 7: Convert ai_ui.cpp to enqueue-only behavior**
 
@@ -627,7 +709,9 @@ cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_cor
 ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core -L offline --output-on-failure
 ```
 
-Expected: media test exits 0, EarthExplorer builds, and the offline gate is green.
+Expected: media test exits 0 with reducer persistence/clearing, function-body
+wiring, single-publication, draw-snapshot, direct-owner, and atomic HUD checks;
+EarthExplorer builds, and the offline gate is green.
 
 - [x] **Step 9: Commit Task 3**
 
@@ -648,7 +732,8 @@ git commit -m "fix: marshal video UI actions onto frame thread"
 
 **Interfaces:**
 - Produces: `VideoPollDisposition classifyVideoPollHttp(bool, int)`.
-- Changes: network absence, 429, and 5xx return `done=false`; other 4xx remain terminal.
+- Changes: network absence, 429, and exactly `500 <= status < 600` return
+  `done=false`; all other non-200 statuses remain terminal.
 
 - [x] **Step 1: Add failing classification tests**
 
@@ -659,6 +744,8 @@ Append:
     CHECK(classifyVideoPollHttp(true, 429) == VIDEO_POLL_RETRY);
     CHECK(classifyVideoPollHttp(true, 500) == VIDEO_POLL_RETRY);
     CHECK(classifyVideoPollHttp(true, 503) == VIDEO_POLL_RETRY);
+    CHECK(classifyVideoPollHttp(true, 599) == VIDEO_POLL_RETRY);
+    CHECK(classifyVideoPollHttp(true, 600) == VIDEO_POLL_TERMINAL_ERROR);
     CHECK(classifyVideoPollHttp(true, 400) == VIDEO_POLL_TERMINAL_ERROR);
     CHECK(classifyVideoPollHttp(true, 401) == VIDEO_POLL_TERMINAL_ERROR);
     CHECK(classifyVideoPollHttp(true, 200) == VIDEO_POLL_PARSE_BODY);
@@ -688,11 +775,14 @@ Add to `ai_media.h`:
 
     inline VideoPollDisposition classifyVideoPollHttp(bool hasResponse, int status)
     {
-        if (!hasResponse || status == 429 || status >= 500) return VIDEO_POLL_RETRY;
+        if (!hasResponse || status == 429 || (status >= 500 && status < 600))
+            return VIDEO_POLL_RETRY;
         if (status != 200) return VIDEO_POLL_TERMINAL_ERROR;
         return VIDEO_POLL_PARSE_BODY;
     }
 ```
+
+The upper-bound regression is required: `599` retries, while `600` is terminal.
 
 - [x] **Step 4: Apply classification in VeoVideoProvider::poll**
 
