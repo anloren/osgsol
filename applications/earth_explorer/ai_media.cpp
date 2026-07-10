@@ -1013,6 +1013,11 @@ namespace earthai
 
     // ---------------- 视频两点巡航流程实现(Task 9)----------------
 
+    void MediaManager::applyVideoOwnerCommandResult(bool succeeded)
+    {
+        _videoCommandError = reduceVideoOwnerCommandError(_videoCommandError, succeeded);
+    }
+
     VideoPhaseKindPublic MediaManager::videoPhase() const
     {
         switch (_video->phase)
@@ -1028,7 +1033,11 @@ namespace earthai
 
     bool MediaManager::beginVideoCapture(const osg::Vec3d& llaA, const std::string& style)
     {
-        if (_video->phase != VideoJob::IDLE) return false;
+        if (_video->phase != VideoJob::IDLE)
+        {
+            applyVideoOwnerCommandResult(false);
+            return false;
+        }
 
         long long epoch = (long long)time(nullptr);
         std::string dir = outDir();
@@ -1043,6 +1052,7 @@ namespace earthai
         _video->waitSnapshotTicks = 0;
 
         OSG_NOTICE << "[AIChat] generate_video phase=A snap=" << _video->snapPathA << std::endl;
+        applyVideoOwnerCommandResult(true);
         return true;
     }
 
@@ -1051,7 +1061,11 @@ namespace earthai
         // 只有"A 点已经稳定就绪、且还没触发过 B 点采集"这一个阶段允许调用——WAIT_B 是
         // beginVideoCapture 完成后 update() 里自动进入的稳态(见 update()/updateVideo() 里
         // WAIT_A→WAIT_B 的转换),不是"WAIT_A 尚在等待快照稳定"那个瞬态。
-        if (_video->phase != VideoJob::WAIT_B) return false;
+        if (_video->phase != VideoJob::WAIT_B)
+        {
+            applyVideoOwnerCommandResult(false);
+            return false;
+        }
 
         long long epoch = (long long)time(nullptr);
         std::string dir = outDir();
@@ -1065,6 +1079,7 @@ namespace earthai
         _video->waitSnapshotTicks = 0;
 
         OSG_NOTICE << "[AIChat] generate_video phase=B snap=" << _video->snapPathB << std::endl;
+        applyVideoOwnerCommandResult(true);
         return true;
     }
 
@@ -1089,6 +1104,7 @@ namespace earthai
         {
             picojson::object err;
             err["error"] = picojson::value(std::string("no video pending confirmation"));
+            applyVideoOwnerCommandResult(false);
             return picojson::value(err);
         }
 
@@ -1098,6 +1114,7 @@ namespace earthai
         {
             picojson::object err;
             err["error"] = picojson::value(std::string("no EARTH_AI_KEY and no EARTH_AI_FAKE_MP4 configured"));
+            applyVideoOwnerCommandResult(false);
             return picojson::value(err);
         }
 
@@ -1251,11 +1268,13 @@ namespace earthai
         picojson::object r;
         r["status"] = picojson::value(std::string("started"));
         r["job_id"] = picojson::value((double)_video->jobId);
+        applyVideoOwnerCommandResult(true);
         return picojson::value(r);
     }
 
     void MediaManager::cancelVideo()
     {
+        applyVideoOwnerCommandResult(true);
         if (_video->phase == VideoJob::IDLE) return;
         OSG_NOTICE << "[AIChat] generate_video cancelled (phase="
                    << (int)_video->phase << ")" << std::endl;

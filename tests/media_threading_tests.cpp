@@ -146,12 +146,19 @@ int main()
         commandError, dispatchResult(VideoUiRequest::Cancel, true));
     CHECK(commandError.empty());
 
+    // Direct FRAME-owner calls do not create UI command failures. A failed owner call must keep
+    // the existing UI error, while every successful owner boundary clears it before publication.
+    std::string ownerError = "old UI failure";
+    CHECK(reduceVideoOwnerCommandError(ownerError, false) == ownerError);
+    CHECK(reduceVideoOwnerCommandError(ownerError, true).empty());
+
     const std::string ui = readSourceFile("applications/earth_explorer/ai_ui.cpp");
     const std::string uiHeader = readSourceFile("applications/earth_explorer/ai_ui.h");
     const std::string media = readSourceFile("applications/earth_explorer/ai_media.cpp");
     const std::string mediaHeader = readSourceFile("applications/earth_explorer/ai_media.h");
     const std::string setup = readSourceFile("applications/earth_explorer/ai_setup.cpp");
     CHECK(!ui.empty() && !uiHeader.empty() && !media.empty() && !mediaHeader.empty());
+    CHECK(!setup.empty());
 
     const std::string update = extractFunctionBody(media, "void MediaManager::update()");
     const std::string snapshotGetter = extractFunctionBody(
@@ -160,12 +167,30 @@ int main()
     const std::string hudRestore = extractFunctionBody(media, "void MediaManager::hudRestore()");
     const std::string isHudHidden = extractFunctionBody(mediaHeader, "bool isHudHidden() const");
     const std::string draw = extractFunctionBody(ui, "void AIChatUI::draw(");
+    const std::string beginVideo = extractFunctionBody(
+        media, "bool MediaManager::beginVideoCapture(");
+    const std::string captureEnd = extractFunctionBody(
+        media, "bool MediaManager::captureVideoEnd(");
+    const std::string confirmVideo = extractFunctionBody(
+        media, "picojson::value MediaManager::confirmVideo()");
+    const std::string cancelVideo = extractFunctionBody(
+        media, "void MediaManager::cancelVideo()");
+    const std::string ownerResult = extractFunctionBody(
+        media, "void MediaManager::applyVideoOwnerCommandResult(bool succeeded)");
+    const std::string frameHandle = extractFunctionBody(setup, "virtual bool handle(");
     CHECK(!update.empty() && !snapshotGetter.empty() && !hudHide.empty());
     CHECK(!hudRestore.empty() && !isHudHidden.empty() && !draw.empty());
+    CHECK(!beginVideo.empty() && !captureEnd.empty() && !confirmVideo.empty());
+    CHECK(!cancelVideo.empty() && !ownerResult.empty() && !frameHandle.empty());
 
     // Runtime structure: request dispatch and both state machines reach exactly one publication
     // epilogue, which copies the FRAME-owned persistent command error.
     CHECK(update.find("_videoRequests.drain()") != std::string::npos);
+    const std::string drainStatement =
+        "std::vector<VideoUiRequest> requests = _videoRequests.drain();";
+    size_t firstUpdateCode = update.find_first_not_of(" \t\r\n");
+    CHECK(firstUpdateCode != std::string::npos);
+    CHECK(update.compare(firstUpdateCode, drainStatement.size(), drainStatement) == 0);
     CHECK(update.find("std::string commandError;") == std::string::npos);
     CHECK(update.find("_videoCommandError = reduceVideoCommandError(") != std::string::npos);
     CHECK(update.find("snapshot.commandError = _videoCommandError;") != std::string::npos);
@@ -194,8 +219,50 @@ int main()
     CHECK(draw.find("media->captureVideoEnd(") == std::string::npos);
     CHECK(draw.find("media->confirmVideo(") == std::string::npos);
     CHECK(draw.find("media->cancelVideo(") == std::string::npos);
+    CHECK(draw.find("media->videoPhase(") == std::string::npos);
+    CHECK(draw.find("media->pendingVideoInfo(") == std::string::npos);
     CHECK(setup.find("mediaVideoPtr->beginVideoCapture(") != std::string::npos);
     CHECK(setup.find("mediaVideoPtr->captureVideoEnd(") != std::string::npos);
+    CHECK(frameHandle.find("_media->confirmVideo(") != std::string::npos);
+    size_t mainThreadDrain = frameHandle.find("_core->drainMainThread()");
+    size_t mediaUpdate = frameHandle.find("_media->update()");
+    CHECK(mainThreadDrain != std::string::npos && mediaUpdate != std::string::npos);
+    CHECK(mainThreadDrain < mediaUpdate);
+
+    // Direct owner methods explicitly preserve errors on failure and clear them on success.
+    CHECK(ownerResult.find("_videoCommandError = reduceVideoOwnerCommandError(") !=
+          std::string::npos);
+    CHECK(countOccurrences(beginVideo, "applyVideoOwnerCommandResult(false);") == 1);
+    CHECK(countOccurrences(beginVideo, "applyVideoOwnerCommandResult(true);") == 1);
+    CHECK(beginVideo.find("applyVideoOwnerCommandResult(false);") <
+          beginVideo.find("return false;"));
+    CHECK(beginVideo.rfind("applyVideoOwnerCommandResult(true);") <
+          beginVideo.rfind("return true;"));
+
+    CHECK(countOccurrences(captureEnd, "applyVideoOwnerCommandResult(false);") == 1);
+    CHECK(countOccurrences(captureEnd, "applyVideoOwnerCommandResult(true);") == 1);
+    CHECK(captureEnd.find("applyVideoOwnerCommandResult(false);") <
+          captureEnd.find("return false;"));
+    CHECK(captureEnd.rfind("applyVideoOwnerCommandResult(true);") <
+          captureEnd.rfind("return true;"));
+
+    CHECK(countOccurrences(confirmVideo, "applyVideoOwnerCommandResult(false);") == 2);
+    CHECK(countOccurrences(confirmVideo, "applyVideoOwnerCommandResult(true);") == 1);
+    size_t firstConfirmFailure = confirmVideo.find("applyVideoOwnerCommandResult(false);");
+    size_t firstConfirmReturn = confirmVideo.find("return picojson::value(err);");
+    size_t secondConfirmFailure = confirmVideo.find(
+        "applyVideoOwnerCommandResult(false);", firstConfirmFailure + 1);
+    size_t secondConfirmReturn = confirmVideo.find(
+        "return picojson::value(err);", firstConfirmReturn + 1);
+    size_t confirmSuccess = confirmVideo.find("applyVideoOwnerCommandResult(true);");
+    size_t confirmSuccessReturn = confirmVideo.rfind("return picojson::value(r);");
+    CHECK(firstConfirmFailure < firstConfirmReturn);
+    CHECK(firstConfirmReturn < secondConfirmFailure && secondConfirmFailure < secondConfirmReturn);
+    CHECK(secondConfirmReturn < confirmSuccess && confirmSuccess < confirmSuccessReturn);
+
+    CHECK(countOccurrences(cancelVideo, "applyVideoOwnerCommandResult(true);") == 1);
+    CHECK(cancelVideo.find("applyVideoOwnerCommandResult(true);") <
+          cancelVideo.find("if (_video->phase == VideoJob::IDLE) return;"));
 
     // Draw/FRAME HUD sharing uses only the atomic paths and cannot decrement below zero.
     CHECK(mediaHeader.find("std::atomic<int> _hudHideCount;") != std::string::npos);

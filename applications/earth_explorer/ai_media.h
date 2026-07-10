@@ -170,6 +170,12 @@ namespace earthai
         return result.error;
     }
 
+    inline std::string reduceVideoOwnerCommandError(const std::string& previous,
+                                                    bool succeeded)
+    {
+        return succeeded ? std::string() : previous;
+    }
+
     // 生成式媒体管线总控:Job 驱动,每帧 update() 由 AIFrameHandler 调用(主线程)。
     // 照片与视频各自只支持"单个 pending 任务"——与真实使用场景(用户点一次等一次)相符,
     // 并发第二个请求会被 startPhotoJob/beginVideoCapture 拒绝,避免状态机复杂化。
@@ -325,6 +331,7 @@ namespace earthai
         // 再从单一 epilogue 发布本 tick 的视频 UI 快照。
         void updatePhotoInternal();
         void updateVideoInternal();
+        void applyVideoOwnerCommandResult(bool succeeded);
 
         // 安全地把 *_video 重置为初始状态:先 join 掉可能还 joinable 的 worker 线程,
         // 再做 *_video = VideoJob()(move-assign)。std::thread 的 move 赋值要求目标线程
