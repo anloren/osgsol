@@ -1,4 +1,5 @@
 #include "ai_setup.h"
+#include "ai_photo_request.h"
 #include "flight_data.h"
 #include "ai_ui.h"
 #include "ai_media.h"
@@ -332,11 +333,12 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
         // 无 EARTH_AI_FAKE_IMG)时直接报错,不注册也可以,但注册后模型能看到"为什么不行"
         // 比工具压根不存在更利于它跟用户解释。
         earthai::Tool photo; photo.name = "generate_photo";
-        photo.description = u8"截取当前三维地球视角并生成一张同地点同视角的写实照片,"
-            u8"异步执行(不会阻塞对话),结果出现在屏幕右上角的照片卡片里。"
-            u8"style 可选:风格/时代/天气描述(如“黄昏”“雪天”“1900 年老照片风格”)。";
-        photo.parametersJson = "{\"type\":\"object\",\"properties\":{"
-            "\"style\":{\"type\":\"string\",\"description\":\"可选:风格/时代/天气描述\"}}}";
+        photo.description = u8"生成一张全新、独立的目标地点写实照片。每次必须传本次任务自己的"
+            u8"lat/lon；若用户说“当前视角”先调用 get_view_state，若目标是 ISS 等实时物体先调用"
+            u8"对应实时位置工具，并把返回的经纬度/高度传入。不得沿用上一张照片或上一地点。"
+            u8"show_camera_platform 默认 false；“从 ISS 俯拍/ISS 视角”仍为 false，只有用户明确"
+            u8"要求画面中看见空间站、太阳能板或飞行器时才设 true。";
+        photo.parametersJson = earthai::photoToolParametersJson();
         earthai::MediaManager* mediaPtr = mediaMgr;
         osgVerse::EarthManipulator* maniPhoto = mani;
         photo.execute = [mediaPtr, maniPhoto](const picojson::value& args) {
@@ -351,14 +353,24 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
                     "media pipeline unavailable (no EARTH_AI_KEY / EARTH_AI_FAKE)"));
                 return picojson::value(err);
             }
-            std::string style;
-            if (args.is<picojson::object>() && args.contains("style")
-                && args.get("style").is<std::string>())
-                style = args.get("style").get<std::string>();
+            earthai::PhotoRequest request;
+            std::string requestError;
+            if (!earthai::parsePhotoRequest(args, request, requestError))
+            {
+                picojson::object err; err["error"] = picojson::value(requestError);
+                return picojson::value(err);
+            }
+            if (!maniPhoto)
+            {
+                picojson::object err; err["error"] = picojson::value("camera unavailable");
+                return picojson::value(err);
+            }
 
-            bool haveView = false; osg::Vec3d lla(0.0, 0.0, 0.0);
-            if (maniPhoto) { lla = maniPhoto->computeEyeLatLonHeight(); haveView = true; }
-            picojson::value r = mediaPtr->startPhotoJob(style, lla, haveView);
+            // 目标定位与抓帧属于同一个工具调用，避免模型漏调 fly_to 后沿用上一地点。
+            maniPhoto->stopAnimation();
+            maniPhoto->setByEye(request.lla[0], request.lla[1], request.lla[2]);
+            picojson::value r = mediaPtr->startPhotoJob(
+                request.style, request.lla, request.showCameraPlatform);
             OSG_NOTICE << "[AIChat] generate_photo -> " << r.serialize() << std::endl;
             return r;
         };
@@ -459,7 +471,11 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
         earthai::GeminiProvider* gp = new earthai::GeminiProvider(
             aiKey, (m && *m) ? m : "gemini-3.5-flash");
         gp->setSystemPrompt(u8"你是 EarthExplorer 三维地球应用的中文助手。优先使用提供的工具完成用户请求；"
-                            u8"用户提到地名时自行换算经纬度；回答保持简洁；不要编造工具没有返回的数据。");
+                            u8"用户提到地名时自行换算经纬度；回答保持简洁；不要编造工具没有返回的数据。"
+                            u8"每次 generate_photo 都是独立新图，必须传该次目标的 lat/lon；当前视角先调"
+                            u8"get_view_state，ISS 等实时目标先查询实时位置并传其经纬度/高度。"
+                            u8"从 ISS 俯拍表示相机在 ISS 位置向下看，show_camera_platform=false；"
+                            u8"除非用户明确要求，不得在画面叠加空间站、太阳能板或飞行器。 ");
         aiCore = new earthai::AIChatCore(gp, aiRegistry);
         // 启动信号(不打 key 值,只打长度):证明 AI key 从环境变量或磁盘 keys.env 读到。
         OSG_NOTICE << "[AIChat] provider=gemini, key configured (len=" << aiKey.size() << ")" << std::endl;

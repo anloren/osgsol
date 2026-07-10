@@ -2,6 +2,7 @@
 // 快照(抓帧)+ 生图管线实现。设计与 ai_chat.cpp 的 worker 模式一致:耗时的网络调用
 // 放独立线程,主线程只在 update() 里轮询状态、绝不阻塞。
 #include "ai_media.h"
+#include "ai_photo_request.h"
 #include "ai_cards.h"
 #include "ai_chat.h"   // AIChatCore 完整定义(ai_media.h 只前置声明):addErrorNote() 调用需要
 #include "earth_config.h"
@@ -688,7 +689,8 @@ namespace earthai
 
     MediaManager::MediaManager(osgViewer::Viewer* viewer, AICardPanel* cards, const std::string& apiKeyOrEmpty)
         : _viewer(viewer), _cards(cards), _apiKey(apiKeyOrEmpty), _grabber(viewer),
-          _state(IDLE), _jobId(0), _workerJoinable(false), _waitSnapshotTicks(0),
+          _state(IDLE), _jobId(0), _workerJoinable(false), _viewRenderUpdateTicks(0),
+          _waitSnapshotTicks(0),
           _hudHideCount(0),
           _video(new VideoJob), _videoGrabber(viewer)
     {}
@@ -762,7 +764,7 @@ namespace earthai
     }
 
     picojson::value MediaManager::startPhotoJob(const std::string& stylePrompt, const osg::Vec3d& lla,
-                                                bool haveView)
+                                                bool showCameraPlatform)
     {
         if (_state != IDLE)
         {
@@ -786,28 +788,25 @@ namespace earthai
 
         long long epoch = (long long)time(nullptr);
         std::string dir = outDir();
-        _snapPath = dir + "/snap_" + std::to_string(epoch) + ".png";
-        _genPath = dir + "/gen_" + std::to_string(epoch) + ".png";
+        _jobId = _jobs.create("photo", u8"生成实景照片");
+        // 秒级时间戳不足以区分快速完成的连续任务（离线/缓存命中时可在同一秒启动第二张）。
+        // 追加单调 job id，保证每次生成拥有独立的输入快照与输出文件，绝不覆盖上一张。
+        std::string requestId = std::to_string(epoch) + "_" + std::to_string(_jobId);
+        _snapPath = dir + "/snap_" + requestId + ".png";
+        _genPath = dir + "/gen_" + requestId + ".png";
 
         // 用户反馈 2:改用 buildPhotoPrompt(ai_prompts.h)——nano-banana-pro-preview 是带推理
         // 的图像模型,提示词需要精确坐标 + "先推理这是现实中哪里"的引导 + 明确把渲染图
         // 降级为"仅构图参考"+ 禁止 UI/文字/水印/地图标注伪影,不再是旧版"以渲染图为参考"
-        // 这种简单措辞。haveView=false(manipulator 不可用)时退化传 (0,0,0),提示词里坐标
-        // 会是赤道原点——理论上不会发生(ai_setup.cpp 的 photo.execute 在 maniPhoto 为空时
-        // haveView 也是 false,但目前没有额外分支跳过坐标段;若未来出现纯离线无 mani 场景
-        // 需要重新考虑是否要一个"无坐标"版本的 prompt)。
-        _prompt = buildPhotoPrompt(lla, stylePrompt);
+        // 这种简单措辞。工具入口已经强制校验独立目标坐标，不再存在隐式沿用当前/上一视角。
+        _prompt = buildPhotoPrompt(lla, stylePrompt, showCameraPlatform);
 
-        _jobId = _jobs.create("photo", u8"生成实景照片");
         _jobs.update(_jobId, AIJob::RUNNING, 0.1f, "", "");
         if (_cards) _cards->pushJob(&_jobs, _jobId, u8"生成实景照片");
-        // 用户反馈 1:抓帧前隐藏 HUD(ImGui 面板/对话条),确保截到的是干净渲染帧——
-        // hudRestore() 在下面 update() 的 WAITING_SNAPSHOT 分支里、本次快照 ready()/超时
-        // 判定出结果的那一刻立即调用(见 update() 对应处注释),不留到生图完成才恢复,
-        // 一帧闪烁("快门")即可,用户接受度已在 spec 里确认。
-        hudHide();
-        _grabber.grab(_snapPath);
-        _state = WAITING_SNAPSHOT;
+        // 工具层可能刚把相机切到本次照片的独立目标。先让新视角完整渲染一帧，再在
+        // update() 的 WAITING_VIEW_RENDER 分支触发抓帧，避免捕获切换前的旧 framebuffer。
+        _state = WAITING_VIEW_RENDER;
+        _viewRenderUpdateTicks = 0;
         _waitSnapshotTicks = 0;  // 重新计数,供 update() 判断等待超时
 
         OSG_NOTICE << "[AIChat] generate_photo job=" << _jobId << " snap=" << _snapPath << std::endl;
@@ -826,6 +825,23 @@ namespace earthai
         // 下面各分支里散布着多个提前 return——先驱动一次视频状态机,避免视频推进逻辑被
         // 挂在某个 return 之后而"post-photo-return 才执行"从而实际上跑不到。
         updateVideoInternal();
+
+        if (_state == WAITING_VIEW_RENDER)
+        {
+            // AIFrameHandler 同一 FRAME 内先 drainMainThread()(可能启动本任务)、再 update()。
+            // 因此第一次到这里必须只等待，让新相机真正完成一帧渲染；下一帧 update 才预约
+            // 快照，保证输入图属于本次任务而不是切换前的 framebuffer。
+            if (!photoCaptureHasFreshView(_viewRenderUpdateTicks))
+            {
+                ++_viewRenderUpdateTicks;
+                return;
+            }
+            hudHide();
+            _grabber.grab(_snapPath);
+            _state = WAITING_SNAPSHOT;
+            _waitSnapshotTicks = 0;
+            return;
+        }
 
         if (_state == WAITING_SNAPSHOT)
         {

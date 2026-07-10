@@ -1,2 +1,2 @@
-[{"calls":[{"name":"generate_photo","args":{}}]},
+[{"calls":[{"name":"generate_photo","args":{"lat":22.298,"lon":114.172,"alt_km":0.5}}]},
  {"text":"照片生成中,完成后见右上角"}]

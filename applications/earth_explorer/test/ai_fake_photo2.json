@@ -1,4 +1,4 @@
-[{"calls":[{"name":"generate_photo","args":{}}]},
+[{"calls":[{"name":"generate_photo","args":{"lat":22.298,"lon":114.172,"alt_km":0.5}}]},
  {"text":"第一张生成中"},
- {"calls":[{"name":"generate_photo","args":{}}]},
+ {"calls":[{"name":"generate_photo","args":{"lat":40.7128,"lon":-74.006,"alt_km":0.8}}]},
  {"text":"第二张生成中"}]

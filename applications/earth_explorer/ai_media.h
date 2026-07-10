@@ -185,9 +185,9 @@ namespace earthai
         // 建 Job → 触发抓帧 → 立即返回 {"status":"started","job_id":N}(不等生图完成)。
         // 若已有照片任务在跑,返回 {"error":"photo job already running"}。
         // lla=(纬度弧度,经度弧度,高度米),与 EarthManipulator::computeEyeLatLonHeight() 返回值
-        // 约定一致;haveView=false 时(manipulator 不可用)lla 的值被忽略,提示词退化为不含坐标
-        // 元数据(见 update() 里 buildPhotoPrompt 调用处)。
-        picojson::value startPhotoJob(const std::string& stylePrompt, const osg::Vec3d& lla, bool haveView);
+        // 约定一致；自然语言工具层要求每次显式提供本次任务自己的目标坐标。
+        picojson::value startPhotoJob(const std::string& stylePrompt, const osg::Vec3d& lla,
+                                      bool showCameraPlatform = false);
 
         void update();   // 主线程每帧调:轮询抓帧就绪 → 起工作线程生图/生视频 → 完成后推卡片/收尾 Job
 
@@ -224,7 +224,7 @@ namespace earthai
         void cancelVideo();
 
     private:
-        enum PendingState { IDLE, WAITING_SNAPSHOT, GENERATING, DONE_HANDLED };
+        enum PendingState { IDLE, WAITING_VIEW_RENDER, WAITING_SNAPSHOT, GENERATING, DONE_HANDLED };
 
         osgViewer::Viewer* _viewer;
         AICardPanel* _cards;
@@ -258,6 +258,7 @@ namespace earthai
         std::string _snapPath, _genPath, _prompt;
         std::thread _worker;
         bool _workerJoinable;
+        unsigned int _viewRenderUpdateTicks;
         int _waitSnapshotTicks;  // 进入 WAITING_SNAPSHOT 后累计的 update() 调用次数,超阈值判超时
 
         void joinWorkerIfAny();

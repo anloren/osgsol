@@ -17,6 +17,7 @@
 #include <imgui/ImGuizmo.h>
 #include "ImGui.h"
 #include "ImGuiInputQueue.h"
+#include "ImGuiScroll.h"
 #include "ImGui.Styles.h"
 #include "pipeline/Utilities.h"
 #include <cstdio>    // popen/pclose: macOS 剪贴板接线用
@@ -359,7 +360,7 @@ public:
             return wantCaptureMouse;
         case osgGA::GUIEventAdapter::SCROLL:
             _input.push(osgVerse::ImGuiInputEvent::mouseWheelEvent(
-                ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP ? 1.0f : -1.0f));
+                osgVerse::resolveImGuiWheelAmount(ea)));
             return wantCaptureMouse;
         default: return false;
         }

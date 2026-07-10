@@ -36,7 +36,8 @@ namespace earthai
     // 再以渲染图为构图参考生成真实照片。英文提示词(模型对 EN 支持最佳)。
     // lla = (纬度弧度, 经度弧度, 高度米),与 EarthManipulator::computeEyeLatLonHeight()
     // 的返回值约定一致(调用方直接把相机位姿传进来,本函数内部负责弧度转角度)。
-    inline std::string buildPhotoPrompt(const osg::Vec3d& lla, const std::string& styleSuffix)
+    inline std::string buildPhotoPrompt(const osg::Vec3d& lla, const std::string& styleSuffix,
+                                        bool showCameraPlatform = false)
     {
         const double kRad2Deg = 57.29577951308232;
         double latDeg = lla[0] * kRad2Deg;
@@ -46,7 +47,9 @@ namespace earthai
         char altBuf[32];
         snprintf(altBuf, sizeof(altBuf), "%.1f", altKm);
 
-        std::string p = "You are creating a real photograph. Camera position: latitude ";
+        std::string p = "You are creating a real photograph. Treat this as a fresh independent generation: "
+                        "do not reuse, continue, edit, or copy any previous generated photograph. "
+                        "Camera position: latitude ";
         p += formatLatLonDeg(latDeg, lonDeg);
         p += ", altitude ";
         p += altBuf;
@@ -60,6 +63,12 @@ namespace earthai
              "atmospheric haze, natural lighting with soft shadows. Absolutely no UI elements, "
              "no text overlays, no watermarks, no map labels, no borders.";
         if (!styleSuffix.empty()) { p += " Style: "; p += styleSuffix; }
+        if (!showCameraPlatform)
+            p += " The camera position is only the viewpoint, not a subject: show no spacecraft, "
+                 "no aircraft, no drone, no satellite, no solar panels, no window frame, and no "
+                 "other camera-platform parts.";
+        else
+            p += " The user explicitly requested that the camera platform or vehicle be visible.";
         return p;
     }
 

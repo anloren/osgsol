@@ -24,6 +24,12 @@
 // 提示词工程(用户反馈 2/3 的核心改动):header-only 纯函数,依赖约束与 ai_motion.h 相同,
 // 直接 include 到测试翻译单元。
 #include "../applications/earth_explorer/ai_prompts.h"
+#if __has_include("../applications/earth_explorer/ai_photo_request.h")
+#include "../applications/earth_explorer/ai_photo_request.h"
+#define OSGSOL_HAS_PHOTO_REQUEST 1
+#else
+#define OSGSOL_HAS_PHOTO_REQUEST 0
+#endif
 // 全局键盘闸纯判定逻辑(earth_main 链首 GlobalKeyboardGate 的核心):header-only、
 // 零依赖(只有 <set>),直接 include 进本翻译单元做单测。
 #include "../applications/earth_explorer/input_gate.h"
@@ -595,12 +601,15 @@ int main(int, char**)
             CHECK(p.find("114.1720") != std::string::npos);
             CHECK(p.find("composition") != std::string::npos);
             CHECK(p.find("no UI") != std::string::npos);
+            CHECK(p.find("fresh independent generation") != std::string::npos);
+            CHECK(p.find("no spacecraft") != std::string::npos);
         }
-        // style 后缀非空时应追加到提示词末尾。
+        // style 后缀非空时应追加到提示词中。
         {
             osg::Vec3d lla(22.298 * kDeg, 114.172 * kDeg, 500.0);
             std::string p = earthai::buildPhotoPrompt(lla, "dusk, golden hour");
             CHECK(p.find("Style: dusk, golden hour") != std::string::npos);
+            CHECK(p.find("no spacecraft") > p.find("Style: dusk, golden hour"));
         }
 
         // buildVideoPrompt:复用 buildMotionPrompt 的南西(southwest)轨迹用例(与上面
@@ -615,6 +624,36 @@ int main(int, char**)
         }
 
         std::cout << "buildPhotoPrompt/buildVideoPrompt tests OK\n";
+    }
+
+    // ---- generate_photo 必须携带本次任务自己的目标坐标，不能隐式沿用上一视角 ----
+    {
+        CHECK(OSGSOL_HAS_PHOTO_REQUEST == 1);
+#if OSGSOL_HAS_PHOTO_REQUEST
+        earthai::PhotoRequest request;
+        std::string error;
+        CHECK(!earthai::parsePhotoRequest(parse("{\"style\":\"ISS view\"}"), request, error));
+        CHECK(error.find("lat/lon") != std::string::npos);
+
+        CHECK(earthai::parsePhotoRequest(parse(
+            "{\"lat\":12.5,\"lon\":34.25,\"alt_km\":408.0,\"style\":\"orbital\"}"),
+            request, error));
+        CHECK(std::fabs(request.lla[0] - 12.5 * 0.017453292519943295) < 1e-9);
+        CHECK(std::fabs(request.lla[1] - 34.25 * 0.017453292519943295) < 1e-9);
+        CHECK(std::fabs(request.lla[2] - 408000.0) < 1e-6);
+        CHECK(request.style == "orbital");
+        CHECK(!request.showCameraPlatform);
+
+        picojson::value schema;
+        CHECK(picojson::parse(schema, earthai::photoToolParametersJson()).empty());
+        const picojson::array& required = schema.get("required").get<picojson::array>();
+        CHECK(required.size() == 2);
+        CHECK(required[0].to_str() == "lat");
+        CHECK(required[1].to_str() == "lon");
+        CHECK(!earthai::photoCaptureHasFreshView(0));
+        CHECK(earthai::photoCaptureHasFreshView(1));
+#endif
+        std::cout << "generate_photo independent target tests OK\n";
     }
 
     // ---- GlobalKeyboardGate 纯判定逻辑(input_gate.h,earth_main 链首键盘闸)----

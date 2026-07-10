@@ -5,6 +5,7 @@
 #include <osgDB/ReadFile>
 #include "ImGui.h"
 #include "ImGuiInputQueue.h"
+#include "ImGuiScroll.h"
 #include "pipeline/Pipeline.h"
 #include "pipeline/Utilities.h"
 using namespace osgVerse;
@@ -68,7 +69,7 @@ public:
             }
         case osgGA::GUIEventAdapter::SCROLL:
             _input.push(ImGuiInputEvent::mouseWheelEvent(
-                ea.getScrollingMotion() == osgGA::GUIEventAdapter::SCROLL_UP ? 1.0f : -1.0f));
+                resolveImGuiWheelAmount(ea)));
             return wantCaptureMouse;
         default: return false;
         }

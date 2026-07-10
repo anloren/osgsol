@@ -1,4 +1,5 @@
 #include <ui/ImGuiInputQueue.h>
+#include <ui/ImGuiScroll.h>
 
 #include <fstream>
 #include <iostream>
@@ -40,6 +41,25 @@ int main()
     CHECK(release != std::string::npos);
     CHECK(nextMethod != std::string::npos);
     CHECK(shutdown != std::string::npos && shutdown < nextMethod);
+
+    // macOS trackpad / Magic Mouse reports both directions as SCROLL_2D.  Each
+    // ImGui event bridge must preserve getScrollingDeltaY() instead of mapping
+    // every non-SCROLL_UP event to -1 (which makes a panel scroll down forever).
+    std::ifstream imgui2DFile(std::string(OSGVERSE_SOURCE_DIR) + "/ui/ImGui.cpp");
+    std::ostringstream imgui2DBuffer; imgui2DBuffer << imgui2DFile.rdbuf();
+    const std::string imgui2DSource = imgui2DBuffer.str();
+    CHECK(imgui2DSource.find("resolveImGuiWheelAmount") != std::string::npos);
+    CHECK(source.find("resolveImGuiWheelAmount") != std::string::npos);
+
+    osg::ref_ptr<osgGA::GUIEventAdapter> scrollEvent = new osgGA::GUIEventAdapter;
+    scrollEvent->setScrollingMotion(osgGA::GUIEventAdapter::SCROLL_UP);
+    CHECK(osgVerse::resolveImGuiWheelAmount(*scrollEvent) == 1.0f);
+    scrollEvent->setScrollingMotion(osgGA::GUIEventAdapter::SCROLL_DOWN);
+    CHECK(osgVerse::resolveImGuiWheelAmount(*scrollEvent) == -1.0f);
+    scrollEvent->setScrollingMotionDelta(0.0f, 2.5f);
+    CHECK(osgVerse::resolveImGuiWheelAmount(*scrollEvent) == 2.5f);
+    scrollEvent->setScrollingMotionDelta(0.0f, -1.25f);
+    CHECK(osgVerse::resolveImGuiWheelAmount(*scrollEvent) == -1.25f);
     std::cout << "[OK] ImGui immutable input queue\n";
     return 0;
 }
