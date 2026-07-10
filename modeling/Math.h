@@ -1,0 +1,372 @@
+#ifndef MANA_MODELING_MATH_HPP
+#define MANA_MODELING_MATH_HPP
+
+#include <sstream>
+#include <vector>
+#include <list>
+#include <map>
+#include <array>
+
+#include <osg/io_utils>
+#include <osg/Math>
+#include <osg/Vec2>
+#include <osg/Vec3>
+#include <osg/Vec4>
+#include <osg/Quat>
+#include <osg/Plane>
+#include <osg/Matrix>
+#include <osg/Polytope>
+#include <osg/Shape>
+#include <osg/CoordinateSystemNode>
+
+namespace osgVerse
+{
+
+    typedef std::pair<osg::Vec2d, osg::Vec2d> LineType2D;
+    typedef std::pair<osg::Vec3d, osg::Vec3d> LineType3D;
+    typedef std::pair<osg::Vec2d, size_t> PointType2D;
+    typedef std::pair<size_t, size_t> EdgeType;
+    typedef std::vector<PointType2D> PointList2D;
+    typedef std::vector<osg::Vec3d> PointList3D;
+    typedef std::vector<osg::Plane> PlaneList;
+    typedef std::vector<EdgeType> EdgeList;
+    struct MathExpressionPrivate;
+
+    template <class T>
+    inline T interpolate(const T& start, const T& end, float percent)
+    { return static_cast<T>(start + (end - start) * percent); }
+
+    /** Get euler angles in HPR order from a quaternion */
+    extern osg::Vec3d computeHPRFromQuat(const osg::Quat& quat);
+
+    /** Get euler angles in HPR order from direction and up vectors */
+    extern osg::Vec3d computeHPRFromMatrix(const osg::Matrix& rotation);
+
+    /** Compute a power-of-two value according to current one */
+    extern int computePowerOfTwo(int s, bool findNearest);
+
+    /** Create round corner at specified pos of the input vector list,
+        adding some points (defined by samples) */
+    extern bool createRoundCorner(PointList3D& va, unsigned int pos, float radius,
+                                  unsigned int samples = 12);
+
+    /** Compute rotation angle and axis from one vector to another */
+    extern float computeRotationAngle(const osg::Vec3& v1, const osg::Vec3& v2, osg::Vec3& axis);
+
+    /** Compute area of a 3D polygon composited of points */
+    extern float computeArea(const PointList3D& points, const osg::Vec3& normal);
+
+    /** Compute area of a triangle */
+    extern float computeTriangleArea(const osg::Vec3& v0, const osg::Vec3& v1, const osg::Vec3& v2);
+
+    /** Compute area of a triangle in UV space */
+    extern float computeTriangleUVArea(const osg::Vec2& v0, const osg::Vec2& v1, const osg::Vec2& v2);
+
+    /** Compute standard deviation */
+    extern float computeStandardDeviation(const std::vector<float>& values);
+
+    /** Compute parent rotation from a parent direction vector and a local rotation quat */
+    extern osg::Quat computeParentRotation(const osg::Vec3& parentDirection, const osg::Quat& localRot);
+
+    /** Compute perspective matrix from horizontal and vertical FOVs */
+    extern osg::Matrix computePerspectiveMatrix(double hfov, double vfov, double zn, double zf);
+
+    /** Compute perspective matrix from OpenCV intrinsic camera matrix
+        See: http://www.info.hiroshima-cu.ac.jp/~miyazaki/knowledge/teche0092.html
+    */
+    extern osg::Matrix computePerspectiveMatrix(double focalX, double focalY,
+                                                double centerX, double centerY, double zn, double zf);
+
+    /** Change an existing perspective matrix to an infinite one (not for displaying use) */
+    extern osg::Matrix computeInfiniteMatrix(const osg::Matrix& proj, double zn);
+
+    /** Obtain near/far value from a specified projection matrix */
+    extern void retrieveNearAndFar(const osg::Matrix& projectionMatrix, double& znear, double& zfar);
+
+    /** Check if two matrix are equal nor not */
+    extern bool isEqual(const osg::Matrix& m0, const osg::Matrix& m1);
+
+    /** Compute result of a numeric expression */
+    class MathExpression
+    {
+        friend struct MathExpressionPrivate;
+    public:
+        MathExpression(const std::string& exp);
+        ~MathExpression();
+
+        void setVariable(const std::string& name, double& value);
+        void setVariable(const std::string& name, const double& value);
+        double evaluate(bool* ok = NULL);
+
+    protected:
+        MathExpressionPrivate* _private;
+        std::string _expressionString;
+        bool _compiled;
+    };
+
+    /** Point cloud querying manager, used for finding closest points */
+    class PointCloudQuery
+    {
+    public:
+        typedef std::pair<osg::Vec3, osg::ref_ptr<osg::Referenced>> PointData;
+        enum Mode { RTreeMode = 0, KdTreeMode };
+
+        PointCloudQuery(Mode m = RTreeMode);
+        ~PointCloudQuery();
+
+        void addPoint(const osg::Vec3& pt, osg::Referenced* userData, float padding = 0.0001f);
+        void addBox(const osg::BoundingBox& bb, osg::Referenced* userData);  // RTree only
+        void setPoints(const std::vector<PointData>& data, float padding = 0.0001f);
+        void clear();
+
+        /** Build the KDTree index for point cloud, KDTree mode only */
+        void buildIndex(int maxLeafSize = 10);
+
+        /** Find nearest neighbors of specific point */
+        float findNearest(const osg::Vec3& pt, std::vector<PointData>& resultData,
+                          float maxDistance, unsigned int maxResults = 1000);
+
+        /** Find points inside a sphere defined by center and radius */
+        int findInRadius(const osg::Vec3& pt, float radius, std::vector<PointData>& resultData);
+
+        /** Find points inside a polytope, RTree mode only */
+        int findInPolytope(const osg::Polytope& poly, std::vector<PointData>& resultData);
+
+    protected:
+        void* _queryData;
+        void* _index;
+        Mode _mode;
+    };
+
+    /** Point cloud segmentation manager */
+    class PointCloudSegmentation
+    {
+    public:
+        typedef std::vector<int> IndexList;
+        PointCloudSegmentation();
+
+        void setPairwiseLinkageFactors(int k, double theta, int planeMode);
+        std::vector<IndexList> execute(const std::vector<osg::Vec3d>& points);
+
+    protected:
+        int _pcaIterations, _planeMode;  // PLANE: 0, SURFACE: 1
+        double _theta;
+    };
+
+    /** Float16 implementation extracted from Eigen */
+    struct HalfFloat
+    {
+        HalfFloat() : x(0) {}
+        HalfFloat(float f) { set(f); }
+        explicit HalfFloat(unsigned short raw) : x(raw) {}
+        unsigned short x;
+
+        union FP32 { unsigned int u; float f; };
+        float get() const
+        {
+            const static FP32 magic = { 113 << 23 };
+            const static unsigned int shifted_exp = 0x7c00 << 13;  // exponent mask after shift
+            FP32 o; o.u = (x & 0x7fff) << 13;                      // exponent/mantissa bits
+            unsigned int exp = shifted_exp & o.u;                  // just the exponent
+            o.u += (127 - 15) << 23;                               // exponent adjust
+
+            // handle exponent special cases
+            if (exp == shifted_exp)
+                o.u += (128 - 16) << 23;    // Inf/NaN? extra exp adjust
+            else if (exp == 0)
+            {
+                o.u += 1 << 23;             // Zero/Denormal? extra exp adjust
+                o.f -= magic.f;             // renormalize
+            }
+            o.u |= (x & 0x8000) << 16;      // sign bit
+            return o.f;
+        }
+
+        void set(float ff)
+        {
+            const static FP32 f32infty = { 255 << 23 };
+            const static FP32 f16max = { (127 + 16) << 23 };
+            const static FP32 denorm_magic = { ((127 - 15) + (23 - 10) + 1) << 23 };
+            const static unsigned int sign_mask = 0x80000000u;
+            FP32 f; f.f = ff;
+            unsigned int sign = f.u & sign_mask; f.u ^= sign;
+            x = static_cast<unsigned short>(0x0u);
+
+            // NOTE all the integer compares in this function can be safely compiled into signed compares since all operands
+            // are below 0x80000000. Important if you want fast straight SSE2 code (since there's no unsigned PCMPGTD).
+            if (f.u >= f16max.u)
+                x = (f.u > f32infty.u) ? 0x7e00 : 0x7c00;  // result is Inf or NaN (all exponent bits set)
+            else
+            {   // (De)normalized number or zero
+                if (f.u < (113 << 23)) {
+                    // resulting FP16 is subnormal or zero use a magic value to align our 10 mantissa bits at the bottom of
+                    // the float. as long as FP addition is round-to-nearest-even this just works.
+                    f.f += denorm_magic.f;
+                    x = static_cast<unsigned short>(f.u - denorm_magic.u);  // one integer subtract of the bias for final float
+                }
+                else
+                {
+                    unsigned int mant_odd = (f.u >> 13) & 1;  // resulting mantissa is odd
+                    f.u += ((unsigned int)(15 - 127) << 23) + 0xfff;  // update exponent, rounding bias part 1
+                    f.u += mant_odd;                                  // rounding bias part 2
+                    x = static_cast<unsigned short>(f.u >> 13);       // take the bits
+                }
+            }
+            x |= static_cast<unsigned short>(sign >> 16);
+        }
+    };
+
+    /** A set of transformation functions between coordinate systems
+        Information about spatial reference systems
+        - [EPSG:4326] Geographic coordinate system (LLA / geodetic)
+        - [EPSG:4978] Geocentric coordinate system (Earth-centered Earth-fixed, ECEF / WGS84)
+        - [EPSG:4479] China Geodetic Coordinate System 2000 (CGCS2000)
+        - [EPSG:3857] Web Mercator / Spherical Mercator
+        - [EPSG:32601-32660] for UTM Northern, [EPSG:32701-32760] for UTM Southern
+    */
+    struct Coordinate
+    {
+        inline osg::Vec3d translateRHtoLH(const osg::Vec3d& v) { return osg::Vec3d(-v[1], v[2], v[0]); }
+        inline osg::Vec3d translateLHtoRH(const osg::Vec3d& v) { return osg::Vec3d(v[2], -v[0], v[1]); }
+        inline osg::Vec3d scaleRHtoLH(const osg::Vec3d& v) { return osg::Vec3d(v[1], v[2], v[0]); }
+        inline osg::Vec3d scaleLHtoRH(const osg::Vec3d& v) { return osg::Vec3d(v[2], v[0], v[1]); }
+        inline osg::Quat rotateRHtoLH(const osg::Quat& q) { return osg::Quat(q[1], -q[2], -q[0], q[3]); }
+        inline osg::Quat rotateLHtoRH(const osg::Quat& q) { return osg::Quat(-q[2], q[0], -q[1], q[3]); }
+
+        struct WGS84
+        {
+            double radiusEquator, radiusPolar, eccentricitySq;
+            WGS84(double radiusE = osg::WGS_84_RADIUS_EQUATOR, double radiusP = osg::WGS_84_RADIUS_POLAR);
+        };
+
+        struct CGCS2000
+        {
+            double paramT[3], paramR[3] /* deg */, paramK;
+            CGCS2000(const osg::Vec3d& T = osg::Vec3d(-0.9919, -1.6975, 2.9427),
+                     const osg::Vec3d& R = osg::Vec3d(0.00089055, -0.00001853, 0.00001250),
+                     double K = 1.0000000675);
+        };
+
+        struct UTM
+        {
+            // https://github.com/isce-framework/isce3/blob/develop/cxx/isce3/core/Projections.cpp
+            double cgb[6], cbg[6], utg[6], gtu[6], lon0, Qn, Zb;
+            int zone; bool isNorth; UTM(int code, const WGS84& wgs84 = WGS84());
+            static double clenshaw(const double* a, int size, double real);
+            static double clenshaw2(const double* a, int size, double real, double imag, double& R, double& I);
+        };
+
+        struct PolarStereographic
+        {
+            // https://github.com/Sciumo/GeographicLib/blob/master/include/GeographicLib/PolarStereographic.hpp
+            double _a, _b, _f, _e2, _es, _e2m, _c, _k0;
+            PolarStereographic(const WGS84& wgs84 = WGS84(), double k0 = 0.994);
+        };
+
+        /// Geodetic: latitude and longitude in radius, altitude in metres; ECEF: coords in metres
+        static osg::Vec3d convertLLAtoECEF(const osg::Vec3d& lla, const WGS84& wgs84 = WGS84());
+
+        /// Geodetic: latitude and longitude in radius, altitude in metres; ECEF: coords in metres
+        static osg::Vec3d convertECEFtoLLA(const osg::Vec3d& ecef, const WGS84& wgs84 = WGS84());
+
+        /// ECEF: coords in metres; CGCS2000: coords in metres
+        static osg::Vec3d convertECEFtoCGCS2000(const osg::Vec3d& ecef, const CGCS2000& c2k = CGCS2000());
+
+        /// ECEF: coords in metres; CGCS2000: coords in metres
+        static osg::Vec3d convertCGCS2000toECEF(const osg::Vec3d& coord, const CGCS2000& c2k = CGCS2000());
+
+        /// Geodetic: latitude and longitude in radius, altitude in metres; Web Mercator: coords in metres
+        static osg::Vec3d convertLLAtoWebMercator(const osg::Vec3d& lla, const WGS84& wgs84 = WGS84());
+
+        /// Geodetic: latitude and longitude in radius, altitude in metres; Web Mercator: coords in metres
+        static osg::Vec3d convertWebMercatorToLLA(const osg::Vec3d& yxz, const WGS84& wgs84 = WGS84());
+
+        /// Geodetic: latitude and longitude in radius, altitude in metres; UTM: coords in metres
+        static osg::Vec3d convertLLAtoUTM(const osg::Vec3d& lla,
+                                          const UTM& utm, const WGS84& wgs84 = WGS84());
+
+        /// Geodetic: latitude and longitude in radius, altitude in metres; UTM: coords in metres
+        static osg::Vec3d convertUTMtoLLA(const osg::Vec3d& coord,
+                                          const UTM& utm, const WGS84& wgs84 = WGS84());
+
+        /// Geodetic: latitude and longitude in radius, altitude in metres; Polar stereo in metres
+        static osg::Vec3d convertLLAtoPolarStereo(const osg::Vec3d& coord, bool isNorth,
+                                                  const PolarStereographic& ps = PolarStereographic());
+
+        /// Geodetic: latitude and longitude in radius, altitude in metres; Polar stereo in metres
+        static osg::Vec3d convertPolarStereoToLLA(const osg::Vec3d& coord, bool isNorth,
+                                                  const PolarStereographic& ps = PolarStereographic());
+
+        /// Geodetic: latitude and longitude in radius, altitude in metres; ENU: east-north-up
+        static osg::Matrix convertLLAtoENU(const osg::Vec3d& lla, const WGS84& wgs84 = WGS84());
+
+        /// Geodetic: latitude and longitude in radius, altitude in metres; NED: north-east-down
+        static osg::Matrix convertLLAtoNED(const osg::Vec3d& lla, const WGS84& wgs84 = WGS84());
+
+        /// Both: latitude and longitude in radius
+        static osg::Vec3d convertWGS84toGCJ02(const osg::Vec3d& lla, const WGS84& wgs84 = WGS84());
+    };
+
+    /** Computational geometry helpers struct */
+    struct GeometryAlgorithm
+    {
+        enum BooleanOperator
+        {
+            BOOL_None = 0, BOOL_Intersection, BOOL_Union,
+            BOOL_Difference, BOOL_Xor
+        };
+
+        /** Project a list of 3D points on a plane to 2D and return the transform matrix */
+        static osg::Matrix project(const PointList3D& points, const osg::Vec3d& planeNormal,
+                                   const osg::Vec3d& planeUp, PointList2D& pointsOut);
+
+        /** Convenient method to convert edges to 3D vertices, 2D projections and edge indices */
+        static EdgeList project(const std::vector<LineType3D>& edges, const osg::Vec3d& planeNormal,
+                                PointList3D& points, PointList2D& points2D);
+        
+        /** Containment computations */
+        static bool pointInPolygon2D(const osg::Vec2d& p, const PointList2D& polygon, bool isConvex);
+
+        /** Compute intersections of a 2D line and another */
+        static PointList2D intersectionWithLine2D(const LineType2D& l0, const LineType2D& l1);
+
+        /** Compute intersections of a 2D line and a 2D polygon */
+        static PointList2D intersectionWithPolygon2D(const LineType2D& l, const PointList2D& polygon);
+
+        /** Decompose a concave polygon into multiple convex polygons and return splitting edges */
+        static std::vector<LineType2D> decomposePolygon2D(const PointList2D& polygon);
+
+        /** Expand/shrink a polygon by the offset parameter */
+        static std::vector<PointList2D> expandPolygon2D(const PointList2D& polygon,
+                                                        double offset, double scale = 10e6);
+
+        /** Clip a polygon with another one: intersection/union/difference */
+        static std::vector<PointList2D> clipPolygon2D(const std::vector<PointList2D>& subjects,
+                                                      const std::vector<PointList2D>& clips,
+                                                      BooleanOperator op, bool evenOdd = true);
+
+        /** Compute the pole of inaccessibility coordinate of a polygon.
+            It is the most distant internal point from the polygon outline (not centroid) */
+        static osg::Vec2d getPoleOfInaccessibility(const PointList2D& polygon, double precision = 1.0);
+
+        /** Compute center of geometry / mass of a polygon */
+        static osg::Vec2d getCentroid(const PointList2D& polygon, bool centerOfMass);
+
+        /** Check for clockwise/counter-clockwise */
+        static bool clockwise2D(const PointList2D& points);
+
+        /** Reorder a list of 2D hull points on a plane */
+        static bool reorderPointsInPlane(PointList2D& points, bool usePoleOfInaccessibility = true,
+                                         const std::vector<EdgeType>& edges = {});
+
+        /** Delaunay triangulation (with auto-detected boundaries and holes based on CDT) */
+        static std::vector<size_t> delaunayTriangulation(
+                const PointList2D& points, const EdgeList& edges, bool allowEdgeIntersection = false);
+
+        /** Delaunay triangulation (classic, need outer-first and correct vertex order) */
+        static std::vector<size_t> delaunayTriangulation(const std::vector<PointList2D>& polygons, PointList2D& addedPoints);
+    };
+
+}
+
+#endif

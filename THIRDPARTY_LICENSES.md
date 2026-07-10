@@ -1,0 +1,159 @@
+### Thirdparty libraries embedded / depended by osgVerse
+| Library          | Mode     | Version   | Used by modules    | License      | Website |
+|------------------|----------|-----------|--------------------|--------------|---------|
+| OpenSceneGraph   | Depended | > 3.1.1   | All                | LGPL (+)     | https://github.com/openscenegraph/OpenSceneGraph |
+| Bullet           | Depended | > 3.17    | Animation          | Zlib (+)     | https://github.com/bulletphysics/bullet3 |
+| cinolib          | Depended | > 1.0     | Modeling           | MIT          | https://github.com/mlivesu/cinolib |
+| Effekseer        | Depended | > 1.70e   | Animation          | MIT          | https://github.com/effekseer/Effekseer |
+| FFmpeg           | Depended | > 6.0     | verse_ffmpeg       | LGPL         | https://github.com/FFmpeg/FFmpeg |
+| libDraco         | Depended | > 1.5     | ReaderWriter       | Apache2      | https://github.com/google/draco |
+| libCEF           | Depended | > 127.3   | Animation          | BSD          | https://github.com/chromiumembedded/cef |
+| libIGL           | Depended | > 2.5     | Modeling           | MPL2         | https://github.com/libigl/libigl |
+| libosmium        | Depended | > 2.11    | verse_osm          | Boost        | https://github.com/osmcode/libosmium |
+| libWebP          | Depended | > 1.2     | verse_webp         | BSD3         | https://github.com/webmproject/libwebp |
+| mimalloc         | Depended | > 2.17    | All                | MIT          | https://github.com/microsoft/mimalloc |
+| netCDF-C         | Depended | > 4.9.3   | verse_netcdf       | BSD3         | https://github.com/Unidata/netcdf-c |
+| NVIDIA Video SDK | Depended | > 12.0    | codec_nv           | Bussiness    | https://developer.nvidia.com/video-codec-sdk |
+| OpenVDB          | Depended | > 10.0    | verse_vdb          | MPL2         | https://github.com/AcademySoftwareFoundation/openvdb |
+| osgEarth         | Depended | > 2.10    | App                | LGPL (+)     | https://github.com/pelicanmapping/osgearth |
+| Qt               | Depended | > 5.5     | App                | LGPL         | https://download.qt.io |
+| SDL2             | Depended | > 2.28.2  | ReaderWriter, WASM | Zlib         | https://github.com/libsdl-org/SDL |
+| ZLMediaKit       | Depended | 20250207  | verse_ms           | MIT          | https://github.com/ZLMediaKit/ZLMediaKit |
+| any              | Embedded |           | -                  | Boost        | https://github.com/thelink2012/any |
+| ApproxMVBB       | Embedded |           | Modeling           | MPL2         | https://github.com/gabyx/ApproxMVBB |
+| Avir             | Embedded | 3.1       | ReaderWriter       | MIT          | https://github.com/avaneev/avir |
+| backward-cpp     | Embedded |           | -                  | MIT          | https://github.com/bombela/backward-cpp |
+| bc7_rdo          | Embedded |           | ReaderWriter       | MIT/Apache2  | https://github.com/richgel999/bc7enc_rdo |
+| blend2d          | Embedded | 0.11.4    | Pipeline           | Zlib         | https://github.com/blend2d/blend2d |
+| BSplineFitting   | Embedded |           | Modeling           | MIT          | https://github.com/QianZheng/BSplineFitting |
+| ByteTrack-cpp    | Embedded | 20260327  | AI                 | MIT          | https://github.com/Vertical-Beach/ByteTrack-cpp |
+| CDT              | Embedded | 1.4.0     | Modeling           | MPL2         | https://github.com/artem-ogre/CDT |
+| Clipper2         | Embedded | 1.3.0     | Modeling           | Boost        | https://github.com/collmot/Clipper2/tree/feat/cpp11-support |
+| Discregrid       | Embedded |           | Modeling           | MIT          | https://github.com/InteractiveComputerGraphics/Discregrid |
+| Eigen            | Embedded |           | -                  | MPL2         | https://gitlab.com/libeigen/eigen |
+| exprtk           | Embedded |           | Modeling           | MIT          | https://github.com/ArashPartow/exprtk |
+| Fir & Iir        | Embedded |           | Animation          | MIT          | https://github.com/berndporr/iir1 |
+| GaussForge       | Embedded | 0.5.5     | verse_3dgs         | Apache2      | https://github.com/3dgscloud/GaussForge |
+| ghc_filesystem   | Embedded |           | -                  | MIT          | https://github.com/gulrak/filesystem |
+| glfw             | Embedded | 3.4       | ReaderWriter, WASM | ZLib         | https://github.com/glfw/glfw |
+| imgui            | Embedded | 1.92.5    | UI, App            | MIT          | https://github.com/ocornut/imgui |
+| imgui-knobs      | Embedded | 20251211  | UI                 | MIT          | https://github.com/altschuler/imgui-knobs |
+| ImGuizmo         | Embedded | 20251211  | UI                 | MIT          | https://github.com/CedricGuillemet/ImGuizmo |
+| imnode-editor    | Embedded | 20251211  | UI                 | MIT          | https://github.com/thedmd/imgui-node-editor |
+| implot           | Embedded | 20251211  | UI                 | MIT          | https://github.com/epezent/implot |
+| imspinner        | Embedded | 20251211  | UI                 | MIT          | https://github.com/dalerank/imspinner |
+| InteractiveMesh  | Embedded | 20260403  | Modeling           | MIT          | https://github.com/gcherchi/InteractiveAndRobustMeshBooleans |
+| ktx              | Embedded |           | verse_ktx          | Apache2 (+)  | https://github.com/KhronosGroup/KTX-Software |
+| laplace_deform   | Embedded |           | -                  | -            | |
+| laszip           | Embedded |           | verse_ept          | Apache2      | https://github.com/LASzip/LASzip |
+| layout           | Embedded |           | -                  | -            | |
+| least-squares    | Embedded |           | Modeling           | MIT          | https://github.com/Rookfighter/least-squares-cpp |
+| leveldb          | Embedded |           | verse_db           | BSD3         | https://github.com/google/leveldb |
+| libheatmap       | Embedded | 20260330  | -                  | MIT          | https://github.com/lucasb-eyer/libheatmap |
+| libhv            | Embedded |           | verse_web          | BSD3         | https://github.com/ithewei/libhv |
+| lightmapper      | Embedded |           | -                  | -            | https://github.com/ands/lightmapper |
+| llama.cpp        | Embedded |           | AI                 | -            | https://github.com/ggerganov/llama.cpp |
+| maplibre-tile    | Embedded | 20260210  | verse_mlt          | Apache2/MIT  | https://github.com/maplibre/maplibre-tile-spec |
+| marl             | Embedded |           | -                  | Apache2      | https://github.com/google/marl |
+| MeshOptimizer    | Embedded | 0.26      | Modeling           | MIT          | https://github.com/zeux/meshoptimizer |
+| METIS            | Embedded | 5.2.1     | Modeling           | Apache2      | https://github.com/KarypisLab/METIS |
+| mikktspace       | Embedded |           | Pipeline           | Public       | https://github.com/mmikk/MikkTSpace |
+| miniaudio        | Embedded | 0.11.23   | ReaderWriter       | Public       | https://github.com/mackron/miniaudio |
+| miniz            | Embedded |           | -                  | MIT          | https://github.com/richgel999/miniz |
+| mio              | Embedded |           | -                  | MIT          | https://github.com/vimpunk/mio |
+| nanoflann        | Embedded |           | -                  | BSD          | https://github.com/jlblancoc/nanoflann |
+| nanoid           | Embedded |           | -                  | MIT          | https://github.com/mcmikecreations/nanoid_cpp |
+| NormalGenerator  | Embedded |           | Pipeline           | -            | |
+| NV.ImageScaling  | Embedded | 20260513  | Pipeline           | MIT          | https://github.com/NVIDIAGameWorks/NVIDIAImageScaling |
+| otl              | Embedded | 4.0       | verse_odbc         | BSD          | http://otl.sourceforge.net |
+| ozz-animation    | Embedded | 0.16.0    | Animation          | MIT          | https://github.com/guillaumeblanc/ozz-animation |
+| parallel_hashmap | Embedded | 20260330  | -                  | Apache2      | https://github.com/greg7mdp/parallel-hashmap |
+| picojson         | Embedded |           | -                  | BSD2         | https://github.com/kazuho/picojson |
+| pinyin           | Embedded |           | UI                 | -            | |
+| pmp-library      | Embedded |           | Modeling           | MIT          | https://github.com/pmp-library/pmp-library |
+| PMTiles          | Embedded | 20260210  | verse_mbtiles      | BSD3         | https://github.com/protomaps/PMTiles |
+| PointCloudSeg    | Embedded | 20260411  | Modeling           | BSD2         | https://github.com/xiaohulugo/PointCloudSegmentation |
+| PoissonGenerator | Embedded |           | Pipeline           | -            | |
+| polylabel        | Embedded | 2.0.1     | Modeling           | ISC          | https://github.com/mapbox/polylabel |
+| protozero        | EMbedded | 1.7.1     | verse_mvt          | BSD2         | https://github.com/mapbox/protozero |
+| pybind11         | Embedded | 2.13.6    | Script             | BSD          | https://github.com/pybind/pybind11 |
+| rapidjson        | Embedded |           | -                  | MIT (+)      | https://github.com/Tencent/rapidjson |
+| rapidxml         | Embedded |           | -                  | Boost / MIT  | https://rapidxml.sourceforge.net/ |
+| rasterizer       | Embedded |           | Pipeline           | -            | https://github.com/rawrunprotected/rasterizer |
+| recastnavigation | Embedded |           | AI                 | Zlib         | https://github.com/recastnavigation/recastnavigation |
+| rLottie          | Embedded | 0.2       | -                  | MIT (+)      | https://github.com/Samsung/rlottie |
+| RTree            | Embedded | 20260404  | Modeling           | MIT          | https://github.com/nushoin/RTree |
+| simdb            | Embedded |           | ReaderWriter       | Apache2      | https://github.com/LiveAsynchronousVisualizedArchitecture/simdb |
+| shapelib         | Embedded | 1.6.2     | verse_shp          | MIT          | https://github.com/OSGeo/shapelib |
+| smplxpp          | Embedded | 20260330  | AI                 | Apache2      | https://github.com/sxyu/smplxpp |
+| span             | Embedded |           | -                  | Boost        | https://github.com/tcbrindle/span |
+| spz              | Embedded |           | verse_3dgs         | MIT          | https://github.com/nianticlabs/spz |
+| sqlite3          | Embedded |           | verse_mbtiles      | Public       | https://www.sqlite.org/index.html |
+| stb              | Embedded |           | verse_image        | MIT / Public | https://github.com/nothings/stb |
+| strtk            | Embedded |           | -                  | MIT          | https://github.com/ArashPartow/strtk |
+| supercluster     | Embedded |           | -                  | ISC          | https://github.com/mapbox/supercluster.hpp |
+| timeout          | Embedded |           | -                  | -            | https://25thandclement.com/~william/projects/timeout.c.html |
+| tiny_gltf        | Embedded |           | verse_gltf         | MIT          | https://github.com/syoyo/tinygltf |
+| tiny_gltf_loader | Embedded |           | verse_gltf         | MIT          | https://github.com/syoyo/tinygltfloader |
+| tiny_obj_loader  | Embedded | 20260527  | verse_mesh         | MIT          | https://github.com/tinyobjloader/tinyobjloader |
+| tinyexr          | Embedded |           | -                  | BSD          | https://github.com/syoyo/tinyexr |
+| tinyfiledialogs  | Embedded | 3.18.2    | UI                 | Zlib         | https://sourceforge.net/projects/tinyfiledialogs |
+| tinyspline       | Embedded |           | Modeling           | MIT          | https://github.com/msteinbeck/tinyspline |
+| tweeny           | Embedded |           | Animation          | MIT          | https://github.com/mobius3/tweeny |
+| ufbx             | Embedded | 0.22.0    | verse_fbx          | MIT /Public  | https://github.com/ufbx/ufbx |
+| VHACD            | Embedded | 4.1       | Modeling           | BSD3         | https://github.com/kmammou/v-hacd |
+| vtzero           | Embedded | 1.1.0     | verse_mvt          | BSD2         |_https://github.com/mapbox/vtzero |
+| xatlas           | Embedded |           | -                  | MIT          | https://github.com/jpcy/xatlas |
+| xxYUV            | Embedded |           | ReaderWriter       | MIT          | https://github.com/metarutaiga/xxYUV |
+
+### Thirparty dependencies installation
+| Library          | Installation |
+|------------------|--------------|
+| OpenSceneGraph   | Cloned and compiled by Setup.sh/Setup.bat |
+| Bullet           | (Linux) apt-get install libbullet-dev |
+| cinolib          | Headers only. Download from https://github.com/mlivesu/cinolib |
+| Effekseer        | Manually Compile from source |
+| FFmpeg           | (Linux) apt-get install libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev libswscale-dev |
+| libDraco         | (Linux) apt-get install libdraco-dev |
+| libCEF           | Download from https://cef-builds.spotifycdn.com/index.html |
+| libIGL           | Headers only. Download from https://github.com/libigl/libigl/releases |
+| libosmium        | (Linux) apt-get install libosmium2-dev |
+| libwebp          | (Linux) apt-get install libwebp-dev |
+| mimalloc         | (Linux) apt-get install libmimalloc-dev |
+| netCDF-C         | (Linux) apt-get install libnetcdf-dev |
+| NVIDIA Video SDK | Download from https://developer.nvidia.com/video-codec-sdk |
+| ODBC             | (Linux) apt-get install unixodbc-dev |
+| OpenVDB          | (Linux) apt-get install libopenvdb-dev libboost-dev |
+| osgEarth         | Manually Compile from source |
+| Python           | (Linux) apt-get install libpython3.10-dev |
+| Qt               | Download from https://download.qt.io/official_releases/ |
+| SDL2             | (Linux) apt-get install libsdl2-dev |
+| ZLMediaKit       | Manually Compile from source |
+
+### OpenSceneGraph version history
+| Version | Release Date | Critical Changes |
+|---------|--------------|------------------|
+| master  |              | Add isTextureLODBiasSupported |
+| 3.6.5   | 2020.2.1     |                  |
+| 3.6.4   | 2019.7.26    |                  |
+| 3.6.3   | 2018.9.14    |                  |
+| 3.6.2   | 2018.6.29    |                  |
+| 3.6.1   | 2018.5.28    |                  |
+| 3.6.0   | 2018.4.8     | Use dirtyGLObjects() to replace dirtyDisplayLists() |
+| 3.5.10  | 2018.3.2     | Add Texture minLOD/maxLOD and LODBias |
+| 3.5.8   | 2017.12.1    | osg::ComputeDispatch, clean up for GL3 |
+| 3.5.5   | 2016.9.6     | osg::QuadArray |
+| 3.5.3   | 2016.6.2     | osg::GraphicsContext::WindowingSystemInterfaces |
+| 3.5.0   | 2016.1.1     | Drawable to Node, ObjectWrapper methods |
+| 3.4.1   | 2017.8.29    |                  |
+| 3.4.0   | 2015.11.16   |                  |
+| 3.3.7   | 2015.4.16    | Camera::dirtyAttachmentMap(), StateSet::setDefine() |
+| 3.3.4   | 2014.12.22   | osg::VertexAttribDivisor, osg::ShaderStorageBufferObject, Image::setColor() |
+| 3.3.2   | 2014.2.24    | get`<osg::GLExtensions>`(), asNode() |
+| 3.3.0   | 2014.1.1     | osg::Callback, Drawable::getBoundingBox() |
+| 3.2.3   | 2018.2.3     |                  |
+| 3.2.2   | 2015.8.5     |                  |
+| 3.2.1   | 2014.6.5     | ImageSequence::getNumImages() |
+| 3.2.0   | 2013.6.25    | Vec*ub, Vec*us, Vec*ui, TextureBuffer, checkEvents(), osg::Array::BIND_PER_VERTEX |
+| 3.1.5   | 2013.2.4     | Compute shader, Registry::getReaderWriterListForProtocol() |
+| 3.1.1   | 2012.3.9     | First version of serializers |

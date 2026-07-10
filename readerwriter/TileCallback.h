@@ -1,0 +1,209 @@
+#ifndef MANA_READERWRITER_TILECALLBACK_HPP
+#define MANA_READERWRITER_TILECALLBACK_HPP
+
+#include <osg/Image>
+#include <osg/Geometry>
+#include <osg/Texture2D>
+#include <osgDB/ReaderWriter>
+#include <functional>
+#include <mutex>
+#include <atomic>
+#include <set>
+#include "Export.h"
+
+typedef std::string (*CreatePathFunc)(int, const std::string&, int, int, int);
+
+namespace osgVerse
+{
+    class TileCallback;
+    struct TileGeometryHandler : public osg::Object
+    {
+        TileGeometryHandler() {}
+        TileGeometryHandler(const TileGeometryHandler& c, const osg::CopyOp& op = osg::CopyOp::SHALLOW_COPY)
+            : osg::Object(c, op) {}
+        META_Object(osgVerse, TileGeometryHandler)
+
+        virtual osg::Geometry* create(const TileCallback* cb, const osg::Matrix& outMatrix,
+                                      const osg::Vec3d& tileMin, const osg::Vec3d& tileMax,
+                                      double width, double height) const { return NULL; }
+    };
+
+    class OSGVERSE_RW_EXPORT TileCallback : public osg::NodeCallback
+    {
+    public:
+        TileCallback(bool g = true)
+        :   _x(-1), _y(-1), _z(-1), _skirtRatio(0.02f), _elevationScale(1.0f), _withGlobeAttr(g), _flatten(true),
+            _bottomLeft(false), _useWebMercator(false), _layersDone(false), _elevationEncoding(RAW_ELEVATION)
+        { _createPathFunc = NULL; _elevationFilterFunc = NULL; }
+        virtual void operator()(osg::Node* node, osg::NodeVisitor* nv);
+
+        virtual osg::Vec3d convertToECEF(const osg::Vec3d& lla) const;
+        virtual void computeTileExtent(osg::Vec3d& tileMin, osg::Vec3d& tileMax,
+                                       double& tileWidth, double& tileHeight) const;
+        virtual double mapAltitude(const osg::Vec4& color, double minH = 0.0, double maxH = 20000.0) const;
+
+        // elevScaleBias 把瓦片 UV[0,1] 映射到高程纹理的子区(xy=bias, zw=scale)。用自身高程的瓦片为
+        // 单位变换;深瓦片(z>15)采 z15 祖先纹理时,它选中本瓦片所在象限,从而一步烘焙出正确高度。
+        virtual osg::Geometry* createTileGeometry(osg::Matrix& outMatrix, osg::Texture* elevation,
+                                                  const osg::Vec3d& tileMin, const osg::Vec3d& tileMax,
+                                                  double width, double height,
+                                                  const osg::Vec4& elevScaleBias = osg::Vec4(0.0f, 0.0f, 1.0f, 1.0f)) const;
+        virtual osg::Geometry* createTileGeometry(osg::Matrix& outMatrix, TileGeometryHandler* handler,
+                                                  const osg::Vec3d& tileMin, const osg::Vec3d& tileMax,
+                                                  double width, double height) const;
+        virtual void updateTileGeometry(osg::Geometry* geometry, osg::Texture* elevation, const std::string& range,
+                                        const osg::Vec3d& tileMin, const osg::Vec3d& tileMax,
+                                        double width, double height) const;
+        virtual void updateSkirtData(osg::Geometry* geometry, double tileRefSize, bool addingTriangles) const;
+
+        enum LayerType { ELEVATION = 0, ORTHOPHOTO, OCEAN_MASK, USER, OVERLAY };
+        enum LayerState { DONE = 0, DEFERRED, FAILED };
+        enum ElevationEncoding { RAW_ELEVATION = 0, TERRARIUM_ELEVATION };
+        typedef std::pair<std::string, LayerState> DataPathPair;
+
+        virtual osg::Texture* findAndUseParentData(LayerType id, osg::Group* parent);
+        osg::Texture* createLayerImage(LayerType id, bool& emptyPath, const osgDB::Options* opt,
+                                       osg::NodeVisitor::ImageRequestHandler* irh = NULL);
+        TileGeometryHandler* createLayerHandler(LayerType id, bool& emptyPath, const osgDB::Options* opt);
+
+        /** Set layer data path with wildcards */
+        void setLayerPath(LayerType id, const std::string& p) { _layerPaths[id] = DataPathPair(p, DONE); }
+        std::string getLayerPath(LayerType id) { return _layerPaths[id].first; }
+
+        /** Set layer data path state */
+        void setLayerPathState(LayerType id, LayerState s) { _layerPaths[id].second = s; }
+        LayerState getLayerPathState(LayerType id) { return _layerPaths[id].second; }
+
+        /** Set global extent size: default is (-180, -90) to (180, 90) */
+        void setTotalExtent(const osg::Vec3d& e0, const osg::Vec3d& e1) { _extentMin = e0; _extentMax = e1; }
+        void setMinExtent(const osg::Vec3d& e) { _extentMin = e; }
+        void setMaxExtent(const osg::Vec3d& e) { _extentMax = e; }
+        const osg::Vec3d& getMinExtent() const { return _extentMin; }
+        const osg::Vec3d& getMaxExtent() const { return _extentMax; }
+
+        /** Set tile column (x), tile row (y) and tile level (z) */
+        void setTileNumber(int x, int y, int z) { _x = x; _y = y; _z = z; }
+        void setTileX(int v) { _x = v; } int getTileX() const { return _x; }
+        void setTileY(int v) { _y = v; } int getTileY() const { return _y; }
+        void setTileZ(int v) { _z = v; } int getTileZ() const { return _z; }
+
+        /** Set a custom function to construct tile path string */
+        void setCreatePathFunction(CreatePathFunc f) { _createPathFunc = f; }
+        CreatePathFunc getCreatePathFunction() const { return _createPathFunc; }
+
+        // 可选:Terrarium 高程解码后的逐像素过滤钩子(应用注入,如区域性高程修正)。参数:
+        // float 高度数组(米,行序同 decodeTerrarium 输出=自底向上/南在 row 0)、宽、高、
+        // 瓦片 x/y/z(与 UrlPathFunction 相同约定,y 为 TMS 行号)。注意:若应用的路径函数
+        // 对深瓦片返回祖先瓦片(如 EarthExplorer z>15→z15),传入的仍是深瓦片坐标而图像
+        // 内容是祖先瓦片,过滤函数需按同一规则自行换算。默认 NULL = 不过滤,零影响。
+        typedef void (*ElevationFilterFunc)(float* heights, int w, int h, int x, int y, int z);
+        void setElevationFilterFunction(ElevationFilterFunc f) { _elevationFilterFunc = f; }
+        ElevationFilterFunc getElevationFilterFunction() const { return _elevationFilterFunc; }
+
+        void setElevationEncoding(ElevationEncoding e) { _elevationEncoding = e; }
+        ElevationEncoding getElevationEncoding() const { return _elevationEncoding; }
+
+        // Terrarium PNG encodes height in RGB: height = (R*256 + G + B/256) - 32768 (meters)
+        static float decodeTerrariumHeight(unsigned char r, unsigned char g, unsigned char b)
+        { return ((float)r * 256.0f + (float)g + (float)b / 256.0f) - 32768.0f; }
+
+        // Convert an 8-bit RGB Terrarium image into a single-channel GL_FLOAT height image (meters)
+        static osg::Image* decodeTerrarium(const osg::Image* src);
+
+        /** Set tile skirt length ratio */
+        void setSkirtRatio(float s) { _skirtRatio = s; }
+        float getSkirtRatio() const { return _skirtRatio; }
+
+        /** Set evevation scale */
+        void setElevationScale(float s) { _elevationScale = s; }
+        float getElevationScale() const { return _elevationScale; }
+
+        /** Set if the tile is flatten 2D or earth 3D */
+        void setFlatten(bool b) { _flatten = b; }
+        bool getFlatten() const { return _flatten; }
+
+        /** Set image origin (bottom-left or top-left) */
+        void setBottomLeft(bool b) { _bottomLeft = b; }
+        bool getBottomLeft() const { return _bottomLeft; }
+
+        /** Set use web-mercator (square tile) or not (2:1 rectangle tile) */
+        void setUseWebMercator(bool b) { _useWebMercator = b; }
+        bool getUseWebMercator() const { return _useWebMercator; }
+
+        /** Set if all layers are loaded or not */
+        void setLayersDone(bool b) { _layersDone = b; }
+        bool getLayersDone() const { return _layersDone; }
+
+        osg::Vec3d adjustLatitudeLongitudeAltitude(const osg::Vec3d& extent, bool useSphericalMercator) const;
+        const osg::Matrix& getTileWorldToLocalMatrix() const { return _worldToLocal; }
+
+        static std::string createPath(const std::string& pseudoPath, int x, int y, int z);
+        static std::string replace(std::string& src, const std::string& match, const std::string& v, bool& c);
+        static std::pair<osg::Geometry*, TileCallback*> findParentTile(osg::Group* parentLOD);
+
+    protected:
+        virtual ~TileCallback() {}
+        virtual bool updateLayerData(osg::NodeVisitor* nv, osg::Node* node, LayerType id);
+
+        std::map<int, DataPathPair> _layerPaths;
+        std::map<std::string, osg::Vec4> _uvRangesToSet;
+        std::map<std::string, osg::ref_ptr<osg::Referenced>> _imageRequests;
+        osg::ref_ptr<osg::Texture> _elevationRef;
+        osg::ref_ptr<osg::Texture2D> _overlayPending;  // 异步加载中的 OVERLAY 本瓦片纹理(顶替期暂存,到货后 swap)
+        bool _overlayStretched = false;  // 电平触发:本瓦片当前是否处于"超缩放父级拉伸"状态,operator() 每帧续帧戳
+        osg::Matrix _worldToLocal;
+        osg::Vec3d _extentMin, _extentMax;
+        CreatePathFunc _createPathFunc;
+        ElevationFilterFunc _elevationFilterFunc;
+        ElevationEncoding _elevationEncoding;
+        int _x, _y, _z; float _skirtRatio, _elevationScale;
+        bool _withGlobeAttr, _flatten, _bottomLeft, _useWebMercator, _layersDone;
+    };
+
+    class OSGVERSE_RW_EXPORT TileManager : public osg::Referenced
+    {
+    public:
+        static TileManager* instance();
+        bool check(const std::map<int, TileCallback::DataPathPair>& paths, std::vector<int>& updated);
+        bool isHandlerExtension(const std::string& ext, std::string& suggested) const;
+
+        void setLayerPath(TileCallback::LayerType id, const std::string& p) { _layerPaths[id] = p; }
+        std::string getLayerPath(TileCallback::LayerType id) { return _layerPaths[id]; }
+
+        // 超缩放拉伸信号:updateLayerData 对 OVERLAY 做"超原生最大缩放→父级拉伸"兜底时,
+        // 记下当前帧号;app 侧据此(带去抖)显示"已达最大细节"角标。
+        void markOverlayStretchedPastNative(unsigned int frame) { _lastOverlayStretchFrame = frame; }
+        unsigned int getLastOverlayStretchFrame() const { return _lastOverlayStretchFrame; }
+
+        void setTileLoadingOptions(osgDB::Options* op) { _options = op; }
+        osgDB::Options* getTileLoadingOptions() { return _options.get(); }
+
+        bool shouldMorph(TileCallback& cb) const;
+        void updateTileGeometry(TileCallback& cb, osg::Geometry* geom);
+        osgDB::ReaderWriter* getReaderWriter(const std::string& protocol, const std::string& url);
+
+        struct DynamicTileCallback : public osg::Referenced
+        {
+            virtual bool shouldMorph(TileCallback& cb) const { return false; }
+            virtual bool updateEntireTileGeometry(TileCallback& cb, osg::Geometry* geom) = 0;
+            virtual osg::Vec3 updateTileVertex(TileCallback& cb, double lat, double lon) = 0;
+        };
+        void setDynamicCallback(DynamicTileCallback* cb) { _dynamicCallback = cb; }
+        DynamicTileCallback* getDynamicCallback() { return _dynamicCallback.get(); }
+
+    protected:
+        TileManager();
+        virtual ~TileManager() {}
+
+        std::map<int, std::string> _layerPaths;
+        std::atomic<unsigned int> _lastOverlayStretchFrame{0};   // operator()/updateLayerData 在 update 线程写,
+                                                                  // EarthControlUI 在 draw 线程读,跨线程 → atomic
+        std::map<std::string, std::string> _acceptHandlerExts;
+        std::map<std::string, osg::observer_ptr<osgDB::ReaderWriter>> _cachedReaderWriters;
+        std::mutex _cachedRWMutex;  // 并行瓦片加载:保护 _cachedReaderWriters
+        osg::ref_ptr<DynamicTileCallback> _dynamicCallback;
+        osg::ref_ptr<osgDB::Options> _options;
+    };
+}
+
+#endif

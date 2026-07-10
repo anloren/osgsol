@@ -1,0 +1,63 @@
+apply plugin: 'com.android.application'
+def ABI_FILTER = rootProject.ext.ABI_FILTER
+def GLES_PROFILE = rootProject.ext.GLES_PROFILE
+
+android {
+    namespace "org.osg"
+    compileSdk = gradle.sdkVersion
+    buildFeatures {
+        buildConfig true
+    }
+    defaultConfig {
+        minSdk gradle.minSdkVersion
+        targetSdk gradle.targetSdkVersion
+        ndk { abiFilters ABI_FILTER }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags "-frtti -fexceptions"
+                abiFilters ABI_FILTER
+                targets 'OpenThreads', 'osg', 'osgDB', 'osgUtil', 'osgGA', 'osgText', 'osgTerrain',
+                        'osgSim', 'osgViewer', 'osgdb_dds', 'osgdb_glsl', 'osgdb_trans',
+                        'osgdb_rot', 'osgdb_scale', 'osgdb_osg', 'osgdb_rgb', 'osgdb_bmp',
+                        'osgdb_deprecated_osg', 'osgdb_deprecated_osgsim', 'osgdb_deprecated_osgtext',
+                        'osgdb_deprecated_osgviewer', 'osgdb_deprecated_osgterrain',
+                        'osgdb_serializers_osg', 'osgdb_serializers_osgsim', 'osgdb_serializers_osgtext',
+                        'osgdb_serializers_osgviewer', 'osgdb_serializers_osgterrain'
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=Debug", "-DOPENGL_PROFILE=${GLES_PROFILE}"
+                }
+            }
+        }
+        release {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=Release", "-DOPENGL_PROFILE=${GLES_PROFILE}"
+                }
+            }
+            minifyEnabled = false
+            proguardFiles.add(file('proguard-rules.txt'))
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "./CMakeLists.txt"
+        }
+    }
+}
+
+gradle.buildFinished {
+    fileTree(".cxx").visit { details ->
+        if (details.directory && details.file.listFiles()?.length == 0) {
+            details.file.deleteDir()
+        }
+    }
+}
+
+preBuild.dependsOn ":thirdparty:build"

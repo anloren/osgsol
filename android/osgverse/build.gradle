@@ -1,0 +1,60 @@
+apply plugin: 'com.android.application'
+def ABI_FILTER = rootProject.ext.ABI_FILTER
+
+android {
+    namespace "org.osgverse"
+    compileSdk = gradle.sdkVersion
+    buildFeatures {
+        buildConfig true
+    }
+    defaultConfig {
+        minSdk gradle.minSdkVersion
+        targetSdk gradle.targetSdkVersion
+        ndk { abiFilters ABI_FILTER }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags "-frtti -fexceptions"
+                abiFilters ABI_FILTER
+                targets 'osgVerseDependency', 'osgVerseModeling', 'osgVerseUI', 'osgVerseScript',
+                        'osgVerseReaderWriter', 'osgVersePipeline', 'osgVerseAnimation', 'osgVerseAI',
+                        'osgVerseWrappers', 'osgdb_verse_tiles', 'osgdb_verse_ept', 'osgdb_verse_fbx',
+                        'osgdb_verse_gltf', 'osgdb_verse_image', 'osgdb_verse_ktx', 'osgdb_verse_leveldb',
+                        'osgdb_verse_mvt', 'osgdb_verse_tms', 'osgdb_verse_web'
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=Debug"
+                }
+            }
+        }
+        release {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=Release"
+                }
+            }
+            minifyEnabled = false
+            proguardFiles.add(file('proguard-rules.txt'))
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "./CMakeLists.txt"
+        }
+    }
+}
+
+gradle.buildFinished {
+    fileTree(".cxx").visit { details ->
+        if (details.directory && details.file.listFiles()?.length == 0) {
+            details.file.deleteDir()
+        }
+    }
+}
+
+preBuild.dependsOn ":osg:build"

@@ -1,0 +1,6 @@
+[{"calls":[{"name":"get_gdacs_summary","args":{}}]},
+ {"calls":[{"name":"show_chart","args":{"type":"bar","title":"GDACS 预警等级分布","labels":["Red","Orange"],"values":[1,2]}}]},
+ {"calls":[{"name":"fly_to","args":{"lat":12.7,"lon":155.3,"alt_km":300}}]},
+ {"calls":[{"name":"fly_to","args":{"lat":17.4,"lon":110.4,"alt_km":300}}]},
+ {"calls":[{"name":"fly_to","args":{"lat":-19.706,"lon":46.966,"alt_km":300}}]},
+ {"text":"过去 24 小时简报:1 条红色预警(关岛/北马里亚纳热带气旋),另有 2 条橙色预警(中国/越南热带气旋、马达加斯加干旱),已逐条飞览。"}]

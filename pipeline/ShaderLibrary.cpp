@@ -1,0 +1,487 @@
+#include <osg/ValueObject>
+#include <osgDB/ReadFile>
+#include <osgDB/FileUtils>
+#include "Pipeline.h"
+#include "ShadowModule.h"
+#include "ShaderLibrary.h"
+#include <iostream>
+#include <sstream>
+using namespace osgVerse;
+
+static std::string trimString(const std::string& str)
+{
+    if (!str.size()) return str;
+    std::string::size_type first = str.find_first_not_of(" \t");
+    std::string::size_type last = str.find_last_not_of("  \t\r\n");
+    if ((first == str.npos) || (last == str.npos)) return std::string("");
+    return str.substr(first, last - first + 1);
+}
+
+ShaderLibrary* ShaderLibrary::instance()
+{
+    static osg::ref_ptr<ShaderLibrary> s_instance = new ShaderLibrary;
+    return s_instance.get();
+}
+
+ShaderLibrary::ShaderLibrary()
+{}
+
+ShaderLibrary::~ShaderLibrary()
+{}
+
+void ShaderLibrary::updateModuleData(PreDefinedModule m, osg::Shader::Type type,
+                                     const std::string& baseDir, const std::string& name)
+{
+    std::ifstream fin(baseDir + name + ".module.h");
+    osg::ref_ptr<osg::Shader> shader = osgDB::readRefShaderFile(baseDir + name + ".module.glsl");
+    std::string moduleMarker = "//! osgVerse module: " + name + "\n";
+
+    if (fin && shader.valid())
+    {
+        std::istreambuf_iterator<char> eos;
+        _moduleHeaders[m] = std::string(std::istreambuf_iterator<char>(fin), eos);
+        _moduleShaders[m] = shader;
+        shader->setName(name + ".module"); shader->setType(type);
+        shader->setShaderSource(moduleMarker + shader->getShaderSource());
+    }
+    else
+        OSG_WARN << "[ShaderLibrary] Shader module " << name << " not found. "
+                 << "Your base directory <" << baseDir << "> may be broken." << std::endl;
+}
+
+void ShaderLibrary::refreshModules(const std::string& baseDir)
+{
+    updateModuleData(UTILITY_SHADERS, osg::Shader::VERTEX, baseDir, "common_vert");
+    updateModuleData(UTILITY_SHADERS, osg::Shader::FRAGMENT, baseDir, "common_frag");
+    updateModuleData(LIGHTING_SHADERS, osg::Shader::FRAGMENT, baseDir, "lighting");
+}
+
+void ShaderLibrary::updateProgram(osg::Program& program, Pipeline* pipeline,
+                                  int moduleFlags, bool needDefinitions)
+{
+    int cxtVer = 0, glslVer = 0; guessOpenGLVersions(cxtVer, glslVer);
+    if (needDefinitions)
+    {
+        for (size_t i = 0; i < program.getNumShaders(); ++i)
+        {
+            if (!pipeline) createShaderDefinitions(*program.getShader(i), cxtVer, glslVer);
+            else pipeline->createShaderDefinitionsFromPipeline(program.getShader(i));
+        }
+    }
+
+    std::vector<osg::ref_ptr<osg::Shader>> shadersToAdd;
+    for (std::map<PreDefinedModule, osg::ref_ptr<osg::Shader>>::iterator
+         itr = _moduleShaders.begin(); itr != _moduleShaders.end(); ++itr)
+    {
+        bool alreadyAdded = false;
+        osg::Shader::Type type = itr->second->getType();
+        std::vector<osg::Shader*> shadersToHaveHeader;
+        if ((moduleFlags & itr->first) == 0) continue;
+
+        for (size_t i = 0; i < program.getNumShaders(); ++i)
+        {   // check if existing shaders can have module declarations
+            osg::Shader* s = program.getShader(i);
+            if (s == itr->second) { alreadyAdded = true; break; }
+            else if (s->getShaderSource().empty()) continue;
+            else if (s->getType() == type) shadersToHaveHeader.push_back(s);
+        }
+
+        if (!alreadyAdded)
+        {   // add declarations and ready to add modules
+#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
+            std::string defs = itr->second->getShaderSource() + "\n";
+#else
+            std::string defs = _moduleHeaders[itr->first] + "\n";
+#endif
+
+            for (size_t i = 0; i < shadersToHaveHeader.size(); ++i)
+            {
+                std::string code = shadersToHaveHeader[i]->getShaderSource();
+                std::string line; std::stringstream ss; ss << code;
+                while (std::getline(ss, line))
+                {
+                    line = trimString(line); if (line.empty()) continue;
+                    if (line.find("precision") != std::string::npos) continue;
+                    if (line[0] == '#' || line[0] == '/') continue; else break;
+                }
+
+                size_t posToInsert = line.empty() ? std::string::npos : code.find(line);
+                if (posToInsert != std::string::npos)
+                {
+                    shadersToHaveHeader[i]->setShaderSource(
+                        code.substr(0, posToInsert) + defs + code.substr(posToInsert));
+                }
+                else
+                    shadersToHaveHeader[i]->setShaderSource(defs + code);
+            }
+#if !defined(OSG_GLES2_AVAILABLE) && !defined(OSG_GLES3_AVAILABLE)
+            shadersToAdd.push_back(itr->second);
+#endif
+        }
+    }
+
+    if (!shadersToAdd.empty())
+    {
+        for (size_t i = 0; i < shadersToAdd.size(); ++i)
+            program.addShader(shadersToAdd[i].get());
+        program.dirtyProgram();
+    }
+}
+
+void ShaderLibrary::createShaderDefinitions(osg::Shader& shader, int glVer, int glslVer,
+                                            const std::vector<std::string>& userDefs,
+                                            const osgDB::ReaderWriter::Options* options)
+{
+    std::vector<std::string> extraDefs; processIncludes(shader, options);
+    std::string source = shader.getShaderSource();
+    if (source.find("//! osgVerse") != std::string::npos) return;
+
+    std::string m_mvp = "gl_ModelViewProjectionMatrix", m_mv = "gl_ModelViewMatrix";
+    std::string m_p = "gl_ProjectionMatrix", m_n = "gl_NormalMatrix";
+    std::string tex1d = "texture", tex2d = "texture", tex2dArr = "texture", tex3d = "texture", texCube = "texture";
+    std::string vin = "in", vout = "out", fin = "in", fout = "out", finalColor = "//";
+#if defined(OSG_GLES3_AVAILABLE) || defined(OSG_GL3_AVAILABLE)
+    if (false)
+#elif !defined(OSG_GLES2_AVAILABLE)
+    if (glslVer <= 120)
+#endif
+    {
+        tex1d = "texture1D"; tex2d = "texture2D"; tex2dArr = "texture2DArray";
+        tex3d = "texture3D"; texCube = "textureCube";
+        vin = "attribute"; vout = "varying"; fin = "varying"; fout = "";
+        finalColor = "gl_FragColor = ";
+
+        extraDefs.push_back("float round(float v) { return v<0.0 ? ceil(v-0.5) : floor(v+0.5); }");
+        extraDefs.push_back("vec2 round(vec2 v) { return vec2(round(v.x), round(v.y)); }");
+        extraDefs.push_back("vec3 round(vec3 v) { return vec3(round(v.x), round(v.y), round(v.z)); }");
+        extraDefs.push_back("vec4 textureLod(sampler2D t, vec2 uv, float l) { return texture2D(t, uv); }");
+        extraDefs.push_back("mat3 transpose(mat3 m) { return mat3("
+                            "vec3(m[0].x, m[1].x, m[2].x), vec3(m[0].y, m[1].y, m[2].y), vec3(m[0].z, m[1].z, m[2].z)); }");
+        extraDefs.push_back("mat4 transpose(mat4 m) { return mat4("
+                            "vec4(m[0].x, m[1].x, m[2].x, m[3].x), vec4(m[0].y, m[1].y, m[2].y, m[3].y),"
+                            "vec4(m[0].z, m[1].z, m[2].z, m[3].z), vec4(m[0].w, m[1].w, m[2].w, m[3].w)); }");
+    }
+
+    osg::Shader::Type shaderType = shader.getType();
+    if (shaderType == osg::Shader::GEOMETRY)
+    {
+#if defined(OSG_GLES3_AVAILABLE) || defined(OSG_GL3_AVAILABLE)
+        extraDefs.push_back("vec4 VERSE_GS_POS(int i) { return gl_in[i].gl_Position; }");
+#else
+        extraDefs.push_back("vec4 VERSE_GS_POS(int i) { return gl_PositionIn[i]; }");
+#endif
+    }
+
+    if (shaderType == osg::Shader::VERTEX || shaderType == osg::Shader::GEOMETRY)
+    {
+#if !defined(VERSE_EMBEDDED_GLES2)
+        if (glVer >= 300 && glslVer >= 140)
+        {
+            m_mvp = "osg_ModelViewProjectionMatrix"; m_mv = "osg_ModelViewMatrix";
+            m_p = "osg_ProjectionMatrix"; m_n = "osg_NormalMatrix";
+            extraDefs.push_back("uniform mat4 osg_ModelViewProjectionMatrix, "
+                                "osg_ModelViewMatrix, osg_ProjectionMatrix;");
+            extraDefs.push_back("uniform mat3 osg_NormalMatrix;");
+            if (shaderType == osg::Shader::VERTEX)
+            {
+                extraDefs.push_back("VERSE_VS_IN vec4 osg_Vertex, osg_Color, "
+                                    "osg_MultiTexCoord0, osg_MultiTexCoord1;");
+                extraDefs.push_back("VERSE_VS_IN vec3 osg_Normal;");
+            }
+        }
+        else
+#endif
+        {
+            extraDefs.push_back("#define osg_Vertex gl_Vertex");
+            extraDefs.push_back("#define osg_Color gl_Color");
+            extraDefs.push_back("#define osg_MultiTexCoord0 gl_MultiTexCoord0");
+            extraDefs.push_back("#define osg_MultiTexCoord1 gl_MultiTexCoord1");
+            extraDefs.push_back("#define osg_Normal gl_Normal");
+        }
+    }
+    extraDefs.push_back("#define VERSE_SRCIPT_DEF");
+    extraDefs.push_back("void VERSE_SCRIPT_FUNC(int pos) {}");
+
+    std::vector<std::string> extLines;
+    size_t extPos = source.find("#extension");
+    while (extPos != std::string::npos)
+    {
+        size_t extEndPos = source.find("\n", extPos + 10);
+        if (extEndPos == std::string::npos) break;
+
+        std::string pre = source.substr(0, extPos);
+        std::string post = source.substr(extEndPos + 1);
+        extLines.push_back(source.substr(extPos, extEndPos - extPos));
+        source = pre + post; extPos = source.find("#extension");
+    }
+
+    if (shaderType == osg::Shader::GEOMETRY)
+    {
+        extLines.push_back("#extension GL_EXT_geometry_shader4: enable");
+    }
+    else
+    {
+#if defined(OSG_GLES1_AVAILABLE) || defined(OSG_GLES2_AVAILABLE)
+        extLines.push_back("#extension GL_EXT_draw_buffers: enable");
+        extLines.push_back("#extension GL_OES_standard_derivatives: enable");
+#endif
+    }
+
+    std::stringstream ss;
+#if defined(OSG_GL3_AVAILABLE)
+    ss << "#version " << osg::maximum(glslVer, 330) << " core" << std::endl;
+    ss << "#define VERSE_GLES3 1" << std::endl;
+#elif defined(OSG_GLES3_AVAILABLE)
+    ss << "#version " << osg::maximum(glslVer, 300) << " es" << std::endl;
+    ss << "#define VERSE_GLES3 1" << std::endl;
+#elif defined(OSG_GLES1_AVAILABLE) || defined(OSG_GLES2_AVAILABLE)
+    ss << "#define VERSE_GLES2 1" << std::endl;
+#else
+    if (glslVer > 120)
+    {
+        if (glslVer < 300) ss << "#version " << glslVer << std::endl;
+        else ss << "#version " << glslVer << " compatibility" << std::endl;
+    }
+#endif
+
+    for (size_t i = 0; i < extLines.size(); ++i) ss << extLines[i] << std::endl;
+#if defined(VERSE_EMBEDDED_GLES2)
+    ss << "#define VERSE_WEBGL1 1" << std::endl;
+#elif defined(VERSE_EMBEDDED_GLES3)
+    ss << "#define VERSE_WEBGL2 1" << std::endl;
+#endif
+    ss << "//! osgVerse generated shader: " << glslVer << std::endl;
+
+#if defined(OSG_GLES3_AVAILABLE)
+    ss << "precision highp float;" << std::endl << "precision highp sampler2D;" << std::endl
+       << "precision mediump sampler3D;" << std::endl;
+#elif defined(OSG_GLES2_AVAILABLE)
+    ss << "precision highp float;" << std::endl;
+#endif
+    if (shaderType == osg::Shader::VERTEX || shaderType == osg::Shader::GEOMETRY)
+    {
+        ss << "#define VERSE_MATRIX_MVP " << m_mvp << std::endl;
+        ss << "#define VERSE_MATRIX_MV " << m_mv << std::endl;
+        ss << "#define VERSE_MATRIX_P " << m_p << std::endl;
+        ss << "#define VERSE_MATRIX_N " << m_n << std::endl;
+        ss << "#define VERSE_VS_IN " << vin << std::endl;
+        ss << "#define VERSE_VS_OUT " << vout << std::endl;
+    }
+    else if (shaderType == osg::Shader::FRAGMENT)
+    {
+        ss << "#define VERSE_FS_IN " << fin << std::endl;
+        ss << "#define VERSE_FS_OUT " << fout << std::endl;
+        ss << "#define VERSE_FS_FINAL " << finalColor << std::endl;
+        ss << "#define VERSE_MAX_SHADOWS " << MAX_SHADOWS << std::endl;
+    }
+    ss << "#define VERSE_TEX1D " << tex1d << std::endl;
+    ss << "#define VERSE_TEX2D " << tex2d << std::endl;
+    ss << "#define VERSE_TEX2DARRAY " << tex2dArr << std::endl;
+    ss << "#define VERSE_TEX3D " << tex3d << std::endl;
+    ss << "#define VERSE_TEXCUBE " << texCube << std::endl;
+
+    for (size_t i = 0; i < extraDefs.size(); ++i) ss << extraDefs[i] << std::endl;
+    for (size_t i = 0; i < userDefs.size(); ++i) ss << userDefs[i] << std::endl;
+    if (source.find("#include") != std::string::npos)
+    {
+        OSG_WARN << "[Pipeline] Find not working '#include' flags: "
+                 << shader.getName() << std::endl;
+    }
+    ss << "//! USER GLSL CODE" << std::endl;
+
+    std::string prefixSource = ss.str();
+    size_t count = std::count(prefixSource.begin(), prefixSource.end(), '\n');
+    shader.setShaderSource(prefixSource + source);
+    shader.setUserValue("PrefixCount", (int)count);
+
+    //std::cout << "=== " << shader.getName() << " ===\n" << shader.getShaderSource() << "\n";
+}
+
+void ShaderLibrary::processIncludes(osg::Shader& shader, const osgDB::ReaderWriter::Options* options) const
+{
+    std::string code = shader.getShaderSource();
+    std::string definesValue, startOfIncludeMarker("// BEGIN: ");
+    std::string endOfIncludeMarker("// END: "), failedLoadMarker("// FAILED: ");
+    shader.getUserValue("Definitions", definesValue);
+
+#if defined(__APPLE__)
+    std::string endOfLine("\r");
+#elif defined(_WIN32)
+    std::string endOfLine("\r\n");
+#else
+    std::string endOfLine("\n");
+#endif
+
+    std::string::size_type pos = 0, pragma_pos = 0, include_pos = 0, defines_pos = 0;
+    std::vector<std::string> defines; osgDB::split(definesValue, defines, ',');
+    while ((pos != std::string::npos) && (((pragma_pos = code.find("#pragma", pos)) != std::string::npos) ||
+                                           (include_pos = code.find("#include", pos)) != std::string::npos))
+    {
+        pos = (pragma_pos != std::string::npos) ? pragma_pos : include_pos;
+        std::string::size_type start_of_pragma_line = pos;
+        std::string::size_type end_of_line = code.find_first_of("\n\r", pos);
+        if (pragma_pos != std::string::npos)
+        {   // we have #pragma usage so skip to the start of the first non white space
+            pos = code.find_first_not_of(" \t", pos + 7);
+            if (pos == std::string::npos) break;
+
+            // check for include part of #pragma include usage
+            int jumpOverKeyword = 7;
+            if (!defines.empty() && code.compare(pos, 14, "import_defines") == 0)
+                { defines_pos = pos + 14; jumpOverKeyword = 14; }
+            else if (code.compare(pos, 7, "include") != 0)
+                { pos = end_of_line; continue; }
+
+            // found include entry so skip to next non white space
+            pos = code.find_first_not_of(" \t", pos + jumpOverKeyword);
+            if (pos == std::string::npos) break;
+        }
+        else
+        {   // we have #include usage so skip to next non white space
+            pos = code.find_first_not_of(" \t", pos + 8);
+            if (pos == std::string::npos) break;
+        }
+
+        std::string::size_type num_characters = (end_of_line == std::string::npos)
+                                              ? code.size() - pos : end_of_line - pos;
+        if (num_characters == 0) continue;
+
+        // prune trailing white space
+        while (num_characters > 0 && (code[pos + num_characters - 1] == ' ' ||
+               code[pos + num_characters - 1] == '\t')) --num_characters;
+        if (code[pos] == '\"')
+        {
+            if (code[pos + num_characters - 1] != '\"') num_characters -= 1;
+            else num_characters -= 2; ++pos;
+        }
+        else if (code[pos] == '(')
+        {
+            if (code[pos + num_characters - 1] != ')') num_characters -= 1;
+            else num_characters -= 2; ++pos;
+        }
+
+        std::string fileOrDefines(code, pos, num_characters);
+        code.erase(start_of_pragma_line, (end_of_line == std::string::npos) ?
+                   (code.size() - start_of_pragma_line) : (end_of_line - start_of_pragma_line));
+        pos = start_of_pragma_line;
+
+        // Handle 'import_defines'
+        if (defines_pos > 0)
+        {
+            std::vector<std::string> expects; osgDB::split(fileOrDefines, expects, ',');
+            for (size_t k = 0; k < expects.size(); ++k)
+            {
+                std::string key = trimString(expects[k]), defLine = "#define ";
+                for (size_t m = 0; m < defines.size(); ++m)
+                {
+                    if (key != trimString(defines[m])) continue; else defLine += key + ";\n";
+                    code.insert(pos, defLine); pos += defLine.size(); break;
+                }
+            }
+            continue;
+        }
+
+        // Handle 'including file'
+        osg::ref_ptr<osg::Shader> innerShader;
+        std::string filename = fileOrDefines;
+        std::string realFilename = osgDB::findDataFile(filename);
+        if (!realFilename.empty()) innerShader = osgDB::readRefShaderFile(realFilename, options);
+        if (!innerShader) innerShader = osgDB::readRefShaderFile(SHADER_DIR + filename, options);
+
+        if (innerShader.valid())
+        {
+            if (!startOfIncludeMarker.empty())
+            {
+                code.insert(pos, startOfIncludeMarker); pos += startOfIncludeMarker.size();
+                code.insert(pos, filename); pos += filename.size();
+                code.insert(pos, endOfLine); pos += endOfLine.size();
+            }
+
+            code.insert(pos, innerShader->getShaderSource());
+            pos += innerShader->getShaderSource().size();
+            if (!endOfIncludeMarker.empty())
+            {
+                code.insert(pos, endOfIncludeMarker); pos += endOfIncludeMarker.size();
+                code.insert(pos, filename); pos += filename.size();
+                code.insert(pos, endOfLine); pos += endOfLine.size();
+            }
+        }
+        else
+        {
+            if (!failedLoadMarker.empty())
+            {
+                code.insert(pos, failedLoadMarker); pos += failedLoadMarker.size();
+                code.insert(pos, filename); pos += filename.size();
+                code.insert(pos, endOfLine); pos += endOfLine.size();
+            }
+            OSG_WARN << "[ShaderLibrary] Failed to include " << filename << std::endl;
+        }
+    }
+    shader.setShaderSource(code);
+}
+
+ScriptableProgram::ScriptableProgram() : osg::Program(), _dirty(false)
+{}
+
+ScriptableProgram::ScriptableProgram(const ScriptableProgram& rhs, const osg::CopyOp& copyop)
+:   osg::Program(rhs, copyop), _segments(rhs._segments), _definitions(rhs._definitions),
+    _originalShaderCodes(rhs._originalShaderCodes), _dirty(rhs._dirty) {}
+
+void ScriptableProgram::addDefinitions(osg::Shader::Type t, const std::string& code)
+{ _definitions[t].push_back(code); _dirty = true; }
+
+void ScriptableProgram::addSegment(osg::Shader::Type t, int pos, const std::string& code)
+{ _segments[t][pos].push_back(code); _dirty = true; }
+
+void ScriptableProgram::getSegments(osg::Shader::Type t, std::map<int, CodeSegmentList>& segments) const
+{
+    std::map<osg::Shader::Type, std::map<int, CodeSegmentList>>::const_iterator itr = _segments.find(t);
+    if (itr != _segments.end()) segments = itr->second;
+}
+
+void ScriptableProgram::getDefinitions(osg::Shader::Type t, CodeSegmentList& segments) const
+{
+    std::map<osg::Shader::Type, CodeSegmentList>::const_iterator itr = _definitions.find(t);
+    if (itr != _definitions.end()) segments = itr->second;
+}
+
+void ScriptableProgram::compileGLObjects(osg::State& state) const
+{
+    if (_dirty && (!_definitions.empty() || !_segments.empty()))
+    {
+        const std::string tag0 = "#define VERSE_SRCIPT_DEF";  // generated by ShaderLibrary
+        const std::string tag1 = "VERSE_SRCIPT_DEF", tag2 = "VERSE_SCRIPT_FUNC(";
+        for (unsigned int i = 0; i < _shaderList.size(); ++i)
+        {
+            osg::Shader* shader = _shaderList[i].get(); osg::Shader::Type type = shader->getType();
+            if (_originalShaderCodes.find(type) == _originalShaderCodes.end())
+                _originalShaderCodes[type] = shader->getShaderSource();
+
+            std::string code = _originalShaderCodes[type], toReplace;
+            CodeSegmentList definitions; getDefinitions(type, definitions);
+            std::map<int, CodeSegmentList> segments; getSegments(type, segments);
+
+            size_t posDef = code.find(tag0); if (posDef != std::string::npos) posDef += tag0.length();
+            if (!definitions.empty())
+            {
+                size_t pos = code.find(tag1, posDef); toReplace = definitions[0];
+                for (size_t k = 1; k < definitions.size(); ++k) toReplace += "\n" + definitions[k];
+                if (pos != std::string::npos) code.replace(pos, tag1.length(), toReplace);
+            }
+
+            for (std::map<int, CodeSegmentList>::iterator itr = segments.begin();
+                 itr != segments.end(); ++itr)
+            {
+                std::string tagF = tag2 + std::to_string(itr->first) + ")";
+                size_t pos = code.find(tagF, posDef); toReplace = itr->second[0];
+                for (size_t k = 1; k < itr->second.size(); ++k) toReplace += "\n" + itr->second[k];
+
+                if (pos != std::string::npos) code.replace(pos, tagF.length(), toReplace);
+                else OSG_NOTICE << "[ScriptableProgram] Inserting to non-exist position " << itr->first << "\n";
+            }
+            shader->setShaderSource(code);
+        }
+        _dirty = false;
+    }
+    osg::Program::compileGLObjects(state);
+}

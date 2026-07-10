@@ -1,0 +1,153 @@
+<html>
+<meta charset="utf-8">
+<head>
+    <title>WebRTC Page</title>
+    <script src="./ZLMRTCClient.js"></script>
+</head>
+<body>
+    <div style="text-align: center;">
+        <div>
+            <video id='video' autoplay style="text-align:left;">
+                Your browser is too old which doesn't support HTML5 video.
+            </video>
+        </div>
+        <button style="width: 100px; height: 50px;" onclick="start()">Start Earth</button>
+    </div>
+    <script>
+        var videoItem = document.getElementById('video'), player = null;
+        var isHttps = 'https:' == document.location.protocol ? true : false;
+        var isLocal = "file:" == document.location.protocol ? true : false;
+        var url = document.location.protocol + "//" + window.location.host +
+            "/index/api/webrtc?app=live&stream=stream&type=play";
+
+        console.log("Ready to start at: " + url);
+        videoItem.style.backgroundColor = "#2222aa";
+        if (!isHttps && !isLocal) {
+            // alert('');
+        }
+
+        var recvOnly = true;
+        ZLMRTCClient.GetAllScanResolution().forEach((r, i) => {
+            console.log(r.label + " (" + r.width + "x" + r.height + ")");
+        })
+
+        function start_play(w, h) {
+            player = new ZLMRTCClient.Endpoint({
+                element: videoItem, zlmsdpUrl: url,
+                simulcast: false, useCamera: false,
+                audioEnable: true, videoEnable: true,
+                recvOnly: recvOnly, debug: false,
+                resolution: { w: w, h: h },
+                usedatachannel: true,
+            });
+
+            player.on(ZLMRTCClient.Events.WEBRTC_ICE_CANDIDATE_ERROR, function (e) {
+                console.log('ICE error');
+            });
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_REMOTE_STREAMS, function (e) {
+                console.log('Ready for remote streams', e.streams);
+            });
+            player.on(ZLMRTCClient.Events.WEBRTC_OFFER_ANWSER_EXCHANGE_FAILED, function (e) {
+                console.log('Offer anwser failed', e);
+                stop();
+            });
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_LOCAL_STREAM, function (s) {
+                console.log('Stream captured');
+            });
+            player.on(ZLMRTCClient.Events.CAPTURE_STREAM_FAILED, function (s) {
+                console.log('Stream capturing failed');
+            });
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_CONNECTION_STATE_CHANGE, function (state) {
+                // https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/connectionState
+                console.log('RTC State==> ', state);
+            });
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_DATA_CHANNEL_OPEN, function (event) {
+                //console.log('Data Channel Open:', event);
+            });
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_DATA_CHANNEL_ERR, function (event) {
+                console.log('Data Channel Error :', event);
+            });
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_DATA_CHANNEL_CLOSE, function (event) {
+                //console.log('Data Channel Closed:', event);
+            });
+            player.on(ZLMRTCClient.Events.WEBRTC_ON_DATA_CHANNEL_MSG, function (event) {
+                //console.log('Data Channel Message:', event.data);
+                // TODO
+            });
+        }
+
+        function start() {
+            if (player) stop();
+            start_play(1920, 1080);
+        }
+
+        function stop() {
+            if (player) {
+                var remote = document.getElementById('video');
+                player.close();
+                player = null;
+                if (remote) {
+                    remote.srcObject = null;
+                    remote.load();
+                }
+            }
+        }
+
+        function sendData(value) {
+            // https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/send
+            if (player) player.sendMsg(value);
+        }
+
+        function closeData() {
+            if (player) player.closeDataChannel();
+        }
+
+        var mouseDown = false;
+        videoItem.onmousedown = function (event) {
+            const rect = videoItem.getBoundingClientRect();
+            var xx = (event.clientX - rect.left) / rect.width;
+            var yy = 1.0 - (event.clientY - rect.top) / rect.height;
+            var button = -1; mouseDown = true;
+            switch (event.button) {
+                case 0: button = 0; break;
+                case 1: button = 1; break;
+                case 2: button = 2; break;
+            }
+            sendData("press," + button + "," + xx + "," + yy);
+        }
+
+        videoItem.onmouseup = function (event) {
+            const rect = videoItem.getBoundingClientRect();
+            var xx = (event.clientX - rect.left) / rect.width;
+            var yy = 1.0 - (event.clientY - rect.top) / rect.height;
+            var button = -1; mouseDown = false;
+            switch (event.button) {
+                case 0: button = 0; break;
+                case 1: button = 1; break;
+                case 2: button = 2; break;
+            }
+            sendData("release," + button + "," + xx + "," + yy);
+        }
+
+        videoItem.onmousemove = function (event) {
+            const rect = videoItem.getBoundingClientRect();
+            var xx = (event.clientX - rect.left) / rect.width;
+            var yy = 1.0 - (event.clientY - rect.top) / rect.height;
+            var button = -1;
+            if (event.buttons !== undefined) {
+                switch (event.button) {
+                    case 0: button = 0; break;
+                    case 1: button = 1; break;
+                    case 2: button = 2; break;
+                }
+            }
+            sendData("move," + button + "," + xx + "," + yy);
+        }
+
+        videoItem.onmousewheel = function (event) {
+            if (event.wheelDelta > 0) sendData("wheel,1,0,0");
+            else sendData("wheel,-1,0,0");
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,264 @@
+{
+ "title": "EONET Events",
+ "description": "Natural events from EONET.",
+ "link": "https://eonet.gsfc.nasa.gov/api/v3/events",
+ "events": [
+  {
+   "id": "EONET_20878",
+   "title": "Tropical Storm Douglas",
+   "description": null,
+   "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_20878",
+   "closed": null,
+   "categories": [
+    {
+     "id": "severeStorms",
+     "title": "Severe Storms"
+    }
+   ],
+   "sources": [
+    {
+     "id": "JTWC",
+     "url": "https://www.metoc.navy.mil/jtwc/products/ep0426.tcw"
+    }
+   ],
+   "geometry": [
+    {
+     "magnitudeValue": 35.0,
+     "magnitudeUnit": "kts",
+     "date": "2026-07-02T18:00:00Z",
+     "type": "Point",
+     "coordinates": [
+      -127.3,
+      17.7
+     ]
+    },
+    {
+     "magnitudeValue": 35.0,
+     "magnitudeUnit": "kts",
+     "date": "2026-07-03T00:00:00Z",
+     "type": "Point",
+     "coordinates": [
+      -127.5,
+      18.5
+     ]
+    },
+    {
+     "magnitudeValue": 35.0,
+     "magnitudeUnit": "kts",
+     "date": "2026-07-03T06:00:00Z",
+     "type": "Point",
+     "coordinates": [
+      -128,
+      19.1
+     ]
+    }
+   ]
+  },
+  {
+   "id": "EONET_20877",
+   "title": "Typhoon Bavi",
+   "description": null,
+   "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_20877",
+   "closed": null,
+   "categories": [
+    {
+     "id": "severeStorms",
+     "title": "Severe Storms"
+    }
+   ],
+   "sources": [
+    {
+     "id": "JTWC",
+     "url": "https://www.metoc.navy.mil/jtwc/products/wp0926.tcw"
+    }
+   ],
+   "geometry": [
+    {
+     "magnitudeValue": 70.0,
+     "magnitudeUnit": "kts",
+     "date": "2026-07-02T18:00:00Z",
+     "type": "Point",
+     "coordinates": [
+      156.6,
+      12.6
+     ]
+    },
+    {
+     "magnitudeValue": 90.0,
+     "magnitudeUnit": "kts",
+     "date": "2026-07-03T00:00:00Z",
+     "type": "Point",
+     "coordinates": [
+      155.3,
+      12.7
+     ]
+    },
+    {
+     "magnitudeValue": 105.0,
+     "magnitudeUnit": "kts",
+     "date": "2026-07-03T06:00:00Z",
+     "type": "Point",
+     "coordinates": [
+      154.2,
+      12.9
+     ]
+    }
+   ]
+  },
+  {
+   "id": "EONET_20822",
+   "title": "Iceberg D33D",
+   "description": null,
+   "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_20822",
+   "closed": null,
+   "categories": [
+    {
+     "id": "seaLakeIce",
+     "title": "Sea and Lake Ice"
+    }
+   ],
+   "sources": [
+    {
+     "id": "NATICE",
+     "url": "https://usicecenter.gov/pub/Iceberg_Tabular.csv"
+    }
+   ],
+   "geometry": [
+    {
+     "magnitudeValue": 62.73,
+     "magnitudeUnit": "NM^2",
+     "date": "2026-06-25T00:00:00Z",
+     "type": "Point",
+     "coordinates": [
+      -55.51,
+      -64.35
+     ]
+    }
+   ]
+  },
+  {
+   "id": "EONET_20710",
+   "title": "Nevados del Chillan Volcano, Chile",
+   "description": null,
+   "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_20710",
+   "closed": null,
+   "categories": [
+    {
+     "id": "volcanoes",
+     "title": "Volcanoes"
+    }
+   ],
+   "sources": [
+    {
+     "id": "SIVolcano",
+     "url": "https://volcano.si.edu/volcano.cfm?vn=357070"
+    }
+   ],
+   "geometry": [
+    {
+     "magnitudeValue": null,
+     "magnitudeUnit": null,
+     "date": "2026-06-15T00:00:00Z",
+     "type": "Point",
+     "coordinates": [
+      -71.378,
+      -36.868
+     ]
+    }
+   ]
+  },
+  {
+   "id": "EONET_20409",
+   "title": "Telica Volcano, Nicaragua",
+   "description": null,
+   "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_20409",
+   "closed": null,
+   "categories": [
+    {
+     "id": "volcanoes",
+     "title": "Volcanoes"
+    }
+   ],
+   "sources": [
+    {
+     "id": "SIVolcano",
+     "url": "https://volcano.si.edu/volcano.cfm?vn=344040"
+    }
+   ],
+   "geometry": [
+    {
+     "magnitudeValue": null,
+     "magnitudeUnit": null,
+     "date": "2026-05-30T00:00:00Z",
+     "type": "Point",
+     "coordinates": [
+      -86.84,
+      12.606
+     ]
+    }
+   ]
+  },
+  {
+   "id": "EONET_20558",
+   "title": "Median Wildfire, Gooding, Idaho",
+   "description": null,
+   "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_20558",
+   "closed": null,
+   "categories": [
+    {
+     "id": "wildfires",
+     "title": "Wildfires"
+    }
+   ],
+   "sources": [
+    {
+     "id": "IRWIN",
+     "url": "https://irwin.doi.gov/observer/incidents/5c3a9dc4-43ad-4b51-9110-554a2267d827"
+    }
+   ],
+   "geometry": [
+    {
+     "magnitudeValue": 1000.0,
+     "magnitudeUnit": "acres",
+     "date": "2026-06-17T13:57:00Z",
+     "type": "Point",
+     "coordinates": [
+      -114.767567,
+      42.805867
+     ]
+    }
+   ]
+  },
+  {
+   "id": "EONET_20565",
+   "title": "TRAIL 13 (09) Wildfire, Citrus, Florida",
+   "description": "6 Miles SW from INVERNESS, FL",
+   "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_20565",
+   "closed": null,
+   "categories": [
+    {
+     "id": "wildfires",
+     "title": "Wildfires"
+    }
+   ],
+   "sources": [
+    {
+     "id": "IRWIN",
+     "url": "https://irwin.doi.gov/observer/incidents/8d86b276-309e-484d-844e-2f2f6419be72"
+    }
+   ],
+   "geometry": [
+    {
+     "magnitudeValue": 687.0,
+     "magnitudeUnit": "acres",
+     "date": "2026-06-16T23:57:00Z",
+     "type": "Point",
+     "coordinates": [
+      -82.4186111,
+      28.7994444
+     ]
+    }
+   ]
+  }
+ ]
+}

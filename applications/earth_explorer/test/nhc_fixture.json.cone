@@ -1,0 +1,15 @@
+{"type": "FeatureCollection",
+ "_note": "手工构造(见 nhc_fixture.json 头注释):layer 7 Forecast Cone;Omar 的 Polygon 故意带一个内环(洞)钉死'只取外环'规则,Six 用 MultiPolygon 钉死多面路径。",
+ "features": [
+  {"type": "Feature",
+   "geometry": {"type": "Polygon", "coordinates": [
+     [[-75.2, 25.0], [-73.9, 26.0], [-74.5, 28.5], [-76.8, 31.2], [-79.0, 33.8], [-82.2, 33.5], [-81.6, 30.4], [-78.4, 27.2], [-76.4, 25.2], [-75.2, 25.0]],
+     [[-77.0, 28.0], [-76.5, 28.5], [-77.5, 28.7], [-77.0, 28.0]]]},
+   "properties": {"stormname": "Omar", "stormtype": "HU", "basin": "al", "advdate": "1100 AM AST Sat Jul 04 2026",
+                  "advisnum": "12", "fcstprd": 120.0, "stormnum": 5.0, "idp_filedate": 1783202400000, "binnumber": "AT1"}},
+  {"type": "Feature",
+   "geometry": {"type": "MultiPolygon", "coordinates": [
+     [[[-108.5, 12.6], [-107.4, 13.3], [-108.9, 14.9], [-111.2, 15.6], [-112.4, 14.3], [-110.5, 12.9], [-108.5, 12.6]]]]},
+   "properties": {"stormname": "Six", "stormtype": "TD", "basin": "ep", "advdate": "900 AM PDT Sat Jul 04 2026",
+                  "advisnum": "2", "fcstprd": 120.0, "stormnum": 6.0, "idp_filedate": 1783202400000, "binnumber": "EP1"}}
+ ]}

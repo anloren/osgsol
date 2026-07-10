@@ -1,0 +1,12 @@
+{"type": "FeatureCollection",
+ "_note": "手工构造(见 nhc_fixture.json 头注释):layer 6 Forecast Track;Omar 单段 LineString,Paloma 故意用 MultiLineString(两段)钉死多段解析路径。",
+ "features": [
+  {"type": "Feature",
+   "geometry": {"type": "LineString", "coordinates": [[-75.2, 25.6], [-77.0, 27.1], [-78.8, 28.9], [-80.1, 31.0], [-80.6, 33.4]]},
+   "properties": {"stormname": "Omar", "stormtype": "HU", "basin": "al", "advdate": "1100 AM AST Sat Jul 04 2026",
+                  "advisnum": "12", "fcstprd": 120.0, "stormnum": 5.0, "idp_filedate": 1783202400000, "binnumber": "AT1"}},
+  {"type": "Feature",
+   "geometry": {"type": "MultiLineString", "coordinates": [[[-45.0, 14.8], [-47.5, 15.6], [-50.1, 16.5]], [[-50.1, 16.5], [-53.0, 17.8], [-56.2, 19.0]]]},
+   "properties": {"stormname": "Paloma", "stormtype": "TS", "basin": "al", "advdate": "1100 AM AST Sat Jul 04 2026",
+                  "advisnum": "4", "fcstprd": 120.0, "stormnum": 6.0, "idp_filedate": 1783202400000, "binnumber": "AT2"}}
+ ]}

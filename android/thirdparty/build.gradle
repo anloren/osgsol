@@ -1,0 +1,58 @@
+apply plugin: 'com.android.application'
+def ABI_FILTER = rootProject.ext.ABI_FILTER
+def ARM_HOST = System.getProperty("os.arch") in ["aarch64", "armv7l", "arm64"]
+
+android {
+    namespace "org.thirdparty"
+    compileSdk = gradle.sdkVersion
+    buildFeatures {
+        buildConfig true
+    }
+    defaultConfig {
+        minSdk gradle.minSdkVersion
+        targetSdk gradle.targetSdkVersion
+        ndk { abiFilters ABI_FILTER }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags "-frtti -fexceptions"
+                abiFilters ABI_FILTER
+                targets 'zlib', 'png', 'jpeg', 'freetype', 'tiff'
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=Debug", "-DARM_HOST=$ARM_HOST"
+                }
+            }
+        }
+        release {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=Release", "-DARM_HOST=$ARM_HOST"
+                }
+            }
+            minifyEnabled = false
+            proguardFiles.add(file('proguard-rules.txt'))
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "./CMakeLists.txt"
+        }
+    }
+}
+
+gradle.buildFinished {
+    fileTree(".cxx").visit { details ->
+        if (details.directory && details.file.listFiles()?.length == 0) {
+            details.file.deleteDir()
+        }
+    }
+}
+
+dependencies {
+}

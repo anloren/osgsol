@@ -1,0 +1,39 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:7.4.2'
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    afterEvaluate { project ->
+        tasks.matching { it.name.contains("assemble") }.configureEach { task ->
+            notCompatibleWithConfigurationCache("Task uses custom logic")
+            outputs.upToDateWhen { 
+                !project.hasProperty("forceRebuild") 
+            }
+        }
+        
+        tasks.matching { 
+            it.name in ["mergeDebugNativeLibs", "stripDebugDebugSymbols", "packageDebug"] 
+        }.configureEach { task ->
+            task.outputs.cacheIf { true }
+        }
+    }
+}
+
+ext {
+    ABI_FILTER = 'arm64-v8a'  // 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+    GLES_PROFILE = 'GLES3'    // 'GLES2', 'GLES3'
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.buildDir
+}

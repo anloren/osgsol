@@ -1,0 +1,56 @@
+SET(LIB_NAME osgVersePipeline)
+SET(LIBRARY_INCLUDE_FILES
+    Pipeline.h DeferredCallback.h UserInputModule.h ShadowModule.h LightModule.h HistoryBufferCallback.h
+    ResourceManager.h LightDrawable.h SkyBox.h NodeSelector.h MultiEffectNode.h
+    SymbolManager.h Drawer2D.h IncrementalCompiler.h IntersectionManager.h Rasterizer.h
+    ShaderLibrary.h RenderCallbackXR.h NISUpscaler.h Utilities.h Global.h Allocator.h
+)
+SET(LIBRARY_FILES ${LIBRARY_INCLUDE_FILES}
+    Pipeline.cpp PipelineStandard.cpp PipelineLoader.cpp DeferredCallback.cpp UserInputModule.cpp
+    ShadowModule.cpp LightModule.cpp LightDrawable.cpp HistoryBufferCallback.cpp ResourceManager.cpp
+    SkyBox.cpp NodeSelector.cpp MultiEffectNode.cpp SymbolManager.cpp Drawer2D.cpp IncrementalCompiler.cpp
+    IntersectionManager.cpp Rasterizer.cpp ShaderLibrary.cpp RenderCallbackXR.cpp
+    NISUpscaler.cpp Utilities.cpp UtilitiesEx.cpp
+)
+
+IF(MSVC AND NOT VERSE_USE_EXTERNAL_GLES)
+    SET(LIBRARY_FILES ${LIBRARY_FILES} TsfFramework.cpp TsfFramework.h)
+ENDIF()
+
+IF("avx2" IN_LIST VERSE_SIMD_FEATURES)
+    ADD_DEFINITIONS(-DVERSE_ENABLE_RASTERIZER)
+ENDIF()
+
+ADD_DEFINITIONS(-DGLEW_STATIC -DGLEW_NO_GLU)
+IF(VERSE_USE_EXTERNAL_GLES2)
+    ADD_DEFINITIONS(-DGLEW_EGL)
+ELSEIF(VERSE_USE_EXTERNAL_GLES3)
+    ADD_DEFINITIONS(-DGLEW_EGL)
+ENDIF()
+
+IF(CUDA_FOUND AND VERSE_BUILD_WITH_CUDA)
+    SET(LIBRARY_FILES ${LIBRARY_FILES} ExternalTexture2D.cpp ExternalTexture2D.h
+        CudaUtils/BitDepth.cu CudaUtils/ColorSpace.cu CudaUtils/ColorSpace.h
+        CudaUtils/Letterbox.cu CudaUtils/CudaUtilities.cu)
+    NEW_CUDA_LIBRARY(${LIB_NAME} STATIC)
+    TARGET_LINK_LIBRARIES(${LIB_NAME} ${CUDA_CUDA_LIBRARY})
+ELSEIF(MUSA_FOUND AND VERSE_BUILD_WITH_MUSA)
+    SET(LIBRARY_FILES ${LIBRARY_FILES} ExternalTexture2D.cpp ExternalTexture2D.h
+        MusaUtils/BitDepth.mu MusaUtils/ColorSpace.mu MusaUtils/ColorSpace.h
+        MusaUtils/Letterbox.mu MusaUtils/CudaUtilities.mu)
+    NEW_CUDA_LIBRARY(${LIB_NAME} STATIC)
+    TARGET_LINK_LIBRARIES(${LIB_NAME} ${MUSA_MUSA_LIBRARY})
+ELSE()
+    SET(LIBRARY_FILES ${LIBRARY_FILES} CudaUtilities_Fallback.cpp)
+    NEW_LIBRARY(${LIB_NAME} STATIC)
+ENDIF()
+
+TARGET_LINK_LIBRARIES(${LIB_NAME} ${OPENGL_LIBRARIES} osgVerseDependency osgVerseModeling)
+LINK_OSG_LIBRARY(${LIB_NAME} OpenThreads osg osgDB osgUtil osgGA osgViewer)
+TARGET_COMPILE_OPTIONS(${LIB_NAME} PUBLIC -D_SCL_SECURE_NO_WARNINGS)
+
+INSTALL(TARGETS ${LIB_NAME} EXPORT ${LIB_NAME}
+        RUNTIME DESTINATION ${INSTALL_BINDIR} COMPONENT libosgverse
+        LIBRARY DESTINATION ${INSTALL_LIBDIR} COMPONENT libosgverse
+        ARCHIVE DESTINATION ${INSTALL_ARCHIVEDIR} COMPONENT libosgverse-dev)
+INSTALL(FILES ${LIBRARY_INCLUDE_FILES} DESTINATION ${INSTALL_INCDIR}/osgVerse/pipeline COMPONENT libosgverse-dev)

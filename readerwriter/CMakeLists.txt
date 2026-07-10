@@ -1,0 +1,81 @@
+SET(LIB_NAME osgVerseReaderWriter)
+SET(LIBRARY_INCLUDE_FILES
+    Utilities.h OsgbTileOptimizer.h DracoProcessor.h FileCache.h DatabasePager.h
+    TileCallback.h EarthManipulator.h GraphicsWindowGLFW.h
+    MaterialGraph.h NamedObjectFinder.h FeatureDefinition.h Export.h
+)
+SET(LIBRARY_FILES ${LIBRARY_INCLUDE_FILES}
+    LoadSceneFBX.cpp LoadSceneFBX.h LoadSceneGLTF.cpp LoadSceneGLTFv1.cpp LoadSceneGLTF.h
+    LoadTextureKTX.cpp LoadTextureKTX.h SaveSceneGLTF.cpp SaveSceneGLTF.h MimeTypes.cpp GLEnums.cpp
+    DracoProcessor.cpp FileCache.cpp DatabasePager.cpp OsgbTileOptimizer.cpp FeatureDefinition.cpp
+    TileCallback.cpp EarthManipulator.cpp GraphicsWindowGLFW.cpp
+    MaterialGraph.cpp Utilities.cpp UtilitiesEx.cpp
+)
+
+IF(WIN32 AND NOT VERSE_USE_EXTERNAL_GLES)
+    SET(LIBRARY_WIN32_INCLUDE_FILES GraphicsWindowWin32NV.h)
+    SET(LIBRARY_INCLUDE_FILES ${LIBRARY_INCLUDE_FILES} ${LIBRARY_WIN32_INCLUDE_FILES})
+    SET(LIBRARY_FILES ${LIBRARY_FILES} GraphicsWindowWin32NV.cpp ${LIBRARY_WIN32_INCLUDE_FILES})
+ENDIF(WIN32 AND NOT VERSE_USE_EXTERNAL_GLES)
+
+IF(SDL2_FOUND OR USE_WASM_OPTIONS)
+    INCLUDE_DIRECTORIES(${SDL2_INCLUDE_DIR})
+    IF(VULKAN_FOUND)
+        SET(LIBRARY_SDL_INCLUDE_FILES VulkanExtension.h)
+        INCLUDE_DIRECTORIES(${VULKAN_INCLUDE_DIR})
+        ADD_DEFINITIONS(-DVERSE_WITH_VULKAN=1)
+    ENDIF(VULKAN_FOUND)
+
+    SET(LIBRARY_SDL_INCLUDE_FILES ${LIBRARY_SDL_INCLUDE_FILES} GraphicsWindowSDL.h)
+    SET(LIBRARY_INCLUDE_FILES ${LIBRARY_INCLUDE_FILES} ${LIBRARY_SDL_INCLUDE_FILES})
+    SET(LIBRARY_FILES ${LIBRARY_FILES} GraphicsWindowSDL.cpp ${LIBRARY_SDL_INCLUDE_FILES})
+    IF(APPLE AND NOT USE_WASM_OPTIONS)
+        SET(LIBRARY_FILES ${LIBRARY_FILES} GraphicsWindowSDL_Utils.mm)
+    ENDIF()
+ELSE()
+    SET(LIBRARY_FILES ${LIBRARY_FILES} GraphicsWindowSDL_Fallback.cpp)
+ENDIF()
+
+INCLUDE_DIRECTORIES(../3rdparty/libhv ../3rdparty/libhv/all
+                    ../3rdparty/stb ../3rdparty/rapidjson ../helpers/toolchain_builder)
+ADD_DEFINITIONS(-DVERSE_RW_LIBRARY -DKHRONOS_STATIC -DHV_STATICLIB
+                -DIDXTYPEWIDTH=32 -DREALTYPEWIDTH=32)  # METIS
+IF(DRACO_FOUND)
+    ADD_DEFINITIONS(-DVERSE_USE_DRACO)
+    INCLUDE_DIRECTORIES(${DRACO_INCLUDE_DIR})
+ENDIF(DRACO_FOUND)
+
+IF(VERSE_STATIC_BUILD)
+    NEW_LIBRARY(${LIB_NAME} STATIC)
+ELSE()
+    NEW_LIBRARY(${LIB_NAME} SHARED)
+ENDIF()
+
+TARGET_COMPILE_OPTIONS(${LIB_NAME} PUBLIC -D_SCL_SECURE_NO_WARNINGS)
+TARGET_LINK_LIBRARIES(${LIB_NAME} glfw)
+TARGET_LINK_LIBRARIES(${LIB_NAME} osgVerseDependency osgVerseAnimation osgVerseModeling osgVersePipeline)
+LINK_OSG_LIBRARY(${LIB_NAME} OpenThreads osg osgDB osgUtil osgGA osgText osgViewer)
+
+IF(SDL2_FOUND)
+    TARGET_LINK_LIBRARIES(${LIB_NAME} debug SDL2main${VERSE_DEBUG_POSTFIX} optimized SDL2main
+                                      debug SDL2${VERSE_DEBUG_POSTFIX} optimized SDL2)
+    IF(APPLE)
+        TARGET_LINK_LIBRARIES(${LIB_NAME} "-framework QuartzCore")
+        TARGET_LINK_LIBRARIES(${LIB_NAME} objc)
+    ENDIF(APPLE)
+ENDIF(SDL2_FOUND)
+
+IF(DRACO_FOUND)
+    TARGET_LINK_LIBRARIES(${LIB_NAME} debug draco${VERSE_DEBUG_POSTFIX} optimized draco)
+ENDIF(DRACO_FOUND)
+
+INSTALL(TARGETS ${LIB_NAME} EXPORT ${LIB_NAME}
+        RUNTIME DESTINATION ${INSTALL_BINDIR} COMPONENT libosgverse
+        LIBRARY DESTINATION ${INSTALL_LIBDIR} COMPONENT libosgverse
+        ARCHIVE DESTINATION ${INSTALL_ARCHIVEDIR} COMPONENT libosgverse-dev)
+INSTALL(FILES ${LIBRARY_INCLUDE_FILES} DESTINATION ${INSTALL_INCDIR}/osgVerse/readerwriter COMPONENT libosgverse-dev)
+IF(NOT VERSE_STATIC_BUILD)
+    IF(MSVC AND VERSE_INSTALL_PDB_FILES)
+        INSTALL(FILES $<TARGET_PDB_FILE:${LIB_NAME}> DESTINATION ${INSTALL_BINDIR} OPTIONAL)
+    ENDIF()
+ENDIF()

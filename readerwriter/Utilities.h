@@ -1,0 +1,456 @@
+#ifndef MANA_READERWRITER_UTILITIES_HPP
+#define MANA_READERWRITER_UTILITIES_HPP
+
+#include <osg/Transform>
+#include <osg/Geometry>
+#include <osg/Camera>
+#include <osgDB/ReaderWriter>
+#ifdef __EMSCRIPTEN__
+#   include <emscripten/fetch.h>
+#   include <emscripten.h>
+extern void emscripten_advance();
+#endif
+#include "Export.h"
+#include <functional>
+#include <queue>
+#include <mutex>
+
+#ifndef GL_ARB_texture_rg
+#define GL_RG                             0x8227
+#define GL_R8                             0x8229
+#define GL_R16                            0x822A
+#define GL_RG8                            0x822B
+#define GL_RG16                           0x822C
+#define GL_R16F                           0x822D
+#define GL_R32F                           0x822E
+#define GL_RG16F                          0x822F
+#define GL_RG32F                          0x8230
+#endif
+
+struct ma_device;
+struct ma_decoder;
+struct AudioPlayingMixer;
+
+namespace osgVerse
+{
+    class OSGVERSE_RW_EXPORT EncodedFrameObject : public osg::Object
+    {
+    public:
+        enum ImageType { FRAME_CUSTOMIZED = 0, FRAME_H264, FRAME_H265 };
+
+        EncodedFrameObject();
+        EncodedFrameObject(ImageType t, int w, int h, unsigned long long dts);
+        EncodedFrameObject(const EncodedFrameObject& obj, const osg::CopyOp& op = osg::CopyOp::SHALLOW_COPY);
+        META_Object(osgVerse, EncodedFrameObject)
+
+        void setImageType(ImageType t) { _type = t; }
+        ImageType getImageType() const { return _type; }
+
+        void setData(const std::vector<unsigned char>& d) { _data = d; }
+        const std::vector<unsigned char>& getData() const { return _data; }
+        std::vector<unsigned char>& getData() { return _data; }
+
+        void setFrameWidth(unsigned int w) { _width = w; }
+        void setFrameHeight(unsigned int h) { _height = h; }
+        unsigned int getFrameWidth() const { return _width; }
+        unsigned int getFrameHeight() const { return _height; }
+
+        void setFrameStamp(unsigned long long s) { _framestamp = s; }
+        void setDuration(unsigned long long s) { _duration = s; }
+        unsigned long long getFrameStamp() const { return _framestamp; }
+        unsigned long long getDuration() const { return _duration; }
+
+    protected:
+        std::vector<unsigned char> _data;
+        unsigned long long _framestamp, _duration;
+        unsigned int _width, _height;
+        ImageType _type;
+    };
+
+    class OSGVERSE_RW_EXPORT FixedFunctionOptimizer : public osg::NodeVisitor
+    {
+    public:
+        FixedFunctionOptimizer()
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN), _toRemoveShaders(false) {}
+        virtual ~FixedFunctionOptimizer();
+        void setRemovingOriginalShaders(bool b) { _toRemoveShaders = b; }
+
+        virtual void apply(osg::Geometry& geom);
+        virtual void apply(osg::Geode& geode);
+        virtual void apply(osg::Node& node);
+
+    protected:
+        bool removeUnusedStateAttributes(osg::StateSet* ssPtr);
+        std::vector<osg::ref_ptr<osg::StateAttribute>> _materialStack;
+        std::set<osg::ref_ptr<osg::StateSet>> _materialSets;
+        bool _toRemoveShaders;
+    };
+
+    class OSGVERSE_RW_EXPORT TextureOptimizer : public osg::NodeVisitor
+    {
+    public:
+        TextureOptimizer(bool saveAsInlineFile = false,
+                         const std::string& newTexFolder = "optimized_tex");
+        virtual ~TextureOptimizer();
+        void deleteSavedTextures();
+
+        void setOptions(osgDB::Options* op) { _ktxOptions = op; }
+        osgDB::Options* getOptions() { return _ktxOptions.get(); }
+
+        void setGeneratingMipmaps(bool b) { _generateMipmaps = b; }
+        bool getGeneratingMipmaps() const { return _generateMipmaps; }
+
+        virtual void apply(osg::Drawable& drawable);
+        virtual void apply(osg::Geode& geode);
+        virtual void apply(osg::Node& node);
+        void applyTextureAttributes(osg::StateSet* ssPtr);
+
+    protected:
+        virtual void applyTexture(osg::Texture* tex, unsigned int unit);
+        osg::Image* compressImage(osg::Texture* tex, osg::Image* img, bool toLoad);
+
+        osg::ref_ptr<osgDB::Options> _ktxOptions;
+        std::vector<std::string> _savedTextures;
+        std::string _textureFolder;
+        bool _saveAsInlineFile, _generateMipmaps;
+    };
+
+#ifdef __EMSCRIPTEN__
+    struct OSGVERSE_RW_EXPORT WebFetcher : public osg::Referenced
+    {
+        WebFetcher() : status(0), done(false) {}
+        std::vector<std::string> resHeaders;
+        std::vector<char> buffer;
+        int status; bool done;
+
+        bool httpGet(const std::string& uri, const char* userName = NULL, const char* password = NULL,
+                     const char* mimeType = NULL, const std::vector<std::string> requestHeaders = std::vector<std::string>())
+        {
+            // https://emscripten.org/docs/api_reference/fetch.html
+            emscripten_fetch_attr_t attr;
+            emscripten_fetch_attr_init(&attr); strcpy(attr.requestMethod, "GET");
+            if (userName != NULL) attr.userName = userName;
+            if (password != NULL) attr.password = password;
+            if (mimeType != NULL) attr.overriddenMimeType = mimeType;
+            if (!requestHeaders.empty())
+            {
+                std::vector<const char*> cRequestHeaders;
+                cRequestHeaders.reserve(requestHeaders.size());
+                for(size_t i = 0; i < requestHeaders.size(); ++i)
+                    cRequestHeaders.push_back(requestHeaders[i].c_str());
+                attr.requestHeaders = &cRequestHeaders[0];
+            }
+
+            attr.userData = this;
+            attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
+            attr.onreadystatechange = WebFetcher::stateChanged;
+            attr.onsuccess = WebFetcher::downloadSuccess;
+            attr.onerror = WebFetcher::downloadFailure;
+            attr.onprogress = WebFetcher::emptyCallback;
+
+            emscripten_fetch_t* f = emscripten_fetch(&attr, uri.c_str());
+            while (!done) emscripten_advance();
+            emscripten_fetch_close(f);
+            return !buffer.empty();
+        }
+
+        static std::vector<std::string> getResponseHeaders(emscripten_fetch_t* f)
+        {
+            int headerSize = (int)emscripten_fetch_get_response_headers_length(f);
+            std::string headerData; headerData.resize(headerSize + 1);
+            if (headerSize <= 0) return std::vector<std::string>();
+            emscripten_fetch_get_response_headers(f, (char*)headerData.data(), headerData.size());
+
+            char** cHeaders = emscripten_fetch_unpack_response_headers(headerData.data());
+            std::vector<std::string> headers; int ptr = 0; char* hValue = cHeaders[ptr];
+            while (hValue != NULL) { headers.push_back(hValue); hValue = cHeaders[++ptr]; }
+            emscripten_fetch_free_unpacked_response_headers(cHeaders); return headers;
+        }
+
+        static void downloadSuccess(emscripten_fetch_t* f)
+        {
+            WebFetcher* fr = (WebFetcher*)f->userData;
+            char* ptr = (char*)&f->data[0]; fr->buffer.assign(ptr, ptr + f->numBytes);
+            fr->status = f->status; fr->done = true;
+        }
+
+        static void downloadFailure(emscripten_fetch_t* f)
+        {
+            WebFetcher* fr = (WebFetcher*)f->userData;
+            fr->status = f->status; fr->done = true; fr->buffer.clear();
+        }
+
+        static void stateChanged(emscripten_fetch_t* f)
+        {
+            WebFetcher* fr = (WebFetcher*)f->userData;
+            if (f->readyState == /*HEADERS_RECEIVED*/2) fr->resHeaders = getResponseHeaders(f);
+        }
+
+        static void emptyCallback(emscripten_fetch_t* f) {}
+    };
+#endif
+
+    /** Copy certain channel of an image to another image */
+    OSGVERSE_RW_EXPORT bool copyImageChannel(osg::Image& src, int srcChannel, osg::Image& dst, int dstChannel);
+
+    /** Handle ORM (Occlusion-Roughness-Metallic) texture creation */
+    OSGVERSE_RW_EXPORT osg::Texture* constructOcclusionRoughnessMetallic(osg::Texture* origin, osg::Texture* input,
+                                                                         int chO, int chR, int chM, bool reverseO = false);
+
+    /** Convert image to compressed texture format */
+    OSGVERSE_RW_EXPORT osg::Image* compressImage(osg::Image& img, osgDB::ReaderWriter* rw = NULL, bool forceDXT1 = false);
+
+    /** Resize image using AVIR resizing algorithm */
+    OSGVERSE_RW_EXPORT bool resizeImage(osg::Image& img, int rWidth, int rHeight, bool autoCompress = true);
+
+    /** Generate mipmaps of given image */
+    OSGVERSE_RW_EXPORT bool generateMipmaps(osg::Image& image, bool useKaiser);
+
+    /** Convert RGB image to YUV */
+    enum YUVFormat { YU12 = 0/*IYUV*/, YV12, NV12, NV21 };
+    OSGVERSE_RW_EXPORT std::vector<std::vector<unsigned char>> convertRGBtoYUV(osg::Image* image, YUVFormat f = YV12);
+
+    /** Some web-related helper functions and algorithms */
+    struct OSGVERSE_RW_EXPORT WebAuxiliary
+    {
+        /** Encode data to base64 */
+        static std::string encodeBase64(const std::vector<unsigned char>& buffer);
+
+        /** Decode base64 to data */
+        static std::vector<unsigned char> decodeBase64(const std::string& data);
+
+        /** Encode string to URL style (e.g., '+' to %2B) */
+        static std::string urlEncode(const std::string& str);
+
+        /** Decode string from URL style */
+        static std::string urlDecode(const std::string& str);
+
+        /** Normalize input URL to replace ./ and ../ substrings to absolute paths */
+        static std::string normalizeUrl(const std::string& url, const std::string& sep = "/");
+
+        /* HTTP related enum and typedefs */
+        enum HttpMethod { HTTP_DELETE = 0, HTTP_GET = 1, HTTP_HEAD = 2, HTTP_POST = 3, HTTP_PUT = 4 };
+        typedef std::map<std::string, std::string> HttpRequestParams;
+        typedef std::map<std::string, std::string> HttpRequestHeaders;
+
+        struct HttpResponseData
+        {
+            int code; std::string body; HttpRequestHeaders headers;
+            HttpResponseData(int c = 0, const std::string& b = "") : code(c), body(b) {}
+            HttpResponseData(int c, const std::string& b, const HttpRequestHeaders& h) : code(c), body(b) { headers = h; }
+        };
+        typedef std::function<void (const std::string& /*url*/, const HttpRequestParams& /*paramsOrBody*/,
+                                    const HttpRequestHeaders&, HttpResponseData&)> HttpCallback;
+
+        /* TCP/UDP related enum and typedefs */
+        enum SocketMethod { UDP_CLIENT = 0, UDP_SERVER, TCP_CLIENT, TCP_SERVER, WEBSOCKET_CLIENT };
+        enum SocketState { UNCONNECTED = 0, CONNECTED, RECEIVED, WS_CONTINUE, WS_TEXT, WS_BINARY };
+        typedef std::function<void (const std::string& /*ip*/, SocketState /*state*/,
+                                    const std::vector<unsigned char>&)> SocketCallback;
+
+        /** Set an HTTP client request (e.g., GET / POST) */
+        static HttpResponseData httpRequest(const std::string& url, HttpMethod m, const std::string& body,
+                                            const HttpRequestHeaders& headers = HttpRequestHeaders(), int timeout = 0);
+        static osg::Referenced* httpRequestAsync(HttpCallback cb, const std::string& url, HttpMethod m, const std::string& body,
+                                                 const HttpRequestHeaders& headers = HttpRequestHeaders(), int timeout = 0);
+
+        /** Set an HTTP server */
+        static osg::Referenced* httpServer(const std::map<std::string, HttpCallback>& getEntries,
+                                           const std::map<std::string, HttpCallback>& postEntries,
+                                           int port, const std::string& rootDir = "./", bool allowCORS = true);
+        
+        /** Set an HTTP + websocket server */
+        static osg::Referenced* httpServerEx(const std::map<std::string, HttpCallback>& getEntries,
+                                             const std::map<std::string, HttpCallback>& postEntries,
+                                             int port, const std::string& rootDir, bool allowCORS, bool withWebsockets,
+                                             SocketCallback readCB, SocketCallback joinCB);
+
+        /** Default GET entry (*) for HTTP server which read and display common web files */
+        static void defaultGetEntry(osg::Referenced* server, const std::string& path, const HttpRequestParams& params,
+                                    const HttpRequestHeaders& req, HttpResponseData& response);
+
+        /** Set a TCP/UDP/WS socket to listen to messages */
+        static osg::Referenced* socketListener(const std::string& host, int port, SocketMethod method,
+                                               SocketCallback readCB, SocketCallback joinCB,
+                                               const HttpRequestHeaders& wsHeaders = HttpRequestHeaders());
+
+        /** Set a TCP/UDP/WS socket or websocket server for sending out messages */
+        static int socketWriter(osg::Referenced* socketListenerOrWsServer, const std::string& target,
+                                const std::vector<unsigned char>& data);
+    };
+
+    /** Compression helper functions and algorithms */
+    struct OSGVERSE_RW_EXPORT CompressAuxiliary
+    {
+        enum CompressorType { ZIP };
+
+        /** Create the archive handle */
+        static osg::Referenced* createHandle(CompressorType type, std::istream& fin);
+
+        /** Destroy the archive handle */
+        static void destroyHandle(osg::Referenced* handle);
+
+        /** List all files in the archive */
+        static std::vector<std::string> listContents(osg::Referenced* handle);
+
+        /** Extract specified file data from the archive */
+        static std::vector<unsigned char> extract(osg::Referenced* handle, const std::string& fileName);
+    };
+
+    /** Client wrapper working with osgVerse Python server (multimodel_server.py) */
+    class OSGVERSE_RW_EXPORT MultiModelClient : public osg::Referenced
+    {
+    public:
+        struct ShmHeader  // HEADER_SIZE = 64
+        {
+            uint32_t magic;        // 0x53484D45 "SHME"
+            uint32_t version, status;
+            uint32_t data_size;    // real data size
+            uint64_t buffer_size;  // total buffer size
+            uint32_t data_type;    // 0=binary, 1=text, 2=image, 3=json
+            uint32_t checksum;
+            double timestamp;
+            uint64_t flags;
+            uint64_t reserved1, reserved2;
+        };
+
+        enum ShmStatus
+        {
+            IDLE = 0, CLIENT_WRITING = 1,
+            SERVER_READING = 2, PROCESSING = 3,
+            SERVER_WRITING = 4, CLIENT_READING = 5,
+            READY = 6, INVALID = 7
+        };
+
+        MultiModelClient(const std::string& url = "http://127.0.0.1:5000");
+        bool registerFunction(const std::string& name, const std::string& code);
+        bool sendText(const std::string& text, bool asJson);
+        bool sendImage(const osg::Image& image, bool asPng);
+        bool sendBinary(const void* data, size_t size);
+
+        bool sendData(const std::string& command, const std::string& type, const void* data, size_t size,
+                      const std::string& mineType = "text/plain");
+        bool sendShm(const std::string& shm_name, const void* data, size_t size, bool bidirectional);
+        std::vector<unsigned char> receiveShm(const std::string& shm_name);
+        void cleanupShm(const std::string& shm_name);
+
+    protected:
+        bool notifyShmServer(const std::string& shm_name, bool bidirectional);
+
+        std::map<std::string, osg::ref_ptr<osg::Referenced>> _handlers;
+        std::string _serverUrl;
+    };
+
+    /** Audio playback interface */
+    class OSGVERSE_RW_EXPORT AudioPlayer : public osg::Referenced
+    {
+    public:
+        struct OSGVERSE_RW_EXPORT PcmFrame
+        { int samples = 0, channels = 0; std::vector<float> data; };
+
+        class OSGVERSE_RW_EXPORT PcmQueue : public osg::Referenced
+        {
+        public:
+            void push(PcmFrame item)
+            {
+                std::unique_lock<std::mutex> lock(_mutex);
+                _queue.push(item);
+            }
+
+            bool pop(PcmFrame& item, size_t maxDataSize)
+            {
+                std::unique_lock<std::mutex> lock(_mutex);
+                if (_queue.empty()) return false;
+
+                size_t sizeToFill = maxDataSize;
+                while (sizeToFill > 0)
+                {
+                    PcmFrame& last = _queue.front();
+                    size_t lastSize = item.data.size() + last.data.size();
+                    item.samples = last.samples; item.channels = last.channels;
+
+                    std::vector<float>::iterator it = last.data.begin();
+                    if (sizeToFill < lastSize)
+                    {   // get part of current queue data
+                        item.data.insert(item.data.end(), it, it + sizeToFill);
+                        last.data.erase(it, it + sizeToFill); sizeToFill = 0;
+                    }
+                    else
+                    {
+                        item.data.insert(item.data.end(), it, last.data.end());
+                        sizeToFill -= lastSize; _queue.pop();
+                    }
+                    if (_queue.empty()) return true;
+                }
+                return true;
+            }
+
+        private:
+            std::queue<PcmFrame> _queue;
+            std::mutex _mutex;
+        };
+
+        struct OSGVERSE_RW_EXPORT Clip : public osg::Referenced
+        {
+            enum State { STOPPED = 0, PLAYING, PAUSED } state;
+            float volume; bool looping; struct ma_decoder* decoder;
+            osg::ref_ptr<osg::Referenced> decodeData;
+            Clip() : state(STOPPED), volume(1.0f), looping(false), decoder(NULL) {}
+        };
+
+        static AudioPlayer* instance();
+        static int defaultSampleRate();
+
+        bool addQueue(const std::string& file, bool autoPlay, bool looping);
+        bool addFile(const std::string& file, bool autoPlay, bool looping);
+
+        bool removeFile(const std::string& file);
+        Clip* getClip(const std::string& file);
+        const Clip* getClip(const std::string& file) const;
+
+        std::map<std::string, osg::ref_ptr<Clip>>& getClips() { return _clips; }
+        const std::map<std::string, osg::ref_ptr<Clip>>& getClips() const { return _clips; }
+
+    protected:
+        AudioPlayer();
+        virtual ~AudioPlayer();
+
+        std::map<std::string, osg::ref_ptr<Clip>> _clips;
+        struct ma_device* _device;
+        struct AudioPlayingMixer* _mixer;
+    };
+
+    enum InitParameterFlag
+    {
+        NoParameters = 0, FixedFunctionRemoval = 0x1, TangentCreation = 0x2,
+        GeodeMerging = 0x4, GaussianSorting = 0x8, DontVertifySSL = 0x10,
+#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE) || defined(OSG_GL3_AVAILABLE)
+        DefaultParameters = FixedFunctionRemoval | TangentCreation | GaussianSorting
+#else
+        DefaultParameters = TangentCreation | GaussianSorting
+#endif
+    };
+    enum ReadingKtxFlag { ReadKtx_ToRGBA, ReadKtx_NoDXT };
+    struct InitParameters;
+
+    /** Create default initializing parameters */
+    OSGVERSE_RW_EXPORT InitParameters defaultInitParameters(int flags = DefaultParameters);
+
+    /** Load content from local file or network protocol */
+    OSGVERSE_RW_EXPORT std::vector<unsigned char> loadFileData(
+            const std::string& url, std::string& mimeType, std::string& encodingType,
+            const std::vector<std::string>& reqHeaders = std::vector<std::string>());
+    inline std::vector<unsigned char> loadFileData(const std::string& url)
+    { std::string mimeType, encodingType; return loadFileData(url, mimeType, encodingType); }
+
+    /** Get [mimetype, extension] map data, or reversed [extension, mimetype] */
+    OSGVERSE_RW_EXPORT std::map<std::string, std::string> createMimeTypeMapper(bool reversed = false);
+
+    /** Get OpenGL enum name and corresponding group/value pairs */
+    OSGVERSE_RW_EXPORT std::map<std::string, std::pair<std::string, GLenum>> createGLEnumMapper();
+
+    /** Setup KTX trancoding flags */
+    OSGVERSE_RW_EXPORT void setReadingKtxFlag(ReadingKtxFlag flag, int value);
+}
+
+#endif
