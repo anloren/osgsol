@@ -170,19 +170,18 @@ private:
             std::lock_guard<std::mutex> lock(_mutex);
             OverlayLayer* layer = findUnlocked(command.id);
             if (!layer) return;
+            if (command.kind == PendingCommand::Enable)
+                layer->enabled = command.enabled;
+            else
+                layer->opacity = command.opacity;
             layerCopy = *layer;
             apply = layer->apply;
-            if (command.kind == PendingCommand::Enable)
-                layerCopy.enabled = command.enabled;
-            else
-                layerCopy.opacity = command.opacity;
         }
         if (apply) apply(layerCopy);
     }
     void applyPresetNow(const std::string& name)
     {
-        std::vector<OverlayLayer> layerCopies;
-        std::vector<std::function<void(const OverlayLayer&)> > callbacks;
+        std::vector<PendingCommand> commands;
         {
             std::lock_guard<std::mutex> lock(_mutex);
             const Preset* preset = findPresetUnlocked(name);
@@ -191,23 +190,25 @@ private:
             for (size_t i = 0; i < _layers.size(); ++i)
             {
                 if (exemptFromPreset(_layers[i])) continue;
-                OverlayLayer layerCopy = _layers[i];
-                layerCopy.enabled = false;
-                layerCopies.push_back(layerCopy);
-                callbacks.push_back(_layers[i].apply);
+                PendingCommand command;
+                command.kind = PendingCommand::Enable;
+                command.id = _layers[i].id;
+                command.enabled = false;
+                commands.push_back(command);
             }
             for (size_t i = 0; i < preset->enabledIds.size(); ++i)
             {
                 OverlayLayer* layer = findUnlocked(preset->enabledIds[i]);
                 if (!layer || exemptFromPreset(*layer)) continue;
-                OverlayLayer layerCopy = *layer;
-                layerCopy.enabled = true;
-                layerCopies.push_back(layerCopy);
-                callbacks.push_back(layer->apply);
+                PendingCommand command;
+                command.kind = PendingCommand::Enable;
+                command.id = layer->id;
+                command.enabled = true;
+                commands.push_back(command);
             }
         }
-        for (size_t i = 0; i < callbacks.size(); ++i)
-            if (callbacks[i]) callbacks[i](layerCopies[i]);
+        for (size_t i = 0; i < commands.size(); ++i)
+            applyLayerCommandNow(commands[i]);
     }
     static bool exemptFromPreset(const OverlayLayer& l)
     { return l.group == u8"底图 / 标注" || l.needsKey || !l.apply; }

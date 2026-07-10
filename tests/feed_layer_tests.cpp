@@ -1611,6 +1611,27 @@ int main(int, char**)
         CHECK(snap[0].subtitle == "fresh");
     }
 
+    {
+        LayerManager lm;
+        OverlayLayer a; a.id = "a"; a.group = "live";
+        a.apply = [&](const OverlayLayer& layer) {
+            if (layer.enabled) lm.find("b")->enabled = false;
+        };
+        OverlayLayer b; b.id = "b"; b.group = "live";
+        b.apply = [&](const OverlayLayer& layer) {
+            if (layer.enabled) lm.find("a")->enabled = false;
+        };
+        lm.add(a); lm.add(b);
+
+        lm.setEnabled("a", true);
+        lm.setEnabled("b", true);
+        CHECK(lm.drainPending() == 2);
+
+        std::vector<OverlayLayer> snap = lm.layersSnapshot();
+        CHECK(snap[0].enabled == false);
+        CHECK(snap[1].enabled == true);
+    }
+
     // ---- FeedSelection 关层清理(Task 4 必修 B):只清"来源==本 feed"的选中 ----
     // FeedLayerImpl/setGlobalSelection 在 feed_layer.cpp 匿名命名空间,本翻译单元
     // 已 #include 其实现,可直接构造(不建场景图、不起抓取线程,纯逻辑可测)。
