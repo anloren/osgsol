@@ -226,7 +226,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
 
                 // 渲染前按 group 归并(组按首次出现顺序,组内按注册顺序)——同一 group 的层
                 // 注册不连续时(实际发生:"实时数据 / Live" 分两处注册)不再重复分组标题。
-                std::vector<OverlayLayer>& ls = _layers->layers();
+                const std::vector<OverlayLayer> ls = _layers->layersSnapshot();
                 std::vector<std::string> groupNames;
                 std::vector<std::vector<size_t> > groupItems;   // 存 layers() 原始下标
                 for (size_t i = 0; i < ls.size(); ++i)
@@ -257,7 +257,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                         continue;
                     for (size_t k = 0; k < visible.size(); ++k)
                     {
-                        OverlayLayer& l = ls[visible[k]];
+                        const OverlayLayer& l = ls[visible[k]];
                         ImGui::PushID((int)visible[k]);   // 用注册下标,跨组全局唯一
                         // needsKey（缺 key）或无 apply 回调（如常开底图）的层置灰、不可交互
                         bool inactive = l.needsKey || !l.apply;
@@ -542,8 +542,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             unsigned int curFrame = (unsigned int)_viewer->getFrameStamp()->getFrameNumber();
             unsigned int lastStretch = osgVerse::TileManager::instance()->getLastOverlayStretchFrame();
             // 找当前激活且带 maxDetailNote 的叠加层(5 层互斥,至多一个)
-            OverlayLayer* active = nullptr;
-            std::vector<OverlayLayer>& ls = _layers->layers();
+            const OverlayLayer* active = nullptr;
+            const std::vector<OverlayLayer> ls = _layers->layersSnapshot();
             for (size_t i = 0; i < ls.size(); ++i)
                 if (ls[i].enabled && !ls[i].maxDetailNote.empty()) { active = &ls[i]; break; }
             // 激活层变了 → 重置关闭态 + 自消失计时(新层的角标该重新出现)

@@ -222,11 +222,13 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
         setLayer.execute = [lmptr](const picojson::value& a) {
             std::string id = a.get("id").get<std::string>();
             bool enabled = a.get("enabled").get<bool>();
-            OverlayLayer* l = lmptr->find(id);
+            const std::vector<OverlayLayer> all = lmptr->layersSnapshot();
+            const OverlayLayer* l = nullptr;
+            for (size_t i = 0; i < all.size(); ++i)
+                if (all[i].id == id) { l = &all[i]; break; }
             if (!l)
             {
                 std::string avail;
-                std::vector<OverlayLayer>& all = lmptr->layers();
                 for (size_t i = 0; i < all.size(); ++i) avail += (i ? "," : "") + all[i].id;
                 picojson::object err;
                 err["error"] = picojson::value("unknown layer id " + id + ", available: " + avail);
@@ -237,17 +239,18 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
                 picojson::object err; err["error"] = picojson::value("layer not togglable");
                 return picojson::value(err);
             }
+            float opacity = l->opacity;
             lmptr->setEnabled(id, enabled);
             if (a.contains("opacity") && l->hasOpacity)
             {
-                float op = osg::clampBetween((float)a.get("opacity").get<double>(), 0.0f, 1.0f);
-                lmptr->setOpacity(id, op);
+                opacity = osg::clampBetween((float)a.get("opacity").get<double>(), 0.0f, 1.0f);
+                lmptr->setOpacity(id, opacity);
             }
             OSG_NOTICE << "[AIChat] set_layer " << id << " " << (enabled ? "on" : "off") << std::endl;
             picojson::object r;
             r["ok"] = picojson::value(true); r["layer"] = picojson::value(id);
             r["enabled"] = picojson::value(enabled);
-            r["opacity"] = picojson::value((double)l->opacity);
+            r["opacity"] = picojson::value((double)opacity);
             return picojson::value(r);
         };
         aiRegistry->add(setLayer);
@@ -266,7 +269,7 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
             r["lon"] = picojson::value(osg::RadiansToDegrees(lla[1]));
             r["alt_km"] = picojson::value(lla[2] / 1000.0);
             picojson::object layersObj;
-            std::vector<OverlayLayer>& all = lmptr->layers();
+            const std::vector<OverlayLayer> all = lmptr->layersSnapshot();
             for (size_t i = 0; i < all.size(); ++i)
                 layersObj[all[i].id] = picojson::value(all[i].enabled);
             r["layers"] = picojson::value(layersObj);

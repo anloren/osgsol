@@ -47,6 +47,13 @@ static void setEnvVar(const char* k, const char* v) { setenv(k, v, 1); }
 static void unsetEnvVar(const char* k) { unsetenv(k); }
 #endif
 
+static std::string readSourceFile(const std::string& relative)
+{
+    std::ifstream input(std::string(OSGVERSE_SOURCE_DIR) + "/" + relative);
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
+}
+
 // ===== P3 Task 1:网格聚合纯函数 =====
 static earthfeed::FeedPoint mkPt(double lat, double lon, float sizePx = 8.0f)
 {
@@ -1981,6 +1988,15 @@ int main(int, char**)
         CHECK(getInt("http.retries") == 3);
         CHECK((int)(getDouble("badge.seconds") + 0.5) == 5);
         std::cout << "[OK] earthcfg params" << std::endl;
+    }
+
+    {
+        const std::string ui = readSourceFile("applications/earth_explorer/EarthControlUI.h");
+        const std::string main = readSourceFile("applications/earth_explorer/earth_main.cpp");
+        CHECK(ui.find("layersSnapshot()") != std::string::npos);
+        CHECK(ui.find("->layers()") == std::string::npos);
+        CHECK(main.find("drainPending()") != std::string::npos);
+        CHECK(main.find("setSubtitle(") != std::string::npos);
     }
 
     std::cout << "feed_layer tests OK\n";

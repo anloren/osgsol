@@ -443,6 +443,20 @@ protected:
     osg::Timer_t _startTick;
 };
 
+class LayerManagerDrainHandler : public osgGA::GUIEventHandler
+{
+public:
+    explicit LayerManagerDrainHandler(LayerManager* layers) : _layers(layers) {}
+    bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&) override
+    {
+        if (ea.getEventType() == osgGA::GUIEventAdapter::FRAME && _layers)
+            _layers->drainPending();
+        return false;
+    }
+private:
+    LayerManager* _layers;
+};
+
 // 卫星拉取失败可见提示(2026-07-05 真机反馈:Starlink 被 CelesTrak 限流(403)时界面完全
 // 没有任何提示,和早前 AI 生图静默失败是同一类问题)。图层目录 UI(EarthControlUI.h)本来
 // 就每帧读一次 OverlayLayer.subtitle 现渲染(ImGui::TextDisabled),这里只需要把 subtitle
@@ -453,12 +467,14 @@ public:
     SatFetchStatusHandler(LayerManager* lm, SatelliteLayer* sat) : _lm(lm), _sat(sat) {}
     virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&)
     {
-        if (ea.getEventType() != osgGA::GUIEventAdapter::FRAME || !_sat) return false;
-        updateOne("satstations", SatCategory::Station, "");
-        updateOne("satnav", SatCategory::Navigation, "");
-        updateOne("satwx", SatCategory::Weather, "");
+        if (ea.getEventType() != osgGA::GUIEventAdapter::FRAME || !_lm || !_sat) return false;
+        const std::vector<OverlayLayer> layers = _lm->layersSnapshot();
+        updateOne(layers, "satstations", SatCategory::Station, "");
+        updateOne(layers, "satnav", SatCategory::Navigation, "");
+        updateOne(layers, "satwx", SatCategory::Weather, "");
         // Starlink 本来就有一句固定说明,拉取失败时追加而不是顶掉。
-        updateOne("starlink", SatCategory::Starlink, u8"约 7000 颗,纯视觉壳层,不可点选");
+        updateOne(layers, "starlink", SatCategory::Starlink,
+                  u8"约 7000 颗,纯视觉壳层,不可点选");
         // 只读诊断:EARTH_SAT_SUMMARY_DEBUG 设置时,每 ~120 帧打印一次卫星汇总 JSON——
         // 离屏 + 真实 CelesTrak 网络下用它验证 summaryJson 里的 ISS/天宫是真实抓取位置。
         static const bool s_sumDbg = (getenv("EARTH_SAT_SUMMARY_DEBUG") != nullptr);
@@ -471,15 +487,18 @@ public:
         return false;
     }
 protected:
-    void updateOne(const char* id, SatCategory cat, const std::string& baseSubtitle)
+    void updateOne(const std::vector<OverlayLayer>& layers, const char* id, SatCategory cat,
+                   const std::string& baseSubtitle)
     {
-        OverlayLayer* l = _lm->find(id); if (!l) return;
+        const OverlayLayer* layer = nullptr;
+        for (size_t i = 0; i < layers.size(); ++i)
+            if (layers[i].id == id) { layer = &layers[i]; break; }
+        if (!layer) return;
         std::string err = _sat->fetchErrorText(cat);
         std::string want = err.empty() ? baseSubtitle
                           : (baseSubtitle.empty() ? err : (baseSubtitle + u8" · " + err));
-        if (l->subtitle != want)
+        if (layer->subtitle != want && _lm->setSubtitle(id, want))
         {
-            l->subtitle = want;
             if (getenv("EARTH_SAT_DEBUG"))
                 std::cout << "[SatDBG] " << id << " subtitle -> \"" << want << "\"" << std::endl;
         }
@@ -510,10 +529,21 @@ public:
         if (latMin < -85.0) latMin = -85.0; if (latMax > 85.0) latMax = 85.0;
         if (lonMin < -180.0) lonMin = -180.0; if (lonMax > 180.0) lonMax = 180.0;
         _ships->setViewState(latMin, lonMin, latMax, lonMax, h);
-        OverlayLayer* l = _lm ? _lm->find("ships") : nullptr;
         // kDisabled 空串不覆盖注册时的说明文案:statusText() 在图层关闭时返回 ""，
         // 若照旧每帧覆盖会把注册时写好的 u8"AISStream 实时船位" 说明文案抹掉。
-        if (l) { std::string want = _ships->statusText(); if (!want.empty() && l->subtitle != want) l->subtitle = want; }
+        if (_lm)
+        {
+            std::string want = _ships->statusText();
+            if (!want.empty())
+            {
+                const std::vector<OverlayLayer> layers = _lm->layersSnapshot();
+                for (size_t i = 0; i < layers.size(); ++i)
+                {
+                    if (layers[i].id == "ships" && layers[i].subtitle != want)
+                    { _lm->setSubtitle("ships", want); break; }
+                }
+            }
+        }
         return false;
     }
 protected:
@@ -940,6 +970,7 @@ int main(int argc, char** argv)
 
     // 图层注册（P0：底图 + 标注）
     LayerManager layerMgr;
+    viewer.addEventHandler(new LayerManagerDrainHandler(&layerMgr));
     {
         OverlayLayer base; base.id = "base"; base.displayName = u8"卫星影像";
         base.group = u8"底图 / 标注"; base.enabled = true; base.hasOpacity = false;
@@ -1348,7 +1379,7 @@ int main(int argc, char** argv)
             else
             {
                 std::ostringstream oss;
-                std::vector<OverlayLayer>& lls = layerMgr.layers();
+                const std::vector<OverlayLayer> lls = layerMgr.layersSnapshot();
                 for (size_t i = 0; i < lls.size(); ++i)
                     oss << (i > 0 ? " " : "") << lls[i].id << "=" << (lls[i].enabled ? 1 : 0);
                 OSG_NOTICE << "[Preset] applied '" << presetEnv << "': " << oss.str() << std::endl;
