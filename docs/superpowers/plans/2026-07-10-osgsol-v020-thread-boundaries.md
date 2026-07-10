@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Work only in `/Users/USER/osgsol` from `v0.1.0` on `codex/v0.2-runtime-safety`; do not modify the original `osgverse` repository or `master`.
+- Work only in `/Users/USER/osgsol/.worktrees/v0.2-runtime-safety` from `v0.1.0` on `codex/v0.2-runtime-safety`; do not modify the original `osgverse` repository or `master`.
 - Preserve bidirectional panel wheel scrolling and independent per-photo target coordinates.
 - ImGui draw traversal may enqueue commands and read snapshots only; it must not mutate live layer/video state.
 - Every production behavior change requires a failing test observed before implementation.
@@ -94,7 +94,7 @@ Append this block beside the existing LayerManager tests in `tests/feed_layer_te
 Run:
 
 ```bash
-cmake --build /Users/USER/osgsol/build/osgsol_core --target osgVerse_Test_Feeds -j2
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_Test_Feeds -j2
 ```
 
 Expected: compilation fails because `layersSnapshot`, `drainPending`, and `setSubtitle` do not exist.
@@ -245,9 +245,9 @@ After every existing test call that expects `applyCount` or `lastAppliedPreset` 
 Run:
 
 ```bash
-cmake --build /Users/USER/osgsol/build/osgsol_core --target osgVerse_Test_Feeds -j2
-/Users/USER/osgsol/build/osgsol_core/bin/osgVerse_Test_Feeds
-ctest --test-dir /Users/USER/osgsol/build/osgsol_core -L offline --output-on-failure
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_Test_Feeds -j2
+/Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core/bin/osgVerse_Test_Feeds
+ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core -L offline --output-on-failure
 ```
 
 Expected: `osgVerse_Test_Feeds` exits 0 and all offline tests pass.
@@ -308,9 +308,9 @@ static std::string readSourceFile(const std::string& relative)
 Run:
 
 ```bash
-cmake -S /Users/USER/osgsol -B /Users/USER/osgsol/build/osgsol_core
-cmake --build /Users/USER/osgsol/build/osgsol_core --target osgVerse_Test_Feeds -j2
-/Users/USER/osgsol/build/osgsol_core/bin/osgVerse_Test_Feeds
+cmake -S /Users/USER/osgsol/.worktrees/v0.2-runtime-safety -B /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_Test_Feeds -j2
+/Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core/bin/osgVerse_Test_Feeds
 ```
 
 Expected: the source-wiring assertion fails because UI still calls `layers()` and no FRAME drain exists.
@@ -368,11 +368,11 @@ viewer.addEventHandler(new LayerManagerDrainHandler(&layerMgr));
 Run:
 
 ```bash
-cmake --build /Users/USER/osgsol/build/osgsol_core --target osgVerse_Test_Feeds -j2
-/Users/USER/osgsol/build/osgsol_core/bin/osgVerse_Test_Feeds
-cmake --build /Users/USER/osgsol/build/osgsol_core --target osgVerse_EarthExplorer -j2
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_Test_Feeds -j2
+/Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core/bin/osgVerse_Test_Feeds
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_EarthExplorer -j2
 EARTH_OFFSCREEN=1 EARTH_IME=0 EARTH_AUTOCAP=60 \
-  /Users/USER/osgsol/build/osgsol_core/bin/osgVerse_EarthExplorer
+  /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core/bin/osgVerse_EarthExplorer
 ```
 
 Expected: tests exit 0; EarthExplorer logs the offscreen context and exits after capture without a crash.
@@ -447,8 +447,8 @@ NEW_CTEST(osgVerse_Test_MediaThreading media_threading_tests.cpp offline 30)
 Run:
 
 ```bash
-cmake -S /Users/USER/osgsol -B /Users/USER/osgsol/build/osgsol_core
-cmake --build /Users/USER/osgsol/build/osgsol_core --target osgVerse_Test_MediaThreading -j2
+cmake -S /Users/USER/osgsol/.worktrees/v0.2-runtime-safety -B /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_Test_MediaThreading -j2
 ```
 
 Expected: compilation fails because `VideoUiRequestQueue` and `VideoUiRequest` do not exist.
@@ -588,10 +588,10 @@ Use `CaptureEnd`, `Confirm`, and `Cancel` for the other buttons. Render `video.c
 Run:
 
 ```bash
-cmake --build /Users/USER/osgsol/build/osgsol_core --target osgVerse_Test_MediaThreading -j2
-/Users/USER/osgsol/build/osgsol_core/bin/osgVerse_Test_MediaThreading
-cmake --build /Users/USER/osgsol/build/osgsol_core --target osgVerse_EarthExplorer -j2
-ctest --test-dir /Users/USER/osgsol/build/osgsol_core -L offline --output-on-failure
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_Test_MediaThreading -j2
+/Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core/bin/osgVerse_Test_MediaThreading
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_EarthExplorer -j2
+ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core -L offline --output-on-failure
 ```
 
 Expected: media test exits 0, EarthExplorer builds, and the offline gate is green.
@@ -636,7 +636,7 @@ Append:
 Run:
 
 ```bash
-cmake --build /Users/USER/osgsol/build/osgsol_core --target osgVerse_Test_MediaThreading -j2
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target osgVerse_Test_MediaThreading -j2
 ```
 
 Expected: compilation fails because the disposition API does not exist.
@@ -690,10 +690,10 @@ Keep parse errors in successful 200 bodies terminal, because repeated parsing of
 Run:
 
 ```bash
-cmake --build /Users/USER/osgsol/build/osgsol_core --target \
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target \
   osgVerse_Test_MediaThreading osgVerse_EarthExplorer -j2
-/Users/USER/osgsol/build/osgsol_core/bin/osgVerse_Test_MediaThreading
-ctest --test-dir /Users/USER/osgsol/build/osgsol_core -L offline --output-on-failure
+/Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core/bin/osgVerse_Test_MediaThreading
+ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core -L offline --output-on-failure
 ```
 
 Expected: all commands exit 0.
@@ -718,7 +718,7 @@ git commit -m "fix: retry transient veo polling failures"
 - [ ] **Step 1: Rebuild all first-batch targets**
 
 ```bash
-cmake --build /Users/USER/osgsol/build/osgsol_core --target \
+cmake --build /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core --target \
   osgVerse_Test_Feeds osgVerse_Test_MediaThreading osgVerse_Test_Ai_Chat \
   osgVerse_EarthExplorer -j2
 ```
@@ -728,7 +728,7 @@ Expected: build exits 0.
 - [ ] **Step 2: Run all offline tests**
 
 ```bash
-ctest --test-dir /Users/USER/osgsol/build/osgsol_core \
+ctest --test-dir /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core \
   -L offline --output-on-failure
 ```
 
@@ -740,7 +740,7 @@ Expected: 100% pass, including `osgVerse_Test_MediaThreading`.
 rm -f /tmp/osgsol-v020-thread-smoke.png
 EARTH_OFFSCREEN=1 EARTH_IME=0 EARTH_AUTOCAP=120 \
 EARTH_AUTOCAP_PATH=/tmp/osgsol-v020-thread-smoke.png \
-  /Users/USER/osgsol/build/osgsol_core/bin/osgVerse_EarthExplorer
+  /Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/osgsol_core/bin/osgVerse_EarthExplorer
 test -s /tmp/osgsol-v020-thread-smoke.png
 ```
 
