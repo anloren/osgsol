@@ -207,7 +207,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             if (_layers && ImGui::CollapsingHeader(u8"图层 Layers", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 // 预设按钮行:一键切换场景图层组合(earth_main 注册,见 LayerManager::applyPreset)
-                const std::vector<Preset>& presets = _layers->presets();
+                const std::vector<Preset> presets = _layers->presetsSnapshot();
                 for (size_t p = 0; p < presets.size(); ++p)
                 {
                     if (p > 0) ImGui::SameLine();

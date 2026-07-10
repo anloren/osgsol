@@ -990,24 +990,15 @@ int main(int argc, char** argv)
         PrecipController* pcptr = precip.get();
         // OVERLAY 瓦片槽互斥组:物理上只有一个 OVERLAY 槽,组内任意一层开启须关闭其余。
         // P6a 从 clouds/precip 两两手写互斥泛化为组表;gebco 由 Task 8 启用。
-        static const char* kOverlaySlotIds[] = { "clouds", "precip", "ndvi", "nightlights", "gebco" };
-        static const size_t kOverlaySlotN = sizeof(kOverlaySlotIds) / sizeof(kOverlaySlotIds[0]);
+        static const std::vector<std::string> kOverlaySlotIds =
+            { "clouds", "precip", "ndvi", "nightlights", "gebco" };
         auto disableOtherOverlays = [lmptr, pcptr](const std::string& selfId) {
-            for (size_t i = 0; i < kOverlaySlotN; ++i)
-            {
-                if (selfId == kOverlaySlotIds[i]) continue;
-                if (OverlayLayer* o = lmptr->find(kOverlaySlotIds[i])) o->enabled = false;
-            }
+            lmptr->setExclusiveGroupEnabled(kOverlaySlotIds, selfId);
             if (selfId != "precip" && pcptr) pcptr->setEnabled(false);
         };
         // OVERLAY 槽可见度:组内任意一层开启,取该层透明度;都关→0。
         auto applyOverlayOpacity = [eptr, lmptr]() {   // eptr/lmptr 为裸指针,浅复制进 lambda(对象会话期存活)
-            float op = 0.0f;
-            for (size_t i = 0; i < kOverlaySlotN; ++i)
-            {
-                OverlayLayer* o = lmptr->find(kOverlaySlotIds[i]);
-                if (o && o->enabled) { op = o->opacity; break; }
-            }
+            float op = lmptr->firstEnabledOpacity(kOverlaySlotIds);
             if (eptr->commonUniforms.count("Overlay2Opacity"))
                 eptr->commonUniforms["Overlay2Opacity"]->set(op);
         };

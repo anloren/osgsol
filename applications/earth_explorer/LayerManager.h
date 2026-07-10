@@ -104,6 +104,27 @@ public:
         layer->subtitle = value;
         return true;
     }
+    void setExclusiveGroupEnabled(const std::vector<std::string>& ids,
+                                  const std::string& activeId)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (size_t i = 0; i < ids.size(); ++i)
+        {
+            OverlayLayer* layer = findUnlocked(ids[i]);
+            if (layer) layer->enabled = (ids[i] == activeId);
+        }
+    }
+    float firstEnabledOpacity(const std::vector<std::string>& ids) const
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (size_t i = 0; i < ids.size(); ++i)
+        {
+            for (size_t j = 0; j < _layers.size(); ++j)
+                if (_layers[j].id == ids[i] && _layers[j].enabled)
+                    return _layers[j].opacity;
+        }
+        return 0.0f;
+    }
     size_t drainPending()
     {
         size_t count = 0;
@@ -134,6 +155,11 @@ public:
     {
         std::lock_guard<std::mutex> lock(_mutex);
         return _layers;
+    }
+    std::vector<Preset> presetsSnapshot() const
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _presets;
     }
     // T8 状态带:最近一次成功应用的预设名(未应用过 = 空串;applyPreset 未命中不改写)。
     std::string lastAppliedPreset() const

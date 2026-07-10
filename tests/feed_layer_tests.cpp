@@ -54,6 +54,18 @@ static std::string readSourceFile(const std::string& relative)
                        std::istreambuf_iterator<char>());
 }
 
+static size_t countOccurrences(const std::string& text, const std::string& needle)
+{
+    if (needle.empty()) return 0;
+    size_t count = 0, pos = 0;
+    while ((pos = text.find(needle, pos)) != std::string::npos)
+    {
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
 // ===== P3 Task 1:网格聚合纯函数 =====
 static earthfeed::FeedPoint mkPt(double lat, double lon, float sizePx = 8.0f)
 {
@@ -1552,7 +1564,10 @@ int main(int, char**)
         lm.addPreset(onlyA);
         Preset clean; clean.name = "clean";   // 空列表 = 全关
         lm.addPreset(clean);
-        CHECK(lm.presets().size() == 2);
+        std::vector<Preset> presetSnapshot = lm.presetsSnapshot();
+        CHECK(presetSnapshot.size() == 2);
+        presetSnapshot.clear();
+        CHECK(lm.presetsSnapshot().size() == 2);
 
         CHECK(lm.applyPreset("onlyA") == true);      // 命中预设 → 返回 true
         lm.drainPending();
@@ -1637,6 +1652,29 @@ int main(int, char**)
         std::vector<OverlayLayer> snap = lm.layersSnapshot();
         CHECK(snap[0].enabled == false);
         CHECK(snap[1].enabled == true);
+    }
+
+    {
+        LayerManager lm;
+        const std::vector<std::string> groupIds = { "a", "b" };
+        OverlayLayer a; a.id = "a"; a.group = "exclusive"; a.opacity = 0.25f;
+        a.apply = [&](const OverlayLayer& layer) {
+            if (layer.enabled) lm.setExclusiveGroupEnabled(groupIds, "a");
+        };
+        OverlayLayer b; b.id = "b"; b.group = "exclusive"; b.opacity = 0.75f;
+        b.apply = [&](const OverlayLayer& layer) {
+            if (layer.enabled) lm.setExclusiveGroupEnabled(groupIds, "b");
+        };
+        lm.add(a); lm.add(b);
+
+        lm.setEnabled("a", true);
+        lm.setEnabled("b", true);
+        CHECK(lm.drainPending() == 2);
+
+        const std::vector<OverlayLayer> snap = lm.layersSnapshot();
+        CHECK(snap[0].enabled == false);
+        CHECK(snap[1].enabled == true);
+        CHECK(std::abs(lm.firstEnabledOpacity(groupIds) - 0.75f) < 1e-6f);
     }
 
     // ---- FeedSelection 关层清理(Task 4 必修 B):只清"来源==本 feed"的选中 ----
@@ -1993,10 +2031,31 @@ int main(int, char**)
     {
         const std::string ui = readSourceFile("applications/earth_explorer/EarthControlUI.h");
         const std::string main = readSourceFile("applications/earth_explorer/earth_main.cpp");
+        const std::string ai = readSourceFile("applications/earth_explorer/ai_setup.cpp");
+        const std::string ticker = readSourceFile("applications/earth_explorer/event_ticker.h");
         CHECK(ui.find("layersSnapshot()") != std::string::npos);
+        CHECK(ui.find("presetsSnapshot()") != std::string::npos);
         CHECK(ui.find("->layers()") == std::string::npos);
-        CHECK(main.find("drainPending()") != std::string::npos);
-        CHECK(main.find("setSubtitle(") != std::string::npos);
+        CHECK(ui.find("->presets()") == std::string::npos);
+        CHECK(ai.find("layersSnapshot()") != std::string::npos);
+        CHECK(ai.find("->layers()") == std::string::npos);
+        CHECK(ai.find("->find(") == std::string::npos);
+        CHECK(countOccurrences(main, "drainPending()") == 1);
+        CHECK(countOccurrences(main, "new LayerManagerDrainHandler") == 1);
+        size_t handlerBegin = main.find("class LayerManagerDrainHandler");
+        size_t handlerEnd = main.find("class SatFetchStatusHandler", handlerBegin);
+        CHECK(handlerBegin != std::string::npos);
+        CHECK(handlerEnd != std::string::npos);
+        const std::string handler = main.substr(handlerBegin, handlerEnd - handlerBegin);
+        CHECK(handler.find("GUIEventAdapter::FRAME") != std::string::npos);
+        CHECK(handler.find("drainPending()") != std::string::npos);
+        CHECK(main.find("lmptr->find(") == std::string::npos);
+        CHECK(main.find("_lm->find(") == std::string::npos);
+        CHECK(main.find("setExclusiveGroupEnabled(") != std::string::npos);
+        CHECK(main.find("firstEnabledOpacity(") != std::string::npos);
+        CHECK(countOccurrences(main, "setSubtitle(") == 2);
+        CHECK(ticker.find("std::string preset = layers ? layers->lastAppliedPreset()")
+              != std::string::npos);
     }
 
     std::cout << "feed_layer tests OK\n";
