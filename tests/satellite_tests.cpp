@@ -92,11 +92,13 @@ static std::string normalizeCodeOnly(const std::string& source)
         }
         if (stringLiteral || charLiteral)
         {
-            compact.push_back(c);
             if (escaped) { escaped = false; continue; }
             if (c == '\\') { escaped = true; continue; }
             if ((stringLiteral && c == '"') || (charLiteral && c == '\''))
-            { stringLiteral = false; charLiteral = false; }
+            {
+                compact.push_back(c);
+                stringLiteral = false; charLiteral = false;
+            }
             continue;
         }
         if (c == '/' && next == '/') { lineComment = true; ++i; continue; }
@@ -281,6 +283,12 @@ int main(int, char**)
             "/* _preciseRefetchRequested = true; */ nextCall();");
         CHECK(normalizedSnippet == "liveCall();nextCall();");
 
+        const std::string normalizedLiterals = normalizeCodeOnly(
+            "const char* fake = \"_preciseRefetchRequested=true; \\\"escaped\\\"\";\n"
+            "char slash = '/'; char quote = '\\''; realCall();");
+        CHECK(normalizedLiterals ==
+              "constchar*fake=\"\";charslash='';charquote='';realCall();");
+
         const std::string source = readSourceFile("applications/earth_explorer/sat_data.cpp");
         CHECK(!source.empty());
 
@@ -344,6 +352,11 @@ int main(int, char**)
         const size_t precisePredicatePos = setCategory.find(precisePredicate);
         CHECK(precisePredicatePos != std::string::npos);
         CHECK(setCategory.find(precisePredicate, precisePredicatePos + 1) == std::string::npos);
+        const std::string preciseRequestAssignment = "_preciseRefetchRequested=true;";
+        const size_t preciseRequestPos = setCategory.find(preciseRequestAssignment);
+        CHECK(preciseRequestPos != std::string::npos);
+        CHECK(setCategory.find(preciseRequestAssignment, preciseRequestPos + 1) ==
+              std::string::npos);
 
         const size_t takePrecise = fetchRun.find(
             "if(_owner->takePreciseRefetchRequest())preciseFetchedOnce=false;");
