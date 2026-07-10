@@ -70,12 +70,42 @@ static std::string extractFunctionBody(const std::string& source,
     return std::string();
 }
 
-static std::string removeWhitespace(const std::string& source)
+static std::string normalizeCodeOnly(const std::string& source)
 {
     std::string compact;
     compact.reserve(source.size());
+    bool lineComment = false, blockComment = false;
+    bool stringLiteral = false, charLiteral = false, escaped = false;
     for (size_t i = 0; i < source.size(); ++i)
-        if (!std::isspace(static_cast<unsigned char>(source[i]))) compact.push_back(source[i]);
+    {
+        char c = source[i];
+        char next = (i + 1 < source.size()) ? source[i + 1] : '\0';
+        if (lineComment)
+        {
+            if (c == '\n') lineComment = false;
+            continue;
+        }
+        if (blockComment)
+        {
+            if (c == '*' && next == '/') { blockComment = false; ++i; }
+            continue;
+        }
+        if (stringLiteral || charLiteral)
+        {
+            compact.push_back(c);
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\') { escaped = true; continue; }
+            if ((stringLiteral && c == '"') || (charLiteral && c == '\''))
+            { stringLiteral = false; charLiteral = false; }
+            continue;
+        }
+        if (c == '/' && next == '/') { lineComment = true; ++i; continue; }
+        if (c == '/' && next == '*') { blockComment = true; ++i; continue; }
+        if (std::isspace(static_cast<unsigned char>(c))) continue;
+        compact.push_back(c);
+        if (c == '"') stringLiteral = true;
+        else if (c == '\'') charLiteral = true;
+    }
     return compact;
 }
 
@@ -246,18 +276,23 @@ int main(int, char**)
 
     // ---- runtime source wiring: render/pick position and explicit precise retry ----
     {
+        const std::string normalizedSnippet = normalizeCodeOnly(
+            "liveCall(); // earthsat::extrapolateSatelliteEcef(fake);\n"
+            "/* _preciseRefetchRequested = true; */ nextCall();");
+        CHECK(normalizedSnippet == "liveCall();nextCall();");
+
         const std::string source = readSourceFile("applications/earth_explorer/sat_data.cpp");
         CHECK(!source.empty());
 
-        const std::string interpolate = removeWhitespace(
+        const std::string interpolate = normalizeCodeOnly(
             extractFunctionBody(source, "void interpolateOne("));
-        const std::string pick = removeWhitespace(
+        const std::string pick = normalizeCodeOnly(
             extractFunctionBody(source, "void pickAt("));
-        const std::string handler = removeWhitespace(
+        const std::string handler = normalizeCodeOnly(
             extractFunctionBody(source, "virtual bool handle("));
-        const std::string setCategory = removeWhitespace(
+        const std::string setCategory = normalizeCodeOnly(
             extractFunctionBody(source, "virtual void setCategoryEnabled("));
-        const std::string fetchRun = removeWhitespace(
+        const std::string fetchRun = normalizeCodeOnly(
             extractFunctionBody(source, "void FetchThread::run()"));
         CHECK(!interpolate.empty());
         CHECK(!pick.empty());
@@ -290,10 +325,25 @@ int main(int, char**)
         const size_t preciseCategories = setCategory.find(
             "cat==SatCategory::Station||cat==SatCategory::Navigation||"
             "cat==SatCategory::Weather");
-        const size_t precisePredicate = setCategory.find(
-            "earthsat::shouldRequestPreciseRefetch(on,_preciseFetchDone,categoryHasData)");
+        const std::string preciseRetryFlow =
+            "boolcategoryHasData=false;"
+            "for(size_ti=0;i<_allPrecise.size();++i)"
+            "if(_allPrecise[i].category==cat){categoryHasData=true;break;}"
+            "if(earthsat::shouldRequestPreciseRefetch("
+            "on,_preciseFetchDone,categoryHasData))"
+            "_preciseRefetchRequested=true;";
+        const size_t preciseFlowPos = setCategory.find(preciseRetryFlow);
         CHECK(preciseCategories != std::string::npos);
-        CHECK(precisePredicate != std::string::npos && preciseCategories < precisePredicate);
+        CHECK(preciseFlowPos != std::string::npos && preciseCategories < preciseFlowPos);
+        const size_t categoryDataTrue = setCategory.find("categoryHasData=true;");
+        CHECK(categoryDataTrue != std::string::npos);
+        CHECK(setCategory.find("categoryHasData=true;", categoryDataTrue + 1) == std::string::npos);
+        const std::string precisePredicate =
+            "earthsat::shouldRequestPreciseRefetch("
+            "on,_preciseFetchDone,categoryHasData)";
+        const size_t precisePredicatePos = setCategory.find(precisePredicate);
+        CHECK(precisePredicatePos != std::string::npos);
+        CHECK(setCategory.find(precisePredicate, precisePredicatePos + 1) == std::string::npos);
 
         const size_t takePrecise = fetchRun.find(
             "if(_owner->takePreciseRefetchRequest())preciseFetchedOnce=false;");
