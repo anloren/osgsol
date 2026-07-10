@@ -1,7 +1,7 @@
 SET(LIB_NAME osgVerseAnimation)
 SET(LIBRARY_INCLUDE_FILES
     PlayerAnimation.h TweenAnimation.h BlendShapeAnimation.h
-    PhysicsEngine.h ParticleEngine.h Utilities.h)
+    ParticleEngine.h Utilities.h)
 SET(LIBRARY_FILES ${LIBRARY_INCLUDE_FILES}
     PlayerAnimation.cpp PlayerAnimationInternal.h PlayerAnimationInternal.cpp
     TweenAnimation.cpp BlendShapeAnimation.cpp ParticleEngineU3D.cpp Utilities.cpp)
@@ -10,7 +10,10 @@ IF(BULLET_FOUND)
     INCLUDE_DIRECTORIES(${BULLET_INCLUDE_DIR})
     INCLUDE("${BULLET_LIB_DIR}/cmake/bullet/BulletConfig.cmake" OPTIONAL)
     ADD_DEFINITIONS(-DVERSE_WITH_BULLET ${BULLET_DEFINITIONS})
-	SET(LIBRARY_FILES ${LIBRARY_FILES} PhysicsEngine.cpp)
+    SET(LIBRARY_INCLUDE_FILES ${LIBRARY_INCLUDE_FILES} PhysicsEngine.h)
+    SET(LIBRARY_FILES ${LIBRARY_FILES} PhysicsEngine.h PhysicsEngine.cpp)
+ELSE()
+    MESSAGE(STATUS "[osgVerse] Bullet support: DISABLED; PhysicsEngine is not built or installed")
 ENDIF(BULLET_FOUND)
 
 FIND_DEPENDENCE(EFFEKSEER "Effekseer.h" "libEffekseer.so;libEffekseer.a;Effekseer.lib" "")
