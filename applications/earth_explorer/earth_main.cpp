@@ -23,6 +23,7 @@
 #include <libhv/all/hlog.h>
 #include "EarthControlUI.h"
 #include "LayerManager.h"
+#include "hk_elevation_filter.h"
 #include "input_gate.h"
 #include "science_overlay.h"
 #include "science_image_pager.h"
@@ -591,50 +592,11 @@ static const std::string kTerrariumUrl =
 static void hkElevationFilter(float* hts, int w, int h, int x, int y, int z)
 {
     static const bool enabled = []() {
-        const char* e = getenv("EARTH_HK_FLATDEM");
-        return !(e && *e && atoi(e) == 0);
+        const char* value = getenv("EARTH_HK_FLATDEM");
+        return !(value && *value && atoi(value) == 0);
     }();
-    if (!enabled || !hts || w <= 0 || h <= 0) return;
-
-    // z>15 时图像内容是 z15 祖先瓦片(见 createCustomPath 同规则),按祖先坐标换算范围
-    int tz = z, tx = x, tyTMS = y;
-    if (z > 15) { int dz = z - 15; tx = x >> dz; tyTMS = y >> dz; tz = 15; }
-    double n = (double)(1 << tz);
-    int tyXYZ = (int)n - 1 - tyTMS;
-    double lonMin = tx / n * 360.0 - 180.0, lonSpan = 360.0 / n;
-    double latN = atan(sinh(osg::PI * (1.0 - 2.0 * tyXYZ / n))) * 180.0 / osg::PI;
-    double latS = atan(sinh(osg::PI * (1.0 - 2.0 * (tyXYZ + 1) / n))) * 180.0 / osg::PI;
-    // 快速剔除:与都会外包络(含渐变带)不相交的瓦片原样返回(全球其它地区零改动)
-    if (lonMin > 114.37 || lonMin + lonSpan < 113.88 || latS > 22.44 || latN < 22.17) return;
-
-    auto smooth01 = [](double t) {
-        t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t); return t * t * (3.0 - 2.0 * t);
-    };
-    // 到矩形 [la0,la1]x[lo0,lo1] 的外距离经 f 宽渐变:核心=0 → 带外=1
-    auto outerW = [&smooth01](double lat, double lon, double la0, double la1,
-                              double lo0, double lo1, double f) {
-        double dla = std::max(std::max(la0 - lat, lat - la1), 0.0);
-        double dlo = std::max(std::max(lo0 - lon, lon - lo1), 0.0);
-        return smooth01(sqrt(dla * dla + dlo * dlo) / f);
-    };
-
-    for (int row = 0; row < h; ++row)
-    {
-        // 解码图自底向上(row 0=南);行中心对应的 XYZ 行分数 → 墨卡托纬度
-        double yf = (double)tyXYZ + 1.0 - ((double)row + 0.5) / (double)h;
-        double lat = atan(sinh(osg::PI * (1.0 - 2.0 * yf / n))) * 180.0 / osg::PI;
-        for (int col = 0; col < w; ++col)
-        {
-            double lon = lonMin + ((double)col + 0.5) / (double)w * lonSpan;
-            double wMetro = outerW(lat, lon, 22.19, 22.42, 113.90, 114.35, 0.02);
-            if (wMetro >= 1.0) continue;
-            double wFlat = outerW(lat, lon, 22.276, 22.335, 114.115, 114.225, 0.012);
-            float& hv = hts[row * w + col];
-            double hMetro = (double)hv * 0.5 - 2.0;   // 抵消 ×2 夸张,整体略沉
-            double hIn = wFlat * hMetro;              // 平原核心=0,向山地平滑过渡
-            hv = (float)(wMetro * (double)hv + (1.0 - wMetro) * hIn);
-        }
-    }
+    if (!enabled) return;
+    earthterrain::applyHongKongElevationFilter(hts, w, h, x, y, z);
 }
 
 static std::string createCustomPath(int type, const std::string& prefix, int x, int y, int z)

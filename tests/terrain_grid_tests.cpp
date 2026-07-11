@@ -1,19 +1,50 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
+#include <string>
 
 #include <osg/Geometry>
 #include <osg/Image>
+#include <osg/Math>
 #include <osg/Texture2D>
 #include <osgDB/Options>
 
 #include <readerwriter/TileCallback.h>
 
+#include "../applications/earth_explorer/hk_elevation_filter.h"
+
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ \
               << ": " #x << std::endl; std::abort(); } } while (0)
+
+struct TmsTile
+{
+    int x;
+    int y;
+};
+
+static TmsTile tmsTileForLonLat(double lonDegrees, double latDegrees, int z)
+{
+    const double n = static_cast<double>(1 << z);
+    const double latRadians = osg::DegreesToRadians(latDegrees);
+    const int x = static_cast<int>(std::floor((lonDegrees + 180.0) / 360.0 * n));
+    const int yXyz = static_cast<int>(std::floor(
+        (1.0 - std::log(std::tan(latRadians) + 1.0 / std::cos(latRadians)) /
+         osg::PI) * 0.5 * n));
+    return TmsTile{x, static_cast<int>(n) - 1 - yXyz};
+}
+
+static std::string readWholeFile(const std::string& path)
+{
+    std::ifstream input(path.c_str(), std::ios::binary);
+    CHECK(input.good());
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
+}
 
 static osg::Texture2D* constantElevation(float meters)
 {
@@ -114,6 +145,68 @@ static double checkSiblingEdge(int z, osg::Texture2D* elevation,
 
 int main(int, char**)
 {
+    const TmsTile coreTile = tmsTileForLonLat(114.17, 22.30, 15);
+    float core = 40.0f;
+    earthterrain::applyHongKongElevationFilter(
+        &core, 1, 1, coreTile.x, coreTile.y, 15);
+    CHECK(std::fabs(core) < 1e-6f);
+
+    const TmsTile outsideTile = tmsTileForLonLat(0.0, 0.0, 15);
+    float outside = 40.0f;
+    earthterrain::applyHongKongElevationFilter(
+        &outside, 1, 1, outsideTile.x, outsideTile.y, 15);
+    CHECK(std::fabs(outside - 40.0f) < 1e-6f);
+
+    const TmsTile metroTile = tmsTileForLonLat(114.00, 22.38, 15);
+    float metro = 40.0f;
+    earthterrain::applyHongKongElevationFilter(
+        &metro, 1, 1, metroTile.x, metroTile.y, 15);
+    CHECK(std::fabs(metro - 18.0f) < 1e-3f);
+
+    float featherSamples[5];
+    for (int i = 0; i < 5; ++i)
+    {
+        const double lon = 114.35 + 0.005 * static_cast<double>(i);
+        const TmsTile tile = tmsTileForLonLat(lon, 22.38, 15);
+        featherSamples[i] = 40.0f;
+        earthterrain::applyHongKongElevationFilter(
+            &featherSamples[i], 1, 1, tile.x, tile.y, 15);
+    }
+    for (int i = 1; i < 5; ++i)
+    {
+        CHECK(featherSamples[i] >= featherSamples[i - 1]);
+        CHECK(featherSamples[i] - featherSamples[i - 1] < 15.0f);
+    }
+
+    const int descendantDepth = 2;
+    const TmsTile ancestorTile = tmsTileForLonLat(114.00, 22.38, 15);
+    const TmsTile descendantTile = {
+        (ancestorTile.x << descendantDepth) + 3,
+        (ancestorTile.y << descendantDepth) + 1
+    };
+    float ancestor = 40.0f;
+    float descendant = 40.0f;
+    earthterrain::applyHongKongElevationFilter(
+        &ancestor, 1, 1, ancestorTile.x, ancestorTile.y, 15);
+    earthterrain::applyHongKongElevationFilter(
+        &descendant, 1, 1, descendantTile.x, descendantTile.y, 17);
+    CHECK(std::fabs(descendant - ancestor) < 1e-6f);
+
+    const std::string mainSource = readWholeFile(
+        std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/earth_main.cpp");
+    const std::string filterSource = readWholeFile(
+        std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/hk_elevation_filter.h");
+    CHECK(mainSource.find("TileElevationScale=2.0") != std::string::npos);
+    CHECK(mainSource.find("TileSkirtRatio=") != std::string::npos);
+    CHECK(mainSource.find("ElevationFilterFunction") != std::string::npos);
+    CHECK(mainSource.find("x >> dz") != std::string::npos);
+    CHECK(mainSource.find("y >> dz") != std::string::npos);
+    CHECK(filterSource.find("if (z > 15)") != std::string::npos);
+    CHECK(filterSource.find("x >> dz") != std::string::npos);
+    CHECK(filterSource.find("y >> dz") != std::string::npos);
+
     CHECK(osgVerse::terrainGridSizeForLevel(0) == 17u);
     CHECK(osgVerse::terrainGridSizeForLevel(11) == 17u);
     CHECK(osgVerse::terrainGridSizeForLevel(12) == 33u);
