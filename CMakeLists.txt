@@ -2,6 +2,15 @@ CMAKE_MINIMUM_REQUIRED(VERSION 3.10)
 PROJECT(osgVerse)
 INCLUDE(CTest)
 
+IF(BUILD_TESTING)
+    ADD_TEST(NAME osgSol_Test_ScienceEarthRelease
+             COMMAND bash "${CMAKE_SOURCE_DIR}/tests/scienceearth_release_tests.sh")
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceEarthRelease PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        LABELS "offline;scienceearth"
+        TIMEOUT 30)
+ENDIF()
+
 SET(VERSE_VERSION "0.8.5")
 SET(VERSE_GRAPHICS_API "GL")
 SET(VERSE_PLATFORM "")

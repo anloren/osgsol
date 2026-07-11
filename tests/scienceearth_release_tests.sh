@@ -2,7 +2,9 @@
 
 set -u
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+script_path="${script_directory}/$(basename "${BASH_SOURCE[0]}")"
+repo_root="$(cd "${script_directory}/.." && pwd -P)"
 baseline_document="${repo_root}/docs/scienceearth/g0-g1-baseline.md"
 failures=0
 
@@ -60,11 +62,11 @@ test "$(git rev-parse 'ScienceEarth^{}')" = \
 [[ -f "${baseline_document}" ]] || \
     fail "baseline evidence document is missing: docs/scienceearth/g0-g1-baseline.md"
 
-if ! "${BASH_SOURCE[0]}" --validate-release-pair v0.2.0 ScienceEarth; then
+if ! "${script_path}" --validate-release-pair v0.2.0 ScienceEarth; then
     fail "release-pair validation entry point is missing or rejects the valid boundary pair"
 fi
 
-if "${BASH_SOURCE[0]}" --validate-release-pair v0.2.0 \
+if "${script_path}" --validate-release-pair v0.2.0 \
         c2161f3d6b43318e37504f1cc22dfefc96adcd36 >/dev/null 2>&1; then
     fail "release-pair validation accepted refs that dereference to different commits"
 fi
