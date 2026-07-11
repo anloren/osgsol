@@ -4,8 +4,8 @@ Date: 2026-07-12 (CST)
 
 Status: **STOP at the Task 5 measurement gate.** Offline correctness, bounded transfer, retry
 accounting, and the `<= 8 s` P95 target pass. Both live medians exceed the `<= 3 s` target. This
-report does not set the repository-wide `G0_DECISION`; it records evidence that Task 6 must not
-interpret as GO.
+report does not set the repository-wide decision; it records evidence that Task 6 must not
+interpret as a passing gate.
 
 ## Reference setup
 
@@ -107,3 +107,41 @@ It links the private `libgdal.a`, `libproj.a`, and `libzstd.a` plus SDK curl and
 System, SQLite, and libc++; there is no `LC_RPATH` and no install rule. The link command inherits
 an unused `-L/opt/homebrew/lib` from the wider project, but no Homebrew library or RPATH enters the
 bundle. Static GDAL source/build strings remain a Task 6 bundle-audit concern.
+
+## Task 6 recursive bundle audit
+
+The disposable `build/science_g0/osgSol Science G0 Probe.app` was rebuilt from the protected
+Desktop baseline, replacing only the main executable and adding the test-only probe as
+`Contents/lib/osgPlugins-3.6.5/osgdb_science.so`. It was ad-hoc signed and passed
+`codesign --verify --deep --strict`. The protected app was not changed: its directory mtime stayed
+`1783759487`, its main executable SHA-256 stayed
+`e79ce979af31227c39137e1caa75aced48ed297bcc1927716284d9f273090fde`, and its
+`CodeResources` SHA-256 stayed
+`14858b06c343ef2d98ae2c27c118b695c8357af893324b8bb233dd6108a9940f`.
+
+The recursive audit visited all 128 Mach-O executables, dylibs, and plugins. Its JSON and readable
+graph are `build/science_g0/bundle-audit.json` and `build/science_g0/bundle-audit.txt`.
+
+| Measurement | Result |
+|---|---:|
+| Protected baseline size | 542,594,200 bytes (517.46 MiB) |
+| Disposable probe size | 563,877,967 bytes (537.76 MiB) |
+| Added size | 21,283,767 bytes (20.30 MiB) |
+| Science-only closure | 21,283,608 bytes (20.30 MiB), probe plugin only |
+| Science dependencies reachable from main | 0 |
+| Unresolved dependencies | 34 |
+| Forbidden-prefix references | 36 |
+| Source/build references | 252 |
+
+The size and main-link isolation limits pass: both added size and science closure are below the
+40 MiB target, and GDAL/PROJ/ZSTD remain reachable only below the probe plugin. System isolation
+fails. A separate recursive audit of the unchanged baseline attributes all 34 unresolved
+Homebrew dependencies, all 36 forbidden-prefix references, and 178 source/build references to the
+pre-existing app closure. The science probe adds 74 source/build strings from its static GDAL
+closure, including compiled-in data-prefix and source filenames. The candidate therefore has 322
+grouped violations in total; unresolved entries are reported separately from the corresponding
+forbidden runtime references.
+
+Fresh gate verification passed the bundle-audit unit suite 10/10, the private dependency hashes and
+static-prefix verifier, Task 5 offline tests 3/3, and the science-off targeted regressions 15/15.
+These passes do not override the failed system-isolation or corrected median-latency hard gates.
