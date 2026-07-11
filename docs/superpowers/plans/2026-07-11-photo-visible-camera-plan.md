@@ -380,3 +380,59 @@ Append the focused test result, offline count, fake job ids/paths, and the three
 git add docs/superpowers/plans/2026-07-11-photo-visible-camera-plan.md
 git commit -m "docs: record visible-camera photo verification"
 ```
+
+## Implementation evidence
+
+Recorded on 2026-07-11 in
+`/Users/USER/osgsol/.worktrees/v0.2-runtime-safety` at Task 3 commit `76c8abb`.
+
+- Sequential application build:
+  `cmake --build build/osgsol_core --target osgVerse_EarthExplorer -j2` exited `0` and ended with
+  `[100%] Built target osgVerse_EarthExplorer`. This incremental build emitted no compiler or linker
+  warnings.
+- Focused regression:
+  `cmake --build build/osgsol_core --target osgVerse_Test_Ai_Chat -j2` exited `0`, and
+  `build/osgsol_core/bin/osgVerse_Test_Ai_Chat` exited `0`, including
+  `generate_photo independent target tests OK` and final `AIChatCore::addErrorNote appends ERR entry OK`.
+- Offline regression:
+  `ctest --test-dir build/osgsol_core -L offline --output-on-failure` passed 13/13 tests with 0
+  failures in 11.07 seconds.
+- The exact fake-photo command printed in Task 4 exited `0` but submitted no chat input and therefore
+  produced 0 photo jobs. `EARTH_AI_FAKE` supplies scripted provider responses; it does not initiate a
+  request. To exercise both scripted requests, the same command was rerun with the existing headless
+  test hooks `EARTH_AI_AUTOSUBMIT="first photo"` and
+  `EARTH_AI_AUTOSUBMIT2="second photo"`.
+- The corrected deterministic run exited `0` and completed two independent jobs:
+  - job `1`: nominal snapshot
+    `/Users/USER/Pictures/EarthExplorer/snap_1783741228_1.png` (actual OSG capture
+    `/Users/USER/Pictures/EarthExplorer/snap_1783741228_1_0.png`) and generated output
+    `/Users/USER/Pictures/EarthExplorer/gen_1783741228_1.png`;
+  - job `2`: nominal snapshot
+    `/Users/USER/Pictures/EarthExplorer/snap_1783741228_2.png` (actual OSG capture
+    `/Users/USER/Pictures/EarthExplorer/snap_1783741228_2_0.png`) and generated output
+    `/Users/USER/Pictures/EarthExplorer/gen_1783741228_2.png`.
+- Both snapshot artifacts exist as 1920x1080 PNG files (82,420 bytes each), and both generated
+  artifacts exist (449,281 bytes each). Equal content hashes are expected here: the camera remains at
+  the same visible `--goto` composition for both metadata-only targets, while `EARTH_AI_FAKE_IMG`
+  deliberately copies the same fixture for both generated outputs. The job ids and all four paths are
+  distinct.
+- The corrected run logged only `generate_photo` tool calls for the two requests and no `fly_to`.
+  The passing focused regression independently guards the production `generate_photo` block against
+  `setByEye`, `moveTo`, and `stopAnimation`, and verifies that the animation gate remains present.
+- Runtime warnings were pre-existing/environmental: missing optional Gaussian-splatting shaders and
+  strategic-feed fixtures from the executable working directory, macOS OpenGL debug/invalid-operation
+  warnings, and NASA GIBS 404 tile responses. They did not crash the run or prevent both jobs from
+  reaching `photo job done`.
+
+### Manual visual outcomes
+
+These three acceptance cases remain **pending final manual testing**. The offscreen/headless command
+cannot perform or observe a middle-drag composition, inspect the visible frame at shutter time, verify
+ISS imagery for unwanted solar panels, or visually inspect the second real generated image for leaked
+Hong Kong content. No headless result is recorded as a visual pass.
+
+1. NVIDIA headquarters oblique composition and no shutter-time top-down jump: **pending**.
+2. Current ISS-subpoint oblique composition, visible-view match, and no unsolicited platform/solar
+   panels: **pending**.
+3. Hong Kong generation followed by NVIDIA generation with no image, coordinate, prompt-suffix, or
+   output-path leakage: **pending**.
