@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.10)
+project(ScienceDepsRuntimeProbe LANGUAGES CXX)
+
+if(NOT SCIENCE_DEPS_PREFIX OR NOT SCIENCE_DEPS_SDK)
+    message(FATAL_ERROR "SCIENCE_DEPS_PREFIX and SCIENCE_DEPS_SDK are required")
+endif()
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_FIND_USE_PACKAGE_REGISTRY OFF)
+set(CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY OFF)
+set(CMAKE_IGNORE_PREFIX_PATH "/opt/homebrew;/usr/local")
+set(CMAKE_PREFIX_PATH "${SCIENCE_DEPS_PREFIX}")
+
+set(CURL_INCLUDE_DIR "${SCIENCE_DEPS_SDK}/usr/include" CACHE PATH "" FORCE)
+set(CURL_LIBRARY "${SCIENCE_DEPS_SDK}/usr/lib/libcurl.tbd" CACHE FILEPATH "" FORCE)
+set(SQLite3_INCLUDE_DIR "${SCIENCE_DEPS_SDK}/usr/include" CACHE PATH "" FORCE)
+set(SQLite3_LIBRARY "${SCIENCE_DEPS_SDK}/usr/lib/libsqlite3.tbd" CACHE FILEPATH "" FORCE)
+set(PROJ_DIR "${SCIENCE_DEPS_PREFIX}/lib/cmake/proj" CACHE PATH "" FORCE)
+set(zstd_DIR "${SCIENCE_DEPS_PREFIX}/lib/cmake/zstd" CACHE PATH "" FORCE)
+set(GDAL_DIR "${SCIENCE_DEPS_PREFIX}/lib/cmake/gdal" CACHE PATH "" FORCE)
+
+find_package(CURL 7.68 REQUIRED)
+find_package(SQLite3 REQUIRED)
+find_package(PROJ CONFIG REQUIRED NO_DEFAULT_PATH)
+find_package(zstd CONFIG REQUIRED NO_DEFAULT_PATH)
+find_package(GDAL CONFIG REQUIRED NO_DEFAULT_PATH)
+
+add_executable(science_deps_runtime_probe runtime_probe.cpp)
+target_link_libraries(science_deps_runtime_probe PRIVATE GDAL::GDAL)

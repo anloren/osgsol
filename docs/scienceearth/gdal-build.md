@@ -18,7 +18,12 @@ decimal).
 | ZSTD 1.5.7 | `https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz` | 2,434,947 | `eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3` |
 
 The authoritative pins are in `packaging/science_deps/versions.env` and
-`packaging/science_deps/checksums.txt`.
+`packaging/science_deps/checksums.txt`. The builder requires those two files to agree exactly
+with the three archive names and hashes before it reads an archive. It also verifies and applies
+the pinned `gdal-3.13.1-disable-shapelib.patch` (SHA-256
+`f7a2824634fdf6ed1ce1bd53b685a6e4f7053793c295f4f34e996e8a19546040`). The patch disables
+the internal Shapelib fallback when the Shape driver is off and lets GDAL's own C23 `#embed`
+compile test recognize AppleClang.
 
 ## Rebuild commands
 
@@ -42,8 +47,17 @@ build/science-deps/prefix
 ```
 
 `SCIENCE_DEPS_ROOT`, `SCIENCE_DEPS_DOWNLOADS`, `SCIENCE_DEPS_SRC`,
-`SCIENCE_DEPS_BUILD`, and `SCIENCE_DEPS_PREFIX` can relocate those directories. The builder
-canonicalizes the install prefix and refuses locations below `/opt/homebrew` or `/usr/local`.
+`SCIENCE_DEPS_BUILD`, and `SCIENCE_DEPS_PREFIX` can relocate those directories, subject to the
+same safety contract. The canonical root must be a strict descendant of this repository's
+`build` directory; every mutable child must be a distinct strict descendant of that root and may
+not overlap another child. Nonempty override directories require the builder's repository-bound
+`.science-deps-owned` marker. Every recursive reset rechecks canonical containment, symlinks,
+and that marker before deletion. A build cleanly re-extracts every verified archive rather than
+reusing an old source tree.
+
+The builder therefore refuses repository, home, system, `/opt/homebrew`, `/usr/local`, symlink,
+overlapping, or unmarked nonempty override paths before deletion. It never writes below a system
+or Homebrew prefix.
 `SCIENCE_DEPS_DEPLOYMENT_TARGET` defaults to `11.0`, matching the app's
 `NSMinimumSystemVersion`.
 
@@ -107,6 +121,7 @@ cmake -S "$ROOT/src/gdal-3.13.1" -B "$ROOT/build/gdal" \
   -DCMAKE_PREFIX_PATH="$PREFIX" '-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local' \
   -DBUILD_SHARED_LIBS=OFF -DBUILD_APPS=OFF -DBUILD_PYTHON_BINDINGS=OFF \
   -DCMAKE_DISABLE_FIND_PACKAGE_SWIG=ON -DBUILD_TESTING=OFF \
+  -DENABLE_GNM=OFF \
   -DGDAL_BUILD_OPTIONAL_DRIVERS=OFF -DOGR_BUILD_OPTIONAL_DRIVERS=OFF \
   -DGDAL_ENABLE_DRIVER_GTIFF=ON -DGDAL_ENABLE_DRIVER_VRT=ON \
   -DOGR_ENABLE_DRIVER_GEOJSON=OFF -DOGR_ENABLE_DRIVER_SHAPE=OFF \
@@ -123,36 +138,64 @@ cmake -S "$ROOT/src/gdal-3.13.1" -B "$ROOT/build/gdal" \
   -DCURL_INCLUDE_DIR="$SDK/usr/include" -DCURL_LIBRARY="$SDK/usr/lib/libcurl.tbd" \
   -DSQLite3_INCLUDE_DIR="$SDK/usr/include" \
   -DSQLite3_LIBRARY="$SDK/usr/lib/libsqlite3.tbd" \
+  -DEMBED_RESOURCE_FILES=ON -DUSE_ONLY_EMBEDDED_RESOURCE_FILES=ON \
   -DGDAL_OBJECT_LIBRARIES_POSITION_INDEPENDENT_CODE=ON
 ```
 
 MEM is an always-built GDAL format declared by `gdal_format(mem)`; the builder does not invent a
 `-D` key for it, but verifies that the resolved cache contains
-`GDAL_ENABLE_DRIVER_MEM:BOOL=ON`. PROJ resource embedding resolved ON. GDAL 3.13.1 probed C23
-`#embed` as unavailable with AppleClang 21 on this host, so its cache resolved
-`EMBED_RESOURCE_FILES=OFF` and the required GDAL data was installed in the prefix instead.
+`GDAL_ENABLE_DRIVER_MEM:BOOL=ON`. The pinned patch also makes the resolved cache require
+`ENABLE_GNM:BOOL=OFF` and `GDAL_USE_SHAPELIB_INTERNAL:BOOL=OFF`.
+
+Before configuring GDAL, the builder independently compiles `gdal_embed_probe.c` as C23. The
+GDAL embed options are ON only when that probe succeeds; otherwise both are OFF and verification
+requires installed GDAL resource files. On this host both the independent probe and GDAL's
+patched upstream compile probe resolved ON, so GDAL and PROJ resources are embedded. The literal
+ON values above are this verified host's resolved configure inputs, not an unconditional policy.
+
+## Runtime capability proof
+
+The compiled `science_deps_runtime_probe` links the installed static prefix. It never calls
+`GDALAllRegister`; it manually registers only `GDALRegister_GTiff`, `GDALRegister_VRT`, and
+`GDALRegister_MEM`, installs the curl handler, and removes every nonlocal VFS except
+`/vsicurl/`. Verification then requires exactly those three active drivers, no active COG or GNM,
+and exactly `/vsicurl/` among remote VFS prefixes.
+
+The probe creates and reopens a tiled ZSTD GeoTIFF, reads a VRT, reads and writes a MEM dataset,
+and warps EPSG:4326 to EPSG:3857 through PROJ. Its `otool -L` output must contain the macOS curl
+and SQLite libraries and no dependency outside `/usr/lib` or `/System/Library/Frameworks`.
+Installed libraries must be static archives, the probe must link the three manual registration
+entry points but not `GDALAllRegister`, the GDAL archive must contain no GNM objects, and no
+Homebrew or `/usr/local` library/include/package path may appear in a resolved cache.
 
 ## Verified result
 
 The 2026-07-12 clean build used AppleClang 21.0.0.21000101 on arm64 macOS with SDK paths from
-Xcode and four parallel jobs. It completed in 158 seconds. `du` reported 52,604 KiB / 51 MiB.
-The prefix contains 406 regular files and 51 symlinks; its only file in `bin` is `gdal-config`,
+Xcode and four parallel jobs. The final end-to-end guarded clean build completed in 139 seconds.
+`du` reported 51 MiB. The prefix contains 404 regular files and 52 symlinks; its only file in
+`bin` is `gdal-config`,
 and it contains no `.dylib` or `.so` files. The installed third-party libraries are
 `libgdal.a`, `libproj.a`, and `libzstd.a`.
 
-`science-deps-manifest.json` is regenerated from the three resolved CMake caches on every build
-or verify. Its verified capability summary is:
+`science-deps-manifest.json` is regenerated from runtime-probe output, link inspection, pins, and
+the three resolved CMake caches on every build or verify. Runtime claims come from the compiled
+probe, while configure facts come from the caches. The manifest excludes itself and ownership
+markers from its prefix inventory. Its SHA-256 remained
+`fbd8046e7211947c00c36073d83855b06f0ad0125b980405fd30a088addfa226` after the clean build and
+two consecutive standalone verifies. Its verified capability summary is:
 
 ```text
-raster drivers: GTIFF, MEM, VRT
+raster drivers: GTiff, MEM, VRT
 OGR drivers: none
 virtual file systems: /vsicurl/
 enabled: curl, SQLite3, PROJ, ZSTD
-disabled: apps, Python/SWIG bindings, tests, Arrow, Parquet, PROJ remote grids
+disabled: COG, GNM, Shape/internal Shapelib, apps, Python/SWIG bindings, tests,
+          Arrow, Parquet, PROJ remote grids
 PROJ resources: embedded
-GDAL resources: installed data (compiler probe did not support C23 #embed)
+GDAL resources: embedded (independent and upstream compiler probes agree)
 ```
 
-The system dependencies recorded in the manifest are the active SDK's
-`usr/lib/libcurl.tbd` and `usr/lib/libsqlite3.tbd`. No dependency library/include cache entry
-resolves below `/opt/homebrew` or `/usr/local`.
+The runtime link dependencies recorded in the manifest are `/usr/lib/libcurl.4.dylib`,
+`/usr/lib/libsqlite3.dylib`, `/usr/lib/libc++.1.dylib`, and `/usr/lib/libSystem.B.dylib`; configure
+inputs record the active SDK's curl and SQLite `.tbd` files. No dependency library/include/package
+cache entry resolves below `/opt/homebrew` or `/usr/local`.

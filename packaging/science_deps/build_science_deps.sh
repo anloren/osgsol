@@ -16,8 +16,13 @@ src_dir=${SCIENCE_DEPS_SRC:-"$science_root/src"}
 build_dir=${SCIENCE_DEPS_BUILD:-"$science_root/build"}
 prefix=${SCIENCE_DEPS_PREFIX:-"$science_root/prefix"}
 manifest="$prefix/science-deps-manifest.json"
+runtime_probe_json="$build_dir/runtime-probe.json"
+runtime_probe_links="$build_dir/runtime-probe-link-dependencies.txt"
+gdal_embed_capability="$build_dir/gdal-embed-capability.txt"
 deployment_target=${SCIENCE_DEPS_DEPLOYMENT_TARGET:-11.0}
 builtin_raster_drivers=(MEM)
+marker_name=.science-deps-owned
+marker_value="osgsol-science-deps-v2:$repo_root"
 
 usage()
 {
@@ -66,19 +71,88 @@ done
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || die "jobs must be a positive integer"
 [[ $mode == --build || $jobs == 1 ]] || die "--jobs is valid only with --build"
 
-canonical_prefix=$(python3 - "$prefix" <<'PY'
+raw_science_root=$science_root
+raw_downloads_dir=$downloads_dir
+raw_src_dir=$src_dir
+raw_build_dir=$build_dir
+raw_prefix=$prefix
+
+python3 - "$raw_science_root" "$raw_downloads_dir" "$raw_src_dir" \
+    "$raw_build_dir" "$raw_prefix" <<'PY' || exit 1
+import os
+import sys
+
+labels = ("ROOT", "DOWNLOADS", "SRC", "BUILD", "PREFIX")
+for label, raw in zip(labels, sys.argv[1:]):
+    path = os.path.abspath(raw)
+    while True:
+        if os.path.islink(path):
+            raise SystemExit(
+                f"[science-deps] error: refusing symlinked {label} path component: {path}"
+            )
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+PY
+
+canonical_path()
+{
+    python3 - "$1" <<'PY'
 import os
 import sys
 print(os.path.realpath(sys.argv[1]))
 PY
-)
-case "$canonical_prefix" in
-    /opt/homebrew|/opt/homebrew/*|/usr/local|/usr/local/*)
-        die "refusing unsafe system or Homebrew prefix: $canonical_prefix"
-        ;;
-esac
+}
 
-for tool in cmake curl python3 shasum tar; do
+repo_build=$(canonical_path "$repo_root/build")
+science_root=$(canonical_path "$science_root")
+downloads_dir=$(canonical_path "$downloads_dir")
+src_dir=$(canonical_path "$src_dir")
+build_dir=$(canonical_path "$build_dir")
+prefix=$(canonical_path "$prefix")
+manifest="$prefix/science-deps-manifest.json"
+
+python3 - "$repo_build" "$science_root" "$downloads_dir" "$src_dir" \
+    "$build_dir" "$prefix" <<'PY' || exit 1
+import os
+import sys
+
+repo_build, root, downloads, source, build, prefix = sys.argv[1:]
+children = {
+    "DOWNLOADS": downloads,
+    "SRC": source,
+    "BUILD": build,
+    "PREFIX": prefix,
+}
+
+def descendant(path, parent):
+    try:
+        return path != parent and os.path.commonpath((path, parent)) == parent
+    except ValueError:
+        return False
+
+if not descendant(root, repo_build):
+    raise SystemExit(
+        f"[science-deps] error: refusing unsafe ROOT; it must be a strict descendant of {repo_build}"
+    )
+
+for label, path in children.items():
+    if not descendant(path, root):
+        raise SystemExit(
+            f"[science-deps] error: refusing unsafe {label}; it must be a strict ROOT descendant"
+        )
+
+items = list(children.items())
+for index, (left_label, left) in enumerate(items):
+    for right_label, right in items[index + 1:]:
+        if left == right or descendant(left, right) or descendant(right, left):
+            raise SystemExit(
+                f"[science-deps] error: refusing overlapping {left_label}/{right_label} paths"
+            )
+PY
+
+for tool in ar cc cmake curl file nm otool patch python3 shasum tar; do
     command -v "$tool" >/dev/null 2>&1 || die "required build tool not found: $tool"
 done
 [[ $(uname -s) == Darwin ]] || die "this pinned prefix recipe currently supports macOS only"
@@ -92,7 +166,65 @@ system_sqlite_library="$sdk_root/usr/lib/libsqlite3.tbd"
 [[ -f $system_sqlite_header && -f $system_sqlite_library ]] ||
     die "macOS SDK SQLite was not found"
 
-mkdir -p "$downloads_dir" "$src_dir" "$build_dir"
+marker_path()
+{
+    printf '%s/%s\n' "$1" "$marker_name"
+}
+
+marker_matches()
+{
+    local marker
+    marker=$(marker_path "$1")
+    [[ -f $marker && $(<"$marker") == "$marker_value" ]]
+}
+
+write_marker()
+{
+    printf '%s\n' "$marker_value" >"$(marker_path "$1")"
+}
+
+prepare_owned_dir()
+{
+    local path=$1
+    [[ ! -L $path ]] || die "refusing symlinked owned directory: $path"
+    if [[ -d $path ]]; then
+        if marker_matches "$path"; then
+            return
+        fi
+        if [[ -n $(find "$path" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
+            die "refusing unmarked non-empty override directory: $path"
+        fi
+    else
+        mkdir -p "$path"
+    fi
+    write_marker "$path"
+}
+
+assert_owned_descendant()
+{
+    local path=$1
+    local canonical
+    canonical=$(canonical_path "$path")
+    [[ $canonical == "$path" && $path == "$science_root"/* ]] ||
+        die "refusing recursive delete outside canonical ROOT descendant: $path"
+    [[ ! -L $path ]] || die "refusing recursive delete of symlink: $path"
+    marker_matches "$path" || die "refusing recursive delete without ownership marker: $path"
+}
+
+safe_reset_dir()
+{
+    local path=$1
+    assert_owned_descendant "$path"
+    rm -rf -- "$path"
+    mkdir -p "$path"
+    write_marker "$path"
+}
+
+prepare_owned_dir "$science_root"
+prepare_owned_dir "$downloads_dir"
+prepare_owned_dir "$src_dir"
+prepare_owned_dir "$build_dir"
+prepare_owned_dir "$prefix"
 
 download_archive()
 {
@@ -115,8 +247,32 @@ download_archive()
         die "$name has $actual_bytes bytes; expected $expected_bytes"
 }
 
+verify_pin_contract()
+{
+    local line_count
+    line_count=$(awk 'NF { count++ } END { print count + 0 }' "$checksums_file")
+    [[ $line_count == 3 ]] || die "checksums.txt must contain exactly three archive pins"
+
+    local component archive_variable sha_variable archive expected actual matches
+    for component in GDAL PROJ ZSTD; do
+        archive_variable="${component}_ARCHIVE"
+        sha_variable="${component}_SHA256"
+        archive=${!archive_variable}
+        expected=${!sha_variable}
+        actual=$(awk -v archive="$archive" '$2 == archive { print $1 }' "$checksums_file")
+        matches=$(awk -v archive="$archive" '$2 == archive { count++ } END { print count + 0 }' \
+            "$checksums_file")
+        [[ $matches == 1 && $actual == "$expected" ]] ||
+            die "$component pin differs between versions.env and checksums.txt"
+    done
+
+    actual=$(shasum -a 256 "$script_dir/gdal-3.13.1-disable-shapelib.patch" | awk '{print $1}')
+    [[ $actual == "$GDAL_PATCH_SHA256" ]] || die "GDAL source patch checksum mismatch"
+}
+
 verify_archives()
 {
+    verify_pin_contract
     (
         cd "$downloads_dir"
         shasum -a 256 -c "$checksums_file"
@@ -134,11 +290,7 @@ download_all()
 extract_archive()
 {
     local archive=$1
-    local extracted_name=$2
-    local sentinel=$3
-    local destination="$src_dir/$extracted_name"
-    [[ -f "$src_dir/$sentinel" ]] && return
-    rm -rf "$destination"
+    local sentinel=$2
     tar -xzf "$downloads_dir/$archive" -C "$src_dir"
     [[ -f "$src_dir/$sentinel" ]] || die "archive did not extract $sentinel"
 }
@@ -148,9 +300,34 @@ extract_all()
     local gdal_cmake_entry="gdal-$GDAL_VERSION/CMakeLists.txt"
     local proj_cmake_entry="proj-$PROJ_VERSION/CMakeLists.txt"
     local zstd_cmake_entry="zstd-$ZSTD_VERSION/build/cmake/CMakeLists.txt"
-    extract_archive "$GDAL_ARCHIVE" "gdal-$GDAL_VERSION" "$gdal_cmake_entry"
-    extract_archive "$PROJ_ARCHIVE" "proj-$PROJ_VERSION" "$proj_cmake_entry"
-    extract_archive "$ZSTD_ARCHIVE" "zstd-$ZSTD_VERSION" "$zstd_cmake_entry"
+    extract_archive "$GDAL_ARCHIVE" "$gdal_cmake_entry"
+    extract_archive "$PROJ_ARCHIVE" "$proj_cmake_entry"
+    extract_archive "$ZSTD_ARCHIVE" "$zstd_cmake_entry"
+    (
+        cd "$src_dir/gdal-$GDAL_VERSION"
+        patch --batch --forward -p1 <"$script_dir/gdal-3.13.1-disable-shapelib.patch"
+    )
+}
+
+probe_gdal_embed_capability()
+{
+    local object="$build_dir/gdal-embed-probe.o"
+    local log="$build_dir/gdal-embed-probe.log"
+    local result=OFF
+    if MACOSX_DEPLOYMENT_TARGET="$deployment_target" cc -std=gnu2x \
+        -c "$script_dir/gdal_embed_probe.c" -o "$object" >"$log" 2>&1; then
+        result=ON
+    fi
+    printf '%s\n' "$result" >"$gdal_embed_capability"
+    echo "[science-deps] independent GDAL #embed capability: $result"
+}
+
+load_gdal_embed_capability()
+{
+    [[ -f $gdal_embed_capability ]] || die "missing independent GDAL #embed result"
+    gdal_embed_supported=$(<"$gdal_embed_capability")
+    [[ $gdal_embed_supported == ON || $gdal_embed_supported == OFF ]] ||
+        die "invalid independent GDAL #embed result"
 }
 
 configure_component()
@@ -212,7 +389,6 @@ common_cmake_args=(
 build_zstd()
 {
     local component_build="$build_dir/zstd"
-    rm -rf "$component_build"
     configure_component zstd \
         -S "$src_dir/zstd-$ZSTD_VERSION/build/cmake" \
         -B "$component_build" \
@@ -229,7 +405,6 @@ build_zstd()
 build_proj()
 {
     local component_build="$build_dir/proj"
-    rm -rf "$component_build"
     configure_component proj \
         -S "$src_dir/proj-$PROJ_VERSION" \
         -B "$component_build" \
@@ -252,7 +427,7 @@ build_proj()
 build_gdal()
 {
     local component_build="$build_dir/gdal"
-    rm -rf "$component_build"
+    load_gdal_embed_capability
     configure_component gdal \
         -S "$src_dir/gdal-$GDAL_VERSION" \
         -B "$component_build" \
@@ -265,6 +440,7 @@ build_gdal()
         -DBUILD_PYTHON_BINDINGS=OFF \
         -DCMAKE_DISABLE_FIND_PACKAGE_SWIG=ON \
         -DBUILD_TESTING=OFF \
+        -DENABLE_GNM=OFF \
         -DGDAL_BUILD_OPTIONAL_DRIVERS=OFF \
         -DOGR_BUILD_OPTIONAL_DRIVERS=OFF \
         -DGDAL_ENABLE_DRIVER_GTIFF=ON \
@@ -295,8 +471,122 @@ build_gdal()
         -DCURL_LIBRARY="$system_curl_library" \
         -DSQLite3_INCLUDE_DIR="$sdk_root/usr/include" \
         -DSQLite3_LIBRARY="$system_sqlite_library" \
+        -DEMBED_RESOURCE_FILES="$gdal_embed_supported" \
+        -DUSE_ONLY_EMBEDDED_RESOURCE_FILES="$gdal_embed_supported" \
         -DGDAL_OBJECT_LIBRARIES_POSITION_INDEPENDENT_CODE=ON
     cmake --build "$component_build" --target install --parallel "$jobs"
+}
+
+build_runtime_probe()
+{
+    local source_dir="$build_dir/runtime-probe-source"
+    local component_build="$build_dir/runtime-probe"
+    mkdir -p "$source_dir"
+    cmake -E copy "$script_dir/runtime_probe_CMakeLists.txt" "$source_dir/CMakeLists.txt"
+    cmake -E copy "$script_dir/runtime_probe.cpp" "$source_dir/runtime_probe.cpp"
+    configure_component runtime-probe \
+        -S "$source_dir" \
+        -B "$component_build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_VISIBILITY_PRESET=hidden \
+        -DCMAKE_VISIBILITY_INLINES_HIDDEN=ON \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET="$deployment_target" \
+        -DSCIENCE_DEPS_PREFIX="$prefix" \
+        -DSCIENCE_DEPS_SDK="$sdk_root"
+    cmake --build "$component_build" --parallel "$jobs"
+    verify_runtime_probe
+}
+
+verify_runtime_probe()
+{
+    local executable="$build_dir/runtime-probe/science_deps_runtime_probe"
+    local temporary="$runtime_probe_json.tmp"
+    [[ -x $executable ]] || die "compiled static-prefix runtime probe is missing"
+    "$executable" >"$temporary"
+    python3 - "$temporary" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    probe = json.load(stream)
+if probe["active_drivers"] != ["GTiff", "MEM", "VRT"]:
+    raise SystemExit(f"unexpected active drivers: {probe['active_drivers']}")
+if probe["active_remote_vfs"] != ["/vsicurl/"]:
+    raise SystemExit(f"unexpected active remote VFS: {probe['active_remote_vfs']}")
+for key in ("gtiff_zstd", "vrt_read", "mem_rasterio", "warp_proj"):
+    if probe.get(key) is not True:
+        raise SystemExit(f"runtime capability failed: {key}")
+if probe.get("cog_active") is not False or probe.get("gnm_active") is not False:
+    raise SystemExit("COG or GNM became active")
+PY
+    mv "$temporary" "$runtime_probe_json"
+    otool -L "$executable" >"$runtime_probe_links"
+}
+
+verify_static_artifacts()
+{
+    local archive
+    for archive in "$prefix/lib/libzstd.a" "$prefix/lib/libproj.a" "$prefix/lib/libgdal.a"; do
+        [[ -f $archive ]] || die "private static archive is missing: $archive"
+        file "$archive" | grep -Eq 'ar archive|current ar archive' ||
+            die "installed library is not a static archive: $archive"
+    done
+
+    local executable="$build_dir/runtime-probe/science_deps_runtime_probe"
+    local symbols="$build_dir/runtime-probe-symbols.txt"
+    nm -gU "$executable" >"$symbols"
+    for symbol in GDALRegister_GTiff GDALRegister_VRT GDALRegister_MEM; do
+        grep -q "_$symbol" "$symbols" || die "runtime probe did not link $symbol"
+    done
+    if grep -Eq '_GDALAllRegister' "$symbols"; then
+        die "broad driver registration leaked into runtime probe"
+    fi
+    if ar -t "$prefix/lib/libgdal.a" | grep -Eiq '(^|/)gnm'; then
+        die "GNM objects leaked into libgdal.a"
+    fi
+
+    python3 - "$runtime_probe_links" <<'PY'
+import sys
+
+dependencies = []
+with open(sys.argv[1], encoding="utf-8") as stream:
+    next(stream, None)
+    for raw in stream:
+        line = raw.strip()
+        if line:
+            dependencies.append(line.split()[0])
+for dependency in dependencies:
+    if not (dependency.startswith("/usr/lib/") or
+            dependency.startswith("/System/Library/Frameworks/")):
+        raise SystemExit(f"unapproved runtime link dependency: {dependency}")
+if not any("libcurl" in dependency for dependency in dependencies):
+    raise SystemExit("runtime probe is not linked to macOS curl")
+if not any("libsqlite3" in dependency for dependency in dependencies):
+    raise SystemExit("runtime probe is not linked to macOS SQLite")
+PY
+
+    if grep -E '^[A-Za-z0-9_]*(LIBRARY|INCLUDE_DIR|_DIR):(FILEPATH|PATH)=/(opt/homebrew|usr/local)' \
+        "$build_dir/zstd/CMakeCache.txt" "$build_dir/proj/CMakeCache.txt" \
+        "$build_dir/gdal/CMakeCache.txt" "$build_dir/runtime-probe/CMakeCache.txt"; then
+        die "Homebrew or /usr/local library/include/package path leaked into a resolved cache"
+    fi
+    if find "$prefix" -type f \( -name '*.dylib' -o -name '*.so' \) -print -quit | grep -q .; then
+        die "shared library leaked into the static prefix"
+    fi
+}
+
+verify_embed_contract()
+{
+    probe_gdal_embed_capability
+    load_gdal_embed_capability
+    local cache="$build_dir/gdal/CMakeCache.txt"
+    cache_expect "$cache" EMBED_RESOURCE_FILES "$gdal_embed_supported"
+    cache_expect "$cache" USE_ONLY_EMBEDDED_RESOURCE_FILES "$gdal_embed_supported"
+    if [[ $gdal_embed_supported == OFF ]]; then
+        [[ -d "$prefix/share/gdal" ]] || die "non-embedded GDAL resource directory is missing"
+        find "$prefix/share/gdal" -type f -print -quit | grep -q . ||
+            die "non-embedded GDAL resources were not installed"
+    fi
 }
 
 verify_no_capability_leaks()
@@ -321,7 +611,7 @@ verify_no_capability_leaks()
             GDAL_USE_CURL|GDAL_USE_SQLITE3|GDAL_USE_ZSTD|\
             GDAL_USE_ZLIB_INTERNAL|GDAL_USE_TIFF_INTERNAL|\
             GDAL_USE_GEOTIFF_INTERNAL|GDAL_USE_JSONC_INTERNAL|\
-            GDAL_USE_CPL_MULTIPROC_PTHREAD|GDAL_USE_SHAPELIB_INTERNAL)
+            GDAL_USE_CPL_MULTIPROC_PTHREAD)
                 ;;
             *)
                 die "unrequested external/internal capability leaked into build: $key"
@@ -362,6 +652,7 @@ verify_resolved_caches()
     cache_expect "$gdal_cache" BUILD_PYTHON_BINDINGS OFF
     cache_expect "$gdal_cache" CMAKE_DISABLE_FIND_PACKAGE_SWIG ON
     cache_expect "$gdal_cache" BUILD_TESTING OFF
+    cache_expect "$gdal_cache" ENABLE_GNM OFF
     cache_expect "$gdal_cache" GDAL_BUILD_OPTIONAL_DRIVERS OFF
     cache_expect "$gdal_cache" OGR_BUILD_OPTIONAL_DRIVERS OFF
     cache_expect "$gdal_cache" GDAL_ENABLE_DRIVER_GTIFF ON
@@ -375,6 +666,7 @@ verify_resolved_caches()
     cache_expect "$gdal_cache" GDAL_USE_ARROW OFF
     cache_expect "$gdal_cache" GDAL_USE_PARQUET OFF
     cache_expect "$gdal_cache" GDAL_USE_JPEG12_INTERNAL OFF
+    cache_expect "$gdal_cache" GDAL_USE_SHAPELIB_INTERNAL OFF
     cache_expect "$gdal_cache" ENABLE_DEFLATE64 OFF
     cache_expect "$gdal_cache" GDAL_OBJECT_LIBRARIES_POSITION_INDEPENDENT_CODE ON
     verify_no_capability_leaks
@@ -383,14 +675,18 @@ verify_resolved_caches()
 emit_manifest()
 {
     verify_resolved_caches
+    [[ -f $runtime_probe_json && -f $runtime_probe_links ]] ||
+        die "runtime probe evidence is missing"
     python3 - "$versions_file" "$build_dir" "$prefix" "$manifest" \
-        "$system_curl_library" "$system_sqlite_library" <<'PY'
+        "$system_curl_library" "$system_sqlite_library" "$runtime_probe_json" \
+        "$runtime_probe_links" "$gdal_embed_capability" <<'PY'
 import json
 import os
 import re
 import sys
 
-versions_path, build_root, prefix, output, curl_library, sqlite_library = sys.argv[1:]
+(versions_path, build_root, prefix, output, curl_library, sqlite_library,
+ runtime_probe_path, runtime_links_path, embed_capability_path) = sys.argv[1:]
 
 def read_env(path):
     values = {}
@@ -418,17 +714,18 @@ def read_cache(component):
 versions = read_env(versions_path)
 caches = {name: read_cache(name)[0] for name in ("zstd", "proj", "gdal")}
 gdal = caches["gdal"]
+with open(runtime_probe_path, encoding="utf-8") as stream:
+    runtime_probe = json.load(stream)
+with open(embed_capability_path, encoding="utf-8") as stream:
+    embed_capability = stream.read().strip()
 
-drivers = sorted(
-    key.removeprefix("GDAL_ENABLE_DRIVER_")
-    for key, value in gdal.items()
-    if key.startswith("GDAL_ENABLE_DRIVER_") and value == "ON"
-)
-ogr_drivers = sorted(
-    key.removeprefix("OGR_ENABLE_DRIVER_")
-    for key, value in gdal.items()
-    if key.startswith("OGR_ENABLE_DRIVER_") and value == "ON"
-)
+link_dependencies = []
+with open(runtime_links_path, encoding="utf-8") as stream:
+    next(stream, None)
+    for raw in stream:
+        line = raw.strip()
+        if line:
+            link_dependencies.append(line.split()[0])
 
 selected_keys = {
     "zstd": [
@@ -450,12 +747,14 @@ selected_keys = {
         "CMAKE_POSITION_INDEPENDENT_CODE", "CMAKE_C_VISIBILITY_PRESET",
         "CMAKE_CXX_VISIBILITY_PRESET", "BUILD_SHARED_LIBS", "BUILD_APPS",
         "BUILD_PYTHON_BINDINGS", "CMAKE_DISABLE_FIND_PACKAGE_SWIG",
-        "BUILD_TESTING", "GDAL_BUILD_OPTIONAL_DRIVERS", "OGR_BUILD_OPTIONAL_DRIVERS",
+        "BUILD_TESTING", "ENABLE_GNM", "GDAL_BUILD_OPTIONAL_DRIVERS",
+        "OGR_BUILD_OPTIONAL_DRIVERS",
         "GDAL_ENABLE_DRIVER_GTIFF", "GDAL_ENABLE_DRIVER_VRT",
         "GDAL_ENABLE_DRIVER_MEM", "OGR_ENABLE_DRIVER_GEOJSON",
         "OGR_ENABLE_DRIVER_SHAPE", "GDAL_USE_CURL", "GDAL_USE_SQLITE3",
         "GDAL_USE_ZSTD", "GDAL_USE_ARROW", "GDAL_USE_PARQUET",
         "GDAL_USE_ZLIB_INTERNAL", "GDAL_USE_JPEG12_INTERNAL",
+        "GDAL_USE_SHAPELIB_INTERNAL",
         "ENABLE_DEFLATE64", "GDAL_USE_TIFF_INTERNAL",
         "GDAL_USE_GEOTIFF_INTERNAL", "GDAL_USE_JSONC_INTERNAL",
         "EMBED_RESOURCE_FILES", "USE_ONLY_EMBEDDED_RESOURCE_FILES",
@@ -472,12 +771,19 @@ for component, keys in selected_keys.items():
     resolved[component] = {key: caches[component][key] for key in keys}
 
 prefix_files = []
+output_real = os.path.realpath(output)
+temporary_real = os.path.realpath(output + ".tmp")
 for root, _, files in os.walk(prefix):
     for name in files:
-        prefix_files.append(os.path.relpath(os.path.join(root, name), prefix))
+        full_path = os.path.join(root, name)
+        if os.path.realpath(full_path) in (output_real, temporary_real):
+            continue
+        if name == ".science-deps-owned":
+            continue
+        prefix_files.append(os.path.relpath(full_path, prefix))
 
 document = {
-    "schema_version": 1,
+    "schema_version": 2,
     "archives": {
         component: {
             "version": versions[f"{component.upper()}_VERSION"],
@@ -488,9 +794,15 @@ document = {
         for component in ("gdal", "proj", "zstd")
     },
     "resolved_cmake_cache": resolved,
-    "compiled_raster_drivers": drivers,
-    "compiled_ogr_drivers": ogr_drivers,
-    "virtual_file_systems": ["/vsicurl/"] if gdal["GDAL_USE_CURL"] == "ON" else [],
+    "compiled_raster_drivers": runtime_probe["active_drivers"],
+    "compiled_ogr_drivers": [],
+    "virtual_file_systems": runtime_probe["active_remote_vfs"],
+    "runtime_probe": runtime_probe,
+    "runtime_link_dependencies": link_dependencies,
+    "gdal_embed_probe": {
+        "supported": embed_capability == "ON",
+        "resolved_cache": gdal["EMBED_RESOURCE_FILES"] == "ON",
+    },
     "features": {
         "curl": gdal["GDAL_USE_CURL"] == "ON",
         "sqlite3": gdal["GDAL_USE_SQLITE3"] == "ON",
@@ -524,20 +836,23 @@ verify_prefix()
 {
     verify_archives
     verify_resolved_caches
-    [[ -f "$prefix/lib/libzstd.a" ]] || die "private libzstd.a is missing"
-    [[ -f "$prefix/lib/libproj.a" ]] || die "private libproj.a is missing"
-    [[ -f "$prefix/lib/libgdal.a" ]] || die "private libgdal.a is missing"
-    if find "$prefix" -type f \( -name '*.dylib' -o -name '*.so' \) -print -quit | grep -q .; then
-        die "shared library leaked into the static prefix"
-    fi
+    verify_embed_contract
+    verify_runtime_probe
+    verify_static_artifacts
     emit_manifest
+    local first_manifest_sha second_manifest_sha
+    first_manifest_sha=$(shasum -a 256 "$manifest" | awk '{print $1}')
+    emit_manifest
+    second_manifest_sha=$(shasum -a 256 "$manifest" | awk '{print $1}')
+    [[ $first_manifest_sha == "$second_manifest_sha" ]] ||
+        die "science dependency manifest is not stable across repeated emission"
     python3 - "$manifest" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     manifest = json.load(stream)
-if manifest["compiled_raster_drivers"] != ["GTIFF", "MEM", "VRT"]:
+if manifest["compiled_raster_drivers"] != ["GTiff", "MEM", "VRT"]:
     raise SystemExit(f"unexpected raster drivers: {manifest['compiled_raster_drivers']}")
 if manifest["compiled_ogr_drivers"]:
     raise SystemExit(f"unexpected OGR drivers: {manifest['compiled_ogr_drivers']}")
@@ -550,6 +865,16 @@ if manifest["features"] != expected:
     raise SystemExit(f"unexpected features: {manifest['features']}")
 if manifest["virtual_file_systems"] != ["/vsicurl/"]:
     raise SystemExit("/vsicurl/ is not resolved in the manifest")
+if "science-deps-manifest.json" in manifest["prefix_files"]:
+    raise SystemExit("manifest includes itself in prefix inventory")
+probe = manifest["runtime_probe"]
+if probe["active_drivers"] != ["GTiff", "MEM", "VRT"]:
+    raise SystemExit("manifest did not preserve runtime-proven drivers")
+if probe["active_remote_vfs"] != ["/vsicurl/"]:
+    raise SystemExit("manifest did not preserve runtime-proven remote VFS")
+if manifest["gdal_embed_probe"]["supported"] != \
+        manifest["gdal_embed_probe"]["resolved_cache"]:
+    raise SystemExit("GDAL embed probe and resolved cache disagree")
 print("[science-deps] verified private static prefix and manifest")
 PY
 }
@@ -560,13 +885,16 @@ case "$mode" in
         ;;
     --build)
         download_all
+        safe_reset_dir "$src_dir"
+        safe_reset_dir "$build_dir"
+        safe_reset_dir "$prefix"
         extract_all
+        probe_gdal_embed_capability
         start_seconds=$SECONDS
-        rm -rf "$prefix"
-        mkdir -p "$prefix"
         build_zstd
         build_proj
         build_gdal
+        build_runtime_probe
         elapsed=$((SECONDS - start_seconds))
         printf '%s\n' "$elapsed" >"$science_root/build-duration-seconds.txt"
         verify_prefix
