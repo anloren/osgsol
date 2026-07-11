@@ -62,18 +62,20 @@ is not permission to relax the limits. Report the failure and stop for a product
 - Create: `tests/scienceearth_release_tests.sh`
 - Modify: `tests/CMakeLists.txt`
 
-**Step 1: Create the execution branch from the approved design commit**
+**Step 1: Create the execution branch from the approved design branch**
 
 Run:
 
 ```bash
 git status --short
 git rev-parse HEAD
-git switch -c codex/science-earth-g0-g1 c2161f3d6b43318e37504f1cc22dfefc96adcd36
+test "$(git branch --show-current)" = "codex/science-earth-design"
+git switch -c codex/science-earth-g0-g1
 ```
 
-Expected: clean tree before the switch; new branch points at the approved design commit. Work in
-the existing linked worktree; do not create a nested worktree and do not touch the original repo.
+Expected: clean tree before the switch; new branch contains the approved design commit
+`c2161f3d6b43318e37504f1cc22dfefc96adcd36` and the committed execution plan. Work in the existing
+linked worktree; do not create a nested worktree and do not touch the original repo.
 
 **Step 2: Write the failing release/tag guard**
 
