@@ -83,19 +83,21 @@ permit relaxing these limits.
 | Cache | Separate bounded science cache with deterministic eviction and no use of the existing terrain cache |
 | Missing plugin/offline | App starts normally; science reports unavailable/partial without affecting existing layers |
 
-## Task 6 signed-off G0 decision
+## Task 6 recorded G0 decision
 
 | Gate | Acceptance limit | Measured result | Outcome |
 |---|---|---|---|
 | Existing behavior | Science-off targeted suite passes unchanged | 15/15 passed | PASS |
 | Dependency build | Pinned private static prefix verifies | GDAL 3.13.1 / PROJ 9.8.1 / ZSTD 1.5.7 hashes and prefix passed | PASS |
-| Link isolation | No main-reachable GDAL/PROJ/ZSTD outside the science plugin | 0 main-reachable; one 21,283,608-byte probe-only closure | PASS |
-| System isolation | No Homebrew, `/usr/local`, source, build, or unresolved references | 34 unresolved, 36 forbidden-prefix, 252 source/build references | **FAIL** |
+| Link isolation | No dynamic or static GDAL/PROJ/ZSTD marker in any non-science Mach-O | 0 main-reachable, but 49 pre-existing static ZSTD markers in one non-science library | **FAIL** |
+| System isolation | No external, Homebrew, `/usr/local`, source, build, or unresolved references | 572 external resolutions, 36 forbidden-prefix, 252 source/build, 0 unresolved | **FAIL** |
 | Added bundle size | `<= 40 MiB` target | 21,283,767 bytes (20.30 MiB) | PASS |
 | AlphaEarth correctness and HTTP | Correct fixtures and bounded byte ranges | Task 5 offline suite 3/3 passed; both formal live transfers stayed bounded | PASS |
 | Uncached first RGB latency | Median `<= 3 s`, P95 `<= 8 s` | NVIDIA 4.23269 s / 4.69879 s; Hong Kong 3.68769 s / 4.17196 s | **FAIL** |
 
 G0_DECISION=STOP
-REASON=Corrected uncached AlphaEarth RGB medians exceed the hard 3 s limit; the recursive probe audit also finds unresolved forbidden Homebrew dependencies and source/build references.
-SIGNED_OFF_BY=Codex Task 6 evidence
-SIGNED_OFF_DATE=2026-07-12
+REASON=Corrected uncached AlphaEarth RGB medians exceed the hard 3 s limit; all-Mach-O auditing also finds external forbidden paths, source/build references, and non-science static ZSTD markers.
+RECORDED_BY=Codex automated Task 6 audit
+AUTOMATED_REVIEW=Root review findings implemented and verified
+HUMAN_PRODUCT_SIGN_OFF=PENDING
+RECORDED_DATE=2026-07-12

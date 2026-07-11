@@ -7,7 +7,6 @@ CURRENT_EXECUTABLE="${SCIENCE_G0_CURRENT_EXECUTABLE:-\
 $ROOT/build/sdk_core/bin/osgVerse_EarthExplorer}"
 PROBE_PLUGIN="${SCIENCE_G0_PROBE_PLUGIN:-$ROOT/build/science_g0/lib/osgdb_science_g0_probe.so}"
 OUTPUT="${SCIENCE_G0_OUTPUT_APP:-$ROOT/build/science_g0/osgSol Science G0 Probe.app}"
-CODESIGN_BIN="${CODESIGN_BIN:-/usr/bin/codesign}"
 MAIN_RELATIVE="Contents/MacOS/osgSol_Earth"
 PLUGIN_RELATIVE="Contents/lib/osgPlugins-3.6.5/osgdb_science.so"
 
@@ -49,7 +48,7 @@ mkdir -p "$(dirname "$OUTPUT/$PLUGIN_RELATIVE")"
 cp "$PROBE_PLUGIN" "$OUTPUT/$PLUGIN_RELATIVE"
 chmod 755 "$OUTPUT/$PLUGIN_RELATIVE"
 
-"$CODESIGN_BIN" --force --deep --sign - "$OUTPUT"
-"$CODESIGN_BIN" --verify --deep --strict "$OUTPUT"
+/usr/bin/codesign --force --deep --sign - "$OUTPUT"
+/usr/bin/codesign --verify --deep --strict "$OUTPUT"
 
 echo "[science-g0-probe] built disposable probe: $OUTPUT"

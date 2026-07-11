@@ -129,19 +129,22 @@ graph are `build/science_g0/bundle-audit.json` and `build/science_g0/bundle-audi
 | Added size | 21,283,767 bytes (20.30 MiB) |
 | Science-only closure | 21,283,608 bytes (20.30 MiB), probe plugin only |
 | Science dependencies reachable from main | 0 |
-| Unresolved dependencies | 34 |
+| Unresolved dependencies | 0 |
+| External dependency resolutions | 572 |
 | Forbidden-prefix references | 36 |
 | Source/build references | 252 |
+| Static science markers outside the science plugin | 49 |
 
-The size and main-link isolation limits pass: both added size and science closure are below the
-40 MiB target, and GDAL/PROJ/ZSTD remain reachable only below the probe plugin. System isolation
-fails. A separate recursive audit of the unchanged baseline attributes all 34 unresolved
-Homebrew dependencies, all 36 forbidden-prefix references, and 178 source/build references to the
-pre-existing app closure. The science probe adds 74 source/build strings from its static GDAL
-closure, including compiled-in data-prefix and source filenames. The candidate therefore has 322
-grouped violations in total; unresolved entries are reported separately from the corresponding
-forbidden runtime references.
+Both immutable size tiers pass: added size and science closure are below the 40 MiB target. The
+main executable reaches no GDAL/PROJ/ZSTD edge, but the stronger all-Mach-O isolation gate fails.
+The audit finds 48 ZSTD symbols and one ZSTD string in the pre-existing non-science
+`libosgVerseReaderWriter.so`. It also resolves 572 dependency edges outside the bundle in true
+dyld runpath order, plus 36 forbidden-prefix and 252 source/build references. A separate recursive
+audit of the unchanged baseline attributes all 572 external resolutions, all 36 forbidden-prefix
+references, all 49 non-science static markers, and 178 source/build references to the pre-existing
+app closure. The probe adds 74 static-GDAL source/data-prefix strings. The candidate has 909
+grouped violations; the unchanged baseline has 836 including its expected missing-probe finding.
 
-Fresh gate verification passed the bundle-audit unit suite 10/10, the private dependency hashes and
+Fresh gate verification passed the bundle-audit unit suite 17/17, the private dependency hashes and
 static-prefix verifier, Task 5 offline tests 3/3, and the science-off targeted regressions 15/15.
 These passes do not override the failed system-isolation or corrected median-latency hard gates.
