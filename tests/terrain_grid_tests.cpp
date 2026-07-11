@@ -30,8 +30,9 @@ static osg::Geometry* makeTile(int z)
     callback->setSkirtRatio(0.05f);
     callback->setElevationScale(2.0f);
     osg::Matrix matrix;
+    osg::ref_ptr<osg::Texture2D> elevation = constantElevation(10.0f);
     return callback->createTileGeometry(
-        matrix, constantElevation(10.0f),
+        matrix, elevation.get(),
         osg::Vec3d(0.30, 1.99, 0.0), osg::Vec3d(0.31, 2.00, 0.0),
         0.01, 0.01);
 }

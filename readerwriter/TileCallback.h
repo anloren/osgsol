@@ -15,6 +15,26 @@ typedef std::string (*CreatePathFunc)(int, const std::string&, int, int, int);
 
 namespace osgVerse
 {
+    inline unsigned int terrainGridSizeForLevel(int z)
+    {
+        return z >= 12 ? 33u : 17u;
+    }
+
+    inline bool tileGeometryGridSize(const osg::Geometry* geometry,
+                                     unsigned int& rows, unsigned int& columns)
+    {
+        rows = columns = 16u;
+        if (!geometry) return false;
+        unsigned int storedRows = 0, storedColumns = 0;
+        if (!geometry->getUserValue("TileGridRows", storedRows) ||
+            !geometry->getUserValue("TileGridColumns", storedColumns) ||
+            storedRows < 2u || storedColumns < 2u)
+            return false;
+        rows = storedRows;
+        columns = storedColumns;
+        return true;
+    }
+
     class TileCallback;
     struct TileGeometryHandler : public osg::Object
     {

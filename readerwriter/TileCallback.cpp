@@ -14,7 +14,6 @@
 #include "TileCallback.h"
 
 using namespace osgVerse;
-static const int TILE_ROWS = 16, TILE_COLS = 16;
 
 class FindTileGeometry : public osg::NodeVisitor
 {
@@ -230,7 +229,8 @@ osg::Geometry* TileCallback::createTileGeometry(osg::Matrix& outMatrix, osg::Tex
 {
     osg::Image* elevation = (elevationTex ? elevationTex->getImage(0) : NULL);
     bool useRealElevation = elevation ? (elevation->getDataType() == GL_FLOAT) : false;
-    unsigned int numRows = TILE_ROWS, numCols = TILE_COLS;
+    const unsigned int numRows = terrainGridSizeForLevel(_z);
+    const unsigned int numCols = numRows;
     unsigned int numVertices = numCols * numRows;
     if (!_flatten && _skirtRatio > 0.0f) numVertices += 2 * (numCols + numRows);
 
@@ -336,6 +336,8 @@ osg::Geometry* TileCallback::createTileGeometry(osg::Matrix& outMatrix, osg::Tex
         }
 
     osg::Geometry* geom = new osg::Geometry;
+    geom->setUserValue("TileGridRows", numRows);
+    geom->setUserValue("TileGridColumns", numCols);
     geom->setVertexArray(va.get()); geom->setTexCoordArray(0, ta.get());
     if (_withGlobeAttr)
     {
@@ -356,7 +358,8 @@ void TileCallback::updateTileGeometry(osg::Geometry* geom, osg::Texture* elevati
 {
     osg::Image* elevation = (elevationTex ? elevationTex->getImage(0) : NULL);
     bool useRealElevation = elevation ? (elevation->getDataType() == GL_FLOAT) : false;
-    unsigned int numRows = TILE_ROWS, numCols = TILE_COLS;
+    unsigned int numRows = 16u, numCols = 16u;
+    tileGeometryGridSize(geom, numRows, numCols);
     std::map<std::string, osg::Vec4>::const_iterator itr = _uvRangesToSet.find(range);
     osg::Vec4 scaleRange = (itr == _uvRangesToSet.end()) ? osg::Vec4(0.0f, 0.0f, 1.0f, 1.0f) : itr->second;
 
@@ -438,7 +441,8 @@ void TileCallback::updateTileGeometry(osg::Geometry* geom, osg::Texture* elevati
 void TileCallback::updateSkirtData(osg::Geometry* geom, double tileRefSize, bool addingTriangles) const
 {
     double skirtHeight = osg::WGS_84_RADIUS_POLAR * tileRefSize * _skirtRatio;
-    unsigned int numRows = TILE_ROWS, numCols = TILE_COLS;
+    unsigned int numRows = 16u, numCols = 16u;
+    tileGeometryGridSize(geom, numRows, numCols);
     unsigned int vi = numRows * numCols;
     if (!geom) return; else if (!geom->getVertexArray() || geom->getNumPrimitiveSets() == 0) return;
 
@@ -855,7 +859,9 @@ void TileManager::updateTileGeometry(TileCallback& tileCB, osg::Geometry* geom)
         osg::Vec3d tileMin, tileMax; double tileWidth = 0.0, tileHeight;
         tileCB.computeTileExtent(tileMin, tileMax, tileWidth, tileHeight);
 
-        unsigned int numRows = TILE_ROWS, numCols = TILE_COLS;
+        unsigned int numRows = 16u, numCols = 16u;
+        tileGeometryGridSize(geom, numRows, numCols);
+        if (!va || va->size() < numRows * numCols) return;
         double invW = tileWidth / (float)(numCols - 1), invH = tileHeight / (float)(numRows - 1);
         const osg::Matrix& worldToLocal = tileCB.getTileWorldToLocalMatrix();
         for (unsigned int y = 0; y < numRows; ++y)
