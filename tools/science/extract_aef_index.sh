@@ -147,13 +147,31 @@ PY
     exit 0
 fi
 
-mkdir -p "${tools_dir}"
-tools_dir="$(cd "${tools_dir}" && pwd -P)"
 allowed_root="${repo_root}/build/science-tools"
-if [[ "${tools_dir}" != "${allowed_root}" && "${tools_dir}" != "${allowed_root}/"* ]]; then
-    printf 'extract_aef_index.sh: tools directory must remain under build/science-tools\n' >&2
-    exit 1
-fi
+validate_tools_dir()
+{
+    local requested="$1"
+    local resolved
+    mkdir -p "${allowed_root}"
+    resolved="$(python3 - "${requested}" <<'PY'
+import os
+import sys
+print(os.path.realpath(os.path.abspath(sys.argv[1])))
+PY
+)"
+    if [[ "${resolved}" != "${allowed_root}" && "${resolved}" != "${allowed_root}/"* ]]; then
+        printf 'extract_aef_index.sh: tools directory must remain under build/science-tools\n' >&2
+        return 1
+    fi
+    mkdir -p "${resolved}"
+    resolved="$(cd "${resolved}" && pwd -P)"
+    if [[ "${resolved}" != "${allowed_root}" && "${resolved}" != "${allowed_root}/"* ]]; then
+        printf 'extract_aef_index.sh: resolved tools directory escaped build/science-tools\n' >&2
+        return 1
+    fi
+    printf '%s\n' "${resolved}"
+}
+tools_dir="$(validate_tools_dir "${tools_dir}")"
 values=()
 while IFS= read -r value; do values+=("${value}"); done < <(
     python3 - "${manifest}" <<'PY'

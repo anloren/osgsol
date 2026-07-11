@@ -3,8 +3,6 @@
 import csv
 import hashlib
 import json
-import os
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -190,6 +188,12 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
             ("fragment", "path", self.valid_rows[0]["path"] + "#bad", "fragment"),
             ("noncompact", "path", self.valid_rows[0]["path"].replace(
                 "/2025/", "/2025/../2025/"), "compact"),
+            ("encoded", "path", self.valid_rows[0]["path"].replace(
+                "/2025/", "/2025/%2e%2e/"), "encoded"),
+            ("backslash", "path", self.valid_rows[0]["path"].replace(
+                "/2025/", "/2025/bad\\segment/"), "backslash"),
+            ("control", "path", self.valid_rows[0]["path"].replace(
+                "/2025/", "/2025/bad\nsegment/"), "control"),
             ("location", "location", "VRT://vsis3/evil.example/bad.tiff", "location"),
         ]
         for name, field, value, message in override_cases:
@@ -340,6 +344,104 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr.decode())
             self.assertEqual(cached_source.read_bytes(), source_bytes)
             self.assertFalse(list(tools_dir.rglob("*.part*")))
+
+    def test_fetch_rejects_manifest_path_traversal_without_touching_sentinel(self):
+        build_root = REPO_ROOT / "build" / "science-tools" / "tests"
+        build_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=build_root) as directory:
+            root = Path(directory)
+            source_archive = root / "source.zip"
+            with zipfile.ZipFile(source_archive, "w") as archive:
+                archive.writestr("duckdb", "#!/usr/bin/env bash\nexit 0\n")
+            archive_bytes = source_archive.read_bytes()
+            cases = [
+                ("archive", "../sentinel.zip", "duckdb", "sentinel.zip"),
+                ("binary", "duckdb.zip", "../sentinel", "sentinel"),
+            ]
+            for label, archive_name, binary_name, sentinel_name in cases:
+                with self.subTest(label=label):
+                    case_root = root / label
+                    case_root.mkdir()
+                    manifest = case_root / "manifest.json"
+                    manifest.write_text(json.dumps({
+                        "duckdb": {
+                            "version": "test", "archive": archive_name,
+                            "url": source_archive.as_uri(),
+                            "sha256": hashlib.sha256(archive_bytes).hexdigest(),
+                            "size": len(archive_bytes), "binary": binary_name,
+                        }
+                    }), encoding="utf-8")
+                    tools_dir = case_root / "tools"
+                    tools_dir.mkdir()
+                    sentinel = (tools_dir if label == "archive" else case_root) / sentinel_name
+                    sentinel.write_bytes(b"must-survive")
+                    result = subprocess.run(
+                        ["bash", str(FETCH_DUCKDB), "--manifest", str(manifest),
+                         "--tools-dir", str(tools_dir)],
+                        cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        check=False)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(label, result.stderr.decode())
+                    self.assertEqual(sentinel.read_bytes(), b"must-survive")
+
+    def test_scripts_reject_external_tools_directory_without_creating_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cases = [
+                ("fetch", ["bash", str(FETCH_DUCKDB), "--tools-dir"]),
+                ("extract", ["bash", str(EXTRACTOR), "--fetch-source-only", "--tools-dir"]),
+            ]
+            for name, prefix in cases:
+                with self.subTest(name=name):
+                    candidate = root / name / "must-not-exist"
+                    result = subprocess.run(
+                        prefix + [str(candidate)], cwd=REPO_ROOT,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("build/science-tools", result.stderr.decode())
+                    self.assertFalse(candidate.exists())
+
+    def test_failed_cache_download_never_reaches_final_path(self):
+        build_root = REPO_ROOT / "build" / "science-tools" / "tests"
+        build_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=build_root) as directory:
+            root = Path(directory)
+            invalid_source = root / "invalid-download"
+            invalid_source.write_bytes(b"wrong-bytes")
+
+            fetch_tools = root / "fetch-tools"
+            fetch_manifest = root / "fetch-manifest.json"
+            fetch_manifest.write_text(json.dumps({
+                "duckdb": {
+                    "version": "test", "archive": "duckdb.zip",
+                    "url": invalid_source.as_uri(), "sha256": "a" * 64,
+                    "size": 123, "binary": "duckdb",
+                }
+            }), encoding="utf-8")
+            fetch_result = subprocess.run(
+                ["bash", str(FETCH_DUCKDB), "--manifest", str(fetch_manifest),
+                 "--tools-dir", str(fetch_tools)], cwd=REPO_ROOT,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            self.assertNotEqual(fetch_result.returncode, 0)
+            self.assertFalse((fetch_tools / "downloads" / "duckdb.zip").exists())
+            self.assertFalse(list(fetch_tools.rglob("*.part*")))
+
+            extract_tools = root / "extract-tools"
+            extract_manifest = root / "extract-manifest.json"
+            extract_manifest.write_text(json.dumps({
+                "source_index": {
+                    "url": invalid_source.as_uri(), "sha256": "b" * 64,
+                    "size": 456,
+                }
+            }), encoding="utf-8")
+            extract_result = subprocess.run(
+                ["bash", str(EXTRACTOR), "--fetch-source-only",
+                 "--manifest", str(extract_manifest),
+                 "--tools-dir", str(extract_tools)], cwd=REPO_ROOT,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            self.assertNotEqual(extract_result.returncode, 0)
+            self.assertFalse((extract_tools / "aef_index.parquet").exists())
+            self.assertFalse(list(extract_tools.rglob("*.part*")))
 
 
 if __name__ == "__main__":

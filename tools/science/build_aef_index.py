@@ -101,6 +101,13 @@ def validate_source_path(value, row_number, year):
     if not value.startswith(S3_PREFIX):
         raise ValidationError("row {} path is outside the trusted AEF prefix".format(row_number))
     relative_path = value[len(S3_PREFIX):]
+    if "%" in relative_path:
+        raise ValidationError("row {} path contains forbidden encoded bytes".format(row_number))
+    if "\\" in relative_path:
+        raise ValidationError("row {} path contains a forbidden backslash".format(row_number))
+    if any(ord(character) < 32 or ord(character) == 127 for character in relative_path):
+        raise ValidationError("row {} path contains a forbidden control character".format(
+            row_number))
     parts = relative_path.split("/")
     if (not relative_path or relative_path.startswith("/") or "" in parts or
             any(part in (".", "..") for part in parts)):
