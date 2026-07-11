@@ -612,11 +612,15 @@ manual testing**; no visual acceptance is claimed.
   `11/tileset.json` and `15/tileset.json` were requested at `[12:45:47.879]`; the other 15
   top-level JSONs were not requested during the observation. Nested requests first appeared at
   `[12:45:49.683]` (`5.745 s` after F2 start). This establishes root-before-all-17 ordering and
-  visible/near-visible partition selectivity for this fixed camera run.
+  fixed-camera request sparsity: `2/17` top-level partitions were requested. It does not establish
+  visible/near-visible partition selectivity; the blank capture and lack of a pan mean
+  neighboring-district locality remains pending.
 - Four KTX2 payloads decoded at `[12:45:53.533]`-`[12:45:53.535]`; the first was `9.595 s`
   after F2 start, providing loader-side coarse-content evidence within 12 seconds. It is not
   visual proof: capture occurred at `[12:46:02.191]` (`18.253 s`) but showed only a blank color
   gradient with no discernible buildings.
 - No F2 HTTP 4xx/5xx, DNS, TLS, timeout, or `[Tiles3D] FAILED` error appeared. The live root and
-  ordering criteria are established for the pinned current plugin, while visible-coarse and all
-  manual altitude/toggle acceptance remain **pending**; no manual visual acceptance is claimed.
+  ordering criteria are established for the pinned current plugin. Pending product/manual gates
+  are discernible visible coarse/refinement within 12 seconds, altitude raise/return residency,
+  neighboring-district locality, and F2 disable/re-enable behavior; no manual visual acceptance
+  is claimed.
