@@ -143,7 +143,8 @@ public:
             if (root.is<picojson::object>())
             {
                 std::string name = opt.valid() ? opt->getPluginStringData("simple_name") : "";
-                osg::ref_ptr<osg::Node> node = createTile(root, prefix, name, "", opt.get());
+                osg::ref_ptr<osg::Node> node = createTile(
+                    root, prefix, name, "", opt.get(), false);
                 if (node.valid())
                 {
                     std::string sub_tile = opt.valid() ? opt->getPluginStringData("sub_tile") : "";
@@ -231,6 +232,25 @@ protected:
         }
         return tileProxy.release();
     }
+
+    osg::Node* createDeferredExternalTileset(const std::string& uri,
+                                             const osg::BoundingSphered& bound,
+                                             const osgDB::Options* options) const
+    {
+        osg::ProxyNode* proxy = new osg::ProxyNode;
+        proxy->setName("DeferredTileset:" + uri);
+        proxy->setLoadingExternalReferenceMode(
+            osg::ProxyNode::DEFER_LOADING_TO_DATABASE_PAGER);
+        proxy->setDatabaseOptions(options ? options->cloneOptions() : new osgDB::Options);
+        proxy->setFileName(0, uri + ".verse_tiles");
+        if (bound.valid())
+        {
+            proxy->setCenterMode(osg::ProxyNode::USER_DEFINED_CENTER);
+            proxy->setCenter(bound.center());
+            proxy->setRadius(bound.radius());
+        }
+        return proxy;
+    }
     
     osg::Node* createTileChildren(picojson::array& children, const std::string& name,
                                   const osgDB::Options* localOptions) const
@@ -238,12 +258,15 @@ protected:
         osg::ref_ptr<osgDB::Options> opt = localOptions ? localOptions->cloneOptions() : new osgDB::Options;
         std::string refine = localOptions->getPluginStringData("refinement");
         std::string prefix = localOptions->getPluginStringData("prefix");
+        const bool deferExternalTilesets =
+            atoi(opt->getPluginStringData("DeferExternalTilesets").c_str()) > 0;
 
         osg::Group* group = new osg::Group; group->setName("TileGroup:" + name);
         for (size_t i = 0; i < children.size(); ++i)
         {
             osg::ref_ptr<osg::Node> child = createTile(
-                children[i], prefix, name + "," + std::to_string(i), refine, opt.get());
+                children[i], prefix, name + "," + std::to_string(i), refine, opt.get(),
+                deferExternalTilesets);
             if (child.valid()) group->addChild(child.get());
         }
 
@@ -259,7 +282,8 @@ protected:
     }
 
     osg::Node* createTile(picojson::value& root, const std::string& prefix, const std::string& name,
-                          const std::string& parentRefine, const osgDB::Options* options) const
+                          const std::string& parentRefine, const osgDB::Options* options,
+                          bool deferExternalTilesets) const
     {
         picojson::value& bound = root.get("boundingVolume");
         picojson::value& content = root.get("content");
@@ -286,7 +310,8 @@ protected:
         if (st.empty()) st = parentRefine;
 
         osg::ref_ptr<osg::Node> tile = createTile(
-            content, children, bs, range, st, prefix, name, opt.get(), isAbsoluteBound);
+            content, children, bs, range, st, prefix, name, opt.get(), isAbsoluteBound,
+            deferExternalTilesets);
         if (trans.is<picojson::array>())
         {
             picojson::array& tArray = trans.get<picojson::array>();
@@ -305,7 +330,8 @@ protected:
     osg::Node* createTile(picojson::value& content, picojson::value& children,
                           const osg::BoundingSphered& bound, double range, const std::string& st,
                           const std::string& prefix, const std::string& name,
-                          const osgDB::Options* options, bool absBound) const
+                          const osgDB::Options* options, bool absBound,
+                          bool deferExternalTilesets) const
     {
         std::string uri = (content.is<picojson::object>() && content.contains("uri"))
                          ? content.get("uri").to_str() : "";
@@ -317,11 +343,15 @@ protected:
         uri = osgVerse::WebAuxiliary::urlDecode(uri);  // some data converted from CesiumLab may have encoded characters...
 
         std::string ext(osgDB::getFileExtension(uri)), sep(1, osgDB::getNativePathSeparator());
-        if (!uri.empty() && !osgDB::isAbsolutePath(uri))
+        if (!uri.empty() && !osgDB::isAbsolutePath(uri) &&
+            osgDB::getServerProtocol(uri).empty())
         {
             if (osgDB::getServerProtocol(prefix) != "") uri = prefix + "/" + uri;
             else if (!prefix.empty()) uri = prefix + sep + uri;
         }
+
+        if (deferExternalTilesets && ext == "json" && !uri.empty())
+            return createDeferredExternalTileset(uri, bound, options);
 
         bool additive = (st == "ADD" || st == "add");
         if (children.is<picojson::array>())
@@ -334,6 +364,9 @@ protected:
             childOpt->setOptionString(children.serialize());
             childOpt->setPluginStringData("fallback", uri + (ext == "json" ? ".verse_tiles" : ".verse_gltf"));
             childOpt->setPluginStringData("refinement", st);
+            const bool hasRoughContent = !uri.empty();
+            childOpt->setPluginStringData("DeferExternalTilesets",
+                                          hasRoughContent ? "0" : "1");
 
             // Create the rough level node
             osg::ref_ptr<osg::Node> child0;
