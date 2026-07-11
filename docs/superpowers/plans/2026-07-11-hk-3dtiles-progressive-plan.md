@@ -557,3 +557,39 @@ wrappers; bracketed application timestamps are local Asia/Shanghai time from the
 Altitude raise/return residency, neighboring-district request locality, and F2 disable/re-enable
 behavior were not observable in the headless runs. All four manual checks remain **pending final
 manual testing**; no visual acceptance is claimed.
+
+### Follow-up: fresh install and runtime-path audit
+
+- The earlier live runs were diagnosed against stale installed plugin copies. Before reinstall,
+  the worktree build plugin SHA-256 was
+  `82c97f664165e85e5d0d444bc0a061f6d63e0f96fcd067b989a04ff0adcee946` and contained
+  `DeferExternalTilesets` plus `DeferredTileset:`. The worktree installed plugin SHA-256 was
+  `ea0d190b4e7ebba6537a4f5647d98c0500befd10e9ef1605fa97747e52404d1e` and contained
+  neither marker.
+- `env -u EARTH_AI_KEY cmake --build build/osgsol_core --target install -j2` ran alone from UTC
+  `04:40:22` to `04:40:28` and exited `0`. After install, the worktree installed plugin SHA-256
+  became `a8688039dfcdeda3d3d86efc968a884988f2c0721d7cd69d99d5a609844f65b2` and both
+  markers were present. It is not byte-identical to the build plugin because CMake rewrote the
+  Mach-O RPATHs from absolute build paths to `@loader_path` paths during install; both files are
+  180,280 bytes.
+- One new isolated-HOME F2 run used 1,500 frames, `EARTH_FRAME_SLEEP_MS=10`, and a hard
+  50-second `gtimeout`. The process ran UTC `04:41:11`-`04:41:38` and exited `0` before the
+  watchdog. F2 began at `[12:41:18.511]`; OSG opened `osgdb_verse_tiles.so` at
+  `[12:41:20.506]`; the first KTX2 decoded at `[12:41:22.531]` (`4.020 s` after F2 start);
+  11 KTX2 payloads decoded; capture occurred at `[12:41:36.734]` (`18.223 s`). No
+  `root_attached_ms`, `DeferredTileset`, child-JSON request URL, or F2 endpoint error was logged.
+  The capture was uniformly gray, so visible-coarse and request-ordering acceptance remain
+  unproven.
+- The same log's failed `osgdb_b3dm.so` lookup exposes the actual plugin search order. It checks
+  `/Users/USER/osgverse/build/sdk_core/lib/osgPlugins-3.6.5` before the worktree build path and
+  `/Users/USER/osgsol/build/sdk_core`; it does **not** list the freshly installed worktree
+  `build/sdk_core`. The first existing `osgdb_verse_tiles.so` candidate has SHA-256
+  `3e65525a3127a526dacbd0669aafe99c7c8f24dc8c7b8e7aa4f347d56b8e4674` and zero
+  deferral markers. The next existing non-worktree installed candidate has SHA-256
+  `798d934bd4bfb37f52783069732028fb0a96911dc76c90200cd82cc1cddd0493` and also zero
+  markers. The worktree build plugin exists only as unversioned
+  `build/osgsol_core/lib/osgdb_verse_tiles.so`, while OSG checks a versioned subdirectory.
+- Therefore the normal worktree install succeeded, but the one permitted follow-up run still did
+  not load that installed file. Root timing and the 17-request ordering remain **not established**.
+  No other repository or global plugin path was modified, and no percentage or manual visual
+  acceptance is claimed.
