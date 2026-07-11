@@ -8,23 +8,31 @@ import hashlib
 import json
 import math
 import os
-import posixpath
 import re
 import sqlite3
 import sys
 import tempfile
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MIN_YEAR = 2017
 MAX_YEAR = 2025
+SOURCE_VERSION = "1.1"
+S3_ORIGIN = "us-west-2.opendata.source.coop"
+S3_PREFIX = "s3://{}/tge-labs/aef/v1/annual/".format(S3_ORIGIN)
+VRT_LOCATION_PREFIX = "VRT://vsis3/{}/tge-labs/aef/v1/annual/".format(S3_ORIGIN)
+ASSET_BASE_URL = "https://data.source.coop/tge-labs/aef/v1/annual/"
+VRT_STRATEGY = "synthesize_vertical_flip"
+FINGERPRINT_ALGORITHM = "sha256"
+FINGERPRINT_DOMAIN = "osgsol.aef.raw-index-record.v1"
+FINGERPRINT_CANONICALIZATION = "json-sort-keys-compact-utf8-numeric-17g-v1"
 SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 GENERATED_AT_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 CSV_COLUMNS = [
-    "dataset_id", "year", "cog_url", "vrt_url", "min_lon", "min_lat",
-    "max_lon", "max_lat", "source_version", "source_checksum",
+    "fid", "path", "year", "wgs84_west", "wgs84_south", "wgs84_east",
+    "wgs84_north", "location",
 ]
 
 
@@ -70,12 +78,47 @@ def parse_number(row, row_number, field):
     return value
 
 
+def canonical_number(value):
+    return format(value, ".17g")
+
+
+def record_fingerprint(raw_record):
+    canonical_record = json.dumps(
+        raw_record, ensure_ascii=True, allow_nan=False, sort_keys=True,
+        separators=(",", ":"))
+    payload = (FINGERPRINT_DOMAIN + "\0" + canonical_record).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def validate_source_path(value, row_number, year):
+    if value != value.strip():
+        raise ValidationError("row {} path has surrounding whitespace".format(row_number))
+    parsed = urlsplit(value)
+    if parsed.query or parsed.fragment:
+        raise ValidationError("row {} path query/fragment is forbidden".format(row_number))
+    if parsed.scheme != "s3" or parsed.netloc != S3_ORIGIN:
+        raise ValidationError("row {} path origin is not the trusted AEF source".format(row_number))
+    if not value.startswith(S3_PREFIX):
+        raise ValidationError("row {} path is outside the trusted AEF prefix".format(row_number))
+    relative_path = value[len(S3_PREFIX):]
+    parts = relative_path.split("/")
+    if (not relative_path or relative_path.startswith("/") or "" in parts or
+            any(part in (".", "..") for part in parts)):
+        raise ValidationError("row {} path is not compact/canonical".format(row_number))
+    if parts[0] != str(year):
+        raise ValidationError("row {} path year does not match year column".format(row_number))
+    if not relative_path.endswith(".tiff"):
+        raise ValidationError("row {} path must name a .tiff COG".format(row_number))
+    return relative_path
+
+
 def validate_row(row, row_number):
-    dataset_id = row["dataset_id"].strip()
-    if not dataset_id:
-        raise ValidationError("row {} dataset_id is empty".format(row_number))
-    if dataset_id != row["dataset_id"]:
-        raise ValidationError("row {} dataset_id has surrounding whitespace".format(row_number))
+    try:
+        fid = int(row["fid"])
+    except (TypeError, ValueError):
+        raise ValidationError("row {} fid is not an integer".format(row_number))
+    if fid < 0 or str(fid) != row["fid"].strip():
+        raise ValidationError("row {} fid must be a canonical non-negative integer".format(row_number))
 
     try:
         year = int(row["year"])
@@ -86,15 +129,17 @@ def validate_row(row, row_number):
             "row {} year must be an integer from {} through {}".format(
                 row_number, MIN_YEAR, MAX_YEAR))
 
-    cog_url = row["cog_url"].strip()
-    vrt_url = row["vrt_url"].strip()
-    validate_https_url(cog_url, "row {} cog_url".format(row_number))
-    validate_https_url(vrt_url, "row {} vrt_url".format(row_number))
+    relative_path = validate_source_path(row["path"], row_number, year)
+    expected_location = VRT_LOCATION_PREFIX + relative_path
+    if row["location"] != expected_location:
+        raise ValidationError(
+            "row {} location does not match the trusted path/orientation metadata".format(
+                row_number))
 
-    min_lon = parse_number(row, row_number, "min_lon")
-    min_lat = parse_number(row, row_number, "min_lat")
-    max_lon = parse_number(row, row_number, "max_lon")
-    max_lat = parse_number(row, row_number, "max_lat")
+    min_lon = parse_number(row, row_number, "wgs84_west")
+    min_lat = parse_number(row, row_number, "wgs84_south")
+    max_lon = parse_number(row, row_number, "wgs84_east")
+    max_lat = parse_number(row, row_number, "wgs84_north")
     if not -180.0 <= min_lon <= 180.0 or not -180.0 <= max_lon <= 180.0:
         raise ValidationError("row {} longitude is outside [-180, 180]".format(row_number))
     if not -90.0 <= min_lat <= 90.0 or not -90.0 <= max_lat <= 90.0:
@@ -102,22 +147,27 @@ def validate_row(row, row_number):
     if min_lon > max_lon or min_lat > max_lat:
         raise ValidationError("row {} bbox minimum exceeds maximum".format(row_number))
 
-    source_version = row["source_version"].strip()
-    if not source_version:
-        raise ValidationError("row {} source_version is empty".format(row_number))
-    source_checksum = validate_sha256(
-        row["source_checksum"].strip(), "row {} source".format(row_number))
-    return {
-        "dataset_id": dataset_id,
+    raw_record = {
+        "fid": str(fid),
+        "location": row["location"],
+        "path": row["path"],
+        "wgs84_east": canonical_number(max_lon),
+        "wgs84_north": canonical_number(max_lat),
+        "wgs84_south": canonical_number(min_lat),
+        "wgs84_west": canonical_number(min_lon),
         "year": year,
-        "cog_url": cog_url,
-        "vrt_url": vrt_url,
+    }
+    return {
+        "dataset_id": str(fid),
+        "year": year,
+        "cog_path": relative_path,
+        "vrt_strategy": VRT_STRATEGY,
         "min_lon": min_lon,
         "min_lat": min_lat,
         "max_lon": max_lon,
         "max_lat": max_lat,
-        "source_version": source_version,
-        "source_checksum": source_checksum,
+        "source_version": SOURCE_VERSION,
+        "record_fingerprint": record_fingerprint(raw_record),
     }
 
 
@@ -128,40 +178,22 @@ def read_rows(input_path):
         reader = csv.DictReader(stream)
         if reader.fieldnames != CSV_COLUMNS:
             raise ValidationError(
-                "CSV columns do not match required schema: {}".format(",".join(CSV_COLUMNS)))
+                "CSV columns do not match primary schema: {}".format(",".join(CSV_COLUMNS)))
         rows = []
-        seen_dataset_ids = set()
+        seen_fids = set()
         for row_number, raw_row in enumerate(reader, start=2):
             if None in raw_row:
                 raise ValidationError("row {} has extra CSV fields".format(row_number))
             row = validate_row(raw_row, row_number)
-            if row["dataset_id"] in seen_dataset_ids:
+            if row["dataset_id"] in seen_fids:
                 raise ValidationError(
-                    "row {} duplicate dataset_id: {}".format(row_number, row["dataset_id"]))
-            seen_dataset_ids.add(row["dataset_id"])
+                    "row {} duplicate fid: {}".format(row_number, row["dataset_id"]))
+            seen_fids.add(row["dataset_id"])
             rows.append(row)
-        return sorted(rows, key=lambda row: (row["year"], row["dataset_id"]))
+        return sorted(rows, key=lambda row: (row["year"], int(row["dataset_id"])))
     finally:
         if close_stream:
             stream.close()
-
-
-def compact_asset_urls(rows):
-    parsed_urls = [urlsplit(row[field]) for row in rows for field in ("cog_url", "vrt_url")]
-    if not parsed_urls:
-        return ""
-    origin = (parsed_urls[0].scheme, parsed_urls[0].netloc)
-    if any((item.scheme, item.netloc) != origin or item.query or item.fragment
-           for item in parsed_urls):
-        return ""
-    common_path = posixpath.commonpath([posixpath.dirname(item.path) for item in parsed_urls])
-    if not common_path.endswith("/"):
-        common_path += "/"
-    asset_base_url = urlunsplit((origin[0], origin[1], common_path, "", ""))
-    for row in rows:
-        for field in ("cog_url", "vrt_url"):
-            row[field] = urlsplit(row[field]).path[len(common_path):]
-    return asset_base_url
 
 
 def validate_generated_at(value):
@@ -174,7 +206,7 @@ def validate_generated_at(value):
     return value
 
 
-def build_database(arguments, rows, asset_base_url, generated_at, source_sha256):
+def build_database(arguments, rows, generated_at, source_sha256):
     output = Path(arguments.output).resolve()
     schema_path = Path(arguments.schema)
     if arguments.schema_version != SCHEMA_VERSION:
@@ -205,22 +237,23 @@ def build_database(arguments, rows, asset_base_url, generated_at, source_sha256)
                 connection.execute(
                     """
                     INSERT INTO tiles
-                    (id, dataset_id, year, cog_url, vrt_url, min_lon, min_lat,
-                     max_lon, max_lat, source_version, source_checksum)
+                    (id, dataset_id, year, cog_path, vrt_strategy, min_lon, min_lat,
+                     max_lon, max_lat, source_version, record_fingerprint)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (row_id, row["dataset_id"], row["year"], row["cog_url"],
-                     row["vrt_url"], row["min_lon"], row["min_lat"], row["max_lon"],
-                     row["max_lat"], row["source_version"], row["source_checksum"]),
+                    (row_id, row["dataset_id"], row["year"], row["cog_path"],
+                     row["vrt_strategy"], row["min_lon"], row["min_lat"], row["max_lon"],
+                     row["max_lat"], row["source_version"], row["record_fingerprint"]),
                 )
                 connection.execute(
                     "INSERT INTO tile_rtree VALUES (?, ?, ?, ?, ?)",
                     (row_id, row["min_lon"], row["max_lon"], row["min_lat"], row["max_lat"]),
                 )
             connection.execute(
-                "INSERT INTO metadata VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO metadata VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (arguments.schema_version, arguments.source_index_url, source_sha256,
-                 generated_at, len(rows), asset_base_url),
+                 generated_at, len(rows), ASSET_BASE_URL, FINGERPRINT_ALGORITHM,
+                 FINGERPRINT_DOMAIN, FINGERPRINT_CANONICALIZATION),
             )
             connection.commit()
             connection.execute("VACUUM")
@@ -254,9 +287,7 @@ def main():
             arguments.source_index_sha256, "source index")
         generated_at = validate_generated_at(arguments.generated_at)
         rows = read_rows(arguments.input)
-        asset_base_url = compact_asset_urls(rows)
-        output = build_database(
-            arguments, rows, asset_base_url, generated_at, source_sha256)
+        output = build_database(arguments, rows, generated_at, source_sha256)
         output_bytes = output.read_bytes()
         json.dump({
             "schema_version": arguments.schema_version,
@@ -264,6 +295,10 @@ def main():
             "source_sha256": source_sha256,
             "generated_at": generated_at,
             "row_count": len(rows),
+            "asset_base_url": ASSET_BASE_URL,
+            "record_fingerprint_algorithm": FINGERPRINT_ALGORITHM,
+            "record_fingerprint_domain": FINGERPRINT_DOMAIN,
+            "record_fingerprint_canonicalization": FINGERPRINT_CANONICALIZATION,
             "output_sha256": hashlib.sha256(output_bytes).hexdigest(),
             "output_size": len(output_bytes),
         }, sys.stdout, sort_keys=True)

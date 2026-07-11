@@ -6,15 +6,49 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "${script_dir}/../.." && pwd -P)"
 manifest="${script_dir}/duckdb-manifest.json"
 tools_dir="${repo_root}/build/science-tools"
-archive_dir="${tools_dir}/downloads"
+temporary_download=""
+extract_dir=""
+trap 'rm -rf "${temporary_download:-}" "${extract_dir:-}"' EXIT
+
+usage()
+{
+    printf 'usage: %s [--manifest manifest.json] [--tools-dir build/science-tools/path]\n' \
+        "${BASH_SOURCE[0]}" >&2
+    exit 64
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --manifest)
+            [[ $# -ge 2 ]] || usage
+            manifest="$2"
+            shift 2
+            ;;
+        --tools-dir)
+            [[ $# -ge 2 ]] || usage
+            tools_dir="$2"
+            shift 2
+            ;;
+        *) usage ;;
+    esac
+done
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     printf 'fetch_duckdb.sh: pinned tool supports macOS arm64 only\n' >&2
     exit 1
 fi
 
-readarray=()
-while IFS= read -r value; do readarray+=("${value}"); done < <(
+mkdir -p "${tools_dir}"
+tools_dir="$(cd "${tools_dir}" && pwd -P)"
+allowed_root="${repo_root}/build/science-tools"
+if [[ "${tools_dir}" != "${allowed_root}" && "${tools_dir}" != "${allowed_root}/"* ]]; then
+    printf 'fetch_duckdb.sh: tools directory must remain under build/science-tools\n' >&2
+    exit 1
+fi
+archive_dir="${tools_dir}/downloads"
+
+values=()
+while IFS= read -r value; do values+=("${value}"); done < <(
     python3 - "${manifest}" <<'PY'
 import json
 import sys
@@ -24,37 +58,41 @@ for key in ("version", "archive", "url", "sha256", "size", "binary"):
     print(item[key])
 PY
 )
-version="${readarray[0]}"
-archive_name="${readarray[1]}"
-url="${readarray[2]}"
-expected_sha256="${readarray[3]}"
-expected_size="${readarray[4]}"
-binary_name="${readarray[5]}"
+version="${values[0]}"
+archive_name="${values[1]}"
+url="${values[2]}"
+expected_sha256="${values[3]}"
+expected_size="${values[4]}"
+binary_name="${values[5]}"
 archive_path="${archive_dir}/${archive_name}"
 binary_path="${tools_dir}/${binary_name}"
 
+cache_matches()
+{
+    local path="$1"
+    local expected_bytes="$2"
+    local expected_hash="$3"
+    [[ -f "${path}" ]] || return 1
+    [[ "$(stat -f '%z' "${path}")" == "${expected_bytes}" ]] || return 1
+    [[ "$(shasum -a 256 "${path}" | awk '{print $1}')" == "${expected_hash}" ]]
+}
+
 mkdir -p "${archive_dir}"
-if [[ ! -f "${archive_path}" ]]; then
-    temporary_archive="${archive_path}.part.$$"
-    trap 'rm -f "${temporary_archive:-}"' EXIT
-    curl --fail --location --retry 3 --output "${temporary_archive}" "${url}"
-    mv "${temporary_archive}" "${archive_path}"
+if ! cache_matches "${archive_path}" "${expected_size}" "${expected_sha256}"; then
+    rm -f "${archive_path}"
+    temporary_download="${archive_path}.part.$$"
+    rm -f "${temporary_download}"
+    curl --fail --location --retry 3 --output "${temporary_download}" "${url}"
+    if ! cache_matches "${temporary_download}" "${expected_size}" "${expected_sha256}"; then
+        printf 'fetch_duckdb.sh: downloaded archive failed size/checksum validation\n' >&2
+        rm -f "${temporary_download}"
+        exit 1
+    fi
+    mv "${temporary_download}" "${archive_path}"
+    temporary_download=""
 fi
 
-actual_size="$(stat -f '%z' "${archive_path}")"
-actual_sha256="$(shasum -a 256 "${archive_path}" | awk '{print $1}')"
-[[ "${actual_size}" == "${expected_size}" ]] || {
-    printf 'fetch_duckdb.sh: archive size mismatch: expected %s, got %s\n' \
-        "${expected_size}" "${actual_size}" >&2
-    exit 1
-}
-[[ "${actual_sha256}" == "${expected_sha256}" ]] || {
-    printf 'fetch_duckdb.sh: archive checksum mismatch\n' >&2
-    exit 1
-}
-
 extract_dir="${tools_dir}/.duckdb-extract.$$"
-trap 'rm -rf "${extract_dir:-}" "${temporary_archive:-}"' EXIT
 mkdir -p "${extract_dir}"
 unzip -q "${archive_path}" -d "${extract_dir}"
 test -f "${extract_dir}/${binary_name}"

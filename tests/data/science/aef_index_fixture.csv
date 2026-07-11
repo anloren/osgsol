@@ -1,6 +1,6 @@
-dataset_id,year,cog_url,vrt_url,min_lon,min_lat,max_lon,max_lat,source_version,source_checksum
-nvidia-2025,2025,https://data.source.coop/tge-labs/aef/v1/annual/2025/nvidia.tif,https://data.source.coop/tge-labs/aef/v1/annual/2025/nvidia.vrt,-122.1000,37.2000,-121.8000,37.6000,1.1,5555555555555555555555555555555555555555555555555555555555555555
-zero-boundary-2017,2017,https://data.source.coop/tge-labs/aef/v1/annual/2017/zero.tif,https://data.source.coop/tge-labs/aef/v1/annual/2017/zero.vrt,-0.2500,-0.2500,0.2500,0.2500,1.1,1111111111111111111111111111111111111111111111111111111111111111
-hong-kong-2025,2025,https://data.source.coop/tge-labs/aef/v1/annual/2025/hong-kong.tif,https://data.source.coop/tge-labs/aef/v1/annual/2025/hong-kong.vrt,114.0000,22.1000,114.4000,22.5000,1.1,4444444444444444444444444444444444444444444444444444444444444444
-nvidia-2024,2024,https://data.source.coop/tge-labs/aef/v1/annual/2024/nvidia.tif,https://data.source.coop/tge-labs/aef/v1/annual/2024/nvidia.vrt,-122.1000,37.0000,-121.9631,37.3707,1.1,3333333333333333333333333333333333333333333333333333333333333333
-hong-kong-2023,2023,https://data.source.coop/tge-labs/aef/v1/annual/2023/hong-kong.tif,https://data.source.coop/tge-labs/aef/v1/annual/2023/hong-kong.vrt,114.1694,22.3193,114.5000,22.6000,1.1,2222222222222222222222222222222222222222222222222222222222222222
+fid,path,year,wgs84_west,wgs84_south,wgs84_east,wgs84_north,location
+1005,s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/10N/nvidia.tiff,2025,-122.1000,37.2000,-121.8000,37.6000,VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/10N/nvidia.tiff
+1001,s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2017/31N/zero.tiff,2017,-0.2500,-0.2500,0.2500,0.2500,VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2017/31N/zero.tiff
+1004,s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/49N/hong-kong.tiff,2025,114.0000,22.1000,114.4000,22.5000,VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/49N/hong-kong.tiff
+1003,s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2024/10N/nvidia.tiff,2024,-122.1000,37.0000,-121.9631,37.3707,VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2024/10N/nvidia.tiff
+1002,s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2023/49N/hong-kong.tiff,2023,114.1694,22.3193,114.5000,22.6000,VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2023/49N/hong-kong.tiff

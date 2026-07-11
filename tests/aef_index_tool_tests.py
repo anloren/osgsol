@@ -3,11 +3,14 @@
 import csv
 import hashlib
 import json
+import os
+import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -15,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_DIR = REPO_ROOT / "tools" / "science"
 BUILDER = TOOLS_DIR / "build_aef_index.py"
 EXTRACTOR = TOOLS_DIR / "extract_aef_index.sh"
+FETCH_DUCKDB = TOOLS_DIR / "fetch_duckdb.sh"
 SCHEMA = TOOLS_DIR / "aef_index_schema.sql"
 FIXTURE = REPO_ROOT / "tests" / "data" / "science" / "aef_index_fixture.csv"
 EXPECTED_PATH = REPO_ROOT / "tests" / "data" / "science" / "aef_index_expected.json"
@@ -93,9 +97,9 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
                 row[1] for row in connection.execute("PRAGMA table_info(tiles)")
             ]
             self.assertEqual(tiles_columns, [
-                "id", "dataset_id", "year", "cog_url", "vrt_url",
+                "id", "dataset_id", "year", "cog_path", "vrt_strategy",
                 "min_lon", "min_lat", "max_lon", "max_lat",
-                "source_version", "source_checksum",
+                "source_version", "record_fingerprint",
             ])
             metadata_columns = [
                 row[1] for row in connection.execute("PRAGMA table_info(metadata)")
@@ -103,6 +107,8 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
             self.assertEqual(metadata_columns, [
                 "schema_version", "source_index_url", "source_index_sha256",
                 "generated_at", "row_count", "asset_base_url",
+                "record_fingerprint_algorithm", "record_fingerprint_domain",
+                "record_fingerprint_canonicalization",
             ])
 
             for query in self.expected["queries"].values():
@@ -111,20 +117,26 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
                 self.assertEqual([list(row) for row in actual], query["rows"])
 
             ordered_rows = connection.execute(
-                "SELECT id, dataset_id, year, cog_url, vrt_url FROM tiles ORDER BY id"
+                "SELECT id, dataset_id, year, cog_path, vrt_strategy, "
+                "record_fingerprint FROM tiles ORDER BY id"
             ).fetchall()
             self.assertEqual(
                 [(row[0], row[1], row[2]) for row in ordered_rows],
                 [
-                    (1, "zero-boundary-2017", 2017),
-                    (2, "hong-kong-2023", 2023),
-                    (3, "nvidia-2024", 2024),
-                    (4, "hong-kong-2025", 2025),
-                    (5, "nvidia-2025", 2025),
+                    (1, "1001", 2017),
+                    (2, "1002", 2023),
+                    (3, "1003", 2024),
+                    (4, "1004", 2025),
+                    (5, "1005", 2025),
                 ],
             )
-            self.assertTrue(all(not row[3].startswith("http") for row in ordered_rows))
-            self.assertTrue(all(not row[4].startswith("http") for row in ordered_rows))
+            self.assertTrue(all(not row[3].startswith(("http", "s3:")) for row in ordered_rows))
+            self.assertTrue(all(row[4] == self.expected["vrt_strategy"] for row in ordered_rows))
+            self.assertTrue(all(len(row[5]) == 64 for row in ordered_rows))
+            self.assertEqual(
+                {row[1]: row[5] for row in ordered_rows},
+                self.expected["record_fingerprints"],
+            )
 
             metadata = connection.execute("SELECT * FROM metadata").fetchone()
             self.assertEqual(metadata, (
@@ -134,6 +146,9 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
                 self.expected["generated_at"],
                 self.expected["row_count"],
                 self.expected["asset_base_url"],
+                self.expected["record_fingerprint_algorithm"],
+                self.expected["record_fingerprint_domain"],
+                self.expected["record_fingerprint_canonicalization"],
             ))
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM tile_rtree").fetchone()[0],
@@ -155,8 +170,8 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
                 ).fetchall()
             finally:
                 connection.close()
-            self.assertEqual(actual[0], (1, "zero-boundary-2017", 2017))
-            self.assertEqual(actual[-1], (5, "nvidia-2025", 2025))
+            self.assertEqual(actual[0], (1, "1001", 2017))
+            self.assertEqual(actual[-1], (5, "1005", 2025))
 
     def test_builder_rejects_malformed_duplicate_and_mismatched_metadata_atomically(self):
         invalid_cases = []
@@ -164,15 +179,18 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
         invalid_cases.append(("year", self.valid_rows + [malformed], 6, "year"))
         invalid_cases.append((
             "duplicate", self.valid_rows + [self.expected["duplicate_row"]], 6,
-            "duplicate dataset_id",
+            "duplicate fid",
         ))
         override_cases = [
-            ("longitude", "min_lon", "-181", "longitude"),
-            ("latitude", "max_lat", "91", "latitude"),
-            ("bbox", "max_lon", "-123", "bbox"),
-            ("url", "cog_url", "ftp://example.invalid/bad.tif", "URL scheme"),
-            ("checksum", "source_checksum", "not-a-sha256", "checksum"),
-            ("version", "source_version", "", "source_version"),
+            ("longitude", "wgs84_west", "-181", "longitude"),
+            ("latitude", "wgs84_north", "91", "latitude"),
+            ("bbox", "wgs84_east", "-123", "bbox"),
+            ("origin", "path", "s3://evil.example/aef/bad.tiff", "origin"),
+            ("query", "path", self.valid_rows[0]["path"] + "?token=bad", "query"),
+            ("fragment", "path", self.valid_rows[0]["path"] + "#bad", "fragment"),
+            ("noncompact", "path", self.valid_rows[0]["path"].replace(
+                "/2025/", "/2025/../2025/"), "compact"),
+            ("location", "location", "VRT://vsis3/evil.example/bad.tiff", "location"),
         ]
         for name, field, value, message in override_cases:
             rows = [dict(row) for row in self.valid_rows]
@@ -204,7 +222,7 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
             mismatched_schema = Path(directory) / "schema-v2.sql"
             mismatched_schema.write_text(
                 SCHEMA.read_text(encoding="utf-8").replace(
-                    "PRAGMA user_version = 1", "PRAGMA user_version = 2"),
+                    "PRAGMA user_version = 2", "PRAGMA user_version = 3"),
                 encoding="utf-8",
             )
             output = Path(directory) / "alphaearth.sqlite"
@@ -237,7 +255,7 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
             self.assertEqual(manifest["output_sha256"], hashlib.sha256(output.read_bytes()).hexdigest())
             self.assertEqual(manifest["output_size"], output.stat().st_size)
 
-    def test_production_projection_matches_pinned_parquet_schema(self):
+    def test_production_projection_exports_only_raw_primary_fields(self):
         result = subprocess.run(
             ["bash", str(EXTRACTOR), "--print-duckdb-sql", "/tmp/aef_index.parquet"],
             cwd=REPO_ROOT,
@@ -247,16 +265,81 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         sql = result.stdout.decode()
-        for field in (
-                "fid", "path", "year", "wgs84_west", "wgs84_south",
-                "wgs84_east", "wgs84_north"):
-            self.assertIn(field, sql)
-        for stale_field in ("datetime", "assets.data.href", "bbox.xmin"):
-            self.assertNotIn(stale_field, sql)
-        self.assertIn("s3://us-west-2.opendata.source.coop/", sql)
-        self.assertIn("https://data.source.coop/", sql)
-        self.assertIn("\\.tiff$", sql)
-        self.assertIn(".vrt", sql)
+        normalized = " ".join(sql.split())
+        self.assertIn(
+            "SELECT fid, path, year, wgs84_west, wgs84_south, "
+            "wgs84_east, wgs84_north, location", normalized)
+        for transformed_field in (
+                "dataset_id", "cog_url", "cog_path", "vrt_url", "vrt_strategy",
+                "record_fingerprint", "sha256("):
+            self.assertNotIn(transformed_field, sql)
+
+    def test_fetch_duckdb_replaces_poisoned_cached_archive_atomically(self):
+        build_root = REPO_ROOT / "build" / "science-tools" / "tests"
+        build_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=build_root) as directory:
+            root = Path(directory)
+            source_archive = root / "source" / "duckdb.zip"
+            source_archive.parent.mkdir()
+            with zipfile.ZipFile(source_archive, "w") as archive:
+                archive.writestr("duckdb", "#!/usr/bin/env bash\nexit 0\n")
+            archive_bytes = source_archive.read_bytes()
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({
+                "duckdb": {
+                    "version": "test",
+                    "archive": "duckdb.zip",
+                    "url": source_archive.as_uri(),
+                    "sha256": hashlib.sha256(archive_bytes).hexdigest(),
+                    "size": len(archive_bytes),
+                    "binary": "duckdb",
+                }
+            }), encoding="utf-8")
+            tools_dir = root / "tools"
+            cached_archive = tools_dir / "downloads" / "duckdb.zip"
+            cached_archive.parent.mkdir(parents=True)
+            cached_archive.write_bytes(b"poisoned-cache")
+
+            result = subprocess.run(
+                ["bash", str(FETCH_DUCKDB), "--manifest", str(manifest),
+                 "--tools-dir", str(tools_dir)],
+                cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                check=False)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(cached_archive.read_bytes(), archive_bytes)
+            self.assertTrue((tools_dir / "duckdb").is_file())
+            self.assertFalse(list(tools_dir.rglob("*.part*")))
+
+    def test_extract_replaces_poisoned_source_cache_before_use(self):
+        build_root = REPO_ROOT / "build" / "science-tools" / "tests"
+        build_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=build_root) as directory:
+            root = Path(directory)
+            source = root / "source" / "aef_index.parquet"
+            source.parent.mkdir()
+            source.write_bytes(b"PAR1-tiny-source-fixture-PAR1")
+            source_bytes = source.read_bytes()
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({
+                "source_index": {
+                    "url": source.as_uri(),
+                    "sha256": hashlib.sha256(source_bytes).hexdigest(),
+                    "size": len(source_bytes),
+                }
+            }), encoding="utf-8")
+            tools_dir = root / "tools"
+            tools_dir.mkdir()
+            cached_source = tools_dir / "aef_index.parquet"
+            cached_source.write_bytes(b"poisoned-cache")
+
+            result = subprocess.run(
+                ["bash", str(EXTRACTOR), "--fetch-source-only",
+                 "--manifest", str(manifest), "--tools-dir", str(tools_dir)],
+                cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                check=False)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(cached_source.read_bytes(), source_bytes)
+            self.assertFalse(list(tools_dir.rglob("*.part*")))
 
 
 if __name__ == "__main__":

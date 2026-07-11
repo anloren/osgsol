@@ -1,48 +1,55 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "generated_at": "2026-07-12T00:00:00Z",
   "source_index_url": "https://example.invalid/aef_index_fixture.csv",
   "row_count": 5,
   "asset_base_url": "https://data.source.coop/tge-labs/aef/v1/annual/",
+  "vrt_strategy": "synthesize_vertical_flip",
+  "record_fingerprint_algorithm": "sha256",
+  "record_fingerprint_domain": "osgsol.aef.raw-index-record.v1",
+  "record_fingerprint_canonicalization": "json-sort-keys-compact-utf8-numeric-17g-v1",
+  "record_fingerprints": {
+    "1001": "fa2b52d3bb89dec011329f7f6eeb4bc5ce42116668dea75cc4d85da8c575d85f",
+    "1002": "00310ab6c077f2b10fac55ebc42725b855470a0b4fe4f29472d6957a078bb3f5",
+    "1003": "9619c9ea5aa89232b225f20a1c295308f650af8873ec3b30f21a62ff332f912f",
+    "1004": "d6f3afb9ccf7e15034acd189178f61ea8cc7d63978cfda3e635e62b18a9a1c3e",
+    "1005": "0039cb8f25ce0d709f17ec9d21e68851d3e2cb3866c25b6cd1182d6bf359c319"
+  },
   "queries": {
     "nvidia_hq": {
       "latitude": 37.3707,
       "longitude": -121.9631,
-      "rows": [[2024, 3, "nvidia-2024"], [2025, 5, "nvidia-2025"]]
+      "rows": [[2024, 3, "1003"], [2025, 5, "1005"]]
     },
     "hong_kong": {
       "latitude": 22.3193,
       "longitude": 114.1694,
-      "rows": [[2023, 2, "hong-kong-2023"], [2025, 4, "hong-kong-2025"]]
+      "rows": [[2023, 2, "1002"], [2025, 4, "1004"]]
     },
     "zero_boundary": {
       "latitude": 0.0,
       "longitude": 0.0,
-      "rows": [[2017, 1, "zero-boundary-2017"]]
+      "rows": [[2017, 1, "1001"]]
     }
   },
   "malformed_row": {
-    "dataset_id": "malformed-year",
+    "fid": "2000",
+    "path": "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2026/31N/bad.tiff",
     "year": "2026",
-    "cog_url": "https://data.source.coop/tge-labs/aef/v1/annual/2026/bad.tif",
-    "vrt_url": "https://data.source.coop/tge-labs/aef/v1/annual/2026/bad.vrt",
-    "min_lon": "0",
-    "min_lat": "0",
-    "max_lon": "1",
-    "max_lat": "1",
-    "source_version": "1.1",
-    "source_checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    "wgs84_west": "0",
+    "wgs84_south": "0",
+    "wgs84_east": "1",
+    "wgs84_north": "1",
+    "location": "VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2026/31N/bad.tiff"
   },
   "duplicate_row": {
-    "dataset_id": "nvidia-2024",
+    "fid": "1003",
+    "path": "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/10N/duplicate.tiff",
     "year": "2025",
-    "cog_url": "https://data.source.coop/tge-labs/aef/v1/annual/2025/duplicate.tif",
-    "vrt_url": "https://data.source.coop/tge-labs/aef/v1/annual/2025/duplicate.vrt",
-    "min_lon": "-122.2",
-    "min_lat": "37.1",
-    "max_lon": "-121.7",
-    "max_lat": "37.7",
-    "source_version": "1.1",
-    "source_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    "wgs84_west": "-122.2",
+    "wgs84_south": "37.1",
+    "wgs84_east": "-121.7",
+    "wgs84_north": "37.7",
+    "location": "VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/10N/duplicate.tiff"
   }
 }
