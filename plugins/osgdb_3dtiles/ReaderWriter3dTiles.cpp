@@ -14,19 +14,12 @@
 #include "3rdparty/picojson.h"
 #include "pipeline/Global.h"
 #include "readerwriter/Utilities.h"
+#include "PagingUtils.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <limits.h>
 #define WRITE_TO_OSG 0
-
-static double computeSwitchPixels(double radius, double geometricError, double sse)
-{
-    if (!(radius > 0.0) || !(geometricError > 0.0) || !(sse > 0.0))
-        return 1.0;
-    return osg::clampBetween(2.0 * radius * sse / geometricError,
-                             1.0, (double)FLT_MAX);
-}
 
 static std::vector<std::string> split(const std::string& src, const char* seperator, bool ignoreEmpty)
 {
@@ -360,7 +353,9 @@ protected:
             else if (!prefix.empty()) uri = prefix + sep + uri;
         }
 
-        if (deferExternalTilesets && ext == "json" && !uri.empty())
+        const bool hasRefinedChildren =
+            children.is<picojson::array>() && !children.get<picojson::array>().empty();
+        if (deferExternalTilesets && ext == "json" && !uri.empty() && !hasRefinedChildren)
             return createDeferredExternalTileset(uri, bound, options);
 
         bool additive = (st == "ADD" || st == "add");
@@ -436,7 +431,8 @@ protected:
             if (atoi(usePixels.c_str()) > 0)
             {
                 const double switchPixels =
-                    computeSwitchPixels(bound.radius(), geometricError, sse);
+                    osgVerse::Tiles3dPaging::computeSwitchPixels(
+                        bound.radius(), geometricError, sse);
                 plod->setRangeMode(osg::LOD::PIXEL_SIZE_ON_SCREEN);
                 if (additive) plod->setRange(0, 0.0f, FLT_MAX);
                 else plod->setRange(0, 0.0f, static_cast<float>(switchPixels));

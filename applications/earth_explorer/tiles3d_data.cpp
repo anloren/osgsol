@@ -11,7 +11,6 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
-#include <sstream>
 #include <thread>
 #include "tiles3d_data.h"
 
@@ -116,12 +115,11 @@ public:
                 const double sse = earthtiles3d::resolveScreenSpaceError(
                     getenv("EARTH_3DTILES_SSE"));
                 self->_sse = sse;
-                std::ostringstream sseText;
-                sseText << sse;
                 osg::ref_ptr<osgDB::Options> opt =
                     new osgDB::Options(isHttp ? "Extension=verse_tiles" : "");
                 opt->setPluginStringData("UsePixelsOnScreen", "1");
-                opt->setPluginStringData("MaxScreenSpaceError", sseText.str());
+                opt->setPluginStringData(
+                    "MaxScreenSpaceError", earthtiles3d::formatScreenSpaceError(sse));
                 if (isHttp)
                 {
                     // 网络 URL:通过 verse_web 读取器获取内容,并以 verse_tiles 解析

@@ -1,7 +1,10 @@
 #include <cmath>
+#include <cfloat>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <locale>
 #include <string>
 #include <vector>
 #include <unistd.h>
@@ -14,6 +17,7 @@
 #include <osgDB/Registry>
 
 #include "../applications/earth_explorer/tiles3d_data.h"
+#include "../plugins/osgdb_3dtiles/PagingUtils.h"
 
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ \
@@ -21,6 +25,12 @@
 
 namespace
 {
+    class CommaDecimalPoint : public std::numpunct<char>
+    {
+    protected:
+        char do_decimal_point() const override { return ','; }
+    };
+
     class CountingReader : public osgDB::ReaderWriter
     {
     public:
@@ -117,6 +127,21 @@ namespace
         CHECK(proxyOptions != sourceOptions);
         CHECK(proxyOptions->getPluginStringData("PagingSentinel") == "preserved");
     }
+
+    float readPixelSwitch(const std::string& path, const char* sse)
+    {
+        osg::ref_ptr<osgDB::Options> options = new osgDB::Options;
+        options->setPluginStringData("UsePixelsOnScreen", "1");
+        options->setPluginStringData("MaxScreenSpaceError", sse);
+        osg::ref_ptr<osg::Node> node =
+            osgDB::readNodeFile(path + ".verse_tiles", options.get());
+        GraphVisitor visitor;
+        if (node.valid()) node->accept(visitor);
+        CHECK(node.valid());
+        CHECK(visitor.pagedLods.size() == 1);
+        CHECK(visitor.pagedLods.front()->getRangeMode() == osg::LOD::PIXEL_SIZE_ON_SCREEN);
+        return visitor.pagedLods.front()->getMinRange(1);
+    }
 }
 
 int main(int, char**)
@@ -128,14 +153,25 @@ int main(int, char**)
     CHECK(std::fabs(earthtiles3d::resolveScreenSpaceError("99") - 32.0) < 1e-9);
     CHECK(std::fabs(earthtiles3d::resolveScreenSpaceError("bad") - 8.0) < 1e-9);
 
+    const double preciseSse = std::nextafter(8.0, 9.0);
+    const std::locale savedLocale = std::locale();
+    std::locale::global(std::locale(std::locale::classic(), new CommaDecimalPoint));
+    const std::string serializedSse = earthtiles3d::formatScreenSpaceError(preciseSse);
+    std::locale::global(savedLocale);
+    CHECK(serializedSse.find(',') == std::string::npos);
+    CHECK(serializedSse.find('.') != std::string::npos);
+    CHECK(earthtiles3d::resolveScreenSpaceError(serializedSse.c_str()) == preciseSse);
+
     CHECK(osgDB::Registry::instance()->loadLibrary(OSGVERSE_3DTILES_PLUGIN_PATH) !=
           osgDB::Registry::NOT_LOADED);
 
     const std::string dir = makeTempDir();
     const std::string root = dir + "/root.json";
+    const std::string mixedRoot = dir + "/mixed.json";
     const std::string replaceRoot = dir + "/replace.json";
     const std::string roughRoot = dir + "/rough.json";
     const std::string lodRoot = dir + "/lod.json";
+    const std::string addLodRoot = dir + "/add-lod.json";
     writeText(root,
         "{\"asset\":{\"version\":\"1.1\"},\"geometricError\":1000,\"root\":{"
         "\"boundingVolume\":{\"sphere\":[0,0,0,1000]},\"geometricError\":500,"
@@ -151,6 +187,14 @@ int main(int, char**)
         "\"content\":{\"uri\":\"counting://rough/tileset.json\"},\"children\":["
         "{\"boundingVolume\":{\"sphere\":[0,0,0,100]},\"geometricError\":50,"
         "\"content\":{\"uri\":\"counting://refined/tileset.json\"}}]}}}");
+    writeText(mixedRoot,
+        "{\"asset\":{\"version\":\"1.1\"},\"geometricError\":1000,\"root\":{"
+        "\"boundingVolume\":{\"sphere\":[0,0,0,1000]},\"geometricError\":500,"
+        "\"refine\":\"REPLACE\",\"children\":[{"
+        "\"boundingVolume\":{\"sphere\":[0,0,0,250]},\"geometricError\":100,"
+        "\"content\":{\"uri\":\"counting://rough/mixed.json\"},\"children\":[{"
+        "\"boundingVolume\":{\"sphere\":[0,0,0,100]},\"geometricError\":25,"
+        "\"content\":{\"uri\":\"counting://refined/local.b3dm\"}}]}]}}}");
     writeText(roughRoot,
         "{\"asset\":{\"version\":\"1.1\"},\"geometricError\":0,\"root\":{"
         "\"boundingVolume\":{\"sphere\":[0,0,0,100]},\"geometricError\":0}}}");
@@ -158,6 +202,12 @@ int main(int, char**)
         "{\"asset\":{\"version\":\"1.1\"},\"geometricError\":25,\"root\":{"
         "\"boundingVolume\":{\"sphere\":[0,0,0,100]},\"geometricError\":25,"
         "\"refine\":\"REPLACE\",\"content\":{\"uri\":\"rough.json\"},"
+        "\"children\":[{\"boundingVolume\":{\"sphere\":[0,0,0,50]},"
+        "\"geometricError\":10,\"content\":{\"uri\":\"refined.json\"}}]}}}");
+    writeText(addLodRoot,
+        "{\"asset\":{\"version\":\"1.1\"},\"geometricError\":25,\"root\":{"
+        "\"boundingVolume\":{\"sphere\":[0,0,0,100]},\"geometricError\":25,"
+        "\"refine\":\"ADD\",\"content\":{\"uri\":\"rough.json\"},"
         "\"children\":[{\"boundingVolume\":{\"sphere\":[0,0,0,50]},"
         "\"geometricError\":10,\"content\":{\"uri\":\"refined.json\"}}]}}}");
 
@@ -186,6 +236,44 @@ int main(int, char**)
                        osg::Vec3d(-100, 0, 0), 60.0, rootOptions.get());
 
     std::cout << "[tiles3d_paging_tests] deferred external roots OK\n";
+
+    const unsigned int readsBeforeMixed = countingReader->readCount();
+    osg::ref_ptr<osg::Node> mixedNode =
+        osgDB::readNodeFile(mixedRoot + ".verse_tiles", rootOptions.get());
+    GraphVisitor mixedVisitor;
+    if (mixedNode.valid()) mixedNode->accept(mixedVisitor);
+    const unsigned int mixedRoughReadAttempts =
+        countingReader->readCount() - readsBeforeMixed;
+
+    CHECK(mixedNode.valid());
+    CHECK(mixedRoughReadAttempts > 0);
+    CHECK(mixedVisitor.pagedLods.size() == 1);
+    CHECK(mixedVisitor.proxies.empty());
+    osg::PagedLOD* mixedLod = mixedVisitor.pagedLods.front();
+    CHECK(mixedLod->getNumChildren() == 1);
+    CHECK(mixedLod->getNumFileNames() == 2);
+    const osgDB::Options* mixedPagerOptions =
+        dynamic_cast<const osgDB::Options*>(mixedLod->getDatabaseOptions());
+    CHECK(mixedPagerOptions != NULL);
+    CHECK(mixedPagerOptions->getPluginStringData("DeferExternalTilesets") == "0");
+
+    const std::string mixedRefinedPseudoFile =
+        mixedLod->getDatabasePath() + mixedLod->getFileName(1);
+    const unsigned int readsBeforeMixedRefined = countingReader->readCount();
+    osg::ref_ptr<osg::Node> mixedRefinedNode =
+        osgDB::readNodeFile(mixedRefinedPseudoFile, mixedPagerOptions);
+    const unsigned int mixedRefinedReadAttempts =
+        countingReader->readCount() - readsBeforeMixedRefined;
+    GraphVisitor mixedRefinedVisitor;
+    if (mixedRefinedNode.valid()) mixedRefinedNode->accept(mixedRefinedVisitor);
+
+    CHECK(mixedRefinedNode.valid());
+    CHECK(mixedRefinedReadAttempts > 0);
+    CHECK(dynamic_cast<osg::ProxyNode*>(mixedRefinedNode.get()) == NULL);
+    CHECK(mixedRefinedVisitor.proxies.empty());
+    CHECK(mixedRefinedVisitor.pagedLods.empty());
+
+    std::cout << "[tiles3d_paging_tests] mixed rough/refined subtree stayed atomic\n";
 
     osg::ref_ptr<osg::Node> replaceNode =
         osgDB::readNodeFile(replaceRoot + ".verse_tiles", rootOptions.get());
@@ -240,11 +328,55 @@ int main(int, char**)
     CHECK(lod->getNumChildrenThatCannotBeExpired() == 1);
     CHECK(std::fabs(lod->getMinimumExpiryTime(1) - 30.0) < 1e-9);
     CHECK(std::fabs(lod->getMinRange(1) - 64.0f) < 1e-4f);
+    CHECK(std::fabs(lod->getMaxRange(0) - 64.0f) < 1e-4f);
+    CHECK(lod->getMaxRange(1) == FLT_MAX);
+
+    osg::ref_ptr<osg::Node> addLodNode =
+        osgDB::readNodeFile(addLodRoot + ".verse_tiles", lodOptions.get());
+    GraphVisitor addLodVisitor;
+    if (addLodNode.valid()) addLodNode->accept(addLodVisitor);
+    CHECK(addLodNode.valid());
+    CHECK(addLodVisitor.pagedLods.size() == 1);
+    osg::PagedLOD* addLod = addLodVisitor.pagedLods.front();
+    CHECK(addLod->getRangeMode() == osg::LOD::PIXEL_SIZE_ON_SCREEN);
+    CHECK(addLod->getMinRange(0) == 0.0f);
+    CHECK(addLod->getMaxRange(0) == FLT_MAX);
+    CHECK(std::fabs(addLod->getMinRange(1) - 64.0f) < 1e-4f);
+    CHECK(addLod->getMaxRange(1) == FLT_MAX);
+
+    osg::ref_ptr<osgDB::Options> legacyOptions = new osgDB::Options;
+    osg::ref_ptr<osg::Node> legacyNode =
+        osgDB::readNodeFile(addLodRoot + ".verse_tiles", legacyOptions.get());
+    GraphVisitor legacyVisitor;
+    if (legacyNode.valid()) legacyNode->accept(legacyVisitor);
+    CHECK(legacyNode.valid());
+    CHECK(legacyVisitor.pagedLods.size() == 1);
+    osg::PagedLOD* legacyLod = legacyVisitor.pagedLods.front();
+    const float expectedLegacyRange =
+        static_cast<float>(25.0 * 1080.0 / (16.0 * 0.5629));
+    CHECK(legacyLod->getRangeMode() == osg::LOD::DISTANCE_FROM_EYE_POINT);
+    CHECK(legacyLod->getMinRange(0) == 0.0f);
+    CHECK(legacyLod->getMaxRange(0) == FLT_MAX);
+    CHECK(legacyLod->getMinRange(1) == 0.0f);
+    CHECK(std::fabs(legacyLod->getMaxRange(1) - expectedLegacyRange) < 1e-3f);
+
+    CHECK(std::fabs(readPixelSwitch(lodRoot, "inf") - 1.0f) < 1e-6f);
+    const double infinity = std::numeric_limits<double>::infinity();
+    CHECK(std::fabs(osgVerse::Tiles3dPaging::computeSwitchPixels(infinity, 25.0, 8.0) -
+                    1.0) < 1e-9);
+    CHECK(std::fabs(osgVerse::Tiles3dPaging::computeSwitchPixels(100.0, infinity, 8.0) -
+                    1.0) < 1e-9);
+    CHECK(std::fabs(osgVerse::Tiles3dPaging::computeSwitchPixels(100.0, 25.0, infinity) -
+                    1.0) < 1e-9);
+    CHECK(std::fabs(osgVerse::Tiles3dPaging::computeSwitchPixels(1e308, 1e-308, 32.0) -
+                    1.0) < 1e-9);
 
     osgDB::Registry::instance()->removeReaderWriter(countingReader.get());
     ::unlink(root.c_str());
+    ::unlink(mixedRoot.c_str());
     ::unlink(replaceRoot.c_str());
     ::unlink(lodRoot.c_str());
+    ::unlink(addLodRoot.c_str());
     ::unlink(roughRoot.c_str());
     ::rmdir(dir.c_str());
     std::cout << "[tiles3d_paging_tests] REPLACE refined group stayed atomic\n";

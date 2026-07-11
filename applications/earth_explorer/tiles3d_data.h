@@ -3,6 +3,10 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <iomanip>
+#include <limits>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <osg/Node>
 #include <osgViewer/View>
@@ -16,6 +20,14 @@ namespace earthtiles3d
         const double parsed = std::strtod(value, &end);
         if (end == value || *end != '\0' || !std::isfinite(parsed)) return 8.0;
         return parsed < 2.0 ? 2.0 : (parsed > 32.0 ? 32.0 : parsed);
+    }
+
+    inline std::string formatScreenSpaceError(double value)
+    {
+        std::ostringstream text;
+        text.imbue(std::locale::classic());
+        text << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+        return text.str();
     }
 }
 
