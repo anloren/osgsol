@@ -502,3 +502,58 @@ Append exact test counts, `root_attached_ms`, first-visible time, request orderi
 git add docs/superpowers/plans/2026-07-11-hk-3dtiles-progressive-plan.md
 git commit -m "docs: record Hong Kong paging verification"
 ```
+
+## Task 5 verification evidence (2026-07-11)
+
+All timestamps below are from the fresh Task 5 run. `UTC_*` values came from the command
+wrappers; bracketed application timestamps are local Asia/Shanghai time from the raw OSG log.
+
+### Offline and build evidence
+
+- `cmake --build build/osgsol_core --target osgVerse_Test_Tiles3dPaging -j2`:
+  UTC `04:31:56`-`04:31:57`, exit `0`; the requested target was built. An earlier wrapper at
+  `04:31:49` built the target but then hit zsh's read-only `status` variable, so it is not used as
+  pass evidence.
+- `build/osgsol_core/bin/osgVerse_Test_Tiles3dPaging`: UTC `04:32:01`, exit `0`.
+  It reported external-child read attempts `0`, REPLACE refined-page read attempts `1`, deferred
+  external roots OK, pixel switch `64`, protected children `1`, refined expiry `30`, and an atomic
+  REPLACE refined group.
+- `ctest --test-dir build/osgsol_core -L offline --output-on-failure`: UTC
+  `04:32:05`-`04:32:15`, exit `0`; `14/14` passed, `0` failed, real time `10.18 s`.
+- `git diff --check`: UTC `04:32:23`, exit `0`, no output.
+- `cmake --build build/osgsol_core --target osgVerse_EarthExplorer -j2`: UTC
+  `04:32:31`-`04:32:32`, exit `0`; the requested app target was built by itself.
+
+### Cold-cache F2 evidence and limits
+
+- Exact brief environment with isolated HOME and `EARTH_AUTOCAP=1500`: process UTC
+  `04:32:52`-`04:33:07`, exit `0`, 10,284 log lines. F2 background loading began at
+  `[12:33:01.543]`; capture occurred at `[12:33:04.801]`, `3.258 s` later. No
+  `root_attached_ms` was emitted. The first KTX2 decode in the subsequent b3dm fallback sequence
+  appeared at `[12:33:05.905]`, `4.362 s` after F2 start and after capture. The captured image was
+  uniformly gray, so it is not visible-coarse evidence.
+- Because `EARTH_AUTOCAP` counts frames rather than milliseconds, two additional isolated-HOME
+  diagnostics kept the same 1,500-frame cap and added bounded per-frame sleeps. With `10 ms`, F2
+  began at `[12:34:12.755]`, capture occurred at `[12:34:29.726]`, and the process exited `0` at
+  UTC `04:34:31`; no root-attach marker appeared. With `25 ms`, F2 began at
+  `[12:36:17.819]`, the first KTX2 decoded at `[12:36:21.897]` (`4.078 s`), 23 KTX2 payloads
+  decoded, capture occurred at `[12:36:58.543]` (`40.724 s`), and the process exited `0` at UTC
+  `04:36:59`; again no root-attach marker appeared. Both captures were uniformly gray.
+- A bounded direct endpoint check at UTC `04:35:10`-`04:35:11` returned HTTP `200`, 11,244
+  bytes, start-transfer `1.453078 s`, total `1.569201 s`. The current root JSON still contains
+  exactly 17 top-level children, all `1/tileset.json` through `17/tileset.json`. No F2 HTTP 4xx/5xx,
+  DNS, connection, TLS, or timeout failure appeared in the application logs.
+- The logs did warn that `osgdb_b3dm.so` was absent, then continued through the verse GLTF/KTX2
+  fallback and decoded content. Neither `root_attached_ms` nor external-JSON request URLs were
+  logged, so root latency and the required ordering relative to the 17 child JSON requests are
+  **not established**. No percentage is claimed.
+- The first loader-side coarse-content evidence is the first KTX2 decode at `4.078 s` in the
+  extended run. It does not prove that a coarse child was attached or visible. The 12-second
+  visible-coarse acceptance remains **unproven** because all offscreen captures were uniformly
+  gray.
+
+### Manual acceptance
+
+Altitude raise/return residency, neighboring-district request locality, and F2 disable/re-enable
+behavior were not observable in the headless runs. All four manual checks remain **pending final
+manual testing**; no visual acceptance is claimed.
