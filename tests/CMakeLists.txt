@@ -147,6 +147,9 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_TileOverlay PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
                            OSGVERSE_TMS_PLUGIN_PATH="$<TARGET_FILE:osgdb_verse_tms>")
 ADD_DEPENDENCIES(osgVerse_Test_TileOverlay osgdb_verse_tms)
+NEW_CTEST(osgVerse_Test_TerrainGrid terrain_grid_tests.cpp offline 120)
+TARGET_COMPILE_DEFINITIONS(osgVerse_Test_TerrainGrid PRIVATE
+                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_Tiles3dPaging tiles3d_paging_tests.cpp offline 120)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Tiles3dPaging PRIVATE
                            OSGVERSE_3DTILES_PLUGIN_PATH="$<TARGET_FILE:osgdb_verse_tiles>")
