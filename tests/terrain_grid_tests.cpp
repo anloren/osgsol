@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 
 #include <osg/Geometry>
@@ -22,6 +24,17 @@ static osg::Texture2D* constantElevation(float meters)
     return new osg::Texture2D(image);
 }
 
+static osg::Texture2D* gradientElevation()
+{
+    osg::Image* image = new osg::Image;
+    image->allocateImage(65, 65, 1, GL_RED, GL_FLOAT);
+    float* values = reinterpret_cast<float*>(image->data());
+    for (int y = 0; y < 65; ++y)
+        for (int x = 0; x < 65; ++x)
+            values[x + y * 65] = static_cast<float>(x + 2 * y);
+    return new osg::Texture2D(image);
+}
+
 static osg::Geometry* makeTile(int z)
 {
     osg::ref_ptr<osgVerse::TileCallback> callback = new osgVerse::TileCallback(true);
@@ -35,6 +48,68 @@ static osg::Geometry* makeTile(int z)
         matrix, elevation.get(),
         osg::Vec3d(0.30, 1.99, 0.0), osg::Vec3d(0.31, 2.00, 0.0),
         0.01, 0.01);
+}
+
+static osg::Geometry* makeAncestorSubtile(osgVerse::TileCallback* callback, int z,
+                                          osg::Texture2D* elevation,
+                                          const osg::Vec3d& tileMin,
+                                          const osg::Vec3d& tileMax,
+                                          const osg::Vec4& elevScaleBias)
+{
+    callback->setTileNumber(0, 0, z);
+    callback->setFlatten(false);
+    callback->setSkirtRatio(0.05f);
+    osg::Matrix matrix;
+    return callback->createTileGeometry(
+        matrix, elevation, tileMin, tileMax,
+        tileMax.x() - tileMin.x(), tileMax.y() - tileMin.y(), elevScaleBias);
+}
+
+static double checkSiblingEdge(int z, osg::Texture2D* elevation,
+                               const osg::Vec3d& leftMin, const osg::Vec3d& leftMax,
+                               const osg::Vec3d& rightMin, const osg::Vec3d& rightMax,
+                               const osg::Vec4& leftBias, const osg::Vec4& rightBias)
+{
+    CHECK(leftMax.x() == rightMin.x());
+    CHECK(leftMin.y() == rightMin.y());
+    CHECK(leftMax.y() == rightMax.y());
+
+    osg::ref_ptr<osgVerse::TileCallback> leftCallback = new osgVerse::TileCallback(true);
+    osg::ref_ptr<osgVerse::TileCallback> rightCallback = new osgVerse::TileCallback(true);
+    osg::ref_ptr<osg::Geometry> leftGeometry = makeAncestorSubtile(
+        leftCallback.get(), z, elevation, leftMin, leftMax, leftBias);
+    osg::ref_ptr<osg::Geometry> rightGeometry = makeAncestorSubtile(
+        rightCallback.get(), z, elevation, rightMin, rightMax, rightBias);
+
+    unsigned int leftRows = 0, leftColumns = 0, rightRows = 0, rightColumns = 0;
+    CHECK(osgVerse::tileGeometryGridSize(leftGeometry.get(), leftRows, leftColumns));
+    CHECK(osgVerse::tileGeometryGridSize(rightGeometry.get(), rightRows, rightColumns));
+    CHECK(leftRows == 33u && leftColumns == 33u);
+    CHECK(rightRows == 33u && rightColumns == 33u);
+
+    const osg::Vec3Array* leftVertices =
+        static_cast<const osg::Vec3Array*>(leftGeometry->getVertexArray());
+    const osg::Vec3Array* rightVertices =
+        static_cast<const osg::Vec3Array*>(rightGeometry->getVertexArray());
+    CHECK(leftVertices && leftVertices->size() >= leftRows * leftColumns);
+    CHECK(rightVertices && rightVertices->size() >= rightRows * rightColumns);
+
+    const osg::Matrixd leftToWorld =
+        osg::Matrixd::inverse(leftCallback->getTileWorldToLocalMatrix());
+    const osg::Matrixd rightToWorld =
+        osg::Matrixd::inverse(rightCallback->getTileWorldToLocalMatrix());
+    double maximumDifference = 0.0;
+    for (unsigned int row = 0; row < 33u; ++row)
+    {
+        const osg::Vec3d leftWorld =
+            osg::Vec3d((*leftVertices)[32u + row * 33u]) * leftToWorld;
+        const osg::Vec3d rightWorld =
+            osg::Vec3d((*rightVertices)[row * 33u]) * rightToWorld;
+        const double difference = (leftWorld - rightWorld).length();
+        maximumDifference = std::max(maximumDifference, difference);
+        CHECK(difference < 1e-3);
+    }
+    return maximumDifference;
 }
 
 int main(int, char**)
@@ -56,6 +131,38 @@ int main(int, char**)
     CHECK(rows == 33u && columns == 33u);
     CHECK(z12->getVertexArray()->getNumElements() == 33u * 33u + 4u * 33u);
 
-    std::cout << "[terrain_grid_tests] grid dimensions OK\n";
+    osg::ref_ptr<osg::Texture2D> gradient = gradientElevation();
+    const double ancestorMinLon = 0.30;
+    const double ancestorMaxLon = 0.31;
+    const double ancestorMinLat = 1.99;
+    const double ancestorMaxLat = 2.00;
+    const double ancestorWidth = ancestorMaxLon - ancestorMinLon;
+    const double ancestorHeight = ancestorMaxLat - ancestorMinLat;
+    const double halfLon = ancestorMinLon + ancestorWidth * 0.5;
+    const double halfLat = ancestorMinLat + ancestorHeight * 0.5;
+    const double z16MaximumDifference = checkSiblingEdge(
+        16, gradient.get(),
+        osg::Vec3d(ancestorMinLon, ancestorMinLat, 0.0),
+        osg::Vec3d(halfLon, halfLat, 0.0),
+        osg::Vec3d(halfLon, ancestorMinLat, 0.0),
+        osg::Vec3d(ancestorMaxLon, halfLat, 0.0),
+        osg::Vec4(0.0f, 0.0f, 0.5f, 0.5f),
+        osg::Vec4(0.5f, 0.0f, 0.5f, 0.5f));
+
+    const double quarterLon = ancestorMinLon + ancestorWidth * 0.25;
+    const double quarterLat = ancestorMinLat + ancestorHeight * 0.25;
+    const double z17MaximumDifference = checkSiblingEdge(
+        17, gradient.get(),
+        osg::Vec3d(ancestorMinLon, ancestorMinLat, 0.0),
+        osg::Vec3d(quarterLon, quarterLat, 0.0),
+        osg::Vec3d(quarterLon, ancestorMinLat, 0.0),
+        osg::Vec3d(halfLon, quarterLat, 0.0),
+        osg::Vec4(0.0f, 0.0f, 0.25f, 0.25f),
+        osg::Vec4(0.25f, 0.0f, 0.25f, 0.25f));
+
+    std::cout << std::setprecision(9)
+              << "[terrain_grid_tests] grid dimensions OK; z16 seam max "
+              << z16MaximumDifference << " m; z17 seam max "
+              << z17MaximumDifference << " m\n";
     return 0;
 }
