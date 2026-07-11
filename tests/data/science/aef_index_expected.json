@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-12T00:00:00Z",
+  "source_index_url": "https://example.invalid/aef_index_fixture.csv",
+  "row_count": 5,
+  "asset_base_url": "https://data.source.coop/tge-labs/aef/v1/annual/",
+  "queries": {
+    "nvidia_hq": {
+      "latitude": 37.3707,
+      "longitude": -121.9631,
+      "rows": [[2024, 3, "nvidia-2024"], [2025, 5, "nvidia-2025"]]
+    },
+    "hong_kong": {
+      "latitude": 22.3193,
+      "longitude": 114.1694,
+      "rows": [[2023, 2, "hong-kong-2023"], [2025, 4, "hong-kong-2025"]]
+    },
+    "zero_boundary": {
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "rows": [[2017, 1, "zero-boundary-2017"]]
+    }
+  },
+  "malformed_row": {
+    "dataset_id": "malformed-year",
+    "year": "2026",
+    "cog_url": "https://data.source.coop/tge-labs/aef/v1/annual/2026/bad.tif",
+    "vrt_url": "https://data.source.coop/tge-labs/aef/v1/annual/2026/bad.vrt",
+    "min_lon": "0",
+    "min_lat": "0",
+    "max_lon": "1",
+    "max_lat": "1",
+    "source_version": "1.1",
+    "source_checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "duplicate_row": {
+    "dataset_id": "nvidia-2024",
+    "year": "2025",
+    "cog_url": "https://data.source.coop/tge-labs/aef/v1/annual/2025/duplicate.tif",
+    "vrt_url": "https://data.source.coop/tge-labs/aef/v1/annual/2025/duplicate.vrt",
+    "min_lon": "-122.2",
+    "min_lat": "37.1",
+    "max_lon": "-121.7",
+    "max_lat": "37.7",
+    "source_version": "1.1",
+    "source_checksum": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}

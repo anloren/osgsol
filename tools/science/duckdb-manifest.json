@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "duckdb": {
+    "version": "1.5.3",
+    "platform": "osx-arm64",
+    "archive": "duckdb_cli-osx-arm64.zip",
+    "url": "https://github.com/duckdb/duckdb/releases/download/v1.5.3/duckdb_cli-osx-arm64.zip",
+    "sha256": "a283a8d03479d1793f6c264937d056e990151706e4bede10f95c86e51c7442a4",
+    "size": 16279388,
+    "binary": "duckdb"
+  },
+  "source_index": {
+    "url": "https://data.source.coop/tge-labs/aef/v1/annual/aef_index.parquet",
+    "sha256": "f738e7d274ad582e56e20a3a8b444c6f2a3ece5781f8f9855bb7ca3d9ed2942f",
+    "size": 77829744,
+    "version_id": "Jij1TxcgnR1OnraqHdIBcyahUK0QjPV_",
+    "last_modified": "2026-03-22T14:47:59Z"
+  }
+}
