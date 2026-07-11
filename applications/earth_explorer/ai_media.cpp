@@ -890,6 +890,10 @@ namespace earthai
             if (!_viewer || !_viewer->getCamera())
             {
                 _jobs.update(_jobId, AIJob::FAILED, 1.0f, "", "camera unavailable");
+                if (_cards) _cards->removeJob(_jobId);
+                if (_chatCore) _chatCore->addErrorNote(u8"照片生成失败：camera unavailable");
+                OSG_WARN << "[AIChat] photo job " << _jobId
+                         << " failed: camera unavailable" << std::endl;
                 _state = IDLE;
                 return;
             }

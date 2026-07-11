@@ -65,6 +65,17 @@ static std::string generatePhotoToolBlock()
     return source.substr(begin, end - begin);
 }
 
+static std::string photoCameraUnavailableBlock()
+{
+    const std::string source = readWholeFile(
+        std::string(OSGVERSE_SOURCE_DIR) + "/applications/earth_explorer/ai_media.cpp");
+    const size_t begin = source.find("if (!_viewer || !_viewer->getCamera())");
+    const size_t end = source.find("_captureRequest = makePhotoCaptureRequest(", begin);
+    CHECK(begin != std::string::npos);
+    CHECK(end != std::string::npos);
+    return source.substr(begin, end - begin);
+}
+
 int main(int, char**)
 {
     using namespace earthai;
@@ -705,6 +716,15 @@ int main(int, char**)
         CHECK(toolBlock.find("setByEye(") == std::string::npos);
         CHECK(toolBlock.find("stopAnimation(") == std::string::npos);
         CHECK(toolBlock.find("moveTo(") == std::string::npos);
+
+        const std::string cameraFailureBlock = photoCameraUnavailableBlock();
+        CHECK(cameraFailureBlock.find("camera unavailable") != std::string::npos);
+        CHECK(cameraFailureBlock.find("_cards->removeJob(_jobId)") != std::string::npos);
+        CHECK(cameraFailureBlock.find("_chatCore->addErrorNote") != std::string::npos);
+        CHECK(cameraFailureBlock.find("failed: camera unavailable") != std::string::npos);
+        CHECK(cameraFailureBlock.find("_state = IDLE") != std::string::npos);
+        CHECK(cameraFailureBlock.find("return;") != std::string::npos);
+        CHECK(cameraFailureBlock.find("hudHide()") == std::string::npos);
         std::cout << "generate_photo independent target tests OK\n";
     }
 
