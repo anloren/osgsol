@@ -29,6 +29,35 @@ The approved ScienceEarth design protects all of the following contracts:
 - existing basemap, labels, precipitation, clouds, NDVI, nightlights, GEBCO, feeds, satellites,
   flights, ships, 3D Tiles, and AI tools retain their established behavior when science is off.
 
+## Science-off validation snapshot
+
+Task 2 established a fresh `build/science_test` baseline on 2026-07-12 from commit `5476f31`
+plus the Task 2 science-off build-contract patch. The build used CMake 4.3.3, Release mode,
+AppleClang 21.0.0.21000101, and arm64, with `BUILD_TESTING=ON`,
+`VERSE_BUILD_EXAMPLES=ON`, and `OSGSOL_BUILD_SCIENCE=OFF`.
+
+The generated contract recorded phase `G0-G1`, science value `0`, and no
+`osgSolScienceCore` or `osgdb_science` target. All 15 requested targets built successfully. The
+matching CTest selection passed 15 of 15 tests in 20.52 seconds:
+
+| Test | Result | Duration |
+|---|---|---:|
+| `osgVerse_Test_Ai_Chat` | Passed | 3.15 s |
+| `osgVerse_Test_Feeds` | Passed | 0.56 s |
+| `osgVerse_Test_TileOverlay` | Passed | 1.01 s |
+| `osgVerse_Test_TerrainGrid` | Passed | 0.48 s |
+| `osgVerse_Test_Tiles3dPaging` | Passed | 0.89 s |
+| `osgVerse_Test_Satellite` | Passed | 0.58 s |
+| `osgVerse_Test_Geospatial` | Passed | 0.56 s |
+| `osgVerse_Test_EarthManipulator` | Passed | 0.50 s |
+| `osgVerse_Test_Ais` | Passed | 0.50 s |
+| `osgVerse_Test_WorldTools` | Passed | 2.22 s |
+| `osgVerse_Test_ImGuiSettings` | Passed | 0.59 s |
+| `osgVerse_Test_McpSafety` | Passed | 8.46 s |
+| `osgVerse_Test_ImGuiThreading` | Passed | 0.48 s |
+| `osgVerse_Test_MediaThreading` | Passed | 0.52 s |
+| `osgVerse_Test_ScienceBuildContract` | Passed | 0.00 s |
+
 ## G0 boundary and limits
 
 G0 covers only a trimmed GDAL/PROJ/ZSTD dependency build, isolation proof, bounded COG byte-range

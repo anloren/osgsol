@@ -176,6 +176,19 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_ImGuiThreading PRIVATE
 NEW_CTEST(osgVerse_Test_MediaThreading media_threading_tests.cpp offline 30)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_MediaThreading PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+IF(BUILD_TESTING)
+    ADD_EXECUTABLE(osgVerse_Test_ScienceBuildContract science_build_contract_tests.cpp)
+    TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_ScienceBuildContract PRIVATE
+                               "${CMAKE_BINARY_DIR}/generated")
+    SET_PROPERTY(TARGET osgVerse_Test_ScienceBuildContract PROPERTY FOLDER "TESTS")
+    ADD_TEST(NAME osgVerse_Test_ScienceBuildContract
+             COMMAND $<TARGET_FILE:osgVerse_Test_ScienceBuildContract>)
+    SET_TESTS_PROPERTIES(osgVerse_Test_ScienceBuildContract PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 30)
+ENDIF()
+
 IF(VERSE_WITH_COMMON_LIBRARIES)
     NEW_CTEST(osgVerse_Test_InputSafety input_safety_tests.cpp offline 30)
     TARGET_LINK_LIBRARIES(osgVerse_Test_InputSafety osgdb_verse_web zlib)

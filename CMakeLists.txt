@@ -297,6 +297,7 @@ ELSEIF(NOT OPENGL_gl_LIBRARY)
 ENDIF()
 
 ######################################### Global Options
+INCLUDE(ScienceEarthOptions)
 SET(VERSE_INSTALL_PDB_FILES ON CACHE BOOL "Enable to install PDB files along with executables and dynamic libraries")
 SET(VERSE_BUILD_EXAMPLES ON CACHE BOOL "Enable build of examples and tests")
 SET(VERSE_BUILD_EXPORTERS OFF CACHE BOOL "Enable build of exporters of other software (e.g., 3dsmax)")
@@ -309,6 +310,19 @@ SET(VERSE_STATIC_BUILD OFF CACHE BOOL "Enable static build of osgVerse libraries
 SET(VERSE_USE_OSG_STATIC OFF CACHE BOOL "Use static build of OpenSceneGraph (will force osgVerse to be static)")
 SET(VERSE_USE_MTT_DRIVER OFF CACHE BOOL "Use MooreThreads MTT drivers")
 SET(VERSE_SUPPORT_CPP17 ON CACHE BOOL "Enable build of libraries using C++ 17 standard")
+
+IF(BUILD_TESTING)
+    STRING(CONCAT OSGSOL_SCIENCE_BUILD_CONTRACT_HEADER
+        "#pragma once\n"
+        "#define OSGSOL_BUILD_SCIENCE_VALUE $<BOOL:${OSGSOL_BUILD_SCIENCE}>\n"
+        "#define OSGSOL_SCIENCE_PHASE_VALUE \"G0-G1\"\n"
+        "#define OSGSOL_BUILD_TARGETS_VALUE \""
+        "$<$<TARGET_EXISTS:osgSolScienceCore>:osgSolScienceCore>;"
+        "$<$<TARGET_EXISTS:osgdb_science>:osgdb_science>\"\n")
+    FILE(GENERATE
+        OUTPUT "${CMAKE_BINARY_DIR}/generated/ScienceEarthBuildContract.h"
+        CONTENT "${OSGSOL_SCIENCE_BUILD_CONTRACT_HEADER}")
+ENDIF()
 
 SET(VERSE_COMPILER_NAME "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 IF(USE_WASM_OPTIONS)
