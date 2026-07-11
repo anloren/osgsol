@@ -317,7 +317,7 @@ git commit -m "fix: stabilize terrain floor across lod changes"
 
 - Modify: `docs/superpowers/plans/2026-07-11-osgsol-manual-acceptance-fixes.md`
 
-- [ ] **Step 1: Rebuild affected targets sequentially**
+- [x] **Step 1: Rebuild affected targets sequentially**
 
 ```bash
 cmake --build build/osgsol_core --target osgVerse_Test_Satellite -j2
@@ -326,7 +326,7 @@ cmake --build build/osgsol_core --target osgVerse_Test_EarthManipulator -j2
 cmake --build build/osgsol_core --target osgVerse_EarthExplorer -j2
 ```
 
-- [ ] **Step 2: Run complete offline and source-preservation gates**
+- [x] **Step 2: Run complete offline and source-preservation gates**
 
 ```bash
 ctest --test-dir build/osgsol_core -L offline --output-on-failure
@@ -335,7 +335,7 @@ rg -n 'resolveImGuiWheelAmount|OSGSOL_HAS_PHOTO_REQUEST|_videoRequests.drain' \
 git diff --check
 ```
 
-- [ ] **Step 3: Run independent offscreen diagnostics**
+- [x] **Step 3: Run independent offscreen diagnostics**
 
 - Satellite fixture: select, clear, and confirm `_orbitRoot` has zero children.
 - Science cold-cache smoke: compare first-visible time and confirm no GIBS request after NDVI/GEBCO publication.
@@ -343,7 +343,7 @@ git diff --check
 - Terrain sequence: confirm stationary lower LOD samples do not reduce the latched floor.
 - General Earth offscreen capture: exit `0`, `1920x1080`, non-empty PNG.
 
-- [ ] **Step 4: Update the fixed Desktop app and verify it after runtime**
+- [x] **Step 4: Update the fixed Desktop app and verify it after runtime**
 
 Build/install/package from this worktree with `EARTH_AI_KEY` unset. Update only `/Users/USER/Desktop/osgSol Earth.app`, retain bundle id `com.anloren.osgsol.earth`, set build channel `manual-test`, and record the final source commit. After the Desktop-path offscreen smoke, require:
 
@@ -354,7 +354,7 @@ test -z "$(find "/Users/USER/Desktop/osgSol Earth.app/Contents/MacOS" \
   -maxdepth 1 -name 'libhv.*.log' -print -quit)"
 ```
 
-- [ ] **Step 5: Record evidence and commit**
+- [x] **Step 5: Record evidence and commit**
 
 Append exact target results, offline count, science timing comparison, screenshot dimensions/hash, package version/commit, and signature result to this tracked plan. Then:
 
@@ -365,3 +365,61 @@ git push origin codex/v0.2-runtime-safety
 ```
 
 Do not merge, tag, or create a pull request after this checkpoint.
+
+#### Task 5 verification evidence (2026-07-11)
+
+- Source/package boundary: all source targets and the install tree were built from
+  `c3a8ebb3002be3f9d1d1b9aaa64da1ccbaa1e303` in this worktree with
+  `EARTH_AI_KEY` unset. No tag, merge, or pull request was created.
+- Sequential target rebuilds: `osgVerse_Test_Satellite`,
+  `osgVerse_Test_TileOverlay`, `osgVerse_Test_EarthManipulator`, and
+  `osgVerse_EarthExplorer` each exited `0`. The only build diagnostics were the
+  existing macOS OpenGL deprecation and duplicate-library linker warnings.
+- Deterministic independent diagnostics all exited `0`:
+  `osgVerse_Test_Satellite` reached `[satellite_tests] all OK` and verifies that
+  an invalid selection rebuild removes all `_orbitRoot` children before returning;
+  `osgVerse_Test_TileOverlay` reached `[tile_overlay_tests] all OK` and its
+  production reader seam observed NDVI requests with zero stale GIBS requests;
+  `osgVerse_Test_EarthManipulator` reached
+  `[earth_manipulator_tests] input setup and terrain-floor state pass`, preserving
+  center/matrix to `1e-9` before the first middle drag and latching `5324.9` across
+  the recorded stationary lower-LOD sequence and a same-cell miss.
+- Offline and preservation gates: `ctest -L offline` passed `13/13` in `10.67s`;
+  the source-preservation search found `resolveImGuiWheelAmount`,
+  `OSGSOL_HAS_PHOTO_REQUEST`, and `_videoRequests.drain` in their expected
+  production/test locations; `git diff --check` exited `0`.
+- Science cold-cache evidence was kept separate from satellite diagnostics. With
+  isolated `HOME` caches and `OSG_NOTIFY_LEVEL=INFO`, the previous fixed Desktop
+  package (`76cec7e`) started three ImagePager workers, while this build started
+  eight. The current NDVI run logged the `1920x1080` context at `08:51:39.142`,
+  queued its first four z1 NDVI requests at `08:51:39.157` (15 ms), and saved the
+  capture at `08:51:43.333` (4.191 s); the current GEBCO run logged the context at
+  `08:53:55.659`, queued its first four z1 GEBCO requests at
+  `08:53:55.675-08:53:55.676` (16-17 ms), and saved at `08:53:59.815` (4.156 s).
+  Both current logs contain zero
+  `VIIRS_SNPP_CorrectedReflectance_TrueColor` requests after the NDVI/GEBCO
+  publication. Because public endpoints returned variable responses (including
+  NDVI 404s), no unsupported network-only speedup percentage is claimed; the
+  reproducible comparison is three versus eight workers, native zoom bounds, and
+  direct current-source requests with no serialized stale-GIBS request.
+- General Desktop-path offscreen smoke exited `0`, logged
+  `[Earth] offscreen context 1920x1080` and
+  `[Earth] offscreen capture saved`, and produced
+  `/tmp/osgsol-manual-acceptance-final.png` (`1920x1080`, `1,933,267` bytes,
+  SHA-256 `dda9ef55e0858502a62c23afb2da567358ee28513d5f501014d555ea08a769f4`).
+- Fixed delivery: `/Users/USER/Desktop/osgSol Earth.app` reports bundle id
+  `com.anloren.osgsol.earth`, version/build `0.2.0`, channel `manual-test`, source
+  commit `c3a8ebb3002be3f9d1d1b9aaa64da1ccbaa1e303`, executable SHA-256
+  `7b22e25dba2aba05064b5b017a6f0aac0f04ebefd0ffd17274f3f0c4f25cf5a0`, and
+  `Contents/MacOS` mode `555`. After the Desktop-path smoke, the package contained
+  no `imgui.ini` and no `Contents/MacOS/libhv.*.log`; removing the root bundle's
+  FileProvider metadata followed by `codesign --verify --deep --strict` exited `0`.
+- External packaging caveat: this Mac's iCloud FileProvider recreates a root-bundle
+  `com.apple.FinderInfo` value (`FinderFlags=8192`, extension-hidden) together with
+  `com.apple.fileprovider.fpfs#P` about 10 seconds after deletion. The exact strict
+  check passes immediately after metadata cleanup, while the later FileProvider
+  reattachment makes strict verification report “resource fork, Finder information,
+  or similar detritus not allowed”; the signed code, runtime smoke, and bundle files
+  do not change. User immutable and a root `deny writeextattr` ACL were each tested,
+  found ineffective against FileProvider, and fully removed; no system or iCloud
+  setting was changed.
