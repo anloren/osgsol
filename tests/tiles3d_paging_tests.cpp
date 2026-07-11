@@ -13,6 +13,8 @@
 #include <osgDB/ReadFile>
 #include <osgDB/Registry>
 
+#include "../applications/earth_explorer/tiles3d_data.h"
+
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ \
               << ": " #x << std::endl; std::abort(); } } while (0)
@@ -119,6 +121,13 @@ namespace
 
 int main(int, char**)
 {
+    CHECK(std::fabs(earthtiles3d::resolveScreenSpaceError(NULL) - 8.0) < 1e-9);
+    CHECK(std::fabs(earthtiles3d::resolveScreenSpaceError("") - 8.0) < 1e-9);
+    CHECK(std::fabs(earthtiles3d::resolveScreenSpaceError("1") - 2.0) < 1e-9);
+    CHECK(std::fabs(earthtiles3d::resolveScreenSpaceError("12.5") - 12.5) < 1e-9);
+    CHECK(std::fabs(earthtiles3d::resolveScreenSpaceError("99") - 32.0) < 1e-9);
+    CHECK(std::fabs(earthtiles3d::resolveScreenSpaceError("bad") - 8.0) < 1e-9);
+
     CHECK(osgDB::Registry::instance()->loadLibrary(OSGVERSE_3DTILES_PLUGIN_PATH) !=
           osgDB::Registry::NOT_LOADED);
 

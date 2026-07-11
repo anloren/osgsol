@@ -1,9 +1,23 @@
 #ifndef EARTH_TILES3D_DATA_H
 #define EARTH_TILES3D_DATA_H
 
+#include <cmath>
+#include <cstdlib>
 #include <string>
 #include <osg/Node>
 #include <osgViewer/View>
+
+namespace earthtiles3d
+{
+    inline double resolveScreenSpaceError(const char* value)
+    {
+        if (!value || !*value) return 8.0;
+        char* end = NULL;
+        const double parsed = std::strtod(value, &end);
+        if (end == value || *end != '\0' || !std::isfinite(parsed)) return 8.0;
+        return parsed < 2.0 ? 2.0 : (parsed > 32.0 ? 32.0 : parsed);
+    }
+}
 
 // 3D Tiles 城市图层对外接口。EarthControlUI / earth_main 只依赖这个抽象。
 // 数据默认为香港地政总署「可视化三维地图」(3D Visualisation Map, f2 端点,

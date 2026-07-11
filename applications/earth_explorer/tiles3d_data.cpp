@@ -9,7 +9,9 @@
 #include <pipeline/Utilities.h>
 #include <iostream>
 #include <atomic>
+#include <chrono>
 #include <mutex>
+#include <sstream>
 #include <thread>
 #include "tiles3d_data.h"
 
@@ -89,7 +91,8 @@ class Tiles3DLayerImpl : public Tiles3DLayer, public osg::NodeCallback
 {
 public:
     Tiles3DLayerImpl(osg::Group* group, const std::string& url)
-        : _group(group), _url(url), _enabled(false), _loadStarted(false), _loadDone(false) {}
+        : _group(group), _url(url), _enabled(false), _loadStarted(false), _loadDone(false),
+          _sse(8.0) {}
 
     virtual void setEnabled(bool on)
     {
@@ -103,24 +106,30 @@ public:
             std::string url = _url;
             osg::ref_ptr<Tiles3DLayerImpl> self(this);   // 保活到线程结束
             std::thread([self, url]() {
+                self->_loadStartedAt = std::chrono::steady_clock::now();
                 OSG_INFO << "[Tiles3D] background load begins: " << url << std::endl;
                 osg::ref_ptr<osg::Node> tiles;
                 bool isHttp = (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0);
-                // EARTH_3DTILES_SSE=<阈值> 覆盖 LOD 细化激进度(默认 16;越小越早细化、
+                // EARTH_3DTILES_SSE=<阈值> 覆盖 LOD 细化激进度
+                // (默认 8;越小越早细化、
                 // 越清晰,减轻"相邻瓦片细化深度不一"的拼布/斑驳感,代价是流量与内存)
-                const char* sseEnv = getenv("EARTH_3DTILES_SSE");
+                const double sse = earthtiles3d::resolveScreenSpaceError(
+                    getenv("EARTH_3DTILES_SSE"));
+                self->_sse = sse;
+                std::ostringstream sseText;
+                sseText << sse;
+                osg::ref_ptr<osgDB::Options> opt =
+                    new osgDB::Options(isHttp ? "Extension=verse_tiles" : "");
+                opt->setPluginStringData("UsePixelsOnScreen", "1");
+                opt->setPluginStringData("MaxScreenSpaceError", sseText.str());
                 if (isHttp)
                 {
                     // 网络 URL:通过 verse_web 读取器获取内容,并以 verse_tiles 解析
                     // (参见 plugins/osgdb_3dtiles/ReaderWriter3dTiles.cpp 约第 49 行注释)
-                    osg::ref_ptr<osgDB::Options> opt = new osgDB::Options("Extension=verse_tiles");
-                    if (sseEnv && *sseEnv) opt->setPluginStringData("MaxScreenSpaceError", sseEnv);
                     tiles = osgDB::readNodeFile(url + ".verse_web", opt.get());
                 }
                 else
                 {
-                    osg::ref_ptr<osgDB::Options> opt = new osgDB::Options;
-                    if (sseEnv && *sseEnv) opt->setPluginStringData("MaxScreenSpaceError", sseEnv);
                     tiles = osgDB::readNodeFile(url + ".verse_tiles", opt.get());
                 }
 
@@ -140,6 +149,10 @@ public:
             if (tiles.valid())
             {
                 _group->addChild(tiles.get());
+                const long long attachedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - _loadStartedAt).count();
+                OSG_NOTICE << "[Tiles3D] root_attached_ms=" << attachedMs
+                           << " sse=" << _sse << " lazy_root=1" << std::endl;
                 const osg::BoundingSphere& bs = tiles->getBound();
                 OSG_NOTICE << "[Tiles3D] loaded: " << _url << "  bound center=" << bs.center()
                            << " radius=" << bs.radius() << std::endl;
@@ -158,6 +171,8 @@ protected:
     osg::ref_ptr<osg::Node> _pending;
     bool _enabled, _loadStarted;
     std::atomic<bool> _loadDone;
+    std::chrono::steady_clock::time_point _loadStartedAt;
+    double _sse;
 };
 
 osg::Node* configure3DTilesLayer(osgViewer::View& /*viewer*/,
