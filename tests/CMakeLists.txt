@@ -176,6 +176,14 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_ImGuiThreading PRIVATE
 NEW_CTEST(osgVerse_Test_MediaThreading media_threading_tests.cpp offline 30)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_MediaThreading PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+IF(BUILD_TESTING)
+    ADD_TEST(NAME osgSol_Test_ScienceEarthRelease
+             COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scienceearth_release_tests.sh")
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceEarthRelease PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        LABELS "offline;scienceearth"
+        TIMEOUT 30)
+ENDIF()
 IF(VERSE_WITH_COMMON_LIBRARIES)
     NEW_CTEST(osgVerse_Test_InputSafety input_safety_tests.cpp offline 30)
     TARGET_LINK_LIBRARIES(osgVerse_Test_InputSafety osgdb_verse_web zlib)
