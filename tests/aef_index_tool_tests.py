@@ -3,6 +3,7 @@
 import csv
 import hashlib
 import json
+import platform
 import sqlite3
 import subprocess
 import sys
@@ -20,6 +21,9 @@ FETCH_DUCKDB = TOOLS_DIR / "fetch_duckdb.sh"
 SCHEMA = TOOLS_DIR / "aef_index_schema.sql"
 FIXTURE = REPO_ROOT / "tests" / "data" / "science" / "aef_index_fixture.csv"
 EXPECTED_PATH = REPO_ROOT / "tests" / "data" / "science" / "aef_index_expected.json"
+MACOS_ARM64 = sys.platform == "darwin" and platform.machine() == "arm64"
+MACOS_ARM64_ONLY = unittest.skipUnless(
+    MACOS_ARM64, "pinned DuckDB/cache scripts require macOS arm64 and BSD stat")
 
 
 class AlphaEarthIndexToolTests(unittest.TestCase):
@@ -278,6 +282,7 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
                 "record_fingerprint", "sha256("):
             self.assertNotIn(transformed_field, sql)
 
+    @MACOS_ARM64_ONLY
     def test_fetch_duckdb_replaces_poisoned_cached_archive_atomically(self):
         build_root = REPO_ROOT / "build" / "science-tools" / "tests"
         build_root.mkdir(parents=True, exist_ok=True)
@@ -314,6 +319,7 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
             self.assertTrue((tools_dir / "duckdb").is_file())
             self.assertFalse(list(tools_dir.rglob("*.part*")))
 
+    @MACOS_ARM64_ONLY
     def test_extract_replaces_poisoned_source_cache_before_use(self):
         build_root = REPO_ROOT / "build" / "science-tools" / "tests"
         build_root.mkdir(parents=True, exist_ok=True)
@@ -345,6 +351,7 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
             self.assertEqual(cached_source.read_bytes(), source_bytes)
             self.assertFalse(list(tools_dir.rglob("*.part*")))
 
+    @MACOS_ARM64_ONLY
     def test_fetch_rejects_manifest_path_traversal_without_touching_sentinel(self):
         build_root = REPO_ROOT / "build" / "science-tools" / "tests"
         build_root.mkdir(parents=True, exist_ok=True)
@@ -384,6 +391,7 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
                     self.assertIn(label, result.stderr.decode())
                     self.assertEqual(sentinel.read_bytes(), b"must-survive")
 
+    @MACOS_ARM64_ONLY
     def test_scripts_reject_external_tools_directory_without_creating_it(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -401,6 +409,7 @@ class AlphaEarthIndexToolTests(unittest.TestCase):
                     self.assertIn("build/science-tools", result.stderr.decode())
                     self.assertFalse(candidate.exists())
 
+    @MACOS_ARM64_ONLY
     def test_failed_cache_download_never_reaches_final_path(self):
         build_root = REPO_ROOT / "build" / "science-tools" / "tests"
         build_root.mkdir(parents=True, exist_ok=True)
