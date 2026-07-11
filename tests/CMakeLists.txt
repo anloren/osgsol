@@ -207,6 +207,112 @@ IF(BUILD_TESTING)
     SET_TESTS_PROPERTIES(osgVerse_Test_ScienceBuildContract PROPERTIES
         LABELS "offline;scienceearth"
         TIMEOUT 30)
+
+    IF(OSGSOL_BUILD_SCIENCE)
+        IF(NOT EXISTS "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libgdal.a")
+            MESSAGE(FATAL_ERROR
+                "OSGSOL_SCIENCE_DEPS_ROOT must name the verified private static prefix")
+        ENDIF()
+        IF(NOT OSGSOL_PYTHON3_EXECUTABLE)
+            MESSAGE(FATAL_ERROR "Python 3 is required for the instrumented range test")
+        ENDIF()
+
+        IF(APPLE)
+            EXECUTE_PROCESS(COMMAND xcrun --show-sdk-path
+                OUTPUT_VARIABLE OSGSOL_SCIENCE_SDK_ROOT
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                RESULT_VARIABLE OSGSOL_SCIENCE_XCRUN_RESULT)
+            IF(NOT OSGSOL_SCIENCE_XCRUN_RESULT EQUAL 0)
+                MESSAGE(FATAL_ERROR "xcrun could not locate the active macOS SDK")
+            ENDIF()
+            SET(CURL_INCLUDE_DIR "${OSGSOL_SCIENCE_SDK_ROOT}/usr/include" CACHE PATH "" FORCE)
+            SET(CURL_LIBRARY "${OSGSOL_SCIENCE_SDK_ROOT}/usr/lib/libcurl.tbd"
+                CACHE FILEPATH "" FORCE)
+            SET(SQLite3_INCLUDE_DIR "${OSGSOL_SCIENCE_SDK_ROOT}/usr/include"
+                CACHE PATH "" FORCE)
+            SET(SQLite3_LIBRARY "${OSGSOL_SCIENCE_SDK_ROOT}/usr/lib/libsqlite3.tbd"
+                CACHE FILEPATH "" FORCE)
+        ENDIF()
+        SET(PROJ_DIR "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/cmake/proj" CACHE PATH "" FORCE)
+        SET(zstd_DIR "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/cmake/zstd" CACHE PATH "" FORCE)
+        SET(ZSTD_DIR "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/cmake/zstd" CACHE PATH "" FORCE)
+        SET(GDAL_DIR "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/cmake/gdal" CACHE PATH "" FORCE)
+        FIND_PACKAGE(CURL 7.68 REQUIRED)
+        FIND_PACKAGE(SQLite3 REQUIRED)
+        FIND_PACKAGE(PROJ CONFIG REQUIRED NO_DEFAULT_PATH)
+        FIND_PACKAGE(zstd CONFIG REQUIRED NO_DEFAULT_PATH)
+        FIND_PACKAGE(GDAL CONFIG REQUIRED NO_DEFAULT_PATH)
+
+        ADD_EXECUTABLE(osgVerse_Test_ScienceGdalSpike science_gdal_spike.cpp)
+        TARGET_COMPILE_FEATURES(osgVerse_Test_ScienceGdalSpike PRIVATE cxx_std_17)
+        TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_ScienceGdalSpike PRIVATE
+                                   "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
+        TARGET_LINK_LIBRARIES(osgVerse_Test_ScienceGdalSpike PRIVATE GDAL::GDAL)
+        SET_PROPERTY(TARGET osgVerse_Test_ScienceGdalSpike PROPERTY FOLDER "TESTS")
+        ADD_TEST(NAME osgVerse_Test_ScienceGdalSpike
+                 COMMAND $<TARGET_FILE:osgVerse_Test_ScienceGdalSpike>)
+        SET_TESTS_PROPERTIES(osgVerse_Test_ScienceGdalSpike PROPERTIES
+            LABELS "offline;scienceearth"
+            TIMEOUT 120)
+
+        ADD_EXECUTABLE(osgVerse_Test_ScienceHttpRanges science_gdal_network_test.cpp)
+        TARGET_COMPILE_FEATURES(osgVerse_Test_ScienceHttpRanges PRIVATE cxx_std_17)
+        TARGET_COMPILE_DEFINITIONS(osgVerse_Test_ScienceHttpRanges PRIVATE
+            OSGSOL_PYTHON3="${OSGSOL_PYTHON3_EXECUTABLE}"
+            OSGSOL_SCIENCE_RANGE_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/science_http_range_server.py")
+        TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_ScienceHttpRanges PRIVATE
+                                   "${PROJECT_SOURCE_DIR}/3rdparty")
+        TARGET_LINK_LIBRARIES(osgVerse_Test_ScienceHttpRanges PRIVATE GDAL::GDAL)
+        SET_PROPERTY(TARGET osgVerse_Test_ScienceHttpRanges PROPERTY FOLDER "TESTS")
+        ADD_TEST(NAME osgVerse_Test_ScienceHttpRanges
+                 COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>)
+        SET_TESTS_PROPERTIES(osgVerse_Test_ScienceHttpRanges PROPERTIES
+            LABELS "offline;scienceearth;network-local"
+            TIMEOUT 120)
+        IF(OSGSOL_SCIENCE_NETWORK_TESTS)
+            ADD_TEST(NAME osgVerse_Test_ScienceGdalLive
+                COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>
+                        --live-cases
+                        "${CMAKE_CURRENT_SOURCE_DIR}/data/science/alphaearth_rgb_cases.json"
+                        --iterations 5)
+            SET_TESTS_PROPERTIES(osgVerse_Test_ScienceGdalLive PROPERTIES
+                LABELS "network;scienceearth"
+                TIMEOUT 300)
+        ENDIF()
+
+        ADD_LIBRARY(osgdb_science_g0_probe MODULE science_gdal_probe_plugin.cpp)
+        TARGET_COMPILE_FEATURES(osgdb_science_g0_probe PRIVATE cxx_std_17)
+        TARGET_LINK_LIBRARIES(osgdb_science_g0_probe PRIVATE GDAL::GDAL)
+        SET_TARGET_PROPERTIES(osgdb_science_g0_probe PROPERTIES
+            PREFIX ""
+            SUFFIX ".so"
+            CXX_VISIBILITY_PRESET hidden
+            VISIBILITY_INLINES_HIDDEN ON
+            SKIP_BUILD_RPATH ON
+            BUILD_WITH_INSTALL_RPATH OFF
+            INSTALL_RPATH ""
+            LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/lib")
+        IF(APPLE)
+            IF(COMMAND TARGET_LINK_OPTIONS)
+                TARGET_LINK_OPTIONS(osgdb_science_g0_probe PRIVATE
+                    "-Wl,-dead_strip"
+                    "-Wl,-exported_symbol,_osgsol_science_g0_probe_anchor")
+            ELSE()
+                SET_PROPERTY(TARGET osgdb_science_g0_probe APPEND_STRING PROPERTY
+                    LINK_FLAGS
+                    " -Wl,-dead_strip -Wl,-exported_symbol,_osgsol_science_g0_probe_anchor")
+            ENDIF()
+        ELSEIF(UNIX)
+            IF(COMMAND TARGET_LINK_OPTIONS)
+                TARGET_LINK_OPTIONS(osgdb_science_g0_probe PRIVATE
+                                    "-Wl,--gc-sections" "-Wl,--exclude-libs,ALL")
+            ELSE()
+                SET_PROPERTY(TARGET osgdb_science_g0_probe APPEND_STRING PROPERTY
+                    LINK_FLAGS " -Wl,--gc-sections -Wl,--exclude-libs,ALL")
+            ENDIF()
+        ENDIF()
+        SET_PROPERTY(TARGET osgdb_science_g0_probe PROPERTY FOLDER "TESTS")
+    ENDIF()
 ENDIF()
 
 IF(VERSE_WITH_COMMON_LIBRARIES)
