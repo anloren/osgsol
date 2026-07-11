@@ -178,6 +178,13 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_MediaThreading PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 IF(BUILD_TESTING)
+    ADD_TEST(NAME osgSol_Test_ScienceDepsScript
+             COMMAND bash "${CMAKE_SOURCE_DIR}/tests/science_deps_script_tests.sh")
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceDepsScript PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        LABELS "offline;scienceearth"
+        TIMEOUT 30)
+
     ADD_EXECUTABLE(osgVerse_Test_ScienceBuildContract science_build_contract_tests.cpp)
     TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_ScienceBuildContract PRIVATE
                                "${CMAKE_BINARY_DIR}/generated")
