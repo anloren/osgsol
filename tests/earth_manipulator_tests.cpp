@@ -17,6 +17,7 @@ namespace
 {
     const double kSurfaceRadius = 1000.0;
     const double kTolerance = 1e-9;
+    const double kRadiusTolerance = 1e-2;
 
     bool vecNear(const osg::Vec3d& lhs, const osg::Vec3d& rhs, double tolerance)
     {
@@ -31,6 +32,18 @@ namespace
             {
                 if (std::fabs(lhs(row, column) - rhs(row, column)) > tolerance)
                     return false;
+            }
+        }
+        return true;
+    }
+
+    bool matrixFinite(const osg::Matrixd& matrix)
+    {
+        for (unsigned int row = 0; row < 4; ++row)
+        {
+            for (unsigned int column = 0; column < 4; ++column)
+            {
+                if (!std::isfinite(matrix(row, column))) return false;
             }
         }
         return true;
@@ -73,6 +86,18 @@ namespace
             return event;
         }
 
+        osg::ref_ptr<osgGA::GUIEventAdapter> drag(int buttonMask, float x, float y)
+        {
+            osg::ref_ptr<osgGA::GUIEventAdapter> event = new osgGA::GUIEventAdapter;
+            event->setEventType(osgGA::GUIEventAdapter::DRAG);
+            event->setWindowRectangle(0, 0, 800, 600);
+            event->setX(x);
+            event->setY(y);
+            event->setButton(0);
+            event->setButtonMask(buttonMask);
+            return event;
+        }
+
         osg::ref_ptr<osg::Geode> surface;
         osg::ref_ptr<osgViewer::View> view;
         osg::ref_ptr<osgVerse::EarthManipulator> manipulator;
@@ -89,6 +114,38 @@ namespace
         CHECK(vecNear(fixture.manipulator->getCenter(), centerBefore, kTolerance));
         CHECK(matrixNear(fixture.manipulator->getMatrix(), matrixBefore, kTolerance));
     }
+
+    void checkRightPressUpdatesViewingRadius()
+    {
+        Fixture fixture;
+        const osg::Vec3d centerBefore = fixture.manipulator->getCenter();
+        osg::ref_ptr<osgGA::GUIEventAdapter> event = fixture.push(
+            osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON, 400.0f, 300.0f);
+
+        CHECK(fixture.manipulator->handle(*event, *fixture.view));
+        CHECK(!vecNear(fixture.manipulator->getCenter(), centerBefore, kTolerance));
+        CHECK(std::fabs(fixture.manipulator->getCenter().length() - kSurfaceRadius) <=
+              kRadiusTolerance);
+    }
+
+    void checkMiddleDragRotatesCamera()
+    {
+        Fixture fixture;
+        osg::ref_ptr<osgGA::GUIEventAdapter> push = fixture.push(
+            osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON, 400.0f, 300.0f);
+        CHECK(fixture.manipulator->handle(*push, *fixture.view));
+        const osg::Vec3d centerAfterPush = fixture.manipulator->getCenter();
+        const osg::Matrixd matrixAfterPush = fixture.manipulator->getMatrix();
+
+        osg::ref_ptr<osgGA::GUIEventAdapter> drag = fixture.drag(
+            osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON, 500.0f, 360.0f);
+        CHECK(fixture.manipulator->handle(*drag, *fixture.view));
+        const osg::Matrixd matrixAfterDrag = fixture.manipulator->getMatrix();
+
+        CHECK(vecNear(fixture.manipulator->getCenter(), centerAfterPush, kTolerance));
+        CHECK(!matrixNear(matrixAfterDrag, matrixAfterPush, kTolerance));
+        CHECK(matrixFinite(matrixAfterDrag));
+    }
 }
 
 int main(int, char**)
@@ -100,7 +157,16 @@ int main(int, char**)
     // regardless of where the press begins.
     checkPressPreservesCamera(osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON, 400.0f, 300.0f);
     checkPressPreservesCamera(osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON, 655.0f, 185.0f);
+    checkPressPreservesCamera(osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON |
+                              osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON,
+                              400.0f, 300.0f);
 
-    std::cout << "[earth_manipulator_tests] middle PUSH preserves camera center and matrix\n";
+    // Control: right-button scaling retains its established center-radius setup.
+    checkRightPressUpdatesViewingRadius();
+
+    // Middle-button setup still acquires a usable pivot: a subsequent drag rotates safely.
+    checkMiddleDragRotatesCamera();
+
+    std::cout << "[earth_manipulator_tests] button-specific PUSH setup and middle DRAG pass\n";
     return 0;
 }

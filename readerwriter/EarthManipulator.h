@@ -200,7 +200,7 @@ namespace osgVerse
         void performHRotate(double value);
         void performHRotate(double x0, double y0, double dx, double dy);
         void performVRotate(double x0, double y0, double dx, double dy);
-        void performRotateAxis(double x0, double y0);
+        void performRotateAxis(double x0, double y0, bool updateViewingRadius = true);
         void performScale(osgGA::GUIEventAdapter::ScrollingMotion scrollMotion) { calcScrollingMotion(scrollMotion); }
         void performScale(double x0, double y0, double dx, double dy)
         {

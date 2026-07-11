@@ -260,7 +260,15 @@ bool EarthManipulator::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAction
         flushMouseEventStack();
         addMouseEventAndUpdate(ea, us);
         if (ea.getButtonMask() != osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON)
-            performRotateAxis(_ga_t0->getXnormalized(), _ga_t0->getYnormalized());
+        {
+            const unsigned int buttonMask = ea.getButtonMask();
+            const bool isRotationInput =
+                buttonMask == osgGA::GUIEventAdapter::MIDDLE_MOUSE_BUTTON ||
+                buttonMask == (osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON |
+                               osgGA::GUIEventAdapter::RIGHT_MOUSE_BUTTON);
+            performRotateAxis(_ga_t0->getXnormalized(), _ga_t0->getYnormalized(),
+                              !isRotationInput);
+        }
         return true;
 
     case osgGA::GUIEventAdapter::RELEASE:
@@ -539,9 +547,9 @@ void EarthManipulator::performVRotate(double x0, double y0, double dx, double dy
     makeTiltRotation(_tiltRotation, _tilt, osg::X_AXIS);
 }
 
-void EarthManipulator::performRotateAxis(double x0, double y0)
+void EarthManipulator::performRotateAxis(double x0, double y0, bool updateViewingRadius)
 {
-    calcTiltCenter(false, false);
+    calcTiltCenter(false, updateViewingRadius);
 #if 0
     // Compute the rotate axis for rotating around a point
     bool ok = calcIntersectPoint(x0, y0, _rotateAxis);
