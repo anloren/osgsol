@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <condition_variable>
+#include <fstream>
 #include "../applications/earth_explorer/ai_tools.h"
 #include <picojson.h>
 
@@ -45,6 +46,24 @@ static void usleep(unsigned int usec) { Sleep(usec / 1000 == 0 ? 1 : usec / 1000
 
 static picojson::value parse(const std::string& s)
 { picojson::value v; picojson::parse(v, s); return v; }
+
+static std::string readWholeFile(const std::string& path)
+{
+    std::ifstream input(path.c_str(), std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
+}
+
+static std::string generatePhotoToolBlock()
+{
+    const std::string source = readWholeFile(
+        std::string(OSGVERSE_SOURCE_DIR) + "/applications/earth_explorer/ai_setup.cpp");
+    const size_t begin = source.find("earthai::Tool photo; photo.name = \"generate_photo\"");
+    const size_t end = source.find("aiRegistry->add(photo);", begin);
+    CHECK(begin != std::string::npos);
+    CHECK(end != std::string::npos);
+    return source.substr(begin, end - begin);
+}
 
 int main(int, char**)
 {
@@ -653,6 +672,11 @@ int main(int, char**)
         CHECK(!earthai::photoCaptureHasFreshView(0));
         CHECK(earthai::photoCaptureHasFreshView(1));
 #endif
+        const std::string toolBlock = generatePhotoToolBlock();
+        CHECK(toolBlock.find("isAnimationRunning()") != std::string::npos);
+        CHECK(toolBlock.find("setByEye(") == std::string::npos);
+        CHECK(toolBlock.find("stopAnimation(") == std::string::npos);
+        CHECK(toolBlock.find("moveTo(") == std::string::npos);
         std::cout << "generate_photo independent target tests OK\n";
     }
 

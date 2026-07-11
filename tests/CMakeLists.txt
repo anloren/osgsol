@@ -137,6 +137,8 @@ IF(NOT VERSE_USE_EXTERNAL_GLES)
 ENDIF(NOT VERSE_USE_EXTERNAL_GLES)
 
 NEW_CTEST(osgVerse_Test_Ai_Chat ai_chat_tests.cpp offline 120)  # AI Chat tool registry / job manager unit tests
+TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Ai_Chat PRIVATE
+                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_Feeds feed_layer_tests.cpp offline 120)  # FeedLayer framework / geo primitives / LayerManager unit tests
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Feeds PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
