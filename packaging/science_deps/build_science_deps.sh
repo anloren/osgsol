@@ -18,6 +18,7 @@ prefix=${SCIENCE_DEPS_PREFIX:-"$science_root/prefix"}
 manifest="$prefix/science-deps-manifest.json"
 runtime_probe_json="$build_dir/runtime-probe.json"
 runtime_probe_links="$build_dir/runtime-probe-link-dependencies.txt"
+inactive_compiled_helpers="$build_dir/inactive-compiled-helpers.json"
 gdal_embed_capability="$build_dir/gdal-embed-capability.txt"
 deployment_target=${SCIENCE_DEPS_DEPLOYMENT_TARGET:-11.0}
 builtin_raster_drivers=(MEM)
@@ -509,8 +510,12 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     probe = json.load(stream)
-if probe["active_drivers"] != ["GTiff", "MEM", "VRT"]:
-    raise SystemExit(f"unexpected active drivers: {probe['active_drivers']}")
+if probe["active_raster_drivers"] != ["GTiff", "MEM", "VRT"]:
+    raise SystemExit(
+        f"unexpected active raster drivers: {probe['active_raster_drivers']}"
+    )
+if probe["active_ogr_drivers"] != ["MEM"]:
+    raise SystemExit(f"unexpected active OGR drivers: {probe['active_ogr_drivers']}")
 if probe["active_remote_vfs"] != ["/vsicurl/"]:
     raise SystemExit(f"unexpected active remote VFS: {probe['active_remote_vfs']}")
 for key in ("gtiff_zstd", "vrt_read", "mem_rasterio", "warp_proj"):
@@ -534,6 +539,8 @@ verify_static_artifacts()
 
     local executable="$build_dir/runtime-probe/science_deps_runtime_probe"
     local symbols="$build_dir/runtime-probe-symbols.txt"
+    local archive_symbols="$build_dir/libgdal-archive-symbols.txt"
+    local archive_members="$build_dir/libgdal-archive-members.txt"
     nm -gU "$executable" >"$symbols"
     for symbol in GDALRegister_GTiff GDALRegister_VRT GDALRegister_MEM; do
         grep -q "_$symbol" "$symbols" || die "runtime probe did not link $symbol"
@@ -544,6 +551,69 @@ verify_static_artifacts()
     if ar -t "$prefix/lib/libgdal.a" | grep -Eiq '(^|/)gnm'; then
         die "GNM objects leaked into libgdal.a"
     fi
+    nm -gU "$prefix/lib/libgdal.a" >"$archive_symbols"
+    ar -t "$prefix/lib/libgdal.a" >"$archive_members"
+    python3 - "$archive_symbols" "$archive_members" "$inactive_compiled_helpers" <<'PY'
+import json
+import re
+import sys
+
+symbols_path, members_path, output_path = sys.argv[1:]
+with open(symbols_path, encoding="utf-8", errors="replace") as stream:
+    symbols = sorted(set(re.findall(r"\b_([A-Za-z][A-Za-z0-9_]*)$", stream.read(), re.M)))
+with open(members_path, encoding="utf-8", errors="replace") as stream:
+    members = sorted(set(line.strip() for line in stream if line.strip()))
+
+required = {
+    "GDALRegister_COG",
+    "VSIInstallS3FileHandler",
+    "VSIInstallGSFileHandler",
+    "VSIInstallAzureFileHandler",
+    "VSIInstallOSSFileHandler",
+    "VSIInstallSwiftFileHandler",
+}
+missing = sorted(required.difference(symbols))
+if missing:
+    raise SystemExit(f"expected inactive compiled helper symbols are missing: {missing}")
+if "cogdriver.cpp.o" not in members:
+    raise SystemExit("expected inactive COG helper object is missing")
+
+cloud_pattern = re.compile(
+    r"^VSIInstall(?:ADLS|Azure|GS|OSS|S3|Swift)(?:Streaming)?FileHandler$"
+)
+cloud_installers = [symbol for symbol in symbols if cloud_pattern.match(symbol)]
+cloud_objects = [
+    member for member in members
+    if member in {
+        "cpl_azure.cpp.o", "cpl_vsil_gs.cpp.o", "cpl_vsil_oss.cpp.o",
+        "cpl_vsil_s3.cpp.o", "cpl_vsil_swift.cpp.o",
+    }
+]
+evidence = {
+    "archive": "lib/libgdal.a",
+    "runtime_status": "compiled_but_inactive",
+    "cog_driver": {
+        "objects": ["cogdriver.cpp.o"],
+        "verified_symbols": ["GDALRegister_COG"],
+        "note": (
+            "GTiff includes COG registration and helper code; COG is not manually "
+            "registered and the runtime probe requires it to remain inactive."
+        ),
+    },
+    "cloud_vfs": {
+        "objects": cloud_objects,
+        "verified_installer_symbols": cloud_installers,
+        "note": (
+            "GDAL curl support compiles cloud VFS installers into the archive; the "
+            "runtime probe removes them and requires /vsicurl/ as the only active "
+            "remote VFS."
+        ),
+    },
+}
+with open(output_path, "w", encoding="utf-8") as stream:
+    json.dump(evidence, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+PY
 
     python3 - "$runtime_probe_links" <<'PY'
 import sys
@@ -675,18 +745,21 @@ verify_resolved_caches()
 emit_manifest()
 {
     verify_resolved_caches
-    [[ -f $runtime_probe_json && -f $runtime_probe_links ]] ||
+    [[ -f $runtime_probe_json && -f $runtime_probe_links && \
+       -f $inactive_compiled_helpers ]] ||
         die "runtime probe evidence is missing"
     python3 - "$versions_file" "$build_dir" "$prefix" "$manifest" \
         "$system_curl_library" "$system_sqlite_library" "$runtime_probe_json" \
-        "$runtime_probe_links" "$gdal_embed_capability" <<'PY'
+        "$runtime_probe_links" "$gdal_embed_capability" \
+        "$inactive_compiled_helpers" <<'PY'
 import json
 import os
 import re
 import sys
 
 (versions_path, build_root, prefix, output, curl_library, sqlite_library,
- runtime_probe_path, runtime_links_path, embed_capability_path) = sys.argv[1:]
+ runtime_probe_path, runtime_links_path, embed_capability_path,
+ inactive_helpers_path) = sys.argv[1:]
 
 def read_env(path):
     values = {}
@@ -718,6 +791,8 @@ with open(runtime_probe_path, encoding="utf-8") as stream:
     runtime_probe = json.load(stream)
 with open(embed_capability_path, encoding="utf-8") as stream:
     embed_capability = stream.read().strip()
+with open(inactive_helpers_path, encoding="utf-8") as stream:
+    inactive_helpers = json.load(stream)
 
 link_dependencies = []
 with open(runtime_links_path, encoding="utf-8") as stream:
@@ -783,7 +858,7 @@ for root, _, files in os.walk(prefix):
         prefix_files.append(os.path.relpath(full_path, prefix))
 
 document = {
-    "schema_version": 2,
+    "schema_version": 3,
     "archives": {
         component: {
             "version": versions[f"{component.upper()}_VERSION"],
@@ -794,9 +869,10 @@ document = {
         for component in ("gdal", "proj", "zstd")
     },
     "resolved_cmake_cache": resolved,
-    "compiled_raster_drivers": runtime_probe["active_drivers"],
-    "compiled_ogr_drivers": [],
-    "virtual_file_systems": runtime_probe["active_remote_vfs"],
+    "active_raster_drivers": runtime_probe["active_raster_drivers"],
+    "active_ogr_drivers": runtime_probe["active_ogr_drivers"],
+    "active_remote_vfs": runtime_probe["active_remote_vfs"],
+    "inactive_compiled_helpers": inactive_helpers,
     "runtime_probe": runtime_probe,
     "runtime_link_dependencies": link_dependencies,
     "gdal_embed_probe": {
@@ -852,10 +928,12 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     manifest = json.load(stream)
-if manifest["compiled_raster_drivers"] != ["GTiff", "MEM", "VRT"]:
-    raise SystemExit(f"unexpected raster drivers: {manifest['compiled_raster_drivers']}")
-if manifest["compiled_ogr_drivers"]:
-    raise SystemExit(f"unexpected OGR drivers: {manifest['compiled_ogr_drivers']}")
+if manifest["schema_version"] != 3:
+    raise SystemExit(f"unexpected manifest schema: {manifest['schema_version']}")
+if manifest["active_raster_drivers"] != ["GTiff", "MEM", "VRT"]:
+    raise SystemExit(f"unexpected raster drivers: {manifest['active_raster_drivers']}")
+if manifest["active_ogr_drivers"] != ["MEM"]:
+    raise SystemExit(f"unexpected OGR drivers: {manifest['active_ogr_drivers']}")
 expected = {
     "curl": True, "sqlite3": True, "proj": True, "zstd": True,
     "arrow": False, "parquet": False, "proj_remote_grids": False,
@@ -863,18 +941,34 @@ expected = {
 }
 if manifest["features"] != expected:
     raise SystemExit(f"unexpected features: {manifest['features']}")
-if manifest["virtual_file_systems"] != ["/vsicurl/"]:
+if manifest["active_remote_vfs"] != ["/vsicurl/"]:
     raise SystemExit("/vsicurl/ is not resolved in the manifest")
 if "science-deps-manifest.json" in manifest["prefix_files"]:
     raise SystemExit("manifest includes itself in prefix inventory")
 probe = manifest["runtime_probe"]
-if probe["active_drivers"] != ["GTiff", "MEM", "VRT"]:
+if probe["schema_version"] != 2:
+    raise SystemExit(f"unexpected runtime-probe schema: {probe['schema_version']}")
+if probe["active_raster_drivers"] != ["GTiff", "MEM", "VRT"]:
     raise SystemExit("manifest did not preserve runtime-proven drivers")
+if probe["active_ogr_drivers"] != ["MEM"]:
+    raise SystemExit("manifest did not preserve runtime-proven OGR driver set")
 if probe["active_remote_vfs"] != ["/vsicurl/"]:
     raise SystemExit("manifest did not preserve runtime-proven remote VFS")
 if manifest["gdal_embed_probe"]["supported"] != \
         manifest["gdal_embed_probe"]["resolved_cache"]:
     raise SystemExit("GDAL embed probe and resolved cache disagree")
+helpers = manifest["inactive_compiled_helpers"]
+if helpers["runtime_status"] != "compiled_but_inactive":
+    raise SystemExit("inactive compiled helper status is missing")
+if helpers["cog_driver"]["verified_symbols"] != ["GDALRegister_COG"]:
+    raise SystemExit("inactive compiled COG surface is not disclosed")
+required_cloud = {
+    "VSIInstallS3FileHandler", "VSIInstallGSFileHandler",
+    "VSIInstallAzureFileHandler", "VSIInstallOSSFileHandler",
+    "VSIInstallSwiftFileHandler",
+}
+if not required_cloud.issubset(helpers["cloud_vfs"]["verified_installer_symbols"]):
+    raise SystemExit("inactive compiled cloud VFS surface is not disclosed")
 print("[science-deps] verified private static prefix and manifest")
 PY
 }

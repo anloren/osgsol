@@ -195,10 +195,28 @@ assert_contains "$runtime_probe_cmake" 'set\(zstd_DIR ' \
     "runtime probe must use zstd package's case-sensitive config directory variable"
 assert_contains "$builder" 'verify_runtime_probe' \
     "verify must rerun and validate the static-prefix runtime probe"
-assert_contains "$builder" 'runtime_probe.*active_drivers' \
+assert_contains "$builder" 'runtime_probe.*active_raster_drivers' \
     "manifest driver claims must come from runtime-probe output"
 assert_contains "$builder" 'runtime_probe.*active_remote_vfs' \
     "manifest remote VFS claims must come from runtime-probe output"
+assert_contains "$builder" '"active_ogr_drivers": runtime_probe\["active_ogr_drivers"\]' \
+    "manifest OGR activity must come from runtime-probe output"
+assert_contains "$builder" '"inactive_compiled_helpers"' \
+    "manifest must disclose compiled but inactive archive helper surfaces"
+for symbol in GDALRegister_COG VSIInstallS3FileHandler VSIInstallGSFileHandler \
+        VSIInstallAzureFileHandler VSIInstallOSSFileHandler VSIInstallSwiftFileHandler; do
+    assert_contains "$builder" "$symbol" \
+        "inactive compiled helper disclosure must be verified against $symbol"
+done
+assert_not_contains "$builder" \
+    '"compiled_raster_drivers"|"compiled_ogr_drivers"|"virtual_file_systems"' \
+    "runtime-active results must not be mislabeled as compiled absence"
+assert_contains "$runtime_probe" 'active_raster_drivers' \
+    "runtime probe must identify its raster-driver result as active"
+assert_contains "$runtime_probe" 'active_ogr_drivers' \
+    "runtime probe must explicitly report active OGR drivers"
+assert_not_contains "$runtime_probe" '\\"active_drivers\\"' \
+    "runtime probe must not use the ambiguous active_drivers field"
 assert_contains "$builder" 'gdal-embed-capability' \
     "GDAL embedding must be tied to an independent compiler probe"
 assert_contains "$builder" 'cache_expect.*ENABLE_GNM.*OFF' \

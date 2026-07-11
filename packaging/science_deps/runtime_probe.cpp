@@ -18,6 +18,12 @@
 
 namespace
 {
+    struct ActiveDrivers
+    {
+        std::vector<std::string> raster;
+        std::vector<std::string> ogr;
+    };
+
     [[noreturn]] void fail(const std::string& message)
     {
         std::cerr << "runtime probe failure: " << message << std::endl;
@@ -78,23 +84,37 @@ namespace
         return remote;
     }
 
-    std::vector<std::string> registerScienceDrivers()
+    ActiveDrivers registerScienceDrivers()
     {
         GDALRegister_GTiff();
         GDALRegister_VRT();
         GDALRegister_MEM();
 
-        std::vector<std::string> drivers;
+        std::vector<std::string> drivers, rasterDrivers, ogrDrivers;
         GDALDriverManager* manager = GetGDALDriverManager();
         for (int i = 0; i < manager->GetDriverCount(); ++i)
-            drivers.emplace_back(manager->GetDriver(i)->GetDescription());
+        {
+            GDALDriver* driver = manager->GetDriver(i);
+            const std::string name = driver->GetDescription();
+            drivers.push_back(name);
+            const char* raster = driver->GetMetadataItem(GDAL_DCAP_RASTER);
+            const char* vector = driver->GetMetadataItem(GDAL_DCAP_VECTOR);
+            if (raster && CPLTestBool(raster))
+                rasterDrivers.push_back(name);
+            if (vector && CPLTestBool(vector))
+                ogrDrivers.push_back(name);
+        }
         std::sort(drivers.begin(), drivers.end());
+        std::sort(rasterDrivers.begin(), rasterDrivers.end());
+        std::sort(ogrDrivers.begin(), ogrDrivers.end());
 
         const std::vector<std::string> expected = {"GTiff", "MEM", "VRT"};
         require(drivers == expected, "active driver set is not exactly GTiff/MEM/VRT");
+        require(rasterDrivers == expected,
+                "active raster driver set is not exactly GTiff/MEM/VRT");
         require(GDALGetDriverByName("COG") == nullptr, "COG driver is active");
         require(GDALGetDriverByName("GNM") == nullptr, "GNM driver is active");
-        return drivers;
+        return {rasterDrivers, ogrDrivers};
     }
 
     void setProjection(GDALDataset* dataset, int epsg)
@@ -192,15 +212,17 @@ namespace
 
 int main()
 {
-    const std::vector<std::string> drivers = registerScienceDrivers();
+    const ActiveDrivers drivers = registerScienceDrivers();
     const std::vector<std::string> remoteVfs = installScienceVfs();
     exerciseRuntime();
     const std::vector<std::string> allVfs = vsiPrefixes();
 
-    std::cout << "{\n  \"schema_version\": 1,\n  \"gdal_version\": \""
+    std::cout << "{\n  \"schema_version\": 2,\n  \"gdal_version\": \""
               << GDALVersionInfo("RELEASE_NAME") << "\",\n"
-              << "  \"active_drivers\": ";
-    printJsonArray(drivers);
+              << "  \"active_raster_drivers\": ";
+    printJsonArray(drivers.raster);
+    std::cout << ",\n  \"active_ogr_drivers\": ";
+    printJsonArray(drivers.ogr);
     std::cout << ",\n  \"active_vfs\": ";
     printJsonArray(allVfs);
     std::cout << ",\n  \"active_remote_vfs\": ";

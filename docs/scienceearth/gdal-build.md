@@ -82,6 +82,10 @@ All three commands include:
 -DCMAKE_INSTALL_PREFIX=$PREFIX
 ```
 
+These options and their resolved `CMakeCache.txt` values are build-configuration evidence for PIC
+and hidden visibility. Verification also checks GDAL's object-library PIC cache key, but it does
+not claim an object-by-object relocation or exported-symbol audit of every archive member.
+
 ZSTD:
 
 ```bash
@@ -160,6 +164,9 @@ The compiled `science_deps_runtime_probe` links the installed static prefix. It 
 `GDALRegister_MEM`, installs the curl handler, and removes every nonlocal VFS except
 `/vsicurl/`. Verification then requires exactly those three active drivers, no active COG or GNM,
 and exactly `/vsicurl/` among remote VFS prefixes.
+GDAL advertises the manually registered MEM driver as both raster- and vector-capable, so the
+runtime-derived `active_ogr_drivers` value is `MEM`; it is not evidence that an optional OGR file
+format driver was compiled or registered.
 
 The probe creates and reopens a tiled ZSTD GeoTIFF, reads a VRT, reads and writes a MEM dataset,
 and warps EPSG:4326 to EPSG:3857 through PROJ. Its `otool -L` output must contain the macOS curl
@@ -167,6 +174,12 @@ and SQLite libraries and no dependency outside `/usr/lib` or `/System/Library/Fr
 Installed libraries must be static archives, the probe must link the three manual registration
 entry points but not `GDALAllRegister`, the GDAL archive must contain no GNM objects, and no
 Homebrew or `/usr/local` library/include/package path may appear in a resolved cache.
+
+Static archive contents are broader than the runtime-active surface. Enabling GTiff necessarily
+compiles `cogdriver.cpp.o`, including `GDALRegister_COG` and COG helper code. GDAL curl support also
+compiles inactive S3, GS, Azure/ADLS, OSS, and Swift VFS installer symbols. Verification derives
+these disclosures from `libgdal.a` members and symbols. The runtime hard gate remains separate:
+COG is not registered, cloud handlers are removed, and `/vsicurl/` is the only active remote VFS.
 
 ## Verified result
 
@@ -177,20 +190,23 @@ Xcode and four parallel jobs. The final end-to-end guarded clean build completed
 and it contains no `.dylib` or `.so` files. The installed third-party libraries are
 `libgdal.a`, `libproj.a`, and `libzstd.a`.
 
-`science-deps-manifest.json` is regenerated from runtime-probe output, link inspection, pins, and
-the three resolved CMake caches on every build or verify. Runtime claims come from the compiled
+`science-deps-manifest.json` is regenerated from runtime-probe output, archive symbol/member
+inspection, link inspection, pins, and the three resolved CMake caches on every build or verify.
+Runtime claims come from the compiled
 probe, while configure facts come from the caches. The manifest excludes itself and ownership
-markers from its prefix inventory. Its SHA-256 remained
-`fbd8046e7211947c00c36073d83855b06f0ad0125b980405fd30a088addfa226` after the clean build and
-two consecutive standalone verifies. Its verified capability summary is:
+markers from its prefix inventory. After the schema-v3 probe regeneration, its SHA-256 remained
+`d594c258e9e22ed7d2ec1eb1d11578d0e715a383eb82101c95ba03ba063d9bc3` across three consecutive
+standalone verifies. Its verified capability summary is:
 
 ```text
-raster drivers: GTiff, MEM, VRT
-OGR drivers: none
-virtual file systems: /vsicurl/
+active_raster_drivers: GTiff, MEM, VRT
+active_ogr_drivers: MEM
+active_remote_vfs: /vsicurl/
 enabled: curl, SQLite3, PROJ, ZSTD
-disabled: COG, GNM, Shape/internal Shapelib, apps, Python/SWIG bindings, tests,
-          Arrow, Parquet, PROJ remote grids
+runtime inactive: COG, GNM, cloud VFS installers other than /vsicurl/
+configured off: Shape/internal Shapelib, apps, Python/SWIG bindings, tests,
+                Arrow, Parquet, PROJ remote grids
+inactive compiled helpers disclosed: COG registration/helpers and cloud VFS installers
 PROJ resources: embedded
 GDAL resources: embedded (independent and upstream compiler probes agree)
 ```
