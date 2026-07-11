@@ -671,6 +671,9 @@ int main(int, char**)
         CHECK(required[1].to_str() == "lon");
         CHECK(!earthai::photoCaptureHasFreshView(0));
         CHECK(earthai::photoCaptureHasFreshView(1));
+        CHECK(std::string(earthai::photoCaptureGateError(true)) ==
+              "camera_flight_in_progress");
+        CHECK(earthai::photoCaptureGateError(false) == NULL);
 #endif
         const std::string toolBlock = generatePhotoToolBlock();
         CHECK(toolBlock.find("isAnimationRunning()") != std::string::npos);

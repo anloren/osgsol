@@ -336,9 +336,9 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
         // 无 EARTH_AI_FAKE_IMG)时直接报错,不注册也可以,但注册后模型能看到"为什么不行"
         // 比工具压根不存在更利于它跟用户解释。
         earthai::Tool photo; photo.name = "generate_photo";
-        photo.description = u8"生成一张全新、独立的目标地点写实照片。每次必须传本次任务自己的"
-            u8"lat/lon；若用户说“当前视角”先调用 get_view_state，若目标是 ISS 等实时物体先调用"
-            u8"对应实时位置工具，并把返回的经纬度/高度传入。不得沿用上一张照片或上一地点。"
+        photo.description = u8"generate_photo 只拍摄屏幕当前可见视角，绝不移动或重置相机。若目标不在当前视角，"
+            u8"必须先调用 fly_to，等待目标画面出现后再调用 generate_photo。每次请求仍必须传本次"
+            u8"目标的 lat/lon，坐标只描述照片地点，不控制快门相机。"
             u8"show_camera_platform 默认 false；“从 ISS 俯拍/ISS 视角”仍为 false，只有用户明确"
             u8"要求画面中看见空间站、太阳能板或飞行器时才设 true。";
         photo.parametersJson = earthai::photoToolParametersJson();
@@ -369,9 +369,15 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
                 return picojson::value(err);
             }
 
-            // 目标定位与抓帧属于同一个工具调用，避免模型漏调 fly_to 后沿用上一地点。
-            maniPhoto->stopAnimation();
-            maniPhoto->setByEye(request.lla[0], request.lla[1], request.lla[2]);
+            const char* gateError = earthai::photoCaptureGateError(
+                maniPhoto->isAnimationRunning());
+            if (gateError)
+            {
+                picojson::object err;
+                err["error"] = picojson::value(std::string(gateError));
+                return picojson::value(err);
+            }
+
             picojson::value r = mediaPtr->startPhotoJob(
                 request.style, request.lla, request.showCameraPlatform);
             OSG_NOTICE << "[AIChat] generate_photo -> " << r.serialize() << std::endl;
@@ -475,8 +481,9 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
             aiKey, (m && *m) ? m : "gemini-3.5-flash");
         gp->setSystemPrompt(u8"你是 EarthExplorer 三维地球应用的中文助手。优先使用提供的工具完成用户请求；"
                             u8"用户提到地名时自行换算经纬度；回答保持简洁；不要编造工具没有返回的数据。"
-                            u8"每次 generate_photo 都是独立新图，必须传该次目标的 lat/lon；当前视角先调"
-                            u8"get_view_state，ISS 等实时目标先查询实时位置并传其经纬度/高度。"
+                            u8"generate_photo 只拍摄屏幕当前可见视角，绝不移动或重置相机。若目标不在当前视角，"
+                            u8"必须先调用 fly_to，等待目标画面出现后再调用 generate_photo。每次请求仍必须传本次"
+                            u8"目标的 lat/lon，坐标只描述照片地点，不控制快门相机。"
                             u8"从 ISS 俯拍表示相机在 ISS 位置向下看，show_camera_platform=false；"
                             u8"除非用户明确要求，不得在画面叠加空间站、太阳能板或飞行器。 ");
         aiCore = new earthai::AIChatCore(gp, aiRegistry);

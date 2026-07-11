@@ -13,6 +13,11 @@ namespace earthai
         return completedUpdateTicks > 0;
     }
 
+    inline const char* photoCaptureGateError(bool animationRunning)
+    {
+        return animationRunning ? "camera_flight_in_progress" : NULL;
+    }
+
     struct PhotoRequest
     {
         osg::Vec3d lla;
