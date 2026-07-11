@@ -794,3 +794,71 @@ The following remain pending and are not represented as passes:
 
 The North Pole radial starburst remains a documented pre-existing known limitation accepted by the
 user for this release; it is not fixed.
+
+## Final-review paging fix and durable artifact evidence (2026-07-11)
+
+### Production fix and TDD evidence
+
+- Production source: `55f1de65bfd41bdaccebb6190bea6b5aefce7713`
+  (`fix: preserve mixed 3d tiles refinement`).
+- RED: a no-content root containing a mixed `REPLACE` child (external rough JSON plus a local
+  refined child) failed at `mixedRoughReadAttempts > 0`. The inherited deferred mode had returned a
+  `ProxyNode` before the mixed child's `children` were considered.
+- GREEN: deferred external JSON now returns early only when there is no non-empty refined child
+  array. The mixed fixture proves a rough read occurs, the root result contains one `PagedLOD`, no
+  proxy replaces the mixed subtree, and the refined group pages as one atomic child group.
+- RED/GREEN also covered non-finite radius, geometric error, SSE, and computed pixel-switch
+  results. Invalid or non-finite inputs fall back to one pixel. Existing `REPLACE`, `ADD`, and
+  legacy distance ranges are asserted.
+- RED/GREEN for SSE serialization added a pure formatter that imbues the classic locale and uses
+  `max_digits10`. A comma-decimal global C++ locale cannot alter the stored plugin option, and an
+  adjacent representable SSE value round-trips exactly. The runtime log continues to report the
+  resolved `_sse` value.
+- Sequential Release builds of `osgVerse_Test_Tiles3dPaging` and `osgVerse_EarthExplorer` exited
+  `0`. The complete offline suite exited `0`: **15/15 passed, 0 failed**, real time `12.27 s`.
+
+### Fresh package and durable formal artifact
+
+- Both install and packaging ran with `EARTH_AI_KEY` removed from the environment. The fresh
+  generic package completed its built-in deep/strict verification.
+- The formal non-timestamped artifact is outside Desktop FileProvider at
+  `/Users/USER/osgsol/.worktrees/v0.2-runtime-safety/dist/osgSol Earth.app`.
+- Exact identity: `com.anloren.osgsol.earth`, version/build `0.2.0` / `0.2.0`, executable
+  `osgSol_Earth`, channel `manual-test`, source
+  `55f1de65bfd41bdaccebb6190bea6b5aefce7713`.
+- The corrected durable artifact passed deep/strict verification immediately and again after a
+  12-second delay. Its hashes were unchanged across the delay:
+  - executable: `c842116465d021ce44e3f61205d5bbb33c5f7e7b5d1af53ea9c6080f4863fddc`
+  - bundled `osgdb_verse_tiles.so`:
+    `47db190cc752c595d49172f8e555ef49c537d16589119b4e0aacacf08da12e13`
+  - `Info.plist`: `64b7c9709d29a7a96e448bde8b7a6d828f8f260211fff7832977b691f844cf78`
+
+### Fixed Desktop replacement and runtime proof
+
+- Only `/Users/USER/Desktop/osgSol Earth.app` was replaced, from the corrected durable formal
+  artifact. No timestamped or additional Desktop app was created.
+- The isolated-HOME basic smoke, with `EARTH_AI_KEY` and `OSG_LIBRARY_PATH` removed, exited `0`
+  and logged both the offscreen-context and capture-saved markers.
+- The isolated F2 smoke loaded the exact bundled path
+  `/Users/USER/Desktop/osgSol Earth.app/Contents/lib/osgPlugins-3.6.5/osgdb_verse_tiles.so`.
+  Its UUID is `A288401F-47E9-3CE5-A738-6A0EA7A03DAE`; it matches the durable plugin byte-for-byte,
+  contains the current paging markers, and attached the F2 root with `sse=8` and no
+  `[Tiles3D] FAILED` marker. This is runtime/plugin provenance evidence, not a manual visual pass.
+- Final Desktop identity checks passed. The executable, plugin, and plist hashes exactly match the
+  durable values above; `Contents/MacOS` is mode `555`; no `imgui.ini` or `libhv.*.log` pollution
+  is present. Cleanup, ad-hoc deep signing, and immediate deep/strict verification exited `0`.
+- As expected, a 12-second delayed Desktop check observed FileProvider reattach root FinderInfo and
+  `com.apple.fileprovider.fpfs#P`, causing strict status `1` without changing signed payload hashes.
+  The final cleanup/re-sign/immediate strict check was repeated. The durable dist artifact remained
+  deep/strict-verifiable throughout and is the persistent signature evidence.
+
+### Remaining concerns and pending manual gates
+
+- The final review's larger capture and terrain injectable-seam coverage debt remains a **Minor**;
+  it was intentionally not expanded in this focused fix wave.
+- All prior manual visual gates remain pending: Kunming low-oblique terrain, Hong Kong F2-off
+  terrain shape, Hong Kong F2 visible refinement/altitude round-trip/locality/toggle behavior,
+  NVIDIA shutter camera stability, ISS visible-view preservation, and Hong Kong-to-NVIDIA photo
+  isolation. No pass is claimed for any of them.
+- The user-approved pre-existing North Pole Web Mercator starburst remains disclosed and unfixed.
+- Existing macOS OpenGL deprecation and duplicate-library linker warnings remain non-blocking.
