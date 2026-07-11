@@ -8,6 +8,7 @@
 #include <modeling/Math.h>
 #include <osg/Notify>
 #include <osg/Math>
+#include <memory>
 
 // 汇总类工具（get_quakes_summary / get_flights_summary）高度雷同：懒开启图层 → 取
 // summaryJson → 解析 → count<=0 时补 loadingNote → 打日志。抽成一个通用小工厂，
@@ -162,6 +163,7 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
     // registry/aiCore 用裸指针、进程生命周期存活，与本文件其余单例/裸 new 风格一致。
     earthai::ToolRegistry* aiRegistry = new earthai::ToolRegistry;
     earthai::AIChatCore* aiCore = nullptr;
+    std::shared_ptr<earthai::PhotoViewGate> photoViewGate(new earthai::PhotoViewGate);
     runtime.tools = aiRegistry;   // 无条件暴露:FeedLayer 等调用方不需要关心 aiCore 是否创建
 
     // MediaManager(Task 8 快照+生图管线)先于 aiRegistry 构造完:generate_photo/generate_video
@@ -188,16 +190,19 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
 
     {
         earthai::Tool fly; fly.name = "fly_to";
-        fly.description = u8"把相机飞到指定经纬度与高度。用户说地名时你自己换算经纬度。";
+        fly.description = u8"只把相机飞到指定经纬度与高度，不拍照。用户说地名时你自己换算经纬度。"
+            u8"若用户要对目标拍照，for_photo 必须为 true；到达后停止本轮，等待用户选好视角再明确拍照。";
         fly.parametersJson = "{\"type\":\"object\",\"properties\":{"
             "\"lat\":{\"type\":\"number\"},\"lon\":{\"type\":\"number\"},"
-            "\"alt_km\":{\"type\":\"number\",\"description\":\"default 150\"}},"
+            "\"alt_km\":{\"type\":\"number\",\"description\":\"default 150; explicit value wins\"},"
+            "\"for_photo\":{\"type\":\"boolean\",\"description\":\"目标拍照导航必须为 true;"
+            "省略 alt_km 时使用 2km 地面近景\"}},"
             "\"required\":[\"lat\",\"lon\"]}";
-        fly.execute = [mani](const picojson::value& a) {
+        fly.execute = [mani, photoViewGate](const picojson::value& a) {
             double lat = a.get("lat").get<double>(), lon = a.get("lon").get<double>();
             // v0.15-vision:默认高度从 50km 提到 150km——50km 相对地球半径 6371km 几乎贴地,
             // 画面容易被地表纹理占满(用户真机反馈);150km 能看到明显地表起伏和区域轮廓。
-            double alt = a.contains("alt_km") ? a.get("alt_km").get<double>() : 150.0;
+            double alt = earthai::photoFlyAltitudeKm(a);
             if (lat < -90 || lat > 90 || lon < -180 || lon > 180 || alt <= 0.0)
             {
                 picojson::object err;
@@ -205,8 +210,21 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
                 return picojson::value(err);
             }
             mani->setByEye(osg::inDegrees(lat), osg::inDegrees(lon), alt * 1000.0);
+            photoViewGate->recordFlyTo();
             OSG_NOTICE << "[AIChat] fly_to " << lat << "," << lon << "," << alt << "km" << std::endl;
-            picojson::object r; r["ok"] = picojson::value(true); return picojson::value(r);
+            picojson::object r;
+            r["ok"] = picojson::value(true);
+            r["lat"] = picojson::value(lat);
+            r["lon"] = picojson::value(lon);
+            r["alt_km"] = picojson::value(alt);
+            if (a.contains("for_photo") && a.get("for_photo").is<bool>()
+                && a.get("for_photo").get<bool>())
+            {
+                r["photo_status"] = picojson::value(std::string("awaiting_user_view_confirmation"));
+                r["note"] = picojson::value(std::string(
+                    u8"目标已显示。停止本轮拍摄；请用户调整/确认视角后，再点击照片或发出下一条拍照指令"));
+            }
+            return picojson::value(r);
         };
         aiRegistry->add(fly);
 
@@ -336,15 +354,16 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
         // 无 EARTH_AI_FAKE_IMG)时直接报错,不注册也可以,但注册后模型能看到"为什么不行"
         // 比工具压根不存在更利于它跟用户解释。
         earthai::Tool photo; photo.name = "generate_photo";
-        photo.description = u8"generate_photo 只拍摄屏幕当前可见视角，绝不移动或重置相机。若目标不在当前视角，"
-            u8"必须先调用 fly_to，等待目标画面出现后再调用 generate_photo。每次请求仍必须传本次"
-            u8"目标的 lat/lon，坐标只描述照片地点，不控制快门相机。"
+        photo.description = u8"generate_photo 只拍摄屏幕当前可见视角，绝不移动或重置相机。用户本条指令必须明确"
+            u8"要求照片，且当前画面必须在目标附近。若本条指令调用过 fly_to，本工具一定拒绝；必须停止并等待"
+            u8"用户看见目标、选好视角后，在下一条拍照指令中再调用。每次仍必须传本次目标 lat/lon，坐标只描述"
+            u8"照片地点，不控制快门相机；生成提示里的高度始终来自当前可见相机。"
             u8"show_camera_platform 默认 false；“从 ISS 俯拍/ISS 视角”仍为 false，只有用户明确"
             u8"要求画面中看见空间站、太阳能板或飞行器时才设 true。";
         photo.parametersJson = earthai::photoToolParametersJson();
         earthai::MediaManager* mediaPtr = mediaMgr;
         osgVerse::EarthManipulator* maniPhoto = mani;
-        photo.execute = [mediaPtr, maniPhoto](const picojson::value& args) {
+        photo.execute = [mediaPtr, maniPhoto, photoViewGate](const picojson::value& args) {
             if (!mediaPtr)
             {
                 // review:mediaMgr 的实际构造条件是"有 EARTH_AI_KEY 或 EARTH_AI_FAKE"(见上面
@@ -369,17 +388,25 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
                 return picojson::value(err);
             }
 
+            const osg::Vec3d currentEyeLla = maniPhoto->computeEyeLatLonHeight();
             const char* gateError = earthai::photoCaptureGateError(
-                maniPhoto->isAnimationRunning());
+                maniPhoto->isAnimationRunning(), *photoViewGate, request.lla, currentEyeLla);
             if (gateError)
             {
                 picojson::object err;
                 err["error"] = picojson::value(std::string(gateError));
                 return picojson::value(err);
             }
+            request.showCameraPlatform = earthai::photoCameraPlatformAllowed(
+                *photoViewGate, request.showCameraPlatform);
+            request = earthai::photoRequestAtVisibleCameraAltitude(request, currentEyeLla);
 
             picojson::value r = mediaPtr->startPhotoJob(
                 request.style, request.lla, request.showCameraPlatform);
+            if (r.is<picojson::object>() && r.contains("status")
+                && r.get("status").is<std::string>()
+                && r.get("status").get<std::string>() == "started")
+                photoViewGate->consumePhotoAuthorization();
             OSG_NOTICE << "[AIChat] generate_photo -> " << r.serialize() << std::endl;
             return r;
         };
@@ -481,8 +508,10 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
             aiKey, (m && *m) ? m : "gemini-3.5-flash");
         gp->setSystemPrompt(u8"你是 EarthExplorer 三维地球应用的中文助手。优先使用提供的工具完成用户请求；"
                             u8"用户提到地名时自行换算经纬度；回答保持简洁；不要编造工具没有返回的数据。"
-                            u8"generate_photo 只拍摄屏幕当前可见视角，绝不移动或重置相机。若目标不在当前视角，"
-                            u8"必须先调用 fly_to，等待目标画面出现后再调用 generate_photo。每次请求仍必须传本次"
+                            u8"generate_photo 只拍摄屏幕当前可见视角，绝不移动或重置相机。目标不在当前视角时，"
+                            u8"必须先调用 fly_to(for_photo=true)。目标拍照严格分两轮：本轮只飞到并显示目标，"
+                            u8"告诉用户调整/确认视角后再拍；绝对不能在同一条用户指令里继续调用 generate_photo。"
+                            u8"收到用户下一条拍照确认后，才调用 generate_photo。每次请求仍必须传本次"
                             u8"目标的 lat/lon，坐标只描述照片地点，不控制快门相机。"
                             u8"从 ISS 俯拍表示相机在 ISS 位置向下看，show_camera_platform=false；"
                             u8"除非用户明确要求，不得在画面叠加空间站、太阳能板或飞行器。 ");
@@ -492,6 +521,8 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
     }
     if (aiCore)
     {
+        aiCore->setSubmitAcceptedCallback(
+            [photoViewGate](const std::string& text) { photoViewGate->beginUserTurn(text); });
         // v0.15-vision 收尾修复:MediaManager 早于 aiCore 构造(见上面 mediaMgr 构造处注释——
         // generate_photo/generate_video 工具的 execute 需要先捕获 mediaMgr 指针才能注册进
         // aiCore 构造时吃的 aiRegistry),这里 aiCore 已就绪,补上反向引用,使 MediaManager

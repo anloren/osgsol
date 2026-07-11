@@ -436,3 +436,66 @@ Hong Kong content. No headless result is recorded as a visual pass.
    panels: **pending**.
 3. Hong Kong generation followed by NVIDIA generation with no image, coordinate, prompt-suffix, or
    output-path leakage: **pending**.
+
+## Follow-up: target navigation and user-confirmed shutter gate
+
+Recorded on 2026-07-11 after the first packaged build exposed a missing product-level gate.
+
+### Root cause
+
+The earlier shutter fix correctly removed `setByEye()` from `generate_photo`, but the required
+`fly_to -> show target -> choose view -> generate_photo` sequence existed only in tool/system prompt
+text. The tool accepted a photo job when the model skipped navigation, reused the old visible view,
+or called `fly_to` and `generate_photo` in the same user request. That is why a request involving
+NVIDIA headquarters could produce a photo before the headquarters/view had been shown and selected.
+
+### Implemented contract
+
+- `generate_photo` still never moves, resets, or stops the camera.
+- A user turn that only requests navigation cannot authorize a photo, even if the model calls the
+  photo tool anyway; explicit and negated photo language is checked in code.
+- Target photography is two-stage. `fly_to(for_photo=true)` defaults to a 2 km ground view and marks
+  a one-shot pending confirmation. Any photo call in the same accepted user turn is rejected,
+  regardless of coordinate offsets.
+- The next user turn may explicitly request a photo or confirm with phrases such as
+  `现在拍吧` / `就这个视角，可以了`; cancellation has higher priority than every affirmative
+  phrase and clears the pending authorization. Successful job start consumes the authorization.
+- The current camera ground projection must be within an altitude-scaled visible radius of the
+  requested target, preventing an old Hong Kong view from satisfying an NVIDIA request. The orbital
+  allowance remains wide enough for an oblique ISS composition.
+- Model-supplied `show_camera_platform=true` is forced false unless the accepted user text explicitly
+  asks to show/include the spacecraft, ISS, or solar panels in frame. Merely saying `from ISS` or
+  `from a spacecraft` does not authorize a platform overlay.
+- The generation prompt keeps requested target latitude/longitude but replaces its altitude with the
+  actual current visible-camera altitude, so a 2 km headquarters view cannot silently become a
+  150 km prompt.
+- Busy-rejected submissions do not advance or authorize the photo turn.
+
+### Test and runtime evidence
+
+- The focused AI tests were developed red/green for: navigation-only rejection, same-turn fly/capture,
+  2.2 km coordinate-offset bypass, stale Hong Kong-to-NVIDIA view, negative/reversed negative language,
+  mixed cancellation plus future-positive language, one-shot shorthand confirmation, injected camera
+  platform, actual visible altitude, ISS oblique allowance, and accepted-vs-busy submit accounting.
+- Fresh `osgVerse_EarthExplorer` builds completed successfully. The final full offline run passed
+  **15/15**, 0 failed, in **10.11 s**; only the existing macOS OpenGL and
+  duplicate-library warnings were emitted.
+- Deterministic offscreen tool-chain runs against the real registry/state machine produced:
+  - `去 NVIDIA 总部` with a malicious extra `generate_photo`: exit 0, **0 photo jobs**;
+  - `去 NVIDIA 总部拍照` with same-turn photo coordinates offset about 2.2 km: exit 0,
+    **0 photo jobs**;
+  - first-turn photo navigation followed by `现在按这个视角拍照`: exit 0, **1 completed job**;
+  - first-turn photo navigation followed by `就这个视角，可以了`: exit 0,
+    **1 completed job** even though the scripted model injected `show_camera_platform=true`; the
+    authorization test proves the flag is forced false without explicit user platform intent.
+- The 2 km NVIDIA offscreen frame `/tmp/earth_capture_0.png` has SHA-256
+  `cf9fd3cd5e088d374afbe065a4d3d14d24276a8cfa8b6cc41988e01c1518c748` and visibly resolves the
+  headquarters block/building imagery instead of stopping at the former 150 km overview.
+- Final read-only review after all fixes reported **Critical: none; Important: none; Ready: yes**.
+
+### Remaining manual visual acceptance
+
+The code/state-machine gates and offscreen target visibility are verified. Final human acceptance is
+still required for the exact on-screen composition: adjust NVIDIA/ISS to the desired angle, confirm
+that the shutter preserves that visible matrix, and inspect the real generated output for content
+fidelity. No headless result is presented as a substitute for that hand test.

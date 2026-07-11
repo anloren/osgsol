@@ -3,6 +3,7 @@
 // AI Chat 代理循环:LLMProvider 抽象 + FakeProvider(离线可测) + AIChatCore 状态机。
 // 本头文件不依赖 OSG,纯 std + picojson,可被 tests/ 单测直接 include 实现文件。
 #include "ai_tools.h"
+#include <functional>
 #include <thread>
 
 namespace earthai
@@ -83,6 +84,9 @@ namespace earthai
         // 线程安全:内部加 _mutex 锁,任意线程调用都安全(尽管目前唯一调用方 MediaManager::update()
         // 是主线程调,加锁是为了和 _transcript 的其它读写保持一致的保护,不依赖调用方在哪个线程)。
         void addErrorNote(const std::string& text);
+        // 成功接受一条新用户指令时调用；busy 而被拒绝的 submit 不触发。照片两阶段门控
+        // 用它区分“同一指令里刚飞到就立刻拍”和“用户看过画面后再次确认拍摄”。
+        void setSubmitAcceptedCallback(const std::function<void(const std::string&)>& callback);
         // 仅测试用:导出当前 _history 序列化后的 Gemini contents JSON,
         // 供单测校验 functionCall/functionResponse 严格配对;业务代码不要调用
         std::string historyContentsForTest() const;
@@ -110,6 +114,7 @@ namespace earthai
         // 这个标志。因此普通 bool 已足够,不需要 atomic;为与本类其余状态字段一致的加锁
         // 纪律,仍在 _mutex 保护下读写(见 ai_chat.cpp)。
         bool _forceNoTools = false;
+        std::function<void(const std::string&)> _submitAcceptedCallback;
 
         // 工作线程产出,主线程 drain 时消费
         std::vector<ChatEntry> _pendingEntries;

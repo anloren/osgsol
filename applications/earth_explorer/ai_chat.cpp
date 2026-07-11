@@ -181,6 +181,7 @@ namespace earthai
 
     void AIChatCore::submit(const std::string& userText)
     {
+        std::function<void(const std::string&)> acceptedCallback;
         {
             std::lock_guard<std::mutex> g(_mutex);
             if (_busy)
@@ -209,7 +210,9 @@ namespace earthai
 
             _busy = true;
             _round = 0;
+            acceptedCallback = _submitAcceptedCallback;
         }
+        if (acceptedCallback) acceptedCallback(userText);
         startWorkerRound();
     }
 
@@ -409,6 +412,13 @@ namespace earthai
         std::lock_guard<std::mutex> g(_mutex);
         ChatEntry e; e.kind = ChatEntry::ERR; e.text = text;
         _transcript.push_back(e);
+    }
+
+    void AIChatCore::setSubmitAcceptedCallback(
+        const std::function<void(const std::string&)>& callback)
+    {
+        std::lock_guard<std::mutex> g(_mutex);
+        _submitAcceptedCallback = callback;
     }
 
     std::string AIChatCore::historyContentsForTest() const

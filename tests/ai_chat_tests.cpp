@@ -203,9 +203,18 @@ int main(int, char**)
 
         ToolRegistry reg3;
         AIChatCore core(&gated, &reg3);
+        int acceptedSubmits = 0;
+        std::string acceptedText;
+        core.setSubmitAcceptedCallback([&acceptedSubmits, &acceptedText](const std::string& text) {
+            ++acceptedSubmits;
+            acceptedText = text;
+        });
         core.submit(u8"第一条");
+        CHECK(acceptedSubmits == 1);
+        CHECK(acceptedText == u8"第一条");
         CHECK(core.busy()); // worker 被门控阻塞,busy 必然还在
         core.submit(u8"第二条(应被忽略)");
+        CHECK(acceptedSubmits == 1); // busy 时被拒绝的文本不算新用户轮次
         gated.release(); // 放行第一轮 worker
 
         for (int i = 0; i < 500 && core.busy(); ++i)
@@ -707,12 +716,131 @@ int main(int, char**)
         CHECK(required[1].to_str() == "lon");
         CHECK(!earthai::photoCaptureHasFreshView(0));
         CHECK(earthai::photoCaptureHasFreshView(1));
-        CHECK(std::string(earthai::photoCaptureGateError(true)) ==
-              "camera_flight_in_progress");
-        CHECK(earthai::photoCaptureGateError(false) == NULL);
+        // 目标拍照必须经过两个硬门槛：当前相机确实在目标附近；若本轮刚执行过 fly_to，
+        // 必须等用户看到画面、调整/确认视角后，在下一条用户指令里才能按快门。
+        earthai::PhotoViewGate viewGate;
+        const osg::Vec3d nvidiaLla(37.3707 * 0.017453292519943295,
+                                   -121.9631 * 0.017453292519943295, 800.0);
+        const osg::Vec3d hongKongEye(22.298 * 0.017453292519943295,
+                                     114.172 * 0.017453292519943295, 800.0);
+        viewGate.beginUserTurn(u8"去 NVIDIA 总部");
+        CHECK(std::string(earthai::photoCaptureGateError(
+                  false, viewGate, nvidiaLla, nvidiaLla)) == "photo_not_requested");
+        viewGate.beginUserTurn(u8"不要拍照，只去 NVIDIA 总部");
+        const char* negativeIntentError = earthai::photoCaptureGateError(
+            false, viewGate, nvidiaLla, nvidiaLla);
+        CHECK(negativeIntentError != NULL);
+        CHECK(std::string(negativeIntentError) == "photo_not_requested");
+        CHECK(!earthai::isExplicitPhotoRequest(u8"照片不要拍，只导航"));
+        CHECK(!earthai::isExplicitPhotoRequest(u8"别生成照片"));
+        CHECK(!earthai::isExplicitPhotoRequest("without taking a picture"));
+        CHECK(!earthai::isExplicitPhotoRequest("don't generate an image"));
+        CHECK(!earthai::isExplicitPhotoRequest("no pictures"));
+        CHECK(!earthai::isExplicitPhotoRequest("show the satellite image layer"));
+        CHECK(earthai::isExplicitPhotoRequest(u8"生成一张 ISS 俯拍照"));
+        CHECK(earthai::isExplicitPhotoRequest("take a photo"));
+        CHECK(earthai::isExplicitPhotoRequest(
+            "Do not generate a video; take a photo instead"));
+        CHECK(earthai::isExplicitPhotoRequest(
+            "Do not take a video; take a photo instead"));
+
+        viewGate.beginUserTurn(u8"生成一张 ISS 俯拍照");
+        CHECK(!earthai::photoCameraPlatformAllowed(viewGate, true));
+        viewGate.beginUserTurn("take a photo from a spacecraft");
+        CHECK(!earthai::photoCameraPlatformAllowed(viewGate, true));
+        viewGate.beginUserTurn(u8"拍照，画面中显示空间站和太阳能板");
+        CHECK(earthai::photoCameraPlatformAllowed(viewGate, true));
+        viewGate.beginUserTurn(u8"拍照，但不要显示空间站或太阳能板");
+        CHECK(earthai::isExplicitPhotoRequest(u8"拍照，但不要显示空间站或太阳能板"));
+        CHECK(!earthai::photoCameraPlatformAllowed(viewGate, true));
+        viewGate.beginUserTurn(u8"拍一张照片");
+        CHECK(std::string(earthai::photoCaptureGateError(
+                  true, viewGate, nvidiaLla, nvidiaLla)) == "camera_flight_in_progress");
+        CHECK(std::string(earthai::photoCaptureGateError(
+                  false, viewGate, nvidiaLla, hongKongEye)) == "photo_target_not_visible");
+        CHECK(earthai::photoCaptureGateError(false, viewGate, nvidiaLla, nvidiaLla) == NULL);
+
+        // 地面目标的拍照导航不能沿用普通地球总览的 150km 默认高度；否则虽然经纬度到了，
+        // 总部建筑仍根本不可见。显式高度（例如 ISS 408km）始终优先。
+        CHECK(std::fabs(earthai::photoFlyAltitudeKm(parse("{}")) - 150.0) < 1e-9);
+        CHECK(std::fabs(earthai::photoFlyAltitudeKm(parse("{\"for_photo\":true}")) - 2.0) < 1e-9);
+        CHECK(std::fabs(earthai::photoFlyAltitudeKm(parse(
+                  "{\"for_photo\":true,\"alt_km\":408}")) - 408.0) < 1e-9);
+        earthai::PhotoRequest visibleAltitudeRequest = earthai::photoRequestAtVisibleCameraAltitude(
+            request, osg::Vec3d(request.lla[0] + 0.01, request.lla[1] - 0.01, 2000.0));
+        CHECK(std::fabs(visibleAltitudeRequest.lla[0] - request.lla[0]) < 1e-12);
+        CHECK(std::fabs(visibleAltitudeRequest.lla[1] - request.lla[1]) < 1e-12);
+        CHECK(std::fabs(visibleAltitudeRequest.lla[2] - 2000.0) < 1e-9);
+        CHECK(visibleAltitudeRequest.style == request.style);
+        CHECK(visibleAltitudeRequest.showCameraPlatform == request.showCameraPlatform);
+
+        viewGate.recordFlyTo();
+        CHECK(std::string(earthai::photoCaptureGateError(
+                  false, viewGate, nvidiaLla, nvidiaLla)) == "photo_view_not_confirmed");
+        osg::Vec3d offsetTarget = nvidiaLla;
+        offsetTarget[0] += 0.02 * 0.017453292519943295; // 约 2.2km，仍在 2km 视角的 5km 范围内
+        const char* offsetSameTurnError = earthai::photoCaptureGateError(
+            false, viewGate, offsetTarget, nvidiaLla);
+        CHECK(offsetSameTurnError != NULL);
+        CHECK(std::string(offsetSameTurnError) == "photo_view_not_confirmed");
+        viewGate.beginUserTurn(u8"现在按这个视角拍照");
+        CHECK(earthai::photoCaptureGateError(false, viewGate, nvidiaLla, nvidiaLla) == NULL);
+
+        earthai::PhotoViewGate pendingConfirmationGate;
+        pendingConfirmationGate.beginUserTurn(u8"去 NVIDIA 总部拍照");
+        pendingConfirmationGate.recordFlyTo();
+        pendingConfirmationGate.beginUserTurn(u8"就这个视角，可以了");
+        CHECK(earthai::photoCaptureGateError(
+                  false, pendingConfirmationGate, nvidiaLla, nvidiaLla) == NULL);
+        pendingConfirmationGate.consumePhotoAuthorization();
+        pendingConfirmationGate.beginUserTurn(u8"可以了");
+        CHECK(std::string(earthai::photoCaptureGateError(
+                  false, pendingConfirmationGate, nvidiaLla, nvidiaLla)) ==
+              "photo_not_requested");
+
+        earthai::PhotoViewGate cancelledConfirmationGate;
+        cancelledConfirmationGate.beginUserTurn(u8"去 NVIDIA 总部拍照");
+        cancelledConfirmationGate.recordFlyTo();
+        cancelledConfirmationGate.beginUserTurn("don't take it yet");
+        CHECK(std::string(earthai::photoCaptureGateError(
+                  false, cancelledConfirmationGate, nvidiaLla, nvidiaLla)) ==
+              "photo_not_requested");
+        earthai::PhotoViewGate mixedCancellationGate;
+        mixedCancellationGate.beginUserTurn(u8"去 NVIDIA 总部拍照");
+        mixedCancellationGate.recordFlyTo();
+        CHECK(earthai::isExplicitPhotoRequest(
+            "don't take it yet; take a photo when I say"));
+        CHECK(earthai::isPhotoShutterCancellation(
+            "don't take it yet; take a photo when I say"));
+        mixedCancellationGate.beginUserTurn(
+            "don't take it yet; take a photo when I say");
+        CHECK(!mixedCancellationGate.photoRequestedThisTurn());
+        CHECK(std::string(earthai::photoCaptureGateError(
+                  false, mixedCancellationGate, nvidiaLla, nvidiaLla)) ==
+              "photo_not_requested");
+        earthai::PhotoViewGate rejectedViewGate;
+        rejectedViewGate.beginUserTurn(u8"去 NVIDIA 总部拍照");
+        rejectedViewGate.recordFlyTo();
+        rejectedViewGate.beginUserTurn("not this view");
+        CHECK(std::string(earthai::photoCaptureGateError(
+                  false, rejectedViewGate, nvidiaLla, nvidiaLla)) ==
+              "photo_not_requested");
+
+        earthai::PhotoViewGate issGate;
+        issGate.beginUserTurn(u8"生成一张 ISS 俯拍照");
+        const osg::Vec3d issTarget(10.0 * 0.017453292519943295,
+                                   20.0 * 0.017453292519943295, 408000.0);
+        const osg::Vec3d issObliqueEye(15.0 * 0.017453292519943295,
+                                       20.0 * 0.017453292519943295, 408000.0);
+        CHECK(earthai::photoCaptureGateError(
+                  false, issGate, issTarget, issObliqueEye) == NULL);
 #endif
         const std::string toolBlock = generatePhotoToolBlock();
         CHECK(toolBlock.find("isAnimationRunning()") != std::string::npos);
+        CHECK(toolBlock.find("computeEyeLatLonHeight()") != std::string::npos);
+        CHECK(toolBlock.find("photoCameraPlatformAllowed") != std::string::npos);
+        CHECK(toolBlock.find("photoRequestAtVisibleCameraAltitude") != std::string::npos);
+        CHECK(toolBlock.find("consumePhotoAuthorization") != std::string::npos);
         CHECK(toolBlock.find("setByEye(") == std::string::npos);
         CHECK(toolBlock.find("stopAnimation(") == std::string::npos);
         CHECK(toolBlock.find("moveTo(") == std::string::npos);
