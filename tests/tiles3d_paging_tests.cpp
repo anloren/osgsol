@@ -19,6 +19,33 @@
 
 namespace
 {
+    class CountingReader : public osgDB::ReaderWriter
+    {
+    public:
+        CountingReader() : _readCount(0)
+        {
+            supportsProtocol("counting", "3D Tiles external-read fixture");
+        }
+
+        const char* className() const override
+        {
+            return "3D Tiles counting fixture reader";
+        }
+
+        ReadResult readNode(const std::string& path, const Options*) const override
+        {
+            if (path.find("counting://") == std::string::npos)
+                return ReadResult::FILE_NOT_HANDLED;
+            ++_readCount;
+            return ReadResult::FILE_NOT_FOUND;
+        }
+
+        unsigned int readCount() const { return _readCount; }
+
+    private:
+        mutable unsigned int _readCount;
+    };
+
     struct GraphVisitor : public osg::NodeVisitor
     {
         GraphVisitor() : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN) {}
@@ -51,6 +78,34 @@ namespace
         output << text;
         CHECK(output.good());
     }
+
+    osg::ProxyNode* findProxy(const std::vector<osg::ProxyNode*>& proxies,
+                              const std::string& fileName)
+    {
+        for (size_t i = 0; i < proxies.size(); ++i)
+        {
+            osg::ProxyNode* proxy = proxies[i];
+            if (proxy->getNumFileNames() == 1 && proxy->getFileName(0) == fileName)
+                return proxy;
+        }
+        return NULL;
+    }
+
+    void checkDeferredProxy(osg::ProxyNode* proxy, const std::string& fileName,
+                            const osg::Vec3d& center, double radius)
+    {
+        CHECK(proxy != NULL);
+        CHECK(proxy->getLoadingExternalReferenceMode() ==
+              osg::ProxyNode::DEFER_LOADING_TO_DATABASE_PAGER);
+        CHECK(proxy->getCenterMode() == osg::ProxyNode::USER_DEFINED_CENTER);
+        CHECK(proxy->getNumFileNames() == 1);
+        CHECK(proxy->getFileName(0) == fileName);
+        CHECK((proxy->getCenter() - center).length() < 1.0e-6);
+        CHECK(std::fabs(proxy->getRadius() - radius) < 1.0e-6);
+        CHECK(proxy->getRadius() > 0.0f);
+        CHECK(proxy->getBound().valid());
+        CHECK(proxy->getBound().radius() > 0.0f);
+    }
 }
 
 int main(int, char**)
@@ -65,25 +120,32 @@ int main(int, char**)
         "\"boundingVolume\":{\"sphere\":[0,0,0,1000]},\"geometricError\":500,"
         "\"refine\":\"ADD\",\"children\":["
         "{\"boundingVolume\":{\"sphere\":[100,0,0,50]},\"geometricError\":50,"
-        "\"content\":{\"uri\":\"west/tileset.json\"}},"
+        "\"content\":{\"uri\":\"counting://west/tileset.json\"}},"
         "{\"boundingVolume\":{\"sphere\":[-100,0,0,60]},\"geometricError\":60,"
-        "\"content\":{\"uri\":\"east/tileset.json\"}}]}}}");
+        "\"content\":{\"uri\":\"counting://east/tileset.json\"}}]}}}");
 
+    osg::ref_ptr<CountingReader> countingReader = new CountingReader;
+    osgDB::Registry::instance()->addReaderWriter(countingReader.get());
     osg::ref_ptr<osg::Node> node = osgDB::readNodeFile(root + ".verse_tiles");
-    CHECK(node.valid());
     GraphVisitor visitor;
-    node->accept(visitor);
-    CHECK(visitor.proxies.size() == 2);
-    CHECK(visitor.proxies[0]->getLoadingExternalReferenceMode() ==
-          osg::ProxyNode::DEFER_LOADING_TO_DATABASE_PAGER);
-    CHECK(visitor.proxies[0]->getCenterMode() == osg::ProxyNode::USER_DEFINED_CENTER);
-    CHECK(visitor.proxies[0]->getNumFileNames() == 1);
-    CHECK(visitor.proxies[0]->getFileName(0).find("tileset.json.verse_tiles") !=
-          std::string::npos);
-    CHECK(visitor.proxies[0]->getRadius() > 0.0f);
-
+    if (node.valid()) node->accept(visitor);
+    const unsigned int externalReadAttempts = countingReader->readCount();
+    osgDB::Registry::instance()->removeReaderWriter(countingReader.get());
     ::unlink(root.c_str());
     ::rmdir(dir.c_str());
+
+    std::cerr << "[tiles3d_paging_tests] external child read attempts: "
+              << externalReadAttempts << std::endl;
+    CHECK(node.valid());
+    CHECK(externalReadAttempts == 0);
+    CHECK(visitor.proxies.size() == 2);
+    checkDeferredProxy(findProxy(visitor.proxies,
+                                 "counting://west/tileset.json.verse_tiles"),
+                       "counting://west/tileset.json.verse_tiles", osg::Vec3d(100, 0, 0), 50.0);
+    checkDeferredProxy(findProxy(visitor.proxies,
+                                 "counting://east/tileset.json.verse_tiles"),
+                       "counting://east/tileset.json.verse_tiles", osg::Vec3d(-100, 0, 0), 60.0);
+
     std::cout << "[tiles3d_paging_tests] deferred external roots OK\n";
     return 0;
 }
