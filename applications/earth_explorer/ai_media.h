@@ -7,6 +7,7 @@
 #include "ai_tools.h"
 #include <pipeline/Utilities.h>   // EarthAtmosphereOcean(快门补光)
 #include "ai_motion.h"
+#include "ai_photo_request.h"
 #include "ai_prompts.h"
 #include <osg/Vec3d>
 #include <osgViewer/Viewer>
@@ -335,6 +336,9 @@ namespace earthai
         PendingState _state;
         int _jobId;
         std::string _snapPath, _genPath, _prompt;
+        PhotoRequest _pendingPhotoInput;
+        PhotoCaptureRequest _captureRequest;
+        long long _photoRequestId;
         std::thread _worker;
         bool _workerJoinable;
         unsigned int _viewRenderUpdateTicks;

@@ -696,7 +696,8 @@ namespace earthai
 
     MediaManager::MediaManager(osgViewer::Viewer* viewer, AICardPanel* cards, const std::string& apiKeyOrEmpty)
         : _viewer(viewer), _cards(cards), _apiKey(apiKeyOrEmpty), _grabber(viewer),
-          _state(IDLE), _jobId(0), _workerJoinable(false), _viewRenderUpdateTicks(0),
+          _state(IDLE), _jobId(0), _photoRequestId(0), _workerJoinable(false),
+          _viewRenderUpdateTicks(0),
           _waitSnapshotTicks(0),
           _hudHideCount(0),
           _video(new VideoJob), _videoGrabber(viewer)
@@ -802,12 +803,10 @@ namespace earthai
         std::string requestId = std::to_string(epoch) + "_" + std::to_string(_jobId);
         _snapPath = dir + "/snap_" + requestId + ".png";
         _genPath = dir + "/gen_" + requestId + ".png";
-
-        // 用户反馈 2:改用 buildPhotoPrompt(ai_prompts.h)——nano-banana-pro-preview 是带推理
-        // 的图像模型,提示词需要精确坐标 + "先推理这是现实中哪里"的引导 + 明确把渲染图
-        // 降级为"仅构图参考"+ 禁止 UI/文字/水印/地图标注伪影,不再是旧版"以渲染图为参考"
-        // 这种简单措辞。工具入口已经强制校验独立目标坐标，不再存在隐式沿用当前/上一视角。
-        _prompt = buildPhotoPrompt(lla, stylePrompt, showCameraPlatform);
+        _pendingPhotoInput.lla = lla;
+        _pendingPhotoInput.style = stylePrompt;
+        _pendingPhotoInput.showCameraPlatform = showCameraPlatform;
+        _photoRequestId = _jobId;
 
         _jobs.update(_jobId, AIJob::RUNNING, 0.1f, "", "");
         if (_cards) _cards->pushJob(&_jobs, _jobId, u8"生成实景照片");
@@ -888,6 +887,16 @@ namespace earthai
                 ++_viewRenderUpdateTicks;
                 return;
             }
+            if (!_viewer || !_viewer->getCamera())
+            {
+                _jobs.update(_jobId, AIJob::FAILED, 1.0f, "", "camera unavailable");
+                _state = IDLE;
+                return;
+            }
+            _captureRequest = makePhotoCaptureRequest(
+                _pendingPhotoInput, _viewer->getCamera()->getViewMatrix(), _photoRequestId);
+            _prompt = buildPhotoPrompt(_captureRequest.targetLla, _captureRequest.style,
+                                       _captureRequest.showCameraPlatform);
             hudHide();
             _grabber.grab(_snapPath);
             _state = WAITING_SNAPSHOT;

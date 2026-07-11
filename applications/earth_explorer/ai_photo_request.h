@@ -1,6 +1,7 @@
 #ifndef EARTH_AI_PHOTO_REQUEST_H
 #define EARTH_AI_PHOTO_REQUEST_H
 
+#include <osg/Matrixd>
 #include <osg/Vec3d>
 #include <picojson.h>
 #include <cmath>
@@ -24,6 +25,27 @@ namespace earthai
         std::string style;
         bool showCameraPlatform = false;
     };
+
+    struct PhotoCaptureRequest
+    {
+        osg::Vec3d targetLla;
+        osg::Matrixd visibleCameraMatrix;
+        std::string style;
+        bool showCameraPlatform = false;
+        long long requestId = 0;
+    };
+
+    inline PhotoCaptureRequest makePhotoCaptureRequest(
+        const PhotoRequest& input, const osg::Matrixd& visibleMatrix, long long requestId)
+    {
+        PhotoCaptureRequest request;
+        request.targetLla = input.lla;
+        request.visibleCameraMatrix = visibleMatrix;
+        request.style = input.style;
+        request.showCameraPlatform = input.showCameraPlatform;
+        request.requestId = requestId;
+        return request;
+    }
 
     inline std::string photoToolParametersJson()
     {

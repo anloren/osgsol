@@ -663,6 +663,31 @@ int main(int, char**)
         CHECK(request.style == "orbital");
         CHECK(!request.showCameraPlatform);
 
+        osg::Matrixd hongKongMatrix = osg::Matrixd::rotate(0.4, osg::X_AXIS);
+        osg::Matrixd nvidiaMatrix = osg::Matrixd::rotate(0.8, osg::Y_AXIS);
+
+        earthai::PhotoRequest hongKongInput;
+        hongKongInput.lla.set(22.298 * 0.017453292519943295,
+                              114.172 * 0.017453292519943295, 500.0);
+        hongKongInput.style = "harbour";
+
+        earthai::PhotoRequest nvidiaInput;
+        nvidiaInput.lla.set(37.3707 * 0.017453292519943295,
+                            -121.9631 * 0.017453292519943295, 800.0);
+        nvidiaInput.style = "campus";
+
+        const earthai::PhotoCaptureRequest first =
+            earthai::makePhotoCaptureRequest(hongKongInput, hongKongMatrix, 41);
+        const earthai::PhotoCaptureRequest second =
+            earthai::makePhotoCaptureRequest(nvidiaInput, nvidiaMatrix, 42);
+
+        CHECK(first.requestId == 41);
+        CHECK(second.requestId == 42);
+        CHECK(first.targetLla != second.targetLla);
+        CHECK(first.visibleCameraMatrix != second.visibleCameraMatrix);
+        CHECK(first.style == "harbour");
+        CHECK(second.style == "campus");
+
         picojson::value schema;
         CHECK(picojson::parse(schema, earthai::photoToolParametersJson()).empty());
         const picojson::array& required = schema.get("required").get<picojson::array>();
