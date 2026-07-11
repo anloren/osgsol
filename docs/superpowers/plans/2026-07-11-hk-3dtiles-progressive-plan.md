@@ -593,3 +593,30 @@ manual testing**; no visual acceptance is claimed.
   not load that installed file. Root timing and the 17-request ordering remain **not established**.
   No other repository or global plugin path was modified, and no percentage or manual visual
   acceptance is claimed.
+
+### Final follow-up: explicitly pinned current plugin
+
+- Before running, the exact pinned file
+  `build/sdk_core/lib/osgPlugins-3.6.5/osgdb_verse_tiles.so` had SHA-256
+  `a8688039dfcdeda3d3d86efc968a884988f2c0721d7cd69d99d5a609844f65b2` and contained
+  both `DeferExternalTilesets` and `DeferredTileset:`.
+- One final isolated-HOME run set
+  `OSG_LIBRARY_PATH=/Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/sdk_core/lib/osgPlugins-3.6.5`,
+  retained `EARTH_3DTILES=1`, SSE `8`, 1,500 frames and `10 ms` frame sleep, and used a hard
+  50-second timeout. It ran UTC `04:45:22`-`04:46:03`, exited `0`, and did not hit the timeout.
+  `DYLD_PRINT_LIBRARIES=1` proved that exact worktree plugin path was loaded.
+- F2 background loading began at `[12:45:43.938]`; the plugin opened at `[12:45:47.868]`;
+  `root_attached_ms=3941 sse=8 lazy_root=1` logged at `[12:45:47.879]`, satisfying the
+  five-second root threshold on this run.
+- The root marker precedes the first top-level child requests in line order. Only partitions
+  `11/tileset.json` and `15/tileset.json` were requested at `[12:45:47.879]`; the other 15
+  top-level JSONs were not requested during the observation. Nested requests first appeared at
+  `[12:45:49.683]` (`5.745 s` after F2 start). This establishes root-before-all-17 ordering and
+  visible/near-visible partition selectivity for this fixed camera run.
+- Four KTX2 payloads decoded at `[12:45:53.533]`-`[12:45:53.535]`; the first was `9.595 s`
+  after F2 start, providing loader-side coarse-content evidence within 12 seconds. It is not
+  visual proof: capture occurred at `[12:46:02.191]` (`18.253 s`) but showed only a blank color
+  gradient with no discernible buildings.
+- No F2 HTTP 4xx/5xx, DNS, TLS, timeout, or `[Tiles3D] FAILED` error appeared. The live root and
+  ordering criteria are established for the pinned current plugin, while visible-coarse and all
+  manual altitude/toggle acceptance remain **pending**; no manual visual acceptance is claimed.
