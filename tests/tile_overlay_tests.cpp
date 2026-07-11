@@ -8,12 +8,14 @@
 // 混合无效果,"加载中/加载失败"都表现为"暂无叠加层",而不是黑块。
 #include <iostream>
 #include <cstdlib>
-#include <fstream>
-#include <iterator>
+#include <mutex>
 #include <string>
+#include <vector>
 #include <osg/Texture2D>
+#include <osgDB/Registry>
 #include <osgDB/Options>   // TileCallback.h 前必须先包含(否则 osgDB::Options 不完整,已知坑)
 #include <readerwriter/TileCallback.h>
+#include "../plugins/osgdb_tms/TmsOverlaySelection.h"
 
 #if __has_include("../applications/earth_explorer/science_overlay.h")
 #include "../applications/earth_explorer/science_overlay.h"
@@ -45,11 +47,41 @@ public:
     std::string lastFile; int requested; double lastPriority;
 };
 
-static std::string readSourceFile(const std::string& relative)
+class FixtureImageReader : public osgDB::ReaderWriter
 {
-    std::ifstream input(std::string(OSGVERSE_SOURCE_DIR) + "/" + relative);
-    return std::string(std::istreambuf_iterator<char>(input),
-                       std::istreambuf_iterator<char>());
+public:
+    FixtureImageReader() { supportsProtocol("fixture", "Tile overlay production-path fixture"); }
+    virtual const char* className() const { return "Tile overlay fixture reader"; }
+    virtual ReadResult readImage(const std::string& path, const Options*) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        requests.push_back(path);
+        osg::ref_ptr<osg::Image> image = new osg::Image;
+        image->allocateImage(2, 2, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+        image->setColor(osg::Vec4(1.0f, 1.0f, 1.0f, 1.0f), 0, 0, 0);
+        return image.release();
+    }
+    void clear() const { std::lock_guard<std::mutex> lock(mutex); requests.clear(); }
+    int count(const std::string& token) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        int n = 0;
+        for (size_t i = 0; i < requests.size(); ++i)
+            if (requests[i].find(token) != std::string::npos) ++n;
+        return n;
+    }
+    mutable std::mutex mutex;
+    mutable std::vector<std::string> requests;
+};
+
+static osg::Node* loadProductionTmsTile(osgDB::ReaderWriter* tms,
+                                        const std::string& staleOverlay)
+{
+    osg::ref_ptr<osgDB::Options> options = new osgDB::Options;
+    options->setPluginStringData("Orthophoto", "fixture://base/{z}/{x}/{y}.png");
+    options->setPluginStringData("Overlay", staleOverlay);
+    options->setPluginStringData("UseEarth3D", "0");
+    return tms->readNode("0-0-x.verse_tms", options.get()).takeNode();
 }
 
 int main(int, char**)
@@ -114,45 +146,90 @@ int main(int, char**)
     CHECK(false && "science_image_pager.h is required");
 #endif
 
-    // ---- 发布状态区分：未发布 != 显式空；当前 NDVI 覆盖克隆 Options 里的陈旧 GIBS ----
+    // ---- 真实生产 seam：未发布回退 Options；发布 NDVI 只请求一次；
+    //      显式空不回退 ----
     {
         osgVerse::TileManager* manager = osgVerse::TileManager::instance();
-        std::string published;
 #if defined(HAS_SCIENCE_OVERLAY)
-        CHECK(!manager->tryGetLayerPath(osgVerse::TileCallback::OVERLAY, published));
-        manager->setLayerPath(osgVerse::TileCallback::OVERLAY, "");
-        CHECK(manager->tryGetLayerPath(osgVerse::TileCallback::OVERLAY, published));
-        CHECK(published.empty());
+        osg::ref_ptr<osgDB::Options> stale = new osgDB::Options;
+        stale->setPluginStringData("Overlay", "gibs");
+        const std::string staleGibs = stale->getPluginStringData("Overlay");
+        const std::string currentNdvi = earthscience::ndviTemplate();
 
-        osg::ref_ptr<osgDB::Options> stale = new osgDB::Options("Overlay=gibs");
-        manager->setLayerPath(osgVerse::TileCallback::OVERLAY, earthscience::ndviTemplate());
-        CHECK(manager->tryGetLayerPath(osgVerse::TileCallback::OVERLAY, published));
-        CHECK(published == earthscience::ndviTemplate());
-        CHECK(published != stale->getPluginStringData("Overlay"));
-
-        StubImageRequestHandler fakeReader;
-        osg::ref_ptr<osgVerse::TileCallback> newChild = new osgVerse::TileCallback(false);
-        newChild->setLayerPath(osgVerse::TileCallback::OVERLAY, published);
-        newChild->setTileNumber(3, 2, 4);
+        StubImageRequestHandler request;
+        osg::ref_ptr<osgVerse::TileCallback> child = new osgVerse::TileCallback(false);
+        osgVerse::applyTmsOverlaySelection(*child, *manager, staleGibs);
+        child->setTileNumber(3, 2, 4);
         bool emptyPath = false;
-        osg::ref_ptr<osg::Texture> childOverlay = newChild->createLayerImage(
-            osgVerse::TileCallback::OVERLAY, emptyPath, stale.get(), &fakeReader);
+        osg::ref_ptr<osg::Texture> overlay = child->createLayerImage(
+            osgVerse::TileCallback::OVERLAY, emptyPath, NULL, &request);
         CHECK(!emptyPath);
-        CHECK(childOverlay.valid());
-        CHECK(fakeReader.requested == 1);
-        CHECK(fakeReader.lastFile.find("MODIS_Terra_NDVI_8Day") != std::string::npos);
-        CHECK(fakeReader.lastFile.find("VIIRS_SNPP_CorrectedReflectance_TrueColor") ==
-              std::string::npos);
-#endif
+        CHECK(overlay.valid());
+        CHECK(request.requested == 1);
+        CHECK(request.lastFile == "gibs");
 
-        const std::string tmsSource = readSourceFile("plugins/osgdb_tms/ReaderWriterTMS.cpp");
-        CHECK(tmsSource.find("tryGetLayerPath(osgVerse::TileCallback::OVERLAY") !=
-              std::string::npos);
-        CHECK(tmsSource.find("setLayerPath(osgVerse::TileCallback::OVERLAY, currentOverlayPath)") !=
-              std::string::npos);
-        CHECK(tmsSource.find("setLayerPath(osgVerse::TileCallback::OVERLAY, overlayPath)") ==
-              std::string::npos);
+        manager->setLayerPath(osgVerse::TileCallback::OVERLAY, currentNdvi);
+        request = StubImageRequestHandler();
+        child = new osgVerse::TileCallback(false);
+        osgVerse::applyTmsOverlaySelection(*child, *manager, staleGibs);
+        child->setTileNumber(3, 2, 4);
+        overlay = child->createLayerImage(
+            osgVerse::TileCallback::OVERLAY, emptyPath, NULL, &request);
+        CHECK(!emptyPath);
+        CHECK(overlay.valid());
+        CHECK(request.requested == 1);
+        CHECK(request.lastFile.find("MODIS_Terra_NDVI_8Day") != std::string::npos);
+        CHECK(request.lastFile != "gibs");
+
+        manager->setLayerPath(osgVerse::TileCallback::OVERLAY, "");
+        request = StubImageRequestHandler();
+        child = new osgVerse::TileCallback(false);
+        osgVerse::applyTmsOverlaySelection(*child, *manager, staleGibs);
+        child->setTileNumber(3, 2, 4);
+        overlay = child->createLayerImage(
+            osgVerse::TileCallback::OVERLAY, emptyPath, NULL, &request);
+        CHECK(emptyPath);
+        CHECK(!overlay.valid());
+        CHECK(request.requested == 0);
+#endif
     }
+
+    // ---- 真实 ReaderWriterTMS::readNode/createTile 调用上述 seam，
+    //      防止 wiring 断开 ----
+#if defined(OSGVERSE_TMS_PLUGIN_PATH)
+    {
+        osg::ref_ptr<FixtureImageReader> fixture = new FixtureImageReader;
+        osgDB::Registry::instance()->addReaderWriter(fixture.get());
+        CHECK(osgDB::Registry::instance()->loadLibrary(OSGVERSE_TMS_PLUGIN_PATH) !=
+              osgDB::Registry::NOT_LOADED);
+        osgDB::ReaderWriter* tms =
+            osgDB::Registry::instance()->getReaderWriterForExtension("verse_tms");
+        CHECK(tms != NULL);
+
+        const std::string staleGibs =
+            "fixture://VIIRS_SNPP_CorrectedReflectance_TrueColor/{z}/{x}/{y}.png";
+        const std::string currentNdvi =
+            "fixture://MODIS_Terra_NDVI_8Day/{z}/{x}/{y}.png";
+
+        osgVerse::TileManager::instance()->setLayerPath(
+            osgVerse::TileCallback::OVERLAY, currentNdvi);
+        fixture->clear();
+        osg::ref_ptr<osg::Node> node = loadProductionTmsTile(tms, staleGibs);
+        CHECK(node.valid());
+        CHECK(fixture->count("MODIS_Terra_NDVI_8Day") > 0);
+        CHECK(fixture->count("VIIRS_SNPP_CorrectedReflectance_TrueColor") == 0);
+
+        osgVerse::TileManager::instance()->setLayerPath(osgVerse::TileCallback::OVERLAY, "");
+        fixture->clear();
+        node = loadProductionTmsTile(tms, staleGibs);
+        CHECK(node.valid());
+        CHECK(fixture->count("MODIS_Terra_NDVI_8Day") == 0);
+        CHECK(fixture->count("VIIRS_SNPP_CorrectedReflectance_TrueColor") == 0);
+        osgDB::Registry::instance()->removeReaderWriter(fixture.get());
+    }
+#else
+    CHECK(false && "OSGVERSE_TMS_PLUGIN_PATH is required");
+#endif
 
     std::cout << "[tile_overlay_tests] all OK" << std::endl;
     return 0;

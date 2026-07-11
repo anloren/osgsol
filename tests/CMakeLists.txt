@@ -142,7 +142,9 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Feeds PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_TileOverlay tile_overlay_tests.cpp offline 120)  # TileCallback overlay async placeholder texture (dark-tile regression)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_TileOverlay PRIVATE
-                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+                           OSGVERSE_TMS_PLUGIN_PATH="$<TARGET_FILE:osgdb_verse_tms>")
+ADD_DEPENDENCIES(osgVerse_Test_TileOverlay osgdb_verse_tms)
 NEW_CTEST(osgVerse_Test_Satellite satellite_tests.cpp offline 120)  # P2 satellite layer: SGP4 vendor + sat_math unit tests
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Satellite PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

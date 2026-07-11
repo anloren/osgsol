@@ -19,6 +19,7 @@
 #include <pipeline/Utilities.h>
 #include <readerwriter/Utilities.h>
 #include <readerwriter/TileCallback.h>
+#include "TmsOverlaySelection.h"
 
 namespace {
 // 常驻 keep-alive 线程池:并行拉取一块瓦片的多层。worker 复用 loadFileData 的 thread_local 长连接
@@ -261,9 +262,7 @@ protected:
         tileCB->setLayerPath(osgVerse::TileCallback::ORTHOPHOTO, orthPath);
         tileCB->setLayerPath(osgVerse::TileCallback::OCEAN_MASK, maskPath);
         tileCB->setLayerPath(osgVerse::TileCallback::USER, userPath);
-        std::string currentOverlayPath = overlayPath;
-        mgr->tryGetLayerPath(osgVerse::TileCallback::OVERLAY, currentOverlayPath);
-        tileCB->setLayerPath(osgVerse::TileCallback::OVERLAY, currentOverlayPath);
+        osgVerse::applyTmsOverlaySelection(*tileCB, *mgr, overlayPath);
         tileCB->setTotalExtent(extentMin, extentMax); tileCB->setTileNumber(x, y, z);
         tileCB->setBottomLeft(atoi(botLeft.c_str()) > 0);
         tileCB->setUseWebMercator(useWM); tileCB->setFlatten(flatten);
