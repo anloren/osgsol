@@ -1,17 +1,23 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cerrno>
+#include <CommonCrypto/CommonDigest.h>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <regex>
+#include <stdexcept>
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <csignal>
@@ -35,16 +41,25 @@
 #error OSGSOL_PYTHON3 must name the Python interpreter
 #endif
 
+#ifndef OSGSOL_SCIENCE_EVIDENCE_DIR
+#error OSGSOL_SCIENCE_EVIDENCE_DIR must name a build-tree evidence directory
+#endif
+
 namespace
 {
     constexpr int SIZE = 256;
     constexpr int BAND_COUNT = 64;
+    constexpr int LIVE_OVERVIEW_FACTOR = 4;
     constexpr std::uint64_t TRANSFER_BUDGET = 1024 * 1024;
+    constexpr std::uint64_t LIVE_TRANSFER_BUDGET = 16 * 1024 * 1024;
 
     struct LiveCase
     {
         std::string name;
         std::string datasetId;
+        std::string rawPath;
+        std::string rawLocation;
+        std::string recordFingerprint;
         std::string url;
         int year = 0;
         double latitude = 0.0;
@@ -55,9 +70,44 @@ namespace
     struct LiveMeasurement
     {
         double milliseconds = 0.0;
-        std::uint64_t requestedBytes = 0;
+        std::uint64_t successfulRangeBytes = 0;
+        std::uint64_t actualHttpBodyBytes = 0;
         std::uint64_t sourceSize = 0;
+        int actualGetCount = 0;
+        int actualHeadCount = 0;
+        int statsGetOperationCount = 0;
+        int successfulGetCount = 0;
+        int transientRetryCount = 0;
+        std::map<int, int> transientRetryCodes;
         std::vector<int> responseCodes;
+    };
+
+    struct HttpProof
+    {
+        int actualGetCount = 0;
+        int actualHeadCount = 0;
+        int successfulGetCount = 0;
+        int transientRetryCount = 0;
+        int statsGetOperationCount = 0;
+        int statsHeadCount = 0;
+        std::uint64_t successfulRangeBytes = 0;
+        std::uint64_t transientBodyBytes = 0;
+        std::uint64_t actualHttpBodyBytes = 0;
+        std::uint64_t sourceSize = 0;
+        std::uint64_t transferBudget = 0;
+        int overviewFactor = 0;
+        int rawWindowX = 0;
+        int rawWindowY = 0;
+        int rawWindowSize = 0;
+        std::map<int, int> transientRetryCodes;
+        std::vector<int> responseCodes;
+    };
+
+    struct LocalServerEvidence
+    {
+        int getCount = 0;
+        int headCount = 0;
+        std::uint64_t committedBytes = 0;
     };
 
     struct DebugCapture
@@ -66,10 +116,97 @@ namespace
         std::vector<std::string> messages;
     };
 
+    void CPL_STDCALL captureGdalMessage(CPLErr errorClass, CPLErrorNum errorNumber,
+                                        const char* message);
+
+    class ScopedGdalErrorCapture
+    {
+    public:
+        explicit ScopedGdalErrorCapture(DebugCapture& capture)
+        {
+            CPLPushErrorHandlerEx(captureGdalMessage, &capture);
+            CPLSetCurrentErrorHandlerCatchDebug(1);
+        }
+
+        ~ScopedGdalErrorCapture() { CPLPopErrorHandler(); }
+
+        ScopedGdalErrorCapture(const ScopedGdalErrorCapture&) = delete;
+        ScopedGdalErrorCapture& operator=(const ScopedGdalErrorCapture&) = delete;
+    };
+
+    class ScopedGdalConfig
+    {
+    public:
+        explicit ScopedGdalConfig(
+            const std::vector<std::pair<std::string, std::string>>& values)
+        {
+            for (const auto& value : values)
+            {
+                const char* previous = CPLGetConfigOption(value.first.c_str(), nullptr);
+                _previous.push_back({value.first, previous ? previous : "", previous != nullptr});
+                CPLSetConfigOption(value.first.c_str(), value.second.c_str());
+            }
+        }
+
+        ~ScopedGdalConfig()
+        {
+            for (auto iterator = _previous.rbegin(); iterator != _previous.rend(); ++iterator)
+                CPLSetConfigOption(iterator->key.c_str(),
+                                   iterator->present ? iterator->value.c_str() : nullptr);
+            VSINetworkStatsReset();
+        }
+
+        ScopedGdalConfig(const ScopedGdalConfig&) = delete;
+        ScopedGdalConfig& operator=(const ScopedGdalConfig&) = delete;
+
+    private:
+        struct PreviousValue
+        {
+            std::string key;
+            std::string value;
+            bool present;
+        };
+        std::vector<PreviousValue> _previous;
+    };
+
+    const picojson::value& field(const picojson::object& object,
+                                 const std::string& name);
+    [[noreturn]] void fail(const std::string& message);
+    void require(bool condition, const std::string& message);
+
+    std::string sha256(const std::string& payload)
+    {
+        unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {};
+        CC_SHA256(payload.data(), static_cast<CC_LONG>(payload.size()), digest);
+        std::ostringstream stream;
+        stream << std::hex << std::setfill('0');
+        for (unsigned char byte : digest)
+            stream << std::setw(2) << static_cast<unsigned int>(byte);
+        return stream.str();
+    }
+
+    std::string canonicalNumber(double value)
+    {
+        std::ostringstream stream;
+        stream << std::setprecision(17) << std::defaultfloat << value;
+        return stream.str();
+    }
+
+    std::string canonicalRecord(const LiveCase& item)
+    {
+        require(item.bbox.size() == 4, "raw bbox must contain four coordinates");
+        return "{\"fid\":\"" + item.datasetId + "\",\"location\":\"" +
+            item.rawLocation + "\",\"path\":\"" + item.rawPath +
+            "\",\"wgs84_east\":\"" + canonicalNumber(item.bbox[2]) +
+            "\",\"wgs84_north\":\"" + canonicalNumber(item.bbox[3]) +
+            "\",\"wgs84_south\":\"" + canonicalNumber(item.bbox[1]) +
+            "\",\"wgs84_west\":\"" + canonicalNumber(item.bbox[0]) +
+            "\",\"year\":" + std::to_string(item.year) + "}";
+    }
+
     [[noreturn]] void fail(const std::string& message)
     {
-        std::cerr << "ScienceHttpRanges failure: " << message << std::endl;
-        std::exit(1);
+        throw std::runtime_error(message);
     }
 
     void require(bool condition, const std::string& message)
@@ -81,25 +218,87 @@ namespace
     {
         pid_t pid = -1;
 
+        ServerProcess() = default;
+        ServerProcess(const ServerProcess&) = delete;
+        ServerProcess& operator=(const ServerProcess&) = delete;
+
+        ServerProcess(ServerProcess&& other) noexcept : pid(other.pid)
+        {
+            other.pid = -1;
+        }
+
+        ServerProcess& operator=(ServerProcess&& other) noexcept
+        {
+            if (this != &other)
+            {
+                terminateAndReap(false);
+                pid = other.pid;
+                other.pid = -1;
+            }
+            return *this;
+        }
+
         ~ServerProcess()
         {
-            if (pid > 0)
-            {
-                kill(pid, SIGTERM);
-                waitpid(pid, nullptr, 0);
-            }
+            terminateAndReap(false);
         }
 
         void stop()
         {
-            if (pid <= 0) return;
-            kill(pid, SIGTERM);
-            int status = 0;
-            require(waitpid(pid, &status, 0) == pid, "failed to reap the range server");
-            require(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-                    "instrumented range server reported a violation");
-            pid = -1;
+            terminateAndReap(true);
         }
+
+    private:
+        void terminateAndReap(bool requireClean)
+        {
+            if (pid <= 0) return;
+            const pid_t child = pid;
+            pid = -1;
+            if (kill(child, SIGTERM) != 0 && errno != ESRCH && requireClean)
+                fail("failed to terminate the range server");
+            int status = 0;
+            pid_t waited = -1;
+            do
+            {
+                waited = waitpid(child, &status, 0);
+            }
+            while (waited < 0 && errno == EINTR);
+            if (requireClean)
+            {
+                require(waited == child, "failed to reap the range server");
+                require(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+                        "instrumented range server reported a violation");
+            }
+        }
+    };
+
+    class UniqueTempDirectory
+    {
+    public:
+        explicit UniqueTempDirectory(const std::string& prefix)
+        {
+            std::string pattern =
+                (std::filesystem::temp_directory_path() / (prefix + "-XXXXXX")).string();
+            std::vector<char> buffer(pattern.begin(), pattern.end());
+            buffer.push_back('\0');
+            char* result = mkdtemp(buffer.data());
+            require(result != nullptr, "mkdtemp failed");
+            _path = result;
+        }
+
+        ~UniqueTempDirectory()
+        {
+            std::error_code ignored;
+            std::filesystem::remove_all(_path, ignored);
+        }
+
+        const std::filesystem::path& path() const { return _path; }
+
+        UniqueTempDirectory(const UniqueTempDirectory&) = delete;
+        UniqueTempDirectory& operator=(const UniqueTempDirectory&) = delete;
+
+    private:
+        std::filesystem::path _path;
     };
 
     void registerScienceRuntime()
@@ -189,72 +388,220 @@ namespace
         return process;
     }
 
-    std::uint64_t integerField(const std::string& line, const std::string& field)
-    {
-        const std::regex expression("\\\"" + field + "\\\"[ ]*:[ ]*([0-9]+)");
-        std::smatch match;
-        require(std::regex_search(line, match, expression),
-                "range log is missing numeric field " + field);
-        return std::stoull(match[1].str());
-    }
-
-    void verifyLog(const std::filesystem::path& log, std::uint64_t sourceSize)
+    LocalServerEvidence verifyLog(const std::filesystem::path& log,
+                                  std::uint64_t sourceSize)
     {
         std::ifstream stream(log);
         require(stream.good(), "instrumented range log is missing");
+        struct RequestRecord
+        {
+            bool started = false;
+            bool completed = false;
+            std::string method;
+            std::string range;
+            int responseCode = 0;
+            std::uint64_t plannedBytes = 0;
+            std::uint64_t actualBytes = 0;
+            std::uint64_t totalCommittedBytes = 0;
+            bool partialWrite = false;
+            bool violation = false;
+        };
+        std::map<int, RequestRecord> requests;
         std::uint64_t totalBytes = 0;
-        int rangedGets = 0;
+        LocalServerEvidence evidence;
         std::string line;
         while (std::getline(stream, line))
         {
-            require(line.find("\"method\"") != std::string::npos &&
-                    line.find("\"uri\"") != std::string::npos &&
-                    line.find("\"range\"") != std::string::npos,
-                    "range log omitted method/URI/Range evidence");
-            const std::uint64_t response = integerField(line, "response_code");
-            const std::uint64_t bytes = integerField(line, "bytes_sent");
-            const std::uint64_t recordedSourceSize = integerField(line, "source_size");
-            require(recordedSourceSize == sourceSize, "range log source size changed");
-            totalBytes += bytes;
-
-            const bool isGet = line.find("\"method\": \"GET\"") != std::string::npos;
-            if (isGet)
+            picojson::value value;
+            const std::string error = picojson::parse(value, line);
+            require(error.empty() && value.is<picojson::object>(),
+                    "range log line is not a JSON object");
+            const picojson::object& object = value.get<picojson::object>();
+            const std::string event = field(object, "event").get<std::string>();
+            const int requestId = static_cast<int>(field(object, "request_id").get<double>());
+            RequestRecord& request = requests[requestId];
+            require(static_cast<std::uint64_t>(field(object, "source_size").get<double>()) ==
+                    sourceSize, "range log source size changed");
+            if (event == "request_start")
             {
-                ++rangedGets;
-                const std::regex rangeExpression("\\\"range\\\"[ ]*:[ ]*(\\\"[^\\\"]*\\\"|null)");
-                std::smatch rangeMatch;
-                require(std::regex_search(line, rangeMatch, rangeExpression),
-                        "range log is missing the Range value");
-                const std::string rangeValue = rangeMatch[1].str();
-                require(rangeValue != "null",
-                        "remote COG GET omitted the Range header");
-                require(rangeValue.find(',') == std::string::npos,
-                        "comma-separated multi-range syntax was emitted");
-                require(response == 206, "remote COG GET did not receive HTTP 206");
+                require(!request.started, "duplicate request_start event");
+                request.started = true;
+                request.method = field(object, "method").get<std::string>();
+                const picojson::value& range = field(object, "range");
+                request.range = range.is<std::string>() ? range.get<std::string>() : "";
             }
-            require(!(response == 200 && bytes == sourceSize),
+            else
+            {
+                require(event == "request_complete" && !request.completed,
+                        "unexpected or duplicate request completion event");
+                request.completed = true;
+                request.responseCode =
+                    static_cast<int>(field(object, "response_code").get<double>());
+                request.plannedBytes = static_cast<std::uint64_t>(
+                    field(object, "planned_bytes").get<double>());
+                request.actualBytes = static_cast<std::uint64_t>(
+                    field(object, "actual_bytes_sent").get<double>());
+                request.totalCommittedBytes = static_cast<std::uint64_t>(
+                    field(object, "total_committed_bytes").get<double>());
+                request.partialWrite = field(object, "partial_write").get<bool>();
+                request.violation = !field(object, "violation").is<picojson::null>();
+            }
+        }
+        require(!requests.empty(), "instrumented server logged no requests");
+        std::uint64_t maximumCommittedBytes = 0;
+        for (const auto& item : requests)
+        {
+            const RequestRecord& request = item.second;
+            require(request.started && request.completed,
+                    "request start/completion evidence is incomplete");
+            require(!request.partialWrite && !request.violation,
+                    "instrumented server recorded a violation or partial write");
+            totalBytes += request.actualBytes;
+            maximumCommittedBytes = std::max(
+                maximumCommittedBytes, request.totalCommittedBytes);
+            if (request.method == "GET")
+            {
+                ++evidence.getCount;
+                require(!request.range.empty(), "remote COG GET omitted the Range header");
+                require(request.range.find(',') == std::string::npos,
+                        "comma-separated multi-range syntax was emitted");
+                require(request.responseCode == 206,
+                        "remote COG GET did not receive HTTP 206");
+                require(request.plannedBytes == request.actualBytes,
+                        "server did not commit the complete planned range body");
+            }
+            else if (request.method == "HEAD")
+            {
+                ++evidence.headCount;
+                require(request.responseCode == 200 && request.actualBytes == 0,
+                        "local HEAD response contract changed");
+            }
+            require(!(request.responseCode == 200 && request.actualBytes == sourceSize),
                     "server returned the complete fixture as HTTP 200");
         }
-        require(rangedGets > 0, "GDAL emitted no ranged GET requests");
+        evidence.committedBytes = totalBytes;
+        require(evidence.getCount > 0, "GDAL emitted no ranged GET requests");
         require(totalBytes <= TRANSFER_BUDGET, "range transfer exceeded the explicit budget");
         require(totalBytes < sourceSize, "range transfer equaled the complete source file");
-        std::cout << "ScienceHttpRanges: requests=" << rangedGets
+        require(maximumCommittedBytes == totalBytes,
+                "server committed-byte total does not match completed request bodies");
+        std::cout << "ScienceHttpRanges: requests=" << evidence.getCount
                   << " bytes=" << totalBytes << " budget=" << TRANSFER_BUDGET
                   << " source_size=" << sourceSize << std::endl;
+        return evidence;
     }
 
-    void configureRangeAccess()
+    std::vector<std::pair<std::string, std::string>> rangeAccessConfig()
     {
-        CPLSetConfigOption("GDAL_HTTP_MULTIRANGE", "YES");
-        CPLSetConfigOption("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES");
-        CPLSetConfigOption("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.tiff,.vrt");
-        CPLSetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR");
-        CPLSetConfigOption("CPL_VSIL_CURL_USE_HEAD", "YES");
-        CPLSetConfigOption("GDAL_HTTP_MAX_RETRY", "3");
-        CPLSetConfigOption("GDAL_HTTP_RETRY_DELAY", "0.1");
-        CPLSetConfigOption("GDAL_HTTP_RETRY_CODES", "429,500,502,503,504");
+        return {
+            {"GDAL_HTTP_MULTIRANGE", "YES"},
+            {"GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES"},
+            {"CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.tiff,.vrt"},
+            {"GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR"},
+            {"CPL_VSIL_CURL_USE_HEAD", "YES"},
+            {"GDAL_HTTP_MAX_RETRY", "3"},
+            {"GDAL_HTTP_RETRY_DELAY", "0.1"},
+            {"GDAL_HTTP_RETRY_CODES", "429,500,502,503,504"},
+            {"CPL_VSIL_NETWORK_STATS_ENABLED", "YES"},
+            {"CPL_CURL_VERBOSE", "YES"},
+            {"CPL_CURL_VERBOSE_DATA_IN", "NO"},
+            {"CPL_DEBUG", "ON"},
+        };
+    }
+
+    void verifyRangeAccessConfig()
+    {
         require(std::string(CPLGetConfigOption("GDAL_HTTP_MULTIRANGE", "")) == "YES",
                 "GDAL_HTTP_MULTIRANGE must be YES");
+        require(std::string(CPLGetConfigOption("GDAL_HTTP_MAX_RETRY", "")) == "3" &&
+                std::string(CPLGetConfigOption("GDAL_HTTP_RETRY_CODES", "")) ==
+                    "429,500,502,503,504",
+                "GDAL bounded retry policy changed");
+    }
+
+    std::string serializeProof(const HttpProof& proof)
+    {
+        std::ostringstream stream;
+        stream << "{\n"
+               << "  \"actual_http_get_count\": " << proof.actualGetCount << ",\n"
+               << "  \"successful_http_get_count\": " << proof.successfulGetCount
+               << ",\n  \"transient_retry_count\": " << proof.transientRetryCount
+               << ",\n  \"transient_retry_codes\": {";
+        bool firstRetryCode = true;
+        for (const auto& retry : proof.transientRetryCodes)
+        {
+            if (!firstRetryCode) stream << ',';
+            stream << "\"" << retry.first << "\":" << retry.second;
+            firstRetryCode = false;
+        }
+        stream << "},\n"
+               << "  \"actual_http_head_count\": " << proof.actualHeadCount << ",\n"
+               << "  \"stats_get_operation_count\": " << proof.statsGetOperationCount
+               << ",\n  \"stats_head_count\": " << proof.statsHeadCount
+               << ",\n  \"successful_range_bytes\": " << proof.successfulRangeBytes
+               << ",\n  \"transient_body_bytes\": " << proof.transientBodyBytes
+               << ",\n  \"actual_http_body_bytes\": " << proof.actualHttpBodyBytes
+               << ",\n  \"source_size\": " << proof.sourceSize;
+        if (proof.transferBudget > 0)
+            stream << ",\n  \"transfer_budget_bytes\": " << proof.transferBudget;
+        stream << ",\n"
+               << "  \"response_codes\": [";
+        for (std::size_t index = 0; index < proof.responseCodes.size(); ++index)
+        {
+            if (index) stream << ',';
+            stream << proof.responseCodes[index];
+        }
+        stream << ']';
+        if (proof.overviewFactor > 0)
+        {
+            stream << ",\n  \"selected_overview_factor\": " << proof.overviewFactor
+                   << ",\n  \"raw_window\": {\"x\":" << proof.rawWindowX
+                   << ",\"y\":" << proof.rawWindowY
+                   << ",\"size\":" << proof.rawWindowSize << '}';
+        }
+        stream << "\n}\n";
+        return stream.str();
+    }
+
+    void writeRawTransportEvidence(const std::string& name,
+                                   const DebugCapture& capture,
+                                   const std::string& statsJson)
+    {
+        const std::filesystem::path directory = OSGSOL_SCIENCE_EVIDENCE_DIR;
+        std::filesystem::create_directories(directory);
+        std::ofstream debugStream(directory / (name + "-curl-cpl.log"));
+        require(debugStream.good(), "failed to create raw curl/CPL evidence");
+        for (const std::string& message : capture.messages)
+            debugStream << message << '\n';
+        std::ofstream statsStream(directory / (name + "-network-stats.json"));
+        require(statsStream.good(), "failed to create raw VSINetworkStats evidence");
+        statsStream << statsJson << '\n';
+    }
+
+    void writeParsedProof(const std::string& name, const HttpProof& proof)
+    {
+        const std::filesystem::path directory = OSGSOL_SCIENCE_EVIDENCE_DIR;
+        std::filesystem::create_directories(directory);
+        std::ofstream proofStream(directory / (name + "-proof.json"));
+        require(proofStream.good(), "failed to create parsed HTTP proof evidence");
+        proofStream << serializeProof(proof);
+    }
+
+    std::string requireNetworkStatsEvidence()
+    {
+        char* serialized = VSINetworkStatsGetAsSerializedJSON(nullptr);
+        require(serialized != nullptr, "GDAL returned no VSINetworkStats JSON");
+        picojson::value value;
+        const std::string error = picojson::parse(value, serialized);
+        CPLFree(serialized);
+        require(error.empty() && value.is<picojson::object>(),
+                "GDAL VSINetworkStats output is not valid JSON");
+        const picojson::object& root = value.get<picojson::object>();
+        const auto methods = root.find("methods");
+        require(methods != root.end() && methods->second.is<picojson::object>() &&
+                methods->second.get<picojson::object>().count("GET") != 0,
+                "GDAL VSINetworkStats did not record GET traffic");
+        return value.serialize(true);
     }
 
     void CPL_STDCALL captureGdalMessage(CPLErr errorClass, CPLErrorNum,
@@ -292,6 +639,32 @@ namespace
         const std::string error = picojson::parse(root, stream);
         require(error.empty(), "failed to parse live case fixture: " + error);
         const picojson::object& rootObject = objectValue(root, "live fixture root");
+        require(static_cast<int>(field(rootObject, "schema_version").get<double>()) == 2,
+                "live fixture schema must be version 2");
+        require(field(rootObject, "source_index_sha256").get<std::string>() ==
+                    "f738e7d274ad582e56e20a3a8b444c6f2a3ece5781f8f9855bb7ca3d9ed2942f",
+                "live fixture source-index checksum changed");
+        require(field(rootObject, "vrt_strategy").get<std::string>() ==
+                    "synthesize_vertical_flip",
+                "live fixture VRT strategy changed");
+        require(field(rootObject, "dequantization").get<std::string>() ==
+                    "sign(v) * pow(abs(v) / 127.5, 2)",
+                "live fixture dequantization contract changed");
+        const picojson::array& rgbBands =
+            field(rootObject, "rgb_bands").get<picojson::array>();
+        require(rgbBands.size() == 3 && rgbBands[0].get<std::string>() == "A01" &&
+                rgbBands[1].get<std::string>() == "A16" &&
+                rgbBands[2].get<std::string>() == "A09",
+                "live fixture RGB band order changed");
+        const std::string fingerprintDomain =
+            field(rootObject, "record_fingerprint_domain").get<std::string>();
+        require(fingerprintDomain == "osgsol.aef.raw-index-record.v1",
+                "live fixture fingerprint domain changed");
+        require(field(rootObject, "record_fingerprint_algorithm").get<std::string>() ==
+                    "sha256" &&
+                field(rootObject, "record_fingerprint_canonicalization").get<std::string>() ==
+                    "json-sort-keys-compact-utf8-numeric-17g-v1",
+                "live fixture fingerprint contract changed");
         const picojson::value& casesValue = field(rootObject, "cases");
         require(casesValue.is<picojson::array>(), "live cases must be an array");
 
@@ -301,8 +674,11 @@ namespace
             const picojson::object& object = objectValue(value, "live case");
             LiveCase item;
             item.name = field(object, "name").get<std::string>();
-            item.datasetId = field(object, "dataset_id").get<std::string>();
-            item.url = field(object, "cog_url").get<std::string>();
+            item.datasetId = field(object, "fid").get<std::string>();
+            item.rawPath = field(object, "path").get<std::string>();
+            item.rawLocation = field(object, "location").get<std::string>();
+            item.recordFingerprint =
+                field(object, "record_fingerprint").get<std::string>();
             item.year = static_cast<int>(field(object, "year").get<double>());
             item.latitude = field(object, "latitude").get<double>();
             item.longitude = field(object, "longitude").get<double>();
@@ -313,6 +689,27 @@ namespace
                     item.latitude >= item.bbox[1] && item.longitude <= item.bbox[2] &&
                     item.latitude <= item.bbox[3],
                     item.name + " point is outside its trusted tile bbox");
+            const std::string s3Prefix =
+                "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/";
+            require(item.rawPath.rfind(s3Prefix, 0) == 0,
+                    item.name + " raw path is outside the pinned source prefix");
+            const std::string relativePath = item.rawPath.substr(s3Prefix.size());
+            require(relativePath.rfind(std::to_string(item.year) + "/", 0) == 0 &&
+                    relativePath.find('?') == std::string::npos &&
+                    relativePath.find('#') == std::string::npos &&
+                    relativePath.size() > 5 &&
+                    relativePath.substr(relativePath.size() - 5) == ".tiff",
+                    item.name + " raw path/year is not canonical");
+            const std::string expectedLocation =
+                "VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/" +
+                relativePath;
+            require(item.rawLocation == expectedLocation,
+                    item.name + " raw location does not match path");
+            item.url = "https://data.source.coop/tge-labs/aef/v1/annual/" +
+                relativePath;
+            require(sha256(fingerprintDomain + std::string(1, '\0') +
+                           canonicalRecord(item)) == item.recordFingerprint,
+                    item.name + " raw record fingerprint mismatch");
             cases.push_back(item);
         }
         require(cases.size() == 2, "live fixture must contain NVIDIA and Hong Kong only");
@@ -325,81 +722,593 @@ namespace
         return cases;
     }
 
-    LiveMeasurement parseLiveDebug(const DebugCapture& capture)
+    std::string lower(std::string value)
     {
-        LiveMeasurement measurement;
-        const std::regex rangeExpression("Downloading ([0-9]+)-([0-9]+)([^ ]*) ");
-        const std::regex responseExpression("response_code=([0-9]+)");
-        const std::regex sizeExpression("GetFileSize\\([^)]*\\)=([0-9]+)");
-        for (const std::string& message : capture.messages)
-        {
-            std::smatch match;
-            if (std::regex_search(message, match, rangeExpression))
-            {
-                require(match[3].str().find(',') == std::string::npos,
-                        "live GDAL request emitted comma-separated multi-range syntax");
-                const std::uint64_t start = std::stoull(match[1].str());
-                const std::uint64_t end = std::stoull(match[2].str());
-                require(end >= start, "live GDAL range is reversed");
-                measurement.requestedBytes += end - start + 1;
-            }
-            if (std::regex_search(message, match, responseExpression))
-                measurement.responseCodes.push_back(std::stoi(match[1].str()));
-            if (std::regex_search(message, match, sizeExpression))
-                measurement.sourceSize = std::stoull(match[1].str());
-        }
-        require(measurement.requestedBytes > 0, "live query emitted no bounded ranges");
-        require(measurement.sourceSize > 0, "live query did not record source size");
-        require(measurement.requestedBytes < measurement.sourceSize,
-                "live query requested the complete COG");
-        require(std::find(measurement.responseCodes.begin(), measurement.responseCodes.end(),
-                          206) != measurement.responseCodes.end(),
-                "live query recorded no HTTP 206 response");
-        const std::set<int> acceptedResponses = {200, 206, 429, 500, 502, 503, 504};
-        for (int response : measurement.responseCodes)
-            require(acceptedResponses.count(response) != 0,
-                    "live query recorded an unexpected HTTP response code");
-        return measurement;
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char character) { return std::tolower(character); });
+        return value;
     }
 
-    LiveMeasurement runLiveIteration(const LiveCase& item)
+    std::map<std::string, std::string> parseHeaders(std::istream& stream)
+    {
+        std::map<std::string, std::string> headers;
+        std::string line;
+        while (std::getline(stream, line))
+        {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            const std::size_t separator = line.find(':');
+            if (separator == std::string::npos) continue;
+            std::string value = line.substr(separator + 1);
+            while (!value.empty() && value.front() == ' ') value.erase(value.begin());
+            headers[lower(line.substr(0, separator))] = value;
+        }
+        return headers;
+    }
+
+    HttpProof buildHttpProof(const DebugCapture& capture, const std::string& statsJson)
+    {
+        struct Request
+        {
+            std::string method;
+            std::string range;
+        };
+        struct Response
+        {
+            int code = 0;
+            std::map<std::string, std::string> headers;
+        };
+        std::vector<Request> requests;
+        std::vector<Response> responses;
+        std::vector<std::pair<std::string, int>> retryEvents;
+        Response currentResponse;
+        bool responseOpen = false;
+        int logicalGetOperations = 0;
+
+        for (const std::string& message : capture.messages)
+        {
+            const std::string outputPrefix = "CURL_INFO_HEADER_OUT: ";
+            const std::string inputPrefix = "CURL_INFO_HEADER_IN: ";
+            if (message.rfind(outputPrefix, 0) == 0)
+            {
+                std::istringstream stream(message.substr(outputPrefix.size()));
+                std::string firstLine;
+                std::getline(stream, firstLine);
+                if (!firstLine.empty() && firstLine.back() == '\r') firstLine.pop_back();
+                std::istringstream firstLineStream(firstLine);
+                Request request;
+                firstLineStream >> request.method;
+                std::string uri;
+                firstLineStream >> uri;
+                const auto headers = parseHeaders(stream);
+                const auto range = headers.find("range");
+                if (range != headers.end()) request.range = range->second;
+                requests.push_back(request);
+            }
+            else if (message.rfind(inputPrefix, 0) == 0)
+            {
+                std::string line = message.substr(inputPrefix.size());
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.rfind("HTTP/", 0) == 0)
+                {
+                    if (responseOpen) responses.push_back(currentResponse);
+                    currentResponse = Response();
+                    responseOpen = true;
+                    std::istringstream status(line);
+                    std::string version;
+                    status >> version >> currentResponse.code;
+                }
+                else if (line.empty())
+                {
+                    if (responseOpen) responses.push_back(currentResponse);
+                    responseOpen = false;
+                }
+                else if (responseOpen)
+                {
+                    const std::size_t separator = line.find(':');
+                    if (separator != std::string::npos)
+                    {
+                        std::string value = line.substr(separator + 1);
+                        while (!value.empty() && value.front() == ' ')
+                            value.erase(value.begin());
+                        currentResponse.headers[lower(line.substr(0, separator))] = value;
+                    }
+                }
+            }
+            if (message.rfind("VSICURL: Got response_code=206", 0) == 0 ||
+                message == "VSICURL: Download completed")
+                ++logicalGetOperations;
+            static const std::regex retryPattern(
+                R"(HTTP error code for .* range ([0-9]+-[0-9]+): ([0-9]+)\. Retrying)");
+            std::smatch retryMatch;
+            if (std::regex_search(message, retryMatch, retryPattern))
+                retryEvents.emplace_back("bytes=" + retryMatch[1].str(),
+                                         std::stoi(retryMatch[2].str()));
+        }
+        if (responseOpen) responses.push_back(currentResponse);
+
+        HttpProof proof;
+        const std::set<int> transientCodes = {429, 500, 502, 503, 504};
+        std::map<std::string, int> requestedRanges;
+        int connectRequests = 0;
+        for (const Request& request : requests)
+        {
+            if (request.method == "CONNECT")
+            {
+                require(request.range.empty(), "CONNECT unexpectedly carried a Range header");
+                ++connectRequests;
+                continue;
+            }
+            if (request.method == "HEAD")
+            {
+                ++proof.actualHeadCount;
+                require(request.range.empty(), "HEAD unexpectedly carried a Range header");
+                continue;
+            }
+            require(request.method == "GET", "unexpected HTTP method in curl evidence");
+            ++proof.actualGetCount;
+            require(!request.range.empty(), "GET omitted the Range header");
+            require(request.range.find(',') == std::string::npos,
+                    "GET emitted comma-separated multi-range syntax");
+            require(request.range.rfind("bytes=", 0) == 0,
+                    "GET Range syntax is not bytes=start-end");
+            ++requestedRanges[request.range];
+        }
+
+        std::map<std::string, int> successfulRanges;
+        std::map<int, int> transientResponses;
+        int headResponses = 0;
+        int connectResponses = 0;
+        for (const Response& response : responses)
+        {
+            proof.responseCodes.push_back(response.code);
+            const auto contentRange = response.headers.find("content-range");
+            const auto contentLength = response.headers.find("content-length");
+            if (transientCodes.count(response.code) != 0)
+            {
+                require(contentRange == response.headers.end(),
+                        "transient response unexpectedly carried Content-Range");
+                require(contentLength != response.headers.end(),
+                        "transient response omitted Content-Length body accounting");
+                proof.transientBodyBytes += std::stoull(contentLength->second);
+                ++transientResponses[response.code];
+                continue;
+            }
+            if (contentRange == response.headers.end())
+            {
+                require(response.code == 200,
+                        "HTTP response was neither 200, 206, nor an allowed transient code");
+                if (contentLength == response.headers.end())
+                {
+                    ++connectResponses;
+                }
+                else
+                {
+                    ++headResponses;
+                    const std::uint64_t size = std::stoull(contentLength->second);
+                    if (proof.sourceSize == 0) proof.sourceSize = size;
+                    require(proof.sourceSize == size, "HEAD source size changed");
+                }
+                continue;
+            }
+            require(response.code == 206, "Content-Range response was not HTTP 206");
+            require(contentRange != response.headers.end() &&
+                    contentLength != response.headers.end(),
+                    "successful ranged GET omitted Content-Range or Content-Length");
+            const std::string& value = contentRange->second;
+            const std::size_t space = value.find(' ');
+            const std::size_t slash = value.find('/');
+            require(space != std::string::npos && slash != std::string::npos && slash > space,
+                    "Content-Range syntax is invalid");
+            const std::string range = "bytes=" + value.substr(space + 1, slash - space - 1);
+            require(requestedRanges.count(range) != 0,
+                    "Content-Range does not match any emitted GET Range");
+            const std::uint64_t responseSize = std::stoull(value.substr(slash + 1));
+            if (proof.sourceSize == 0) proof.sourceSize = responseSize;
+            require(proof.sourceSize == responseSize, "Content-Range source size changed");
+            const std::uint64_t bodyBytes = std::stoull(contentLength->second);
+            const std::string interval = range.substr(6);
+            const std::size_t dash = interval.find('-');
+            require(dash != std::string::npos,
+                    "matched Range is missing its interval separator");
+            const std::uint64_t start = std::stoull(interval.substr(0, dash));
+            const std::uint64_t end = std::stoull(interval.substr(dash + 1));
+            require(end >= start && bodyBytes == end - start + 1,
+                    "Content-Length does not match Content-Range");
+            require(bodyBytes < proof.sourceSize,
+                    "ranged GET returned the complete source object");
+            proof.successfulRangeBytes += bodyBytes;
+            ++proof.successfulGetCount;
+            ++successfulRanges[range];
+        }
+        require(headResponses == proof.actualHeadCount,
+                "HEAD request/response count mismatch (possible GET 200)");
+        require(connectResponses == connectRequests,
+                "proxy CONNECT request/response count mismatch (possible GET 200)");
+
+        std::map<std::string, int> retriesByRange;
+        std::map<int, int> retryCodes;
+        for (const auto& retry : retryEvents)
+        {
+            require(transientCodes.count(retry.second) != 0,
+                    "CPL retry event used an unlisted transient response code");
+            ++retriesByRange[retry.first];
+            ++retryCodes[retry.second];
+            require(retriesByRange[retry.first] <= 3,
+                    "ranged GET exceeded the three-retry policy");
+            require(requestedRanges.count(retry.first) != 0,
+                    "CPL retry event names a Range that was never emitted");
+        }
+        require(retryCodes == transientResponses,
+                "transient HTTP responses do not reconcile with CPL retry events");
+        for (const auto& request : requestedRanges)
+        {
+            const int successful = successfulRanges[request.first];
+            const int retries = retriesByRange[request.first];
+            require(successful > 0,
+                    "emitted GET Range had no final HTTP 206 response");
+            require(request.second == successful + retries,
+                    "emitted GET Range count does not reconcile with retries and HTTP 206");
+        }
+        require(proof.actualGetCount ==
+                    proof.successfulGetCount + static_cast<int>(retryEvents.size()),
+                "GET request count does not reconcile with successes and retries");
+        proof.transientRetryCount = static_cast<int>(retryEvents.size());
+        proof.transientRetryCodes = retryCodes;
+        proof.actualHttpBodyBytes = proof.successfulRangeBytes + proof.transientBodyBytes;
+        require(proof.actualGetCount > 0 && proof.successfulRangeBytes > 0 &&
+                proof.successfulRangeBytes < proof.sourceSize,
+                "HTTP proof is empty or equals the complete object");
+
+        picojson::value statsValue;
+        const std::string statsError = picojson::parse(statsValue, statsJson);
+        require(statsError.empty() && statsValue.is<picojson::object>(),
+                "VSINetworkStats JSON is invalid");
+        const picojson::object& statsRoot = statsValue.get<picojson::object>();
+        const picojson::object& methods =
+            field(statsRoot, "methods").get<picojson::object>();
+        const picojson::object& get = field(methods, "GET").get<picojson::object>();
+        const picojson::object& head = field(methods, "HEAD").get<picojson::object>();
+        proof.statsGetOperationCount =
+            static_cast<int>(field(get, "count").get<double>());
+        proof.statsHeadCount = static_cast<int>(field(head, "count").get<double>());
+        const std::uint64_t statsBytes = static_cast<std::uint64_t>(
+            field(get, "downloaded_bytes").get<double>());
+        require(statsBytes == proof.successfulRangeBytes,
+                "VSINetworkStats downloaded bytes disagree with HTTP response bodies");
+        require(proof.statsHeadCount == proof.actualHeadCount,
+                "VSINetworkStats HEAD count disagrees with curl headers");
+        require(proof.statsGetOperationCount == logicalGetOperations,
+                "VSINetworkStats GET operations disagree with CPL read operations");
+        return proof;
+    }
+
+    void verifyHttpParserRegression()
+    {
+        DebugCapture capture;
+        capture.messages = {
+            "CURL_INFO_HEADER_OUT: CONNECT data.example:443 HTTP/1.1\r\n"
+            "Host: data.example:443\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/1.1 200 Connection established\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "CURL_INFO_HEADER_OUT: HEAD /tile.tiff HTTP/1.1\r\nHost: data.example\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 200\r",
+            "CURL_INFO_HEADER_IN: content-length: 1000\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\nHost: data.example\r\n"
+            "Range: bytes=10-19\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 500\r",
+            "CURL_INFO_HEADER_IN: content-length: 17\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "HTTP error code for https://data.example/tile.tiff range 10-19: 500. "
+            "Retrying again in 0.1 secs",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\nHost: data.example\r\n"
+            "Range: bytes=10-19\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 206\r",
+            "CURL_INFO_HEADER_IN: content-range: bytes 10-19/1000\r",
+            "CURL_INFO_HEADER_IN: content-length: 10\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "VSICURL: Got response_code=206",
+        };
+        const std::string stats =
+            "{\"methods\":{\"GET\":{\"count\":1,\"downloaded_bytes\":10},"
+            "\"HEAD\":{\"count\":1}}}";
+        const HttpProof proof = buildHttpProof(capture, stats);
+        require(proof.actualGetCount == 2 && proof.actualHeadCount == 1 &&
+                proof.successfulGetCount == 1 && proof.transientRetryCount == 1 &&
+                proof.transientRetryCodes == std::map<int, int>({{500, 1}}) &&
+                proof.successfulRangeBytes == 10 && proof.transientBodyBytes == 17 &&
+                proof.actualHttpBodyBytes == 27 && proof.sourceSize == 1000,
+                "proxy/retry/header parser regression fixture failed");
+
+        const auto isRejected = [&stats](const DebugCapture& candidate)
+        {
+            try
+            {
+                static_cast<void>(buildHttpProof(candidate, stats));
+                return false;
+            }
+            catch (const std::exception&)
+            {
+                return true;
+            }
+        };
+
+        DebugCapture unlisted;
+        unlisted.messages = capture.messages;
+        unlisted.messages[8] = "CURL_INFO_HEADER_IN: HTTP/2 501\r";
+        unlisted.messages[11] =
+            "HTTP error code for https://data.example/tile.tiff range 10-19: 501. "
+            "Retrying again in 0.1 secs";
+        require(isRejected(unlisted),
+                "HTTP parser accepted an unlisted transient response code");
+
+        DebugCapture excessive;
+        excessive.messages.assign(capture.messages.begin(), capture.messages.begin() + 7);
+        for (int attempt = 0; attempt < 4; ++attempt)
+        {
+            excessive.messages.push_back(
+                "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\nHost: data.example\r\n"
+                "Range: bytes=10-19\r\n\r\n");
+            excessive.messages.push_back("CURL_INFO_HEADER_IN: HTTP/2 500\r");
+            excessive.messages.push_back("CURL_INFO_HEADER_IN: content-length: 0\r");
+            excessive.messages.push_back("CURL_INFO_HEADER_IN: \r");
+            excessive.messages.push_back(
+                "HTTP error code for https://data.example/tile.tiff range 10-19: 500. "
+                "Retrying again in 0.1 secs");
+        }
+        excessive.messages.insert(excessive.messages.end(), capture.messages.begin() + 12,
+                                  capture.messages.end());
+        require(isRejected(excessive),
+                "HTTP parser accepted more than three transient retries");
+
+        DebugCapture multiplexed;
+        multiplexed.messages = {
+            "CURL_INFO_HEADER_OUT: HEAD /tile.tiff HTTP/2\r\nHost: data.example\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 200\r",
+            "CURL_INFO_HEADER_IN: content-length: 1000\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\nHost: data.example\r\n"
+            "Range: bytes=10-19\r\n\r\n",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\nHost: data.example\r\n"
+            "Range: bytes=20-29\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 500\r",
+            "CURL_INFO_HEADER_IN: content-length: 17\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "CURL_INFO_HEADER_IN: HTTP/2 206\r",
+            "CURL_INFO_HEADER_IN: content-range: bytes 20-29/1000\r",
+            "CURL_INFO_HEADER_IN: content-length: 10\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "HTTP error code for https://data.example/tile.tiff range 10-19: 500. "
+            "Retrying again in 0.1 secs",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\nHost: data.example\r\n"
+            "Range: bytes=10-19\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 206\r",
+            "CURL_INFO_HEADER_IN: content-range: bytes 10-19/1000\r",
+            "CURL_INFO_HEADER_IN: content-length: 10\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "VSICURL: Got response_code=206",
+            "VSICURL: Got response_code=206",
+        };
+        const std::string multiplexedStats =
+            "{\"methods\":{\"GET\":{\"count\":2,\"downloaded_bytes\":20},"
+            "\"HEAD\":{\"count\":1}}}";
+        const HttpProof multiplexedProof = buildHttpProof(multiplexed, multiplexedStats);
+        require(multiplexedProof.actualGetCount == 3 &&
+                multiplexedProof.successfulGetCount == 2 &&
+                multiplexedProof.transientRetryCount == 1 &&
+                multiplexedProof.successfulRangeBytes == 20 &&
+                multiplexedProof.actualHttpBodyBytes == 37,
+                "out-of-order HTTP/2 multiplex retry regression fixture failed");
+
+        DebugCapture unknown;
+        unknown.messages = capture.messages;
+        unknown.messages[3] =
+            "CURL_INFO_HEADER_OUT: POST /tile.tiff HTTP/1.1\r\nHost: data.example\r\n\r\n";
+        require(isRejected(unknown), "HTTP parser accepted an unknown outbound method");
+    }
+
+    struct PixelWindow
+    {
+        int x = 0;
+        int topDownY = 0;
+        int size = 256;
+    };
+
+    PixelWindow derivePixelWindow(const LiveCase& item, int rasterSize)
+    {
+        require(item.bbox.size() == 4 && rasterSize > 256,
+                "cannot derive pixel window from invalid bbox/raster size");
+        const double normalizedX =
+            (item.longitude - item.bbox[0]) / (item.bbox[2] - item.bbox[0]);
+        const double normalizedTopY =
+            (item.bbox[3] - item.latitude) / (item.bbox[3] - item.bbox[1]);
+        require(normalizedX >= 0.0 && normalizedX <= 1.0 &&
+                normalizedTopY >= 0.0 && normalizedTopY <= 1.0,
+                item.name + " normalized point is outside the raw bbox");
+        const int centerX = static_cast<int>(std::llround(
+            normalizedX * static_cast<double>(rasterSize - 1)));
+        const int centerY = static_cast<int>(std::llround(
+            normalizedTopY * static_cast<double>(rasterSize - 1)));
+        PixelWindow window;
+        window.x = std::max(0, std::min(rasterSize - window.size,
+                                       centerX - window.size / 2));
+        window.topDownY = std::max(0, std::min(rasterSize - window.size,
+                                              centerY - window.size / 2));
+        window.x -= window.x % LIVE_OVERVIEW_FACTOR;
+        window.topDownY -= window.topDownY % LIVE_OVERVIEW_FACTOR;
+        return window;
+    }
+
+    double checkedDequantize(std::int8_t raw)
+    {
+        const double normalized = std::abs(static_cast<double>(raw)) / 127.5;
+        const double formula = std::copysign(std::pow(normalized, 2.0),
+                                             static_cast<double>(raw));
+        const double expanded = (raw < 0 ? -1.0 : (raw > 0 ? 1.0 : 0.0)) *
+            normalized * normalized;
+        require(std::abs(formula - expanded) < 1e-15,
+                "AlphaEarth signed dequantization formula changed");
+        return formula;
+    }
+
+    GDALRasterBand* exactOverview(GDALRasterBand* base, int factor)
+    {
+        require(base != nullptr && factor > 1, "invalid overview selection request");
+        for (int index = 0; index < base->GetOverviewCount(); ++index)
+        {
+            GDALRasterBand* overview = base->GetOverview(index);
+            if (overview && overview->GetXSize() * factor == base->GetXSize() &&
+                overview->GetYSize() * factor == base->GetYSize())
+                return overview;
+        }
+        fail("source COG has no exact " + std::to_string(factor) + "x overview");
+    }
+
+    std::vector<std::int8_t> readNormalizedOverviewRgb(
+        GDALDataset* raw, const PixelWindow& window, const int* bandMap)
+    {
+        require(window.size % LIVE_OVERVIEW_FACTOR == 0 &&
+                window.x % LIVE_OVERVIEW_FACTOR == 0 &&
+                window.topDownY % LIVE_OVERVIEW_FACTOR == 0,
+                "bbox window is not aligned to the chosen source overview");
+        const int rawWindowY = raw->GetRasterYSize() - window.topDownY - window.size;
+        require(rawWindowY >= 0 && rawWindowY % LIVE_OVERVIEW_FACTOR == 0,
+                "mirrored raw bbox window is not overview-aligned");
+        const int overviewX = window.x / LIVE_OVERVIEW_FACTOR;
+        const int overviewY = rawWindowY / LIVE_OVERVIEW_FACTOR;
+        const int overviewSize = window.size / LIVE_OVERVIEW_FACTOR;
+        require(overviewSize == 64,
+                "live bbox sample must be an exact 64x64 overview window");
+
+        std::vector<std::int8_t> rgb(overviewSize * overviewSize * 3);
+        std::vector<unsigned char> normalizedMasks(overviewSize * overviewSize * 3);
+        bool hasValidNonZero = false;
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            GDALRasterBand* overview = exactOverview(
+                raw->GetRasterBand(bandMap[channel]), LIVE_OVERVIEW_FACTOR);
+            require(overview->GetRasterDataType() == GDT_Int8,
+                    "selected RGB overview is not signed Int8");
+            std::vector<std::int8_t> values(overviewSize * overviewSize);
+            std::vector<unsigned char> masks(overviewSize * overviewSize);
+            require(overview->RasterIO(GF_Read, overviewX, overviewY,
+                                       overviewSize, overviewSize, values.data(),
+                                       overviewSize, overviewSize, GDT_Int8,
+                                       0, 0, nullptr) == CE_None,
+                    "exact source overview RGB window read failed");
+            require(overview->GetMaskBand()->RasterIO(
+                        GF_Read, overviewX, overviewY, overviewSize, overviewSize,
+                        masks.data(), overviewSize, overviewSize, GDT_Byte,
+                        0, 0, nullptr) == CE_None,
+                    "exact source overview mask window read failed");
+            for (int topY = 0; topY < overviewSize; ++topY)
+            {
+                const int rawY = overviewSize - 1 - topY;
+                for (int x = 0; x < overviewSize; ++x)
+                {
+                    const std::size_t source = rawY * overviewSize + x;
+                    const std::size_t destination =
+                        (topY * overviewSize + x) * 3 + channel;
+                    rgb[destination] = values[source];
+                    normalizedMasks[destination] = masks[source];
+                    hasValidNonZero = hasValidNonZero ||
+                        (masks[source] != 0 && values[source] != 0);
+                }
+            }
+            const std::size_t top = channel;
+            const std::size_t rawBottom = (overviewSize - 1) * overviewSize;
+            const std::size_t bottom =
+                ((overviewSize - 1) * overviewSize) * 3 + channel;
+            require(rgb[top] == values[rawBottom] &&
+                    normalizedMasks[top] == masks[rawBottom] &&
+                    rgb[bottom] == values[0] && normalizedMasks[bottom] == masks[0],
+                    "top-down normalization did not mirror raw overview pixels/masks");
+            bool dequantizedValidSample = false;
+            for (std::size_t pixel = channel; pixel < rgb.size(); pixel += 3)
+            {
+                if (normalizedMasks[pixel] == 0) continue;
+                require(std::isfinite(checkedDequantize(rgb[pixel])),
+                        "dequantized overview sample is non-finite");
+                dequantizedValidSample = true;
+                break;
+            }
+            require(dequantizedValidSample,
+                    "RGB overview channel has no valid sample to dequantize");
+        }
+        require(hasValidNonZero,
+                "normalized source-overview RGB window has no valid non-zero sample");
+        return rgb;
+    }
+
+    void closeDataset(GDALDataset* dataset)
+    {
+        if (dataset) GDALClose(dataset);
+    }
+
+    using DatasetPtr = std::unique_ptr<GDALDataset, decltype(&closeDataset)>;
+
+    LiveMeasurement runLiveIteration(const LiveCase& item, int iteration)
     {
         VSICurlClearCache();
         DebugCapture capture;
-        CPLPushErrorHandlerEx(captureGdalMessage, &capture);
-        CPLSetCurrentErrorHandlerCatchDebug(1);
-        CPLSetConfigOption("CPL_DEBUG", "VSICURL");
+        ScopedGdalErrorCapture errorCapture(capture);
+        VSINetworkStatsReset();
         const auto started = std::chrono::steady_clock::now();
         const std::string vsiUrl = "/vsicurl/" + item.url;
-        GDALDataset* dataset = static_cast<GDALDataset*>(GDALOpenEx(
-            vsiUrl.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY, nullptr, nullptr, nullptr));
-        require(dataset != nullptr, item.name + " COG open failed");
-        require(dataset->GetRasterXSize() == 8192 && dataset->GetRasterYSize() == 8192 &&
-                dataset->GetRasterCount() == 64,
+        DatasetPtr raw(static_cast<GDALDataset*>(GDALOpenEx(
+            vsiUrl.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
+            nullptr, nullptr, nullptr)), closeDataset);
+        require(raw != nullptr, item.name + " COG open failed");
+        require(raw->GetRasterXSize() == 8192 && raw->GetRasterYSize() == 8192 &&
+                raw->GetRasterCount() == 64,
                 item.name + " is not the expected 8192x8192x64 tile");
+        const PixelWindow window = derivePixelWindow(item, raw->GetRasterXSize());
+        double rawTransform[6] = {};
+        require(raw->GetGeoTransform(rawTransform) == CE_None && rawTransform[5] > 0.0,
+                item.name + " raw COG is not the expected bottom-up source");
+
         const int bandMap[] = {2, 17, 10};
         const std::string bandNames[] = {"A01", "A16", "A09"};
         for (int index = 0; index < 3; ++index)
         {
-            GDALRasterBand* band = dataset->GetRasterBand(bandMap[index]);
-            require(band && band->GetRasterDataType() == GDT_Int8 &&
-                    std::string(band->GetDescription()) == bandNames[index],
+            GDALRasterBand* rawBand = raw->GetRasterBand(bandMap[index]);
+            require(rawBand && rawBand->GetRasterDataType() == GDT_Int8 &&
+                    std::string(rawBand->GetDescription()) == bandNames[index] &&
+                    rawBand->GetMaskBand() != nullptr,
                     item.name + " RGB band metadata changed");
         }
-        std::vector<std::int8_t> rgb(64 * 64 * 3);
-        require(dataset->RasterIO(GF_Read, 3968, 3968, 256, 256, rgb.data(),
-                                  64, 64, GDT_Int8, 3, bandMap,
-                                  3, 64 * 3, 1, nullptr) == CE_None,
-                item.name + " bounded RGB window read failed");
+        const std::vector<std::int8_t> rgb =
+            readNormalizedOverviewRgb(raw.get(), window, bandMap);
         require(std::any_of(rgb.begin(), rgb.end(),
                             [](std::int8_t value) { return value != 0; }),
                 item.name + " RGB window is empty after HTTP retries");
-        GDALClose(dataset);
+        raw.reset();
         const auto finished = std::chrono::steady_clock::now();
-        CPLPopErrorHandler();
-        CPLSetConfigOption("CPL_DEBUG", nullptr);
 
-        LiveMeasurement measurement = parseLiveDebug(capture);
+        const std::string statsJson = requireNetworkStatsEvidence();
+        const std::string evidenceName = item.name + "-" + std::to_string(iteration);
+        writeRawTransportEvidence(evidenceName, capture, statsJson);
+        HttpProof proof = buildHttpProof(capture, statsJson);
+        proof.overviewFactor = LIVE_OVERVIEW_FACTOR;
+        proof.rawWindowX = window.x;
+        proof.rawWindowY = 8192 - window.topDownY - window.size;
+        proof.rawWindowSize = window.size;
+        proof.transferBudget = LIVE_TRANSFER_BUDGET;
+        require(proof.actualHttpBodyBytes <= proof.transferBudget &&
+                proof.actualHttpBodyBytes < proof.sourceSize,
+                item.name + " actual HTTP response bodies exceeded the live budget");
+        writeParsedProof(evidenceName, proof);
+        LiveMeasurement measurement;
+        measurement.successfulRangeBytes = proof.successfulRangeBytes;
+        measurement.actualHttpBodyBytes = proof.actualHttpBodyBytes;
+        measurement.sourceSize = proof.sourceSize;
+        measurement.actualGetCount = proof.actualGetCount;
+        measurement.actualHeadCount = proof.actualHeadCount;
+        measurement.statsGetOperationCount = proof.statsGetOperationCount;
+        measurement.successfulGetCount = proof.successfulGetCount;
+        measurement.transientRetryCount = proof.transientRetryCount;
+        measurement.transientRetryCodes = proof.transientRetryCodes;
+        measurement.responseCodes = proof.responseCodes;
         measurement.milliseconds =
             std::chrono::duration<double, std::milli>(finished - started).count();
         return measurement;
@@ -414,22 +1323,35 @@ namespace
         return values[std::min(index, values.size() - 1)];
     }
 
-    int runLive(const std::filesystem::path& casesPath, int iterations)
+    int runLive(const std::filesystem::path& casesPath, int iterations,
+                const std::string& caseFilter = "")
     {
-        require(iterations == 5, "Task 5 live evidence requires exactly five iterations");
-        configureRangeAccess();
+        require(iterations == 1 || iterations == 5,
+                "live evidence accepts one smoke iteration or five measured iterations");
+        ScopedGdalConfig config(rangeAccessConfig());
+        verifyRangeAccessConfig();
         const std::vector<LiveCase> cases = loadLiveCases(casesPath);
+        int casesRun = 0;
         for (const LiveCase& item : cases)
         {
+            if (!caseFilter.empty() && item.name != caseFilter) continue;
+            ++casesRun;
             std::vector<double> timings;
-            std::uint64_t totalBytes = 0;
+            std::uint64_t totalSuccessfulBytes = 0;
+            std::uint64_t totalActualBodyBytes = 0;
             std::uint64_t sourceSize = 0;
+            int totalRetries = 0;
             std::set<int> responses;
+            std::map<int, int> retryCodes;
             for (int iteration = 1; iteration <= iterations; ++iteration)
             {
-                LiveMeasurement measurement = runLiveIteration(item);
+                LiveMeasurement measurement = runLiveIteration(item, iteration);
                 timings.push_back(measurement.milliseconds);
-                totalBytes += measurement.requestedBytes;
+                totalSuccessfulBytes += measurement.successfulRangeBytes;
+                totalActualBodyBytes += measurement.actualHttpBodyBytes;
+                totalRetries += measurement.transientRetryCount;
+                for (const auto& retry : measurement.transientRetryCodes)
+                    retryCodes[retry.first] += retry.second;
                 sourceSize = measurement.sourceSize;
                 responses.insert(measurement.responseCodes.begin(),
                                  measurement.responseCodes.end());
@@ -437,32 +1359,62 @@ namespace
                           << " fid=" << item.datasetId << " year=" << item.year
                           << " iteration=" << iteration
                           << " milliseconds=" << measurement.milliseconds
-                          << " requested_bytes=" << measurement.requestedBytes
+                          << " successful_range_bytes="
+                          << measurement.successfulRangeBytes
+                          << " actual_http_body_bytes="
+                          << measurement.actualHttpBodyBytes
+                          << " http_gets=" << measurement.actualGetCount
+                          << " successful_http_gets="
+                          << measurement.successfulGetCount
+                          << " transient_retries="
+                          << measurement.transientRetryCount
+                          << " http_heads=" << measurement.actualHeadCount
+                          << " stats_get_operations=" << measurement.statsGetOperationCount
                           << " source_size=" << measurement.sourceSize << std::endl;
             }
             std::cout << "ScienceGdalLive summary case=" << item.name
                       << " fid=" << item.datasetId << " year=" << item.year
                       << " median_ms=" << percentile(timings, 0.5)
                       << " p95_ms=" << percentile(timings, 0.95)
-                      << " total_requested_bytes=" << totalBytes
+                      << " total_successful_range_bytes=" << totalSuccessfulBytes
+                      << " total_actual_http_body_bytes=" << totalActualBodyBytes
+                      << " transient_retries=" << totalRetries
+                      << " retry_codes=";
+            for (const auto& retry : retryCodes)
+                std::cout << retry.first << ':' << retry.second << ',';
+            std::cout
                       << " source_size=" << sourceSize << " response_codes=";
             for (int response : responses) std::cout << response << ',';
             std::cout << " complete_cog=false" << std::endl;
         }
+        require(casesRun > 0, "requested live case was not found in the pinned fixture");
         return 0;
     }
 }
 
-int main(int argc, char** argv)
+int runMain(int argc, char** argv)
 {
+    verifyHttpParserRegression();
     registerScienceRuntime();
+    if (argc == 3 && std::string(argv[1]) == "--validate-live-cases")
+    {
+        const std::vector<LiveCase> cases = loadLiveCases(argv[2]);
+        std::cout << "ScienceGdalCases: validated " << cases.size()
+                  << " pinned raw rows" << std::endl;
+        return 0;
+    }
     if (argc == 5 && std::string(argv[1]) == "--live-cases" &&
         std::string(argv[3]) == "--iterations")
         return runLive(argv[2], std::stoi(argv[4]));
-    require(argc == 1, "usage: no arguments, or --live-cases FILE --iterations 5");
-    const std::filesystem::path root = std::filesystem::temp_directory_path() /
-        ("osgsol-science-http-range-" + std::to_string(getpid()));
-    std::filesystem::create_directories(root);
+    if (argc == 6 && std::string(argv[1]) == "--live-case" &&
+        std::string(argv[4]) == "--iterations")
+        return runLive(argv[2], std::stoi(argv[5]), argv[3]);
+    require(argc == 1,
+            "usage: no arguments, --validate-live-cases FILE, or "
+            "--live-cases FILE --iterations 1|5, or "
+            "--live-case FILE NAME --iterations 1|5");
+    UniqueTempDirectory temporary("osgsol-science-http-range");
+    const std::filesystem::path root = temporary.path();
     const std::filesystem::path fixture = root / "alphaearth-range-fixture.tif";
     const std::filesystem::path ready = root / "ready.txt";
     const std::filesystem::path log = root / "requests.jsonl";
@@ -471,7 +1423,11 @@ int main(int argc, char** argv)
 
     ServerProcess server = startServer(fixture, ready, log);
     const int port = waitForPort(ready);
-    configureRangeAccess();
+    ScopedGdalConfig config(rangeAccessConfig());
+    verifyRangeAccessConfig();
+    VSINetworkStatsReset();
+    DebugCapture capture;
+    ScopedGdalErrorCapture errorCapture(capture);
     const std::string url = "/vsicurl/http://127.0.0.1:" + std::to_string(port) +
         "/alphaearth-range-fixture.tif";
     GDALDataset* dataset = static_cast<GDALDataset*>(GDALOpenEx(
@@ -486,8 +1442,29 @@ int main(int argc, char** argv)
                               3, WINDOW_SIZE * 3, 1, nullptr) == CE_None,
             "bounded RGB window read failed");
     GDALClose(dataset);
+    const std::string statsJson = requireNetworkStatsEvidence();
+    writeRawTransportEvidence("local", capture, statsJson);
+    const HttpProof proof = buildHttpProof(capture, statsJson);
     server.stop();
-    verifyLog(log, sourceSize);
-    std::filesystem::remove_all(root);
+    const LocalServerEvidence local = verifyLog(log, sourceSize);
+    require(local.getCount == proof.actualGetCount &&
+            local.headCount == proof.actualHeadCount &&
+            local.committedBytes == proof.actualHttpBodyBytes &&
+            proof.actualHttpBodyBytes <= TRANSFER_BUDGET,
+            "local server, curl headers, and VSINetworkStats evidence disagree");
+    writeParsedProof("local", proof);
     return 0;
+}
+
+int main(int argc, char** argv)
+{
+    try
+    {
+        return runMain(argc, argv);
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "ScienceHttpRanges failure: " << error.what() << std::endl;
+        return 1;
+    }
 }

@@ -21,40 +21,61 @@ class RangeState:
         self.source_size = source_path.stat().st_size
         self.log_path = log_path
         self.budget = budget
-        self.bytes_sent = 0
+        self.committed_bytes = 0
         self.reserved_bytes = 0
         self.violations = []
+        self.next_request_id = 1
         self.lock = threading.Lock()
 
-    def record(self, method, uri, range_header, response_code, bytes_sent,
-               violation=None, reserved=False):
+    def write_entry_locked(self, entry):
+        with self.log_path.open("a", encoding="utf-8") as stream:
+            json.dump(entry, stream, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+
+    def begin(self, method, uri, range_header):
         with self.lock:
-            if reserved:
-                self.reserved_bytes -= bytes_sent
-            else:
-                self.bytes_sent += bytes_sent
+            request_id = self.next_request_id
+            self.next_request_id += 1
+            self.write_entry_locked({
+                "event": "request_start",
+                "request_id": request_id,
+                "method": method,
+                "uri": uri,
+                "range": range_header,
+                "source_size": self.source_size,
+            })
+            return request_id
+
+    def complete(self, request_id, method, uri, range_header, response_code,
+                 planned_bytes, actual_bytes_sent, reserved_bytes=0,
+                 violation=None, partial_write=False):
+        with self.lock:
+            self.reserved_bytes -= reserved_bytes
+            if self.reserved_bytes < 0:
+                raise RuntimeError("reserved-byte accounting underflow")
+            self.committed_bytes += actual_bytes_sent
             if violation:
                 self.violations.append(violation)
-            entry = {
+            self.write_entry_locked({
+                "event": "request_complete",
+                "request_id": request_id,
                 "method": method,
                 "uri": uri,
                 "range": range_header,
                 "response_code": response_code,
-                "bytes_sent": bytes_sent,
-                "total_bytes_sent": self.bytes_sent,
+                "planned_bytes": planned_bytes,
+                "actual_bytes_sent": actual_bytes_sent,
+                "total_committed_bytes": self.committed_bytes,
                 "source_size": self.source_size,
                 "violation": violation,
-            }
-            with self.log_path.open("a", encoding="utf-8") as stream:
-                json.dump(entry, stream, sort_keys=True)
-                stream.write("\n")
-                stream.flush()
+                "partial_write": partial_write,
+            })
 
     def reserve(self, amount):
         with self.lock:
-            if self.bytes_sent + self.reserved_bytes + amount > self.budget:
+            if self.committed_bytes + self.reserved_bytes + amount > self.budget:
                 return False
-            self.bytes_sent += amount
             self.reserved_bytes += amount
             return True
 
@@ -70,69 +91,97 @@ class StrictRangeHandler(http.server.BaseHTTPRequestHandler):
         path = unquote(urlsplit(self.path).path)
         return path == "/" + self.state.source_path.name
 
-    def send_empty(self, response_code, violation=None):
-        self.send_response(response_code)
-        self.send_header("Content-Length", "0")
-        self.send_header("Accept-Ranges", "bytes")
-        self.end_headers()
-        self.state.record(
-            self.command, self.path, self.headers.get("Range"), response_code, 0,
-            violation)
+    def send_empty(self, request_id, response_code, violation=None):
+        partial_write = False
+        try:
+            self.send_response(response_code)
+            self.send_header("Content-Length", "0")
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionError, OSError) as error:
+            partial_write = True
+            violation = "response_write_failed:{}".format(type(error).__name__)
+        self.state.complete(
+            request_id, self.command, self.path, self.headers.get("Range"),
+            response_code, 0, 0, violation=violation,
+            partial_write=partial_write)
 
     def do_HEAD(self):
+        request_id = self.state.begin("HEAD", self.path, self.headers.get("Range"))
         if not self.fixture_request():
-            self.send_empty(404, "unexpected_uri")
+            self.send_empty(request_id, 404, "unexpected_uri")
             return
-        self.send_response(200)
-        self.send_header("Content-Length", str(self.state.source_size))
-        self.send_header("Accept-Ranges", "bytes")
-        self.end_headers()
-        self.state.record("HEAD", self.path, self.headers.get("Range"), 200, 0)
+        partial_write = False
+        violation = None
+        try:
+            self.send_response(200)
+            self.send_header("Content-Length", str(self.state.source_size))
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionError, OSError) as error:
+            partial_write = True
+            violation = "response_write_failed:{}".format(type(error).__name__)
+        self.state.complete(
+            request_id, "HEAD", self.path, self.headers.get("Range"), 200,
+            0, 0, violation=violation, partial_write=partial_write)
 
     def do_GET(self):
+        request_id = self.state.begin("GET", self.path, self.headers.get("Range"))
         if not self.fixture_request():
-            self.send_empty(404, "unexpected_uri")
+            self.send_empty(request_id, 404, "unexpected_uri")
             return
 
         range_header = self.headers.get("Range")
         if range_header is None:
-            self.send_empty(412, "missing_range")
+            self.send_empty(request_id, 412, "missing_range")
             return
         if "," in range_header:
-            self.send_empty(400, "comma_multirange")
+            self.send_empty(request_id, 400, "comma_multirange")
             return
         match = RANGE_PATTERN.fullmatch(range_header)
         if not match:
-            self.send_empty(400, "invalid_range")
+            self.send_empty(request_id, 400, "invalid_range")
             return
 
         start = int(match.group(1))
         requested_end = int(match.group(2)) if match.group(2) else self.state.source_size - 1
         if start >= self.state.source_size or requested_end < start:
-            self.send_response(416)
-            self.send_header("Content-Range", "bytes */{}".format(self.state.source_size))
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            self.state.record("GET", self.path, range_header, 416, 0, "invalid_range")
+            self.send_empty(request_id, 416, "invalid_range")
             return
         end = min(requested_end, self.state.source_size - 1)
         length = end - start + 1
         if not self.state.reserve(length):
-            self.send_empty(509, "budget_exceeded")
+            self.send_empty(request_id, 509, "budget_exceeded")
             return
 
-        self.send_response(206)
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Content-Range", "bytes {}-{}/{}".format(
-            start, end, self.state.source_size))
-        self.send_header("Content-Length", str(length))
-        self.send_header("Content-Type", "image/tiff")
-        self.end_headers()
-        with self.state.source_path.open("rb") as stream:
-            stream.seek(start)
-            payload = stream.read(length)
-        self.wfile.write(payload)
-        self.state.record("GET", self.path, range_header, 206, len(payload), reserved=True)
+        actual_bytes_sent = 0
+        violation = None
+        partial_write = False
+        try:
+            self.send_response(206)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Range", "bytes {}-{}/{}".format(
+                start, end, self.state.source_size))
+            self.send_header("Content-Length", str(length))
+            self.send_header("Content-Type", "image/tiff")
+            self.end_headers()
+            with self.state.source_path.open("rb") as stream:
+                stream.seek(start)
+                payload = stream.read(length)
+            if len(payload) != length:
+                raise OSError("short fixture read")
+            self.wfile.write(payload)
+            self.wfile.flush()
+            actual_bytes_sent = len(payload)
+        except (BrokenPipeError, ConnectionError, OSError) as error:
+            partial_write = True
+            violation = "partial_write:{}".format(type(error).__name__)
+        self.state.complete(
+            request_id, "GET", self.path, range_header, 206, length,
+            actual_bytes_sent, reserved_bytes=length, violation=violation,
+            partial_write=partial_write)
 
 
 def parse_arguments():

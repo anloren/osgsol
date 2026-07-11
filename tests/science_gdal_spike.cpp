@@ -7,13 +7,19 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <cpl_conv.h>
 #include <cpl_string.h>
+#include <cpl_vsi.h>
 #include <gdal_frmts.h>
 #include <gdal_priv.h>
+#include <gdalwarper.h>
+#include <ogr_spatialref.h>
+#include <unistd.h>
 
 namespace
 {
@@ -23,14 +29,56 @@ namespace
 
     [[noreturn]] void fail(const std::string& message)
     {
-        std::cerr << "ScienceGdalSpike failure: " << message << std::endl;
-        std::exit(1);
+        throw std::runtime_error(message);
     }
 
     void require(bool condition, const std::string& message)
     {
         if (!condition) fail(message);
     }
+
+    class UniqueTempDirectory
+    {
+    public:
+        explicit UniqueTempDirectory(const std::string& prefix)
+        {
+            std::string pattern =
+                (std::filesystem::temp_directory_path() / (prefix + "-XXXXXX")).string();
+            std::vector<char> buffer(pattern.begin(), pattern.end());
+            buffer.push_back('\0');
+            char* result = mkdtemp(buffer.data());
+            require(result != nullptr, "mkdtemp failed");
+            _path = result;
+        }
+
+        ~UniqueTempDirectory()
+        {
+            std::error_code ignored;
+            std::filesystem::remove_all(_path, ignored);
+        }
+
+        const std::filesystem::path& path() const { return _path; }
+
+        UniqueTempDirectory(const UniqueTempDirectory&) = delete;
+        UniqueTempDirectory& operator=(const UniqueTempDirectory&) = delete;
+
+    private:
+        std::filesystem::path _path;
+    };
+
+    class ScopedVsiPath
+    {
+    public:
+        explicit ScopedVsiPath(std::string path) : _path(std::move(path)) {}
+        ~ScopedVsiPath() { VSIUnlink(_path.c_str()); }
+        const std::string& path() const { return _path; }
+
+        ScopedVsiPath(const ScopedVsiPath&) = delete;
+        ScopedVsiPath& operator=(const ScopedVsiPath&) = delete;
+
+    private:
+        std::string _path;
+    };
 
     std::string bandName(int zeroBasedBand)
     {
@@ -72,7 +120,9 @@ namespace
             for (int x = 0; x < FIXTURE_SIZE; ++x)
             {
                 int value = ((zeroBasedBand * 11 + x * 3 + y * 5) % 255) - 127;
-                if (zeroBasedBand == 1 && x == 20)
+                if (zeroBasedBand == 1 && x >= 64 && x < 128 && y >= 64 && y < 128)
+                    value = 42;
+                else if (zeroBasedBand == 1 && x == 20)
                     value = (y == 0) ? -127 : y - 128;
                 values[y * FIXTURE_SIZE + x] = static_cast<std::int8_t>(value);
             }
@@ -109,8 +159,18 @@ namespace
         require(dataset != nullptr, "failed to create the signed-int8 ZSTD fixture");
 
         const double southUpTransform[6] = {100.0, 1.0, 0.0, 200.0, 0.0, 1.0};
-        require(dataset->SetGeoTransform(const_cast<double*>(southUpTransform)) == CE_None,
+        require(dataset->SetGeoTransform(southUpTransform) == CE_None,
                 "failed to assign the fixture geotransform");
+        OGRSpatialReference spatialReference;
+        spatialReference.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        require(spatialReference.importFromEPSG(3857) == OGRERR_NONE,
+                "failed to create fixture spatial reference");
+        char* projection = nullptr;
+        require(spatialReference.exportToWkt(&projection) == OGRERR_NONE && projection,
+                "failed to serialize fixture spatial reference");
+        require(dataset->SetProjection(projection) == CE_None,
+                "failed to assign fixture spatial reference");
+        CPLFree(projection);
 
         for (int zeroBasedBand = 0; zeroBasedBand < BAND_COUNT; ++zeroBasedBand)
         {
@@ -133,51 +193,41 @@ namespace
         GDALClose(dataset);
     }
 
-    std::string xmlEscape(const std::string& value)
+    void exerciseMemDriver()
     {
-        std::string escaped;
-        for (char character : value)
-        {
-            if (character == '&') escaped += "&amp;";
-            else if (character == '<') escaped += "&lt;";
-            else if (character == '>') escaped += "&gt;";
-            else if (character == '\"') escaped += "&quot;";
-            else escaped += character;
-        }
-        return escaped;
+        GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("MEM");
+        require(driver != nullptr, "MEM driver lookup failed");
+        GDALDataset* dataset = driver->Create("", 4, 4, 1, GDT_Int8, nullptr);
+        require(dataset != nullptr, "MEM dataset creation failed");
+        const std::vector<std::int8_t> expected = {
+            -7, -6, -5, -4, -3, -2, -1, 0,
+             1,  2,  3,  4,  5,  6,  7, 8,
+        };
+        std::vector<std::int8_t> actual(expected.size());
+        GDALRasterBand* band = dataset->GetRasterBand(1);
+        require(band->RasterIO(GF_Write, 0, 0, 4, 4,
+                               const_cast<std::int8_t*>(expected.data()), 4, 4,
+                               GDT_Int8, 0, 0, nullptr) == CE_None,
+                "MEM write failed");
+        require(band->RasterIO(GF_Read, 0, 0, 4, 4, actual.data(), 4, 4,
+                               GDT_Int8, 0, 0, nullptr) == CE_None &&
+                actual == expected, "MEM round-trip failed");
+        GDALClose(dataset);
     }
 
-    void createTrustedVerticalFlipVrt(const std::filesystem::path& source,
-                                      const std::filesystem::path& output)
+    void createTrustedVerticalFlipVrt(GDALDataset* source, const std::string& output)
     {
-        std::ofstream stream(output);
-        require(stream.good(), "failed to create the trusted VRT");
-        stream << "<VRTDataset rasterXSize=\"" << FIXTURE_SIZE
-               << "\" rasterYSize=\"" << FIXTURE_SIZE << "\">\n"
-               << "  <GeoTransform>100,1,0,456,0,-1</GeoTransform>\n";
-        const std::string escapedSource = xmlEscape(source.string());
-        for (int band = 1; band <= BAND_COUNT; ++band)
-        {
-            stream << "  <VRTRasterBand dataType=\"Int8\" band=\"" << band << "\">\n"
-                   << "    <Description>" << bandName(band - 1) << "</Description>\n"
-                   << "    <NoDataValue>" << NODATA_VALUE << "</NoDataValue>\n";
-            for (int sourceY = 0; sourceY < FIXTURE_SIZE; ++sourceY)
-            {
-                stream << "    <SimpleSource>\n"
-                       << "      <SourceFilename relativeToVRT=\"0\">" << escapedSource
-                       << "</SourceFilename>\n"
-                       << "      <SourceBand>" << band << "</SourceBand>\n"
-                       << "      <SrcRect xOff=\"0\" yOff=\"" << sourceY
-                       << "\" xSize=\"" << FIXTURE_SIZE << "\" ySize=\"1\"/>\n"
-                       << "      <DstRect xOff=\"0\" yOff=\""
-                       << (FIXTURE_SIZE - 1 - sourceY) << "\" xSize=\"" << FIXTURE_SIZE
-                       << "\" ySize=\"1\"/>\n"
-                       << "    </SimpleSource>\n";
-            }
-            stream << "  </VRTRasterBand>\n";
-        }
-        stream << "</VRTDataset>\n";
-        require(stream.good(), "failed to finish the trusted VRT");
+        GDALDataset* warped = static_cast<GDALDataset*>(GDALAutoCreateWarpedVRT(
+            source, source->GetProjectionRef(), source->GetProjectionRef(),
+            GRA_NearestNeighbour, 0.0, nullptr));
+        require(warped != nullptr, "failed to synthesize vertical-flip warped VRT");
+        GDALDriver* vrtDriver = GetGDALDriverManager()->GetDriverByName("VRT");
+        require(vrtDriver != nullptr, "VRT driver lookup failed");
+        GDALDataset* saved = vrtDriver->CreateCopy(
+            output.c_str(), warped, false, nullptr, nullptr, nullptr);
+        require(saved != nullptr, "failed to persist trusted VRT under /vsimem");
+        GDALClose(saved);
+        GDALClose(warped);
     }
 
     std::int8_t readInt8(GDALRasterBand* band, int x, int y)
@@ -227,12 +277,15 @@ namespace
                 "NoData and valid zero are not distinguished by the mask");
     }
 
-    void verifyOrientation(GDALDataset* vrt)
+    void verifyOrientation(GDALDataset* raw, GDALDataset* vrt)
     {
+        GDALRasterBand* rawA01 = raw->GetRasterBand(2);
         GDALRasterBand* a01 = vrt->GetRasterBand(2);
-        require(readInt8(a01, 20, 0) == 127,
+        require(readInt8(rawA01, 20, FIXTURE_SIZE - 1) == 127 &&
+                readInt8(a01, 20, 0) == 127,
                 "trusted VRT top row does not map from the source bottom row");
-        require(readInt8(a01, 20, FIXTURE_SIZE - 1) == -127,
+        require(readInt8(rawA01, 20, 0) == -127 &&
+                readInt8(a01, 20, FIXTURE_SIZE - 1) == -127,
                 "trusted VRT bottom row does not map from the source top row");
         double transform[6] = {};
         require(vrt->GetGeoTransform(transform) == CE_None && transform[5] == -1.0,
@@ -247,9 +300,9 @@ namespace
     {
         GDALRasterBand* a01 = dataset->GetRasterBand(2);
         require(a01->GetOverviewCount() == 2, "fixture overview pyramid is incomplete");
-        GDALRasterBand* overview = a01->GetOverview(1);
+        GDALRasterBand* overview = a01->GetRasterSampleOverview(16 * 16);
         require(overview && overview->GetXSize() == 64 && overview->GetYSize() == 64,
-                "4x overview was not selected for the bbox read");
+                "automatic sampling did not select the 4x overview");
 
         const int sourceX = 64, sourceY = 64, sourceSize = 64;
         const int overviewFactor = FIXTURE_SIZE / overview->GetXSize();
@@ -263,21 +316,28 @@ namespace
                                    window.data(), readSize, readSize, GDT_Int8,
                                    0, 0, nullptr) == CE_None,
                 "bounded overview/window read failed");
-        require(!window.empty(), "bounded overview/window read returned no samples");
+        require(std::all_of(window.begin(), window.end(),
+                            [](std::int8_t value) { return value == 42; }),
+                "automatic overview window returned incorrect pixels");
+        std::vector<std::int8_t> baseWindow(readSize * readSize);
+        require(a01->RasterIO(GF_Read, sourceX, sourceY, sourceSize, sourceSize,
+                              baseWindow.data(), readSize, readSize, GDT_Int8,
+                              0, 0, nullptr) == CE_None && baseWindow == window,
+                "base-band bbox resampling disagrees with the selected overview window");
     }
 }
 
-int main()
+int runMain()
 {
     registerScienceDrivers();
-    const std::filesystem::path root = std::filesystem::temp_directory_path() /
-        ("osgsol-science-gdal-spike-" + std::to_string(std::rand()));
-    std::filesystem::create_directories(root);
+    exerciseMemDriver();
+    UniqueTempDirectory temporary("osgsol-science-gdal-spike");
+    const std::filesystem::path root = temporary.path();
     const std::filesystem::path cogPath = root / "alphaearth-mini.tif";
-    const std::filesystem::path vrtPath = root / "alphaearth-mini-flip.vrt";
+    ScopedVsiPath vrtPath("/vsimem/osgsol-alphaearth-mini-flip-" +
+                          std::to_string(getpid()) + ".vrt");
 
     createFixture(cogPath);
-    createTrustedVerticalFlipVrt(cogPath, vrtPath);
 
     GDALDataset* cog = static_cast<GDALDataset*>(
         GDALOpenEx(cogPath.string().c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
@@ -291,18 +351,31 @@ int main()
             "fixture compression is not ZSTD");
     verifyRgbAndMask(cog);
     verifyBoundedOverviewWindow(cog);
+    createTrustedVerticalFlipVrt(cog, vrtPath.path());
 
     GDALDataset* vrt = static_cast<GDALDataset*>(
-        GDALOpenEx(vrtPath.string().c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
+        GDALOpenEx(vrtPath.path().c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
                    nullptr, nullptr, nullptr));
     require(vrt != nullptr && std::string(vrt->GetDriverName()) == "VRT",
             "trusted vertical-flip VRT did not open");
-    verifyOrientation(vrt);
+    verifyOrientation(cog, vrt);
 
     GDALClose(vrt);
     GDALClose(cog);
-    std::filesystem::remove_all(root);
     std::cout << "ScienceGdalSpike: 64-band Int8/ZSTD, RGB, mask, orientation, and "
                  "overview window verified" << std::endl;
     return 0;
+}
+
+int main()
+{
+    try
+    {
+        return runMain();
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "ScienceGdalSpike failure: " << error.what() << std::endl;
+        return 1;
+    }
 }

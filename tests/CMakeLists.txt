@@ -217,37 +217,54 @@ IF(BUILD_TESTING)
             MESSAGE(FATAL_ERROR "Python 3 is required for the instrumented range test")
         ENDIF()
 
-        IF(APPLE)
-            EXECUTE_PROCESS(COMMAND xcrun --show-sdk-path
-                OUTPUT_VARIABLE OSGSOL_SCIENCE_SDK_ROOT
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                RESULT_VARIABLE OSGSOL_SCIENCE_XCRUN_RESULT)
-            IF(NOT OSGSOL_SCIENCE_XCRUN_RESULT EQUAL 0)
-                MESSAGE(FATAL_ERROR "xcrun could not locate the active macOS SDK")
-            ENDIF()
-            SET(CURL_INCLUDE_DIR "${OSGSOL_SCIENCE_SDK_ROOT}/usr/include" CACHE PATH "" FORCE)
-            SET(CURL_LIBRARY "${OSGSOL_SCIENCE_SDK_ROOT}/usr/lib/libcurl.tbd"
-                CACHE FILEPATH "" FORCE)
-            SET(SQLite3_INCLUDE_DIR "${OSGSOL_SCIENCE_SDK_ROOT}/usr/include"
-                CACHE PATH "" FORCE)
-            SET(SQLite3_LIBRARY "${OSGSOL_SCIENCE_SDK_ROOT}/usr/lib/libsqlite3.tbd"
-                CACHE FILEPATH "" FORCE)
+        IF(NOT APPLE)
+            MESSAGE(FATAL_ERROR
+                "The verified Task 3 private dependency prefix currently targets macOS")
         ENDIF()
-        SET(PROJ_DIR "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/cmake/proj" CACHE PATH "" FORCE)
-        SET(zstd_DIR "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/cmake/zstd" CACHE PATH "" FORCE)
-        SET(ZSTD_DIR "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/cmake/zstd" CACHE PATH "" FORCE)
-        SET(GDAL_DIR "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/cmake/gdal" CACHE PATH "" FORCE)
-        FIND_PACKAGE(CURL 7.68 REQUIRED)
-        FIND_PACKAGE(SQLite3 REQUIRED)
-        FIND_PACKAGE(PROJ CONFIG REQUIRED NO_DEFAULT_PATH)
-        FIND_PACKAGE(zstd CONFIG REQUIRED NO_DEFAULT_PATH)
-        FIND_PACKAGE(GDAL CONFIG REQUIRED NO_DEFAULT_PATH)
+        EXECUTE_PROCESS(COMMAND xcrun --show-sdk-path
+            OUTPUT_VARIABLE OSGSOL_SCIENCE_SDK_ROOT
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE OSGSOL_SCIENCE_XCRUN_RESULT)
+        IF(NOT OSGSOL_SCIENCE_XCRUN_RESULT EQUAL 0)
+            MESSAGE(FATAL_ERROR "xcrun could not locate the active macOS SDK")
+        ENDIF()
+        SET(_OSGSOL_SCIENCE_GDAL_ARCHIVE
+            "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libgdal.a")
+        SET(_OSGSOL_SCIENCE_PROJ_ARCHIVE
+            "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libproj.a")
+        SET(_OSGSOL_SCIENCE_ZSTD_ARCHIVE
+            "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libzstd.a")
+        SET(_OSGSOL_SCIENCE_CURL_STUB
+            "${OSGSOL_SCIENCE_SDK_ROOT}/usr/lib/libcurl.tbd")
+        SET(_OSGSOL_SCIENCE_SQLITE_STUB
+            "${OSGSOL_SCIENCE_SDK_ROOT}/usr/lib/libsqlite3.tbd")
+        FOREACH(_OSGSOL_SCIENCE_LIBRARY
+                ${_OSGSOL_SCIENCE_GDAL_ARCHIVE}
+                ${_OSGSOL_SCIENCE_PROJ_ARCHIVE}
+                ${_OSGSOL_SCIENCE_ZSTD_ARCHIVE}
+                ${_OSGSOL_SCIENCE_CURL_STUB}
+                ${_OSGSOL_SCIENCE_SQLITE_STUB})
+            IF(NOT EXISTS "${_OSGSOL_SCIENCE_LIBRARY}")
+                MESSAGE(FATAL_ERROR
+                    "ScienceEarth test dependency is missing: ${_OSGSOL_SCIENCE_LIBRARY}")
+            ENDIF()
+        ENDFOREACH()
+        ADD_LIBRARY(osgSolScienceGdalTestDeps INTERFACE)
+        TARGET_INCLUDE_DIRECTORIES(osgSolScienceGdalTestDeps INTERFACE
+                                   "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
+        TARGET_LINK_LIBRARIES(osgSolScienceGdalTestDeps INTERFACE
+            "${_OSGSOL_SCIENCE_GDAL_ARCHIVE}"
+            "${_OSGSOL_SCIENCE_CURL_STUB}"
+            "${_OSGSOL_SCIENCE_ZSTD_ARCHIVE}"
+            "${_OSGSOL_SCIENCE_PROJ_ARCHIVE}"
+            m dl "${_OSGSOL_SCIENCE_SQLITE_STUB}")
 
         ADD_EXECUTABLE(osgVerse_Test_ScienceGdalSpike science_gdal_spike.cpp)
         TARGET_COMPILE_FEATURES(osgVerse_Test_ScienceGdalSpike PRIVATE cxx_std_17)
         TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_ScienceGdalSpike PRIVATE
                                    "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
-        TARGET_LINK_LIBRARIES(osgVerse_Test_ScienceGdalSpike PRIVATE GDAL::GDAL)
+        TARGET_LINK_LIBRARIES(osgVerse_Test_ScienceGdalSpike PRIVATE
+                              osgSolScienceGdalTestDeps)
         SET_PROPERTY(TARGET osgVerse_Test_ScienceGdalSpike PROPERTY FOLDER "TESTS")
         ADD_TEST(NAME osgVerse_Test_ScienceGdalSpike
                  COMMAND $<TARGET_FILE:osgVerse_Test_ScienceGdalSpike>)
@@ -259,10 +276,12 @@ IF(BUILD_TESTING)
         TARGET_COMPILE_FEATURES(osgVerse_Test_ScienceHttpRanges PRIVATE cxx_std_17)
         TARGET_COMPILE_DEFINITIONS(osgVerse_Test_ScienceHttpRanges PRIVATE
             OSGSOL_PYTHON3="${OSGSOL_PYTHON3_EXECUTABLE}"
-            OSGSOL_SCIENCE_RANGE_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/science_http_range_server.py")
+            OSGSOL_SCIENCE_RANGE_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/science_http_range_server.py"
+            OSGSOL_SCIENCE_EVIDENCE_DIR="${CMAKE_BINARY_DIR}/science-network-evidence")
         TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_ScienceHttpRanges PRIVATE
                                    "${PROJECT_SOURCE_DIR}/3rdparty")
-        TARGET_LINK_LIBRARIES(osgVerse_Test_ScienceHttpRanges PRIVATE GDAL::GDAL)
+        TARGET_LINK_LIBRARIES(osgVerse_Test_ScienceHttpRanges PRIVATE
+                              osgSolScienceGdalTestDeps)
         SET_PROPERTY(TARGET osgVerse_Test_ScienceHttpRanges PROPERTY FOLDER "TESTS")
         ADD_TEST(NAME osgVerse_Test_ScienceHttpRanges
                  COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>)
@@ -282,7 +301,7 @@ IF(BUILD_TESTING)
 
         ADD_LIBRARY(osgdb_science_g0_probe MODULE science_gdal_probe_plugin.cpp)
         TARGET_COMPILE_FEATURES(osgdb_science_g0_probe PRIVATE cxx_std_17)
-        TARGET_LINK_LIBRARIES(osgdb_science_g0_probe PRIVATE GDAL::GDAL)
+        TARGET_LINK_LIBRARIES(osgdb_science_g0_probe PRIVATE osgSolScienceGdalTestDeps)
         SET_TARGET_PROPERTIES(osgdb_science_g0_probe PROPERTIES
             PREFIX ""
             SUFFIX ".so"

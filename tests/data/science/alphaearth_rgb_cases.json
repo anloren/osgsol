@@ -1,28 +1,36 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source_index_url": "https://data.source.coop/tge-labs/aef/v1/annual/aef_index.parquet",
+  "source_index_sha256": "f738e7d274ad582e56e20a3a8b444c6f2a3ece5781f8f9855bb7ca3d9ed2942f",
   "selection_date": "2026-07-12",
   "vrt_strategy": "synthesize_vertical_flip",
   "rgb_bands": ["A01", "A16", "A09"],
   "dequantization": "sign(v) * pow(abs(v) / 127.5, 2)",
+  "record_fingerprint_algorithm": "sha256",
+  "record_fingerprint_domain": "osgsol.aef.raw-index-record.v1",
+  "record_fingerprint_canonicalization": "json-sort-keys-compact-utf8-numeric-17g-v1",
   "cases": [
     {
       "name": "nvidia_hq",
-      "dataset_id": "9790",
+      "fid": "9790",
       "year": 2025,
+      "path": "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff",
+      "location": "VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff",
+      "record_fingerprint": "03956d76d3bc0d67c4f61608a1771ffb036a7e3ece6df326a2b52e66d412a0f1",
       "latitude": 37.3707,
       "longitude": -121.9631,
-      "bbox": [-122.07923449193419, 36.995882066705576, -121.14066509082407, 37.74491179716658],
-      "cog_url": "https://data.source.coop/tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff"
+      "bbox": [-122.07923449193419, 36.995882066705576, -121.14066509082407, 37.74491179716658]
     },
     {
       "name": "hong_kong",
-      "dataset_id": "181593",
+      "fid": "181593",
       "year": 2025,
+      "path": "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff",
+      "location": "VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff",
+      "record_fingerprint": "deded3c50b4a91db0fe3fe97691734c7fa5a802647c1571d28f75515587a59ff",
       "latitude": 22.3193,
       "longitude": 114.1694,
-      "bbox": [114.0, 22.1961523775654, 114.61611548102607, 22.945759067760623],
-      "cog_url": "https://data.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff"
+      "bbox": [114.0, 22.1961523775654, 114.61611548102607, 22.945759067760623]
     }
   ]
 }
