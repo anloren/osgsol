@@ -296,6 +296,14 @@ int main(int, char**)
             extractFunctionBody(source, "void interpolateOne("));
         const std::string pick = normalizeCodeOnly(
             extractFunctionBody(source, "void pickAt("));
+        const std::string clearSelected = normalizeCodeOnly(
+            extractFunctionBody(source, "virtual void clearSelected("));
+        const std::string selectByNoradId = normalizeCodeOnly(
+            extractFunctionBody(source, "void selectByNoradIdInternal("));
+        const std::string sync = normalizeCodeOnly(
+            extractFunctionBody(source, "void syncIfDirty("));
+        const std::string rebuildOrbitLines = normalizeCodeOnly(
+            extractFunctionBody(source, "void rebuildOrbitLines("));
         const std::string handler = normalizeCodeOnly(
             extractFunctionBody(source, "virtual bool handle("));
         const std::string setCategory = normalizeCodeOnly(
@@ -304,6 +312,10 @@ int main(int, char**)
             extractFunctionBody(source, "void FetchThread::run()"));
         CHECK(!interpolate.empty());
         CHECK(!pick.empty());
+        CHECK(!clearSelected.empty());
+        CHECK(!selectByNoradId.empty());
+        CHECK(!sync.empty());
+        CHECK(!rebuildOrbitLines.empty());
         CHECK(!handler.empty());
         CHECK(!setCategory.empty());
         CHECK(!fetchRun.empty());
@@ -329,6 +341,42 @@ int main(int, char**)
         CHECK(handler.find("view->getFrameStamp()") != std::string::npos);
         CHECK(handler.find("frameStamp?frameStamp->getReferenceTime():0.0") != std::string::npos);
         CHECK(handler.find("_owner->pickAt(cam,ea.getX(),my,refTime);") != std::string::npos);
+
+        // Product semantics confirmed by the user on 2026-07-11.
+        // No valid selection means no trajectory and no footprint, including ISS/Tiangong.
+        const size_t invalidSelectionPos = rebuildOrbitLines.find("if(!sel.valid)return;");
+        CHECK(invalidSelectionPos != std::string::npos);
+        CHECK(rebuildOrbitLines.find("if(_catStation)for") == std::string::npos);
+        CHECK(rebuildOrbitLines.find("_allPrecise") == std::string::npos);
+        CHECK(rebuildOrbitLines.find("if(!isAlwaysShow(sel.noradId))") == std::string::npos);
+
+        // A click miss and hiding the owning category both clear the selection.
+        CHECK(pick.find("if(!cam||_visiblePrecise.empty()||!cam->getViewport())") !=
+              std::string::npos);
+        CHECK(pick.find("elseclearSelected();") != std::string::npos);
+        CHECK(setCategory.find(
+            "if(selected.valid&&selected.category==cat)clearSelected();") != std::string::npos);
+
+        // Draw/update invalidation is atomic; consuming it is one-shot.
+        CHECK(source.find("std::atomic<bool> _selectedOrbitDirty") != std::string::npos);
+        CHECK(clearSelected.find("_selected=SatelliteInfo();_selectedOrbitDirty=true;") !=
+              std::string::npos);
+        CHECK(sync.find("_selectedOrbitDirty.exchange(false)") != std::string::npos);
+        CHECK(sync.find("_selectedOrbitDirty=false") == std::string::npos);
+
+        // Selecting B replaces A's single selected snapshot/TLE pair. Orbit rebuilding consumes
+        // only that pair, so no A-owned or persistent category geometry can survive the rebuild.
+        const std::string replaceSelection =
+            "_selected=info;_selectedLine1=found->line1;_selectedLine2=found->line2;";
+        CHECK(selectByNoradId.find(replaceSelection) != std::string::npos);
+        const std::string selectedOrbit = "earthsat::buildOrbitVertices(line1,line2,tsince,180)";
+        const size_t selectedOrbitPos = rebuildOrbitLines.find(selectedOrbit);
+        CHECK(selectedOrbitPos != std::string::npos && invalidSelectionPos < selectedOrbitPos);
+        CHECK(rebuildOrbitLines.find("earthsat::buildOrbitVertices(", selectedOrbitPos + 1) ==
+              std::string::npos);
+        const size_t selectedFootprintPos = rebuildOrbitLines.find(
+            "earthsat::buildFootprintVertices(sel.latDeg,sel.lonDeg,radiusKm,64)");
+        CHECK(selectedFootprintPos != std::string::npos && invalidSelectionPos < selectedFootprintPos);
 
         const size_t preciseCategories = setCategory.find(
             "cat==SatCategory::Station||cat==SatCategory::Navigation||"

@@ -302,8 +302,7 @@ namespace
     // (POISK/NAUKA/WENTIAN/MENGTIAN/SZ-21)、火箭残骸(FREGAT DEB)、ISS 释放的学生立方星
     // (HMU-SAT2/KNACKSAT-2/CORAL/...)共 23 个物体——这是 CelesTrak 官方分组口径本身如此,
     // 不是本模块分类错误。这 23 个都保留在「空间站」类目里(用户确认接受),但 ISS/天宫单独
-    // 放大+换色高亮,不然混在一堆同色点里认不出来。两个 ID 同时也是 rebuildOrbitLines() 里
-    // "默认常显轨道线"的白名单,两处保持同一个判据。
+    // 放大+换色高亮,不然混在一堆同色点里认不出来。
     bool isAlwaysShowSatellite(int noradId) { return noradId == 25544 || noradId == 48274; }
 
     osg::Geode* buildSatGeode(const std::vector<Satellite>& sats, osg::StateSet* sharedSS, float sizePx)
@@ -382,6 +381,11 @@ namespace
             case SatCategory::Starlink:   changed = (_catStarlink != on); _catStarlink = on; break;
             }
             if (!changed) return;
+            if (!on)
+            {
+                SatelliteInfo selected = getSelected();
+                if (selected.valid && selected.category == cat) clearSelected();
+            }
             if (cat == SatCategory::Station || cat == SatCategory::Navigation ||
                 cat == SatCategory::Weather)
             {
@@ -486,7 +490,11 @@ namespace
         // 屏幕拾取:相机 + 窗口鼠标坐标(y 向上)。选最近的前半球卫星(精选组)。仅主线程调用。
         void pickAt(osg::Camera* cam, float mx, float my, double refTime)
         {
-            if (_visiblePrecise.empty() || !cam->getViewport()) return;
+            if (!cam || _visiblePrecise.empty() || !cam->getViewport())
+            {
+                clearSelected();
+                return;
+            }
             osg::Vec3d eye, center, up; cam->getViewMatrixAsLookAt(eye, center, up);
             osg::Matrixd VPW = cam->getViewMatrix() * cam->getProjectionMatrix()
                              * cam->getViewport()->computeWindowMatrix();
@@ -503,6 +511,7 @@ namespace
                 if (d2 < (double)(tol*tol) && d2 < bestD2) { bestD2 = d2; best = (int)i; }
             }
             if (best >= 0) selectByNoradIdInternal(_visiblePrecise[best].noradId);
+            else clearSelected();
         }
 
         bool preciseFetchTriggered() const { return _preciseFetchTriggered; }
@@ -556,7 +565,7 @@ namespace
                     _starlinkErrorDetail = _pendingStarlinkErrorDetail;
                 }
             }
-            if (_selectedOrbitDirty) needRebuild = true;   // Task 4 Step 5 会用到:选中态变化也要重建
+            if (_selectedOrbitDirty.exchange(false)) needRebuild = true;
 
             if (!needRebuild) return;
             _rebuildNeeded = false;
@@ -587,13 +596,8 @@ namespace
             _starlinkGeode = buildSatGeode(_allStarlink, _ss.get(), kStarlinkSizePx);
             _starlinkRoot->addChild(_starlinkGeode.get());
 
-            // 无条件重建(不只在 _selectedOrbitDirty 时才画)——精选组每 1s 重新传播一次,
-            // 这里顺带把 ISS/天宫的常显轨道线也重算到最新;2-3 条轨道线×180 点 SGP4
-            // 重算相对于同一批卫星的逐帧点云更新而言开销可忽略,不需要额外的脏标记
-            // 精细控制。_selectedOrbitDirty 仍然保留:它的作用是让"点选/取消选中"能在
-            // 当帧就强制 needRebuild=true、立即反映,不用等下一次精选组数据到达
-            // (最多 1s 的延迟对交互来说不够跟手)。
-            _selectedOrbitDirty = false;
+            // 精选组每 1s 重新传播时也重算当前选中轨道;点选/取消选中的原子脏标记则让
+            // 交互在当帧强制 needRebuild=true,不用等待下一次精选组数据到达。
             rebuildOrbitLines();
         }
 
@@ -634,10 +638,6 @@ namespace
             _selectedOrbitDirty = true;   // 下一帧(主线程 update)重建该卫星的轨道线+足迹圆
         }
 
-        // 判据与 buildSatGeode() 的点渲染高亮共用同一个自由函数(isAlwaysShowSatellite),
-        // 避免 25544/48274 这两个 NORAD ID 在两处重复硬编码、将来改一处忘了改另一处。
-        static bool isAlwaysShow(int noradId) { return isAlwaysShowSatellite(noradId); }
-
         // 从"现在"起算的 tsince(分钟since该 TLE 自身历元),与 repropagate() 用的是
         // 同一手法——TLE 历元通常是数天前(CelesTrak 数据刷新周期),轨道线必须从
         // "现在"画起,不能从历元(tsince=0)画起,否则画的是"过去某一整圈"而非
@@ -655,33 +655,17 @@ namespace
         void rebuildOrbitLines()
         {
             _orbitRoot->removeChildren(0, _orbitRoot->getNumChildren());
-            // ISS/天宫是「空间站」类目——类目关闭(如"干净"预设清空所有层)时不画其常显轨道线。
-            // 否则 _allPrecise 里已抓到的数据不随类目关闭清空,轨道线会残留在场景里(真机验收 bug)。
-            if (_catStation) for (size_t i = 0; i < _allPrecise.size(); ++i)
-            {
-                if (!isAlwaysShow(_allPrecise[i].noradId)) continue;
-                double tsince = tsinceNow(_allPrecise[i].line1, _allPrecise[i].line2);
-                std::vector<osg::Vec3d> verts = earthsat::buildOrbitVertices(
-                    _allPrecise[i].line1, _allPrecise[i].line2, tsince, 180);
-                if (verts.size() < 2) continue;
-                osg::Geometry* g = earthgeo::buildPolylineGeometry(verts, osg::Vec4(0.4f, 0.9f, 1.0f, 1.0f));
-                osg::Geode* geode = new osg::Geode; geode->addDrawable(g);
-                _orbitRoot->addChild(geode);
-            }
             SatelliteInfo sel; std::string line1, line2;
             { OpenThreads::ScopedLock<OpenThreads::Mutex> lk(_selMutex);
               sel = _selected; line1 = _selectedLine1; line2 = _selectedLine2; }
             if (!sel.valid) return;
-            if (!isAlwaysShow(sel.noradId))   // 避免与上面常显的 ISS/天宫重复画同一条线
+            double tsince = tsinceNow(line1, line2);
+            std::vector<osg::Vec3d> verts = earthsat::buildOrbitVertices(line1, line2, tsince, 180);
+            if (verts.size() >= 2)
             {
-                double tsince = tsinceNow(line1, line2);
-                std::vector<osg::Vec3d> verts = earthsat::buildOrbitVertices(line1, line2, tsince, 180);
-                if (verts.size() >= 2)
-                {
-                    osg::Geometry* g = earthgeo::buildPolylineGeometry(verts, osg::Vec4(1.0f, 0.9f, 0.3f, 1.0f));
-                    osg::Geode* geode = new osg::Geode; geode->addDrawable(g);
-                    _orbitRoot->addChild(geode);
-                }
+                osg::Geometry* g = earthgeo::buildPolylineGeometry(verts, osg::Vec4(1.0f, 0.9f, 0.3f, 1.0f));
+                osg::Geode* geode = new osg::Geode; geode->addDrawable(g);
+                _orbitRoot->addChild(geode);
             }
             double radiusKm = earthsat::footprintRadiusKm(sel.altKm);
             std::vector<osg::Vec3d> ring = earthsat::buildFootprintVertices(sel.latDeg, sel.lonDeg, radiusKm, 64);
@@ -749,7 +733,8 @@ namespace
         OpenThreads::Mutex _mutex;
         bool _preciseDirty, _starlinkDirty, _rebuildNeeded;
         SatelliteInfo _selected; std::string _selectedLine1, _selectedLine2;
-        mutable OpenThreads::Mutex _selMutex; bool _selectedOrbitDirty = false;
+        mutable OpenThreads::Mutex _selMutex;
+        std::atomic<bool> _selectedOrbitDirty{false};
     public:
         FetchThread* _thread;
     };
