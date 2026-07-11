@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cerrno>
@@ -31,6 +32,7 @@
 #include <cpl_vsi_virtual.h>
 #include <gdal_frmts.h>
 #include <gdal_priv.h>
+#include <ogr_spatialref.h>
 #include <picojson.h>
 
 #ifndef OSGSOL_SCIENCE_RANGE_SERVER
@@ -59,19 +61,24 @@ namespace
         std::string datasetId;
         std::string rawPath;
         std::string rawLocation;
+        std::string rawCrs;
+        std::string utmZone;
         std::string recordFingerprint;
         std::string url;
         int year = 0;
         double latitude = 0.0;
         double longitude = 0.0;
         std::vector<double> bbox;
+        std::vector<double> utmBbox;
     };
 
     struct LiveMeasurement
     {
         double milliseconds = 0.0;
         std::uint64_t successfulRangeBytes = 0;
+        std::uint64_t declaredTransientBytes = 0;
         std::uint64_t actualHttpBodyBytes = 0;
+        std::uint64_t conservativeBodyUpperBound = 0;
         std::uint64_t sourceSize = 0;
         int actualGetCount = 0;
         int actualHeadCount = 0;
@@ -91,14 +98,20 @@ namespace
         int statsGetOperationCount = 0;
         int statsHeadCount = 0;
         std::uint64_t successfulRangeBytes = 0;
-        std::uint64_t transientBodyBytes = 0;
+        std::uint64_t declaredTransientBytes = 0;
         std::uint64_t actualHttpBodyBytes = 0;
+        std::uint64_t conservativeBodyUpperBound = 0;
         std::uint64_t sourceSize = 0;
         std::uint64_t transferBudget = 0;
         int overviewFactor = 0;
         int rawWindowX = 0;
         int rawWindowY = 0;
         int rawWindowSize = 0;
+        std::string sourceCrs;
+        std::array<double, 6> geotransform = {};
+        std::array<double, 2> projectedPoint = {};
+        std::array<double, 2> rawPixel = {};
+        std::array<double, 4> verifiedWgs84Bbox = {};
         std::map<int, int> transientRetryCodes;
         std::vector<int> responseCodes;
     };
@@ -403,11 +416,13 @@ namespace
             std::uint64_t plannedBytes = 0;
             std::uint64_t actualBytes = 0;
             std::uint64_t totalCommittedBytes = 0;
+            std::uint64_t totalReservedBytes = 0;
             bool partialWrite = false;
             bool violation = false;
         };
         std::map<int, RequestRecord> requests;
         std::uint64_t totalBytes = 0;
+        std::uint64_t finalReservedBytes = 0;
         LocalServerEvidence evidence;
         std::string line;
         while (std::getline(stream, line))
@@ -443,6 +458,9 @@ namespace
                     field(object, "actual_bytes_sent").get<double>());
                 request.totalCommittedBytes = static_cast<std::uint64_t>(
                     field(object, "total_committed_bytes").get<double>());
+                request.totalReservedBytes = static_cast<std::uint64_t>(
+                    field(object, "total_reserved_bytes").get<double>());
+                finalReservedBytes = request.totalReservedBytes;
                 request.partialWrite = field(object, "partial_write").get<bool>();
                 request.violation = !field(object, "violation").is<picojson::null>();
             }
@@ -485,6 +503,8 @@ namespace
         require(totalBytes < sourceSize, "range transfer equaled the complete source file");
         require(maximumCommittedBytes == totalBytes,
                 "server committed-byte total does not match completed request bodies");
+        require(finalReservedBytes == 0,
+                "server retained reserved bytes after all requests completed");
         std::cout << "ScienceHttpRanges: requests=" << evidence.getCount
                   << " bytes=" << totalBytes << " budget=" << TRANSFER_BUDGET
                   << " source_size=" << sourceSize << std::endl;
@@ -539,8 +559,11 @@ namespace
                << "  \"stats_get_operation_count\": " << proof.statsGetOperationCount
                << ",\n  \"stats_head_count\": " << proof.statsHeadCount
                << ",\n  \"successful_range_bytes\": " << proof.successfulRangeBytes
-               << ",\n  \"transient_body_bytes\": " << proof.transientBodyBytes
+               << ",\n  \"declared_transient_bytes\": "
+               << proof.declaredTransientBytes
                << ",\n  \"actual_http_body_bytes\": " << proof.actualHttpBodyBytes
+               << ",\n  \"conservative_body_upper_bound_bytes\": "
+               << proof.conservativeBodyUpperBound
                << ",\n  \"source_size\": " << proof.sourceSize;
         if (proof.transferBudget > 0)
             stream << ",\n  \"transfer_budget_bytes\": " << proof.transferBudget;
@@ -557,7 +580,24 @@ namespace
             stream << ",\n  \"selected_overview_factor\": " << proof.overviewFactor
                    << ",\n  \"raw_window\": {\"x\":" << proof.rawWindowX
                    << ",\"y\":" << proof.rawWindowY
-                   << ",\"size\":" << proof.rawWindowSize << '}';
+                   << ",\"size\":" << proof.rawWindowSize << '}'
+                   << ",\n  \"source_crs\": \"" << proof.sourceCrs << "\""
+                   << ",\n  \"geotransform\": [";
+            for (std::size_t index = 0; index < proof.geotransform.size(); ++index)
+            {
+                if (index) stream << ',';
+                stream << std::setprecision(17) << proof.geotransform[index];
+            }
+            stream << "],\n  \"projected_point\": ["
+                   << proof.projectedPoint[0] << ',' << proof.projectedPoint[1]
+                   << "],\n  \"raw_pixel\": [" << proof.rawPixel[0] << ','
+                   << proof.rawPixel[1] << "],\n  \"verified_wgs84_bbox\": [";
+            for (std::size_t index = 0; index < proof.verifiedWgs84Bbox.size(); ++index)
+            {
+                if (index) stream << ',';
+                stream << proof.verifiedWgs84Bbox[index];
+            }
+            stream << ']';
         }
         stream << "\n}\n";
         return stream.str();
@@ -639,8 +679,8 @@ namespace
         const std::string error = picojson::parse(root, stream);
         require(error.empty(), "failed to parse live case fixture: " + error);
         const picojson::object& rootObject = objectValue(root, "live fixture root");
-        require(static_cast<int>(field(rootObject, "schema_version").get<double>()) == 2,
-                "live fixture schema must be version 2");
+        require(static_cast<int>(field(rootObject, "schema_version").get<double>()) == 3,
+                "live fixture schema must be version 3");
         require(field(rootObject, "source_index_sha256").get<std::string>() ==
                     "f738e7d274ad582e56e20a3a8b444c6f2a3ece5781f8f9855bb7ca3d9ed2942f",
                 "live fixture source-index checksum changed");
@@ -677,6 +717,8 @@ namespace
             item.datasetId = field(object, "fid").get<std::string>();
             item.rawPath = field(object, "path").get<std::string>();
             item.rawLocation = field(object, "location").get<std::string>();
+            item.rawCrs = field(object, "crs").get<std::string>();
+            item.utmZone = field(object, "utm_zone").get<std::string>();
             item.recordFingerprint =
                 field(object, "record_fingerprint").get<std::string>();
             item.year = static_cast<int>(field(object, "year").get<double>());
@@ -685,10 +727,17 @@ namespace
             const picojson::array& bbox = field(object, "bbox").get<picojson::array>();
             for (const picojson::value& coordinate : bbox)
                 item.bbox.push_back(coordinate.get<double>());
+            const picojson::array& utmBbox =
+                field(object, "utm_bbox").get<picojson::array>();
+            for (const picojson::value& coordinate : utmBbox)
+                item.utmBbox.push_back(coordinate.get<double>());
             require(item.bbox.size() == 4 && item.longitude >= item.bbox[0] &&
                     item.latitude >= item.bbox[1] && item.longitude <= item.bbox[2] &&
                     item.latitude <= item.bbox[3],
                     item.name + " point is outside its trusted tile bbox");
+            require(item.utmBbox.size() == 4 && item.utmBbox[2] > item.utmBbox[0] &&
+                    item.utmBbox[3] > item.utmBbox[1],
+                    item.name + " pinned UTM bounds are invalid");
             const std::string s3Prefix =
                 "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/";
             require(item.rawPath.rfind(s3Prefix, 0) == 0,
@@ -869,7 +918,7 @@ namespace
                         "transient response unexpectedly carried Content-Range");
                 require(contentLength != response.headers.end(),
                         "transient response omitted Content-Length body accounting");
-                proof.transientBodyBytes += std::stoull(contentLength->second);
+                proof.declaredTransientBytes += std::stoull(contentLength->second);
                 ++transientResponses[response.code];
                 continue;
             }
@@ -954,7 +1003,9 @@ namespace
                 "GET request count does not reconcile with successes and retries");
         proof.transientRetryCount = static_cast<int>(retryEvents.size());
         proof.transientRetryCodes = retryCodes;
-        proof.actualHttpBodyBytes = proof.successfulRangeBytes + proof.transientBodyBytes;
+        proof.actualHttpBodyBytes = proof.successfulRangeBytes;
+        proof.conservativeBodyUpperBound =
+            proof.successfulRangeBytes + proof.declaredTransientBytes;
         require(proof.actualGetCount > 0 && proof.successfulRangeBytes > 0 &&
                 proof.successfulRangeBytes < proof.sourceSize,
                 "HTTP proof is empty or equals the complete object");
@@ -1016,8 +1067,10 @@ namespace
         require(proof.actualGetCount == 2 && proof.actualHeadCount == 1 &&
                 proof.successfulGetCount == 1 && proof.transientRetryCount == 1 &&
                 proof.transientRetryCodes == std::map<int, int>({{500, 1}}) &&
-                proof.successfulRangeBytes == 10 && proof.transientBodyBytes == 17 &&
-                proof.actualHttpBodyBytes == 27 && proof.sourceSize == 1000,
+                proof.successfulRangeBytes == 10 &&
+                proof.declaredTransientBytes == 17 &&
+                proof.actualHttpBodyBytes == 10 &&
+                proof.conservativeBodyUpperBound == 27 && proof.sourceSize == 1000,
                 "proxy/retry/header parser regression fixture failed");
 
         const auto isRejected = [&stats](const DebugCapture& candidate)
@@ -1097,8 +1150,21 @@ namespace
                 multiplexedProof.successfulGetCount == 2 &&
                 multiplexedProof.transientRetryCount == 1 &&
                 multiplexedProof.successfulRangeBytes == 20 &&
-                multiplexedProof.actualHttpBodyBytes == 37,
+                multiplexedProof.declaredTransientBytes == 17 &&
+                multiplexedProof.actualHttpBodyBytes == 20 &&
+                multiplexedProof.conservativeBodyUpperBound == 37,
                 "out-of-order HTTP/2 multiplex retry regression fixture failed");
+
+        DebugCapture rangedGet200;
+        rangedGet200.messages.assign(capture.messages.begin(), capture.messages.begin() + 7);
+        rangedGet200.messages.push_back(
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\nHost: data.example\r\n"
+            "Range: bytes=0-999\r\n\r\n");
+        rangedGet200.messages.push_back("CURL_INFO_HEADER_IN: HTTP/2 200\r");
+        rangedGet200.messages.push_back("CURL_INFO_HEADER_IN: content-length: 1000\r");
+        rangedGet200.messages.push_back("CURL_INFO_HEADER_IN: \r");
+        require(isRejected(rangedGet200),
+                "HTTP parser accepted HTTP 200 for an emitted ranged GET");
 
         DebugCapture unknown;
         unknown.messages = capture.messages;
@@ -1114,28 +1180,306 @@ namespace
         int size = 256;
     };
 
-    PixelWindow derivePixelWindow(const LiveCase& item, int rasterSize)
+    struct GeoreferenceProof
     {
-        require(item.bbox.size() == 4 && rasterSize > 256,
-                "cannot derive pixel window from invalid bbox/raster size");
-        const double normalizedX =
-            (item.longitude - item.bbox[0]) / (item.bbox[2] - item.bbox[0]);
-        const double normalizedTopY =
-            (item.bbox[3] - item.latitude) / (item.bbox[3] - item.bbox[1]);
-        require(normalizedX >= 0.0 && normalizedX <= 1.0 &&
-                normalizedTopY >= 0.0 && normalizedTopY <= 1.0,
-                item.name + " normalized point is outside the raw bbox");
-        const int centerX = static_cast<int>(std::llround(
-            normalizedX * static_cast<double>(rasterSize - 1)));
-        const int centerY = static_cast<int>(std::llround(
-            normalizedTopY * static_cast<double>(rasterSize - 1)));
+        std::string crs;
+        std::array<double, 6> geotransform = {};
+        std::array<double, 2> projectedPoint = {};
+        std::array<double, 2> rawPixel = {};
+        std::array<double, 4> verifiedWgs84Bbox = {};
+    };
+
+    PixelWindow deriveGeoreferencedWindow(GDALDataset* dataset,
+                                          const LiveCase& item,
+                                          GeoreferenceProof* proof = nullptr);
+
+    void verifyGeoreferenceRegression()
+    {
+        GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("MEM");
+        require(driver != nullptr, "MEM driver is unavailable for georeference regression");
+        GDALDataset* dataset = driver->Create("", 8192, 8192, 0, GDT_Unknown, nullptr);
+        require(dataset != nullptr, "failed to create georeference regression dataset");
+        OGRSpatialReference spatialReference;
+        require(spatialReference.SetFromUserInput("EPSG:32610") == OGRERR_NONE &&
+                dataset->SetSpatialRef(&spatialReference) == CE_None,
+                "failed to assign georeference regression CRS");
+        double transform[] = {581920.0, 10.0, 0.0, 4096000.0, 0.0, 10.0};
+        require(dataset->SetGeoTransform(transform) == CE_None,
+                "failed to assign georeference regression transform");
+
+        LiveCase item;
+        item.name = "georef_regression";
+        item.rawCrs = "EPSG:32610";
+        item.utmZone = "10N";
+        item.longitude = -121.9631;
+        item.latitude = 37.3707;
+        item.utmBbox = {581920.0, 4096000.0, 663840.0, 4177920.0};
+        item.bbox = {-122.07923449193419, 36.995882066705576,
+                     -121.14066509082407, 37.74491179716658};
+
+        const PixelWindow window = deriveGeoreferencedWindow(dataset, item);
+        require(window.x == 860 && window.topDownY == 4012 && window.size == 256,
+                "georeferenced regression window changed");
+
+        const auto rejected = [dataset](const LiveCase& candidate)
+        {
+            try
+            {
+                static_cast<void>(deriveGeoreferencedWindow(dataset, candidate));
+                return false;
+            }
+            catch (const std::exception&)
+            {
+                return true;
+            }
+        };
+        LiveCase wrongCrs = item;
+        wrongCrs.rawCrs = "EPSG:32611";
+        require(rejected(wrongCrs), "georeference validation accepted a mismatched CRS");
+        LiveCase wrongTransform = item;
+        wrongTransform.utmBbox[0] += 10.0;
+        require(rejected(wrongTransform),
+                "georeference validation accepted a mismatched affine transform");
+        LiveCase wrongBbox = item;
+        wrongBbox.bbox[0] += 0.01;
+        require(rejected(wrongBbox),
+                "georeference validation accepted a mismatched WGS84 bbox");
+
+        require(spatialReference.SetFromUserInput("EPSG:32650") == OGRERR_NONE &&
+                dataset->SetSpatialRef(&spatialReference) == CE_None,
+                "failed to assign clipped georeference regression CRS");
+        double clippedTransform[] = {172320.0, 10.0, 0.0,
+                                     2457600.0, 0.0, 10.0};
+        require(dataset->SetGeoTransform(clippedTransform) == CE_None,
+                "failed to assign clipped georeference regression transform");
+        LiveCase clipped;
+        clipped.name = "clipped_georef_regression";
+        clipped.rawCrs = "EPSG:32650";
+        clipped.utmZone = "50N";
+        clipped.longitude = 114.1694;
+        clipped.latitude = 22.3193;
+        clipped.utmBbox = {172320.0, 2457600.0, 254240.0, 2539520.0};
+        clipped.bbox = {114.0, 22.1961523775654,
+                        114.61611548102607, 22.945759067760623};
+        const PixelWindow clippedWindow =
+            deriveGeoreferencedWindow(dataset, clipped);
+        require(clippedWindow.x == 3476 && clippedWindow.topDownY == 6732,
+                "area-of-use-clipped georeferenced window changed");
+        GDALClose(dataset);
+    }
+
+    struct GeographicPoint
+    {
+        double x = 0.0;
+        double y = 0.0;
+    };
+
+    template<typename Inside, typename Intersect>
+    std::vector<GeographicPoint> clipPolygon(
+        const std::vector<GeographicPoint>& input, Inside inside, Intersect intersect)
+    {
+        std::vector<GeographicPoint> output;
+        if (input.empty()) return output;
+        GeographicPoint previous = input.back();
+        bool previousInside = inside(previous);
+        for (const GeographicPoint& current : input)
+        {
+            const bool currentInside = inside(current);
+            if (currentInside != previousInside)
+                output.push_back(intersect(previous, current));
+            if (currentInside) output.push_back(current);
+            previous = current;
+            previousInside = currentInside;
+        }
+        return output;
+    }
+
+    std::vector<GeographicPoint> clipToAreaOfUse(
+        std::vector<GeographicPoint> polygon,
+        double west, double south, double east, double north)
+    {
+        const auto verticalIntersection = [](const GeographicPoint& first,
+                                             const GeographicPoint& second,
+                                             double x)
+        {
+            const double fraction = (x - first.x) / (second.x - first.x);
+            return GeographicPoint{x, first.y + fraction * (second.y - first.y)};
+        };
+        const auto horizontalIntersection = [](const GeographicPoint& first,
+                                               const GeographicPoint& second,
+                                               double y)
+        {
+            const double fraction = (y - first.y) / (second.y - first.y);
+            return GeographicPoint{first.x + fraction * (second.x - first.x), y};
+        };
+        polygon = clipPolygon(polygon,
+            [west](const GeographicPoint& point) { return point.x >= west; },
+            [west, &verticalIntersection](const GeographicPoint& first,
+                                          const GeographicPoint& second)
+            { return verticalIntersection(first, second, west); });
+        polygon = clipPolygon(polygon,
+            [east](const GeographicPoint& point) { return point.x <= east; },
+            [east, &verticalIntersection](const GeographicPoint& first,
+                                          const GeographicPoint& second)
+            { return verticalIntersection(first, second, east); });
+        polygon = clipPolygon(polygon,
+            [south](const GeographicPoint& point) { return point.y >= south; },
+            [south, &horizontalIntersection](const GeographicPoint& first,
+                                             const GeographicPoint& second)
+            { return horizontalIntersection(first, second, south); });
+        return clipPolygon(polygon,
+            [north](const GeographicPoint& point) { return point.y <= north; },
+            [north, &horizontalIntersection](const GeographicPoint& first,
+                                             const GeographicPoint& second)
+            { return horizontalIntersection(first, second, north); });
+    }
+
+    PixelWindow deriveGeoreferencedWindow(GDALDataset* dataset,
+                                          const LiveCase& item,
+                                          GeoreferenceProof* proof)
+    {
+        require(dataset != nullptr && item.utmBbox.size() == 4 &&
+                item.bbox.size() == 4,
+                "georeference validation requires complete pinned bounds");
+        const OGRSpatialReference* sourceSpatialReference = dataset->GetSpatialRef();
+        require(sourceSpatialReference != nullptr,
+                item.name + " source dataset has no CRS");
+        OGRSpatialReference projected(*sourceSpatialReference);
+        projected.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        const char* authority = projected.GetAuthorityName(nullptr);
+        const char* code = projected.GetAuthorityCode(nullptr);
+        const std::size_t separator = item.rawCrs.find(':');
+        require(separator != std::string::npos && authority && code &&
+                item.rawCrs.substr(0, separator) == authority &&
+                item.rawCrs.substr(separator + 1) == code,
+                item.name + " dataset CRS authority/code differs from pinned raw crs");
+        require(item.utmZone.size() >= 2 && item.utmZone.back() == 'N',
+                item.name + " pinned UTM zone is malformed");
+        const int zone = std::stoi(item.utmZone.substr(0, item.utmZone.size() - 1));
+        require(std::stoi(code) == 32600 + zone,
+                item.name + " UTM zone and CRS code disagree");
+
+        double geotransform[6] = {};
+        require(dataset->GetGeoTransform(geotransform) == CE_None,
+                item.name + " source dataset has no affine geotransform");
+        const std::array<double, 6> expected = {
+            item.utmBbox[0],
+            (item.utmBbox[2] - item.utmBbox[0]) / dataset->GetRasterXSize(),
+            0.0,
+            item.utmBbox[1],
+            0.0,
+            (item.utmBbox[3] - item.utmBbox[1]) / dataset->GetRasterYSize(),
+        };
+        for (int index = 0; index < 6; ++index)
+        {
+            const double tolerance = 1e-12 * std::max(1.0, std::abs(expected[index]));
+            require(std::abs(geotransform[index] - expected[index]) <= tolerance,
+                    item.name + " complete affine geotransform differs from UTM bounds");
+        }
+
+        OGRSpatialReference wgs84;
+        require(wgs84.SetFromUserInput("EPSG:4326") == OGRERR_NONE,
+                "failed to construct EPSG:4326");
+        wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        std::unique_ptr<OGRCoordinateTransformation,
+                        decltype(&OCTDestroyCoordinateTransformation)> toProjected(
+            OGRCreateCoordinateTransformation(&wgs84, &projected),
+            OCTDestroyCoordinateTransformation);
+        std::unique_ptr<OGRCoordinateTransformation,
+                        decltype(&OCTDestroyCoordinateTransformation)> toWgs84(
+            OGRCreateCoordinateTransformation(&projected, &wgs84),
+            OCTDestroyCoordinateTransformation);
+        require(toProjected && toWgs84,
+                item.name + " failed to create CRS transformations");
+
+        double projectedX = item.longitude;
+        double projectedY = item.latitude;
+        require(toProjected->Transform(1, &projectedX, &projectedY),
+                item.name + " failed to transform pinned lon/lat into source CRS");
+        double inverse[6] = {};
+        require(GDALInvGeoTransform(geotransform, inverse),
+                item.name + " affine geotransform is not invertible");
+        double rawPixelX = 0.0, rawPixelY = 0.0;
+        GDALApplyGeoTransform(inverse, projectedX, projectedY,
+                              &rawPixelX, &rawPixelY);
+        require(rawPixelX >= 0.0 && rawPixelY >= 0.0 &&
+                rawPixelX < dataset->GetRasterXSize() &&
+                rawPixelY < dataset->GetRasterYSize(),
+                item.name + " transformed point is outside the source raster");
+
+        constexpr int EDGE_SEGMENTS = 20;
+        std::vector<GeographicPoint> footprint;
+        footprint.reserve(EDGE_SEGMENTS * 4);
+        const int width = dataset->GetRasterXSize();
+        const int height = dataset->GetRasterYSize();
+        const auto addPoint = [&](double pixelX, double pixelY)
+        {
+            double x = 0.0, y = 0.0;
+            GDALApplyGeoTransform(geotransform, pixelX, pixelY, &x, &y);
+            footprint.push_back({x, y});
+        };
+        for (int step = 0; step < EDGE_SEGMENTS; ++step)
+            addPoint(width * step / static_cast<double>(EDGE_SEGMENTS), 0.0);
+        for (int step = 0; step < EDGE_SEGMENTS; ++step)
+            addPoint(width, height * step / static_cast<double>(EDGE_SEGMENTS));
+        for (int step = 0; step < EDGE_SEGMENTS; ++step)
+            addPoint(width * (EDGE_SEGMENTS - step) /
+                     static_cast<double>(EDGE_SEGMENTS), height);
+        for (int step = 0; step < EDGE_SEGMENTS; ++step)
+            addPoint(0.0, height * (EDGE_SEGMENTS - step) /
+                     static_cast<double>(EDGE_SEGMENTS));
+        std::vector<double> longitudes, latitudes;
+        longitudes.reserve(footprint.size());
+        latitudes.reserve(footprint.size());
+        for (const GeographicPoint& point : footprint)
+        {
+            longitudes.push_back(point.x);
+            latitudes.push_back(point.y);
+        }
+        require(toWgs84->Transform(static_cast<int>(footprint.size()),
+                                   longitudes.data(), latitudes.data()),
+                item.name + " failed to transform raster footprint to WGS84");
+        for (std::size_t index = 0; index < footprint.size(); ++index)
+            footprint[index] = {longitudes[index], latitudes[index]};
+        double areaWest = 0.0, areaSouth = 0.0, areaEast = 0.0, areaNorth = 0.0;
+        const char* areaName = nullptr;
+        require(projected.GetAreaOfUse(&areaWest, &areaSouth, &areaEast, &areaNorth,
+                                       &areaName),
+                item.name + " source CRS has no area-of-use bounds");
+        footprint = clipToAreaOfUse(footprint, areaWest, areaSouth,
+                                    areaEast, areaNorth);
+        require(!footprint.empty(), item.name + " clipped WGS84 footprint is empty");
+        std::array<double, 4> verifiedBbox = {
+            footprint[0].x, footprint[0].y, footprint[0].x, footprint[0].y};
+        for (const GeographicPoint& point : footprint)
+        {
+            verifiedBbox[0] = std::min(verifiedBbox[0], point.x);
+            verifiedBbox[1] = std::min(verifiedBbox[1], point.y);
+            verifiedBbox[2] = std::max(verifiedBbox[2], point.x);
+            verifiedBbox[3] = std::max(verifiedBbox[3], point.y);
+        }
+        for (int index = 0; index < 4; ++index)
+            require(std::abs(verifiedBbox[index] - item.bbox[index]) <= 1e-9,
+                    item.name + " transformed/clipped footprint bbox differs from index");
+
+        const int centerX = static_cast<int>(std::floor(rawPixelX));
+        const int rawCenterY = static_cast<int>(std::floor(rawPixelY));
+        const int topDownCenterY = height - 1 - rawCenterY;
         PixelWindow window;
-        window.x = std::max(0, std::min(rasterSize - window.size,
+        window.x = std::max(0, std::min(width - window.size,
                                        centerX - window.size / 2));
-        window.topDownY = std::max(0, std::min(rasterSize - window.size,
-                                              centerY - window.size / 2));
+        window.topDownY = std::max(0, std::min(height - window.size,
+                                              topDownCenterY - window.size / 2));
         window.x -= window.x % LIVE_OVERVIEW_FACTOR;
         window.topDownY -= window.topDownY % LIVE_OVERVIEW_FACTOR;
+        if (proof)
+        {
+            proof->crs = item.rawCrs;
+            std::copy(geotransform, geotransform + 6, proof->geotransform.begin());
+            proof->projectedPoint = {projectedX, projectedY};
+            proof->rawPixel = {rawPixelX, rawPixelY};
+            proof->verifiedWgs84Bbox = verifiedBbox;
+        }
         return window;
     }
 
@@ -1262,10 +1606,9 @@ namespace
         require(raw->GetRasterXSize() == 8192 && raw->GetRasterYSize() == 8192 &&
                 raw->GetRasterCount() == 64,
                 item.name + " is not the expected 8192x8192x64 tile");
-        const PixelWindow window = derivePixelWindow(item, raw->GetRasterXSize());
-        double rawTransform[6] = {};
-        require(raw->GetGeoTransform(rawTransform) == CE_None && rawTransform[5] > 0.0,
-                item.name + " raw COG is not the expected bottom-up source");
+        GeoreferenceProof georeference;
+        const PixelWindow window =
+            deriveGeoreferencedWindow(raw.get(), item, &georeference);
 
         const int bandMap[] = {2, 17, 10};
         const std::string bandNames[] = {"A01", "A16", "A09"};
@@ -1293,14 +1636,21 @@ namespace
         proof.rawWindowX = window.x;
         proof.rawWindowY = 8192 - window.topDownY - window.size;
         proof.rawWindowSize = window.size;
+        proof.sourceCrs = georeference.crs;
+        proof.geotransform = georeference.geotransform;
+        proof.projectedPoint = georeference.projectedPoint;
+        proof.rawPixel = georeference.rawPixel;
+        proof.verifiedWgs84Bbox = georeference.verifiedWgs84Bbox;
         proof.transferBudget = LIVE_TRANSFER_BUDGET;
-        require(proof.actualHttpBodyBytes <= proof.transferBudget &&
-                proof.actualHttpBodyBytes < proof.sourceSize,
-                item.name + " actual HTTP response bodies exceeded the live budget");
+        require(proof.conservativeBodyUpperBound <= proof.transferBudget &&
+                proof.conservativeBodyUpperBound < proof.sourceSize,
+                item.name + " conservative HTTP body bound exceeded the live budget");
         writeParsedProof(evidenceName, proof);
         LiveMeasurement measurement;
         measurement.successfulRangeBytes = proof.successfulRangeBytes;
+        measurement.declaredTransientBytes = proof.declaredTransientBytes;
         measurement.actualHttpBodyBytes = proof.actualHttpBodyBytes;
+        measurement.conservativeBodyUpperBound = proof.conservativeBodyUpperBound;
         measurement.sourceSize = proof.sourceSize;
         measurement.actualGetCount = proof.actualGetCount;
         measurement.actualHeadCount = proof.actualHeadCount;
@@ -1338,7 +1688,9 @@ namespace
             ++casesRun;
             std::vector<double> timings;
             std::uint64_t totalSuccessfulBytes = 0;
+            std::uint64_t totalDeclaredTransientBytes = 0;
             std::uint64_t totalActualBodyBytes = 0;
+            std::uint64_t totalConservativeBodyUpperBound = 0;
             std::uint64_t sourceSize = 0;
             int totalRetries = 0;
             std::set<int> responses;
@@ -1348,7 +1700,10 @@ namespace
                 LiveMeasurement measurement = runLiveIteration(item, iteration);
                 timings.push_back(measurement.milliseconds);
                 totalSuccessfulBytes += measurement.successfulRangeBytes;
+                totalDeclaredTransientBytes += measurement.declaredTransientBytes;
                 totalActualBodyBytes += measurement.actualHttpBodyBytes;
+                totalConservativeBodyUpperBound +=
+                    measurement.conservativeBodyUpperBound;
                 totalRetries += measurement.transientRetryCount;
                 for (const auto& retry : measurement.transientRetryCodes)
                     retryCodes[retry.first] += retry.second;
@@ -1363,6 +1718,10 @@ namespace
                           << measurement.successfulRangeBytes
                           << " actual_http_body_bytes="
                           << measurement.actualHttpBodyBytes
+                          << " declared_transient_bytes="
+                          << measurement.declaredTransientBytes
+                          << " conservative_body_upper_bound_bytes="
+                          << measurement.conservativeBodyUpperBound
                           << " http_gets=" << measurement.actualGetCount
                           << " successful_http_gets="
                           << measurement.successfulGetCount
@@ -1378,6 +1737,10 @@ namespace
                       << " p95_ms=" << percentile(timings, 0.95)
                       << " total_successful_range_bytes=" << totalSuccessfulBytes
                       << " total_actual_http_body_bytes=" << totalActualBodyBytes
+                      << " total_declared_transient_bytes="
+                      << totalDeclaredTransientBytes
+                      << " total_conservative_body_upper_bound_bytes="
+                      << totalConservativeBodyUpperBound
                       << " transient_retries=" << totalRetries
                       << " retry_codes=";
             for (const auto& retry : retryCodes)
@@ -1396,6 +1759,7 @@ int runMain(int argc, char** argv)
 {
     verifyHttpParserRegression();
     registerScienceRuntime();
+    verifyGeoreferenceRegression();
     if (argc == 3 && std::string(argv[1]) == "--validate-live-cases")
     {
         const std::vector<LiveCase> cases = loadLiveCases(argv[2]);

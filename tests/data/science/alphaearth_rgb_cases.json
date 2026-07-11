@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "source_index_url": "https://data.source.coop/tge-labs/aef/v1/annual/aef_index.parquet",
   "source_index_sha256": "f738e7d274ad582e56e20a3a8b444c6f2a3ece5781f8f9855bb7ca3d9ed2942f",
   "selection_date": "2026-07-12",
@@ -13,6 +13,9 @@
     {
       "name": "nvidia_hq",
       "fid": "9790",
+      "crs": "EPSG:32610",
+      "utm_zone": "10N",
+      "utm_bbox": [581920.0, 4096000.0, 663840.0, 4177920.0],
       "year": 2025,
       "path": "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff",
       "location": "VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff",
@@ -24,6 +27,9 @@
     {
       "name": "hong_kong",
       "fid": "181593",
+      "crs": "EPSG:32650",
+      "utm_zone": "50N",
+      "utm_bbox": [172320.0, 2457600.0, 254240.0, 2539520.0],
       "year": 2025,
       "path": "s3://us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff",
       "location": "VRT://vsis3/us-west-2.opendata.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff",

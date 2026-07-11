@@ -288,6 +288,14 @@ IF(BUILD_TESTING)
         SET_TESTS_PROPERTIES(osgVerse_Test_ScienceHttpRanges PROPERTIES
             LABELS "offline;scienceearth;network-local"
             TIMEOUT 120)
+        ADD_TEST(NAME osgSol_Test_ScienceHttpRangeServer
+            COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+                    "${OSGSOL_PYTHON3_EXECUTABLE}" -m unittest
+                    tests.science_http_range_server_tests -v)
+        SET_TESTS_PROPERTIES(osgSol_Test_ScienceHttpRangeServer PROPERTIES
+            LABELS "offline;scienceearth;network-local"
+            WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+            TIMEOUT 30)
         IF(OSGSOL_SCIENCE_NETWORK_TESTS)
             ADD_TEST(NAME osgVerse_Test_ScienceGdalLive
                 COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>

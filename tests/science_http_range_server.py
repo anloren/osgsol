@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlsplit
 
 
 RANGE_PATTERN = re.compile(r"^bytes=(\d+)-(\d*)$")
+WRITE_CHUNK_BYTES = 64 * 1024
 
 
 class RangeState:
@@ -67,6 +68,7 @@ class RangeState:
                 "planned_bytes": planned_bytes,
                 "actual_bytes_sent": actual_bytes_sent,
                 "total_committed_bytes": self.committed_bytes,
+                "total_reserved_bytes": self.reserved_bytes,
                 "source_size": self.source_size,
                 "violation": violation,
                 "partial_write": partial_write,
@@ -169,12 +171,17 @@ class StrictRangeHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             with self.state.source_path.open("rb") as stream:
                 stream.seek(start)
-                payload = stream.read(length)
-            if len(payload) != length:
-                raise OSError("short fixture read")
-            self.wfile.write(payload)
-            self.wfile.flush()
-            actual_bytes_sent = len(payload)
+                remaining = length
+                while remaining:
+                    payload = stream.read(min(remaining, WRITE_CHUNK_BYTES))
+                    if not payload:
+                        raise OSError("short fixture read")
+                    written = self.wfile.write(payload)
+                    if written != len(payload):
+                        raise OSError("short response write")
+                    self.wfile.flush()
+                    actual_bytes_sent += written
+                    remaining -= written
         except (BrokenPipeError, ConnectionError, OSError) as error:
             partial_write = True
             violation = "partial_write:{}".format(type(error).__name__)
