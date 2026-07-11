@@ -163,34 +163,47 @@ int main(int, char**)
         &metro, 1, 1, metroTile.x, metroTile.y, 15);
     CHECK(std::fabs(metro - 18.0f) < 1e-3f);
 
+    const double featherLongitudes[] = {114.34, 114.35, 114.36, 114.37, 114.38};
     float featherSamples[5];
+    bool foundIntermediateFeather = false;
     for (int i = 0; i < 5; ++i)
     {
-        const double lon = 114.35 + 0.005 * static_cast<double>(i);
-        const TmsTile tile = tmsTileForLonLat(lon, 22.38, 15);
+        const TmsTile tile = tmsTileForLonLat(featherLongitudes[i], 22.38, 15);
         featherSamples[i] = 40.0f;
         earthterrain::applyHongKongElevationFilter(
             &featherSamples[i], 1, 1, tile.x, tile.y, 15);
+        if (featherSamples[i] > 18.0f && featherSamples[i] < 40.0f)
+            foundIntermediateFeather = true;
     }
+    CHECK(std::fabs(featherSamples[0] - 18.0f) < 1e-3f);
+    CHECK(std::fabs(featherSamples[4] - 40.0f) < 1e-6f);
+    CHECK(foundIntermediateFeather);
     for (int i = 1; i < 5; ++i)
     {
         CHECK(featherSamples[i] >= featherSamples[i - 1]);
         CHECK(featherSamples[i] - featherSamples[i - 1] < 15.0f);
     }
 
-    const int descendantDepth = 2;
-    const TmsTile ancestorTile = tmsTileForLonLat(114.00, 22.38, 15);
-    const TmsTile descendantTile = {
-        (ancestorTile.x << descendantDepth) + 3,
-        (ancestorTile.y << descendantDepth) + 1
+    const TmsTile featherAncestorTile = tmsTileForLonLat(114.36, 22.38, 15);
+    float featherAncestor = 40.0f;
+    earthterrain::applyHongKongElevationFilter(
+        &featherAncestor, 1, 1, featherAncestorTile.x, featherAncestorTile.y, 15);
+    CHECK(featherAncestor > 18.0f && featherAncestor < 40.0f);
+    const TmsTile featherDescendantTiles[] = {
+        TmsTile{(featherAncestorTile.x << 2) + 3,
+                (featherAncestorTile.y << 2) + 1},
+        TmsTile{(featherAncestorTile.x << 4) + 15,
+                (featherAncestorTile.y << 4) + 7}
     };
-    float ancestor = 40.0f;
-    float descendant = 40.0f;
-    earthterrain::applyHongKongElevationFilter(
-        &ancestor, 1, 1, ancestorTile.x, ancestorTile.y, 15);
-    earthterrain::applyHongKongElevationFilter(
-        &descendant, 1, 1, descendantTile.x, descendantTile.y, 17);
-    CHECK(std::fabs(descendant - ancestor) < 1e-6f);
+    const int descendantLevels[] = {17, 19};
+    for (int i = 0; i < 2; ++i)
+    {
+        float featherDescendant = 40.0f;
+        earthterrain::applyHongKongElevationFilter(
+            &featherDescendant, 1, 1, featherDescendantTiles[i].x,
+            featherDescendantTiles[i].y, descendantLevels[i]);
+        CHECK(std::fabs(featherDescendant - featherAncestor) < 1e-6f);
+    }
 
     const std::string mainSource = readWholeFile(
         std::string(OSGVERSE_SOURCE_DIR) +
@@ -200,7 +213,9 @@ int main(int, char**)
         "/applications/earth_explorer/hk_elevation_filter.h");
     CHECK(mainSource.find("TileElevationScale=2.0") != std::string::npos);
     CHECK(mainSource.find("TileSkirtRatio=") != std::string::npos);
-    CHECK(mainSource.find("ElevationFilterFunction") != std::string::npos);
+    CHECK(mainSource.find(
+        "setPluginData(\"ElevationFilterFunction\", (void*)hkElevationFilter)") !=
+        std::string::npos);
     CHECK(mainSource.find("x >> dz") != std::string::npos);
     CHECK(mainSource.find("y >> dz") != std::string::npos);
     CHECK(filterSource.find("if (z > 15)") != std::string::npos);
