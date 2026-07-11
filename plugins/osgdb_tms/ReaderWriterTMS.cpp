@@ -261,7 +261,9 @@ protected:
         tileCB->setLayerPath(osgVerse::TileCallback::ORTHOPHOTO, orthPath);
         tileCB->setLayerPath(osgVerse::TileCallback::OCEAN_MASK, maskPath);
         tileCB->setLayerPath(osgVerse::TileCallback::USER, userPath);
-        tileCB->setLayerPath(osgVerse::TileCallback::OVERLAY, overlayPath);
+        std::string currentOverlayPath = overlayPath;
+        mgr->tryGetLayerPath(osgVerse::TileCallback::OVERLAY, currentOverlayPath);
+        tileCB->setLayerPath(osgVerse::TileCallback::OVERLAY, currentOverlayPath);
         tileCB->setTotalExtent(extentMin, extentMax); tileCB->setTileNumber(x, y, z);
         tileCB->setBottomLeft(atoi(botLeft.c_str()) > 0);
         tileCB->setUseWebMercator(useWM); tileCB->setFlatten(flatten);

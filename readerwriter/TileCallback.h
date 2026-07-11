@@ -167,8 +167,9 @@ namespace osgVerse
         bool check(const std::map<int, TileCallback::DataPathPair>& paths, std::vector<int>& updated);
         bool isHandlerExtension(const std::string& ext, std::string& suggested) const;
 
-        void setLayerPath(TileCallback::LayerType id, const std::string& p) { _layerPaths[id] = p; }
-        std::string getLayerPath(TileCallback::LayerType id) { return _layerPaths[id]; }
+        void setLayerPath(TileCallback::LayerType id, const std::string& p);
+        bool tryGetLayerPath(TileCallback::LayerType id, std::string& path) const;
+        std::string getLayerPath(TileCallback::LayerType id) const;
 
         // 超缩放拉伸信号:updateLayerData 对 OVERLAY 做"超原生最大缩放→父级拉伸"兜底时,
         // 记下当前帧号;app 侧据此(带去抖)显示"已达最大细节"角标。
@@ -196,6 +197,7 @@ namespace osgVerse
         virtual ~TileManager() {}
 
         std::map<int, std::string> _layerPaths;
+        mutable std::mutex _layerPathsMutex;
         std::atomic<unsigned int> _lastOverlayStretchFrame{0};   // operator()/updateLayerData 在 update 线程写,
                                                                   // EarthControlUI 在 draw 线程读,跨线程 → atomic
         std::map<std::string, std::string> _acceptHandlerExts;

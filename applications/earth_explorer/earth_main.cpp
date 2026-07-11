@@ -24,6 +24,8 @@
 #include "EarthControlUI.h"
 #include "LayerManager.h"
 #include "input_gate.h"
+#include "science_overlay.h"
+#include "science_image_pager.h"
 #if defined(__APPLE__)
 #include "ime_bridge.h"
 #endif
@@ -635,15 +637,6 @@ static void hkElevationFilter(float* hts, int w, int h, int x, int y, int z)
     }
 }
 
-// P6a:GIBS 科学图层瓦片模板。time 用 "default"(GIBS 解析为该层最新可用期,长跑不刷新
-// 与云图 gibsDate 同一取舍)。LevelN 以上无数据 → 404 → 透明回退(同 VIIRS 极夜先例)。
-static const char* kNdviTemplate =
-    "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_NDVI_8Day/"
-    "default/default/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png";
-static const char* kNightTemplate =
-    "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/"
-    "default/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png";
-
 static std::string createCustomPath(int type, const std::string& prefix, int x, int y, int z)
 {
     // 内部瓦片是 TMS（OriginBottomLeft=1，原点左下）。在线服务（ArcGIS / Terrarium）
@@ -695,7 +688,9 @@ static std::string createCustomPath(int type, const std::string& prefix, int x, 
         //   "gibs"      → GIBS VIIRS 云图(默认);
         //   以 http 开头 → 当作完整瓦片模板(RainViewer 降水雷达);
         //   其它(空)    → 不加载(返回空)。
-        if (prefix.rfind("http", 0) == 0)   // RainViewer 模板(已含 {z}/{x}/{y})
+        const int nativeMax = earthscience::nativeMaxZoom(prefix);
+        if (nativeMax >= 0 && z > nativeMax) return "";
+        if (prefix.rfind("http", 0) == 0)   // RainViewer / science 模板(已含 {z}/{x}/{y})
         {
             if (z > 10) return "";          // 雷达分辨率粗,z>10 不取
             return osgVerse::TileCallback::createPath(prefix, x, yXYZ, z);
@@ -819,6 +814,7 @@ int main(int argc, char** argv)
         hlog_disable();
 
     osgViewer::Viewer viewer;
+    viewer.setImagePager(new earthscience::ScienceImagePager(8));
     osg::ArgumentParser arguments = osgVerse::globalInitialize(argc, argv, osgVerse::defaultInitParameters());
     osg::setNotifyHandler(new osgVerse::ConsoleHandler(false));
     osgVerse::updateOsgBinaryWrappers();
@@ -1046,7 +1042,7 @@ int main(int argc, char** argv)
             {
                 disableOtherOverlays("ndvi");
                 osgVerse::TileManager::instance()->setLayerPath(
-                    osgVerse::TileCallback::OVERLAY, kNdviTemplate);
+                    osgVerse::TileCallback::OVERLAY, earthscience::ndviTemplate());
             }
             else
                 osgVerse::TileManager::instance()->setLayerPath(
@@ -1066,7 +1062,7 @@ int main(int argc, char** argv)
             {
                 disableOtherOverlays("nightlights");
                 osgVerse::TileManager::instance()->setLayerPath(
-                    osgVerse::TileCallback::OVERLAY, kNightTemplate);
+                    osgVerse::TileCallback::OVERLAY, earthscience::nightlightsTemplate());
             }
             else
                 osgVerse::TileManager::instance()->setLayerPath(

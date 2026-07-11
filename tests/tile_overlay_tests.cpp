@@ -8,9 +8,22 @@
 // 混合无效果,"加载中/加载失败"都表现为"暂无叠加层",而不是黑块。
 #include <iostream>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <osg/Texture2D>
 #include <osgDB/Options>   // TileCallback.h 前必须先包含(否则 osgDB::Options 不完整,已知坑)
 #include <readerwriter/TileCallback.h>
+
+#if __has_include("../applications/earth_explorer/science_overlay.h")
+#include "../applications/earth_explorer/science_overlay.h"
+#define HAS_SCIENCE_OVERLAY 1
+#endif
+
+#if __has_include("../applications/earth_explorer/science_image_pager.h")
+#include "../applications/earth_explorer/science_image_pager.h"
+#define HAS_SCIENCE_IMAGE_PAGER 1
+#endif
 
 // Release 构建带 -DNDEBUG 会吞掉 assert —— 用自定义 CHECK 保证断言永远生效
 #define CHECK(x) do { if (!(x)) { \
@@ -21,16 +34,23 @@
 class StubImageRequestHandler : public osg::NodeVisitor::ImageRequestHandler
 {
 public:
-    StubImageRequestHandler() : requested(0) {}
+    StubImageRequestHandler() : requested(0), lastPriority(-1.0) {}
     virtual double getPreLoadTime() const { return 0.0; }
     virtual osg::ref_ptr<osg::Image> readRefImageFile(const std::string&, const osg::Referenced* = 0)
     { return osg::ref_ptr<osg::Image>(); }
-    virtual void requestImageFile(const std::string& fileName, osg::Object*, int, double,
+    virtual void requestImageFile(const std::string& fileName, osg::Object*, int, double priority,
                                   const osg::FrameStamp*, osg::ref_ptr<osg::Referenced>&,
                                   const osg::Referenced* = 0)
-    { lastFile = fileName; requested++; }
-    std::string lastFile; int requested;
+    { lastFile = fileName; lastPriority = priority; requested++; }
+    std::string lastFile; int requested; double lastPriority;
 };
+
+static std::string readSourceFile(const std::string& relative)
+{
+    std::ifstream input(std::string(OSGVERSE_SOURCE_DIR) + "/" + relative);
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
+}
 
 int main(int, char**)
 {
@@ -56,6 +76,7 @@ int main(int, char**)
         CHECK(img->getPixelFormat() == GL_RGBA);     // 必须带 alpha 通道才能"透明"
         osg::Vec4 c = img->getColor(0u, 0u);
         CHECK(c.a() == 0.0f);                        // 全透明:混合权重为 0,不影响底图
+        CHECK(stub.lastPriority == 4.0);              // 粗层级优先于细层级合并
         std::cout << "[tile_overlay_tests] async placeholder texture OK: "
                   << stub.lastFile << std::endl;
     }
@@ -72,6 +93,65 @@ int main(int, char**)
         CHECK(!tex.valid());
         CHECK(stub.requested == 0);
         std::cout << "[tile_overlay_tests] empty-path branch unchanged OK" << std::endl;
+    }
+
+    // ---- 科学图层原生层级与专用 ImagePager 并发池 ----
+#if defined(HAS_SCIENCE_OVERLAY)
+    CHECK(earthscience::nativeMaxZoom(earthscience::ndviTemplate()) == 9);
+    CHECK(earthscience::nativeMaxZoom(earthscience::nightlightsTemplate()) == 8);
+    CHECK(earthscience::nativeMaxZoom("gebco") == 8);
+#else
+    CHECK(false && "science_overlay.h is required");
+#endif
+
+#if defined(HAS_SCIENCE_IMAGE_PAGER)
+    {
+        osg::ref_ptr<earthscience::ScienceImagePager> pager =
+            new earthscience::ScienceImagePager(8);
+        CHECK(pager->getNumImageThreads() == 8);
+    }
+#else
+    CHECK(false && "science_image_pager.h is required");
+#endif
+
+    // ---- 发布状态区分：未发布 != 显式空；当前 NDVI 覆盖克隆 Options 里的陈旧 GIBS ----
+    {
+        osgVerse::TileManager* manager = osgVerse::TileManager::instance();
+        std::string published;
+#if defined(HAS_SCIENCE_OVERLAY)
+        CHECK(!manager->tryGetLayerPath(osgVerse::TileCallback::OVERLAY, published));
+        manager->setLayerPath(osgVerse::TileCallback::OVERLAY, "");
+        CHECK(manager->tryGetLayerPath(osgVerse::TileCallback::OVERLAY, published));
+        CHECK(published.empty());
+
+        osg::ref_ptr<osgDB::Options> stale = new osgDB::Options("Overlay=gibs");
+        manager->setLayerPath(osgVerse::TileCallback::OVERLAY, earthscience::ndviTemplate());
+        CHECK(manager->tryGetLayerPath(osgVerse::TileCallback::OVERLAY, published));
+        CHECK(published == earthscience::ndviTemplate());
+        CHECK(published != stale->getPluginStringData("Overlay"));
+
+        StubImageRequestHandler fakeReader;
+        osg::ref_ptr<osgVerse::TileCallback> newChild = new osgVerse::TileCallback(false);
+        newChild->setLayerPath(osgVerse::TileCallback::OVERLAY, published);
+        newChild->setTileNumber(3, 2, 4);
+        bool emptyPath = false;
+        osg::ref_ptr<osg::Texture> childOverlay = newChild->createLayerImage(
+            osgVerse::TileCallback::OVERLAY, emptyPath, stale.get(), &fakeReader);
+        CHECK(!emptyPath);
+        CHECK(childOverlay.valid());
+        CHECK(fakeReader.requested == 1);
+        CHECK(fakeReader.lastFile.find("MODIS_Terra_NDVI_8Day") != std::string::npos);
+        CHECK(fakeReader.lastFile.find("VIIRS_SNPP_CorrectedReflectance_TrueColor") ==
+              std::string::npos);
+#endif
+
+        const std::string tmsSource = readSourceFile("plugins/osgdb_tms/ReaderWriterTMS.cpp");
+        CHECK(tmsSource.find("tryGetLayerPath(osgVerse::TileCallback::OVERLAY") !=
+              std::string::npos);
+        CHECK(tmsSource.find("setLayerPath(osgVerse::TileCallback::OVERLAY, currentOverlayPath)") !=
+              std::string::npos);
+        CHECK(tmsSource.find("setLayerPath(osgVerse::TileCallback::OVERLAY, overlayPath)") ==
+              std::string::npos);
     }
 
     std::cout << "[tile_overlay_tests] all OK" << std::endl;

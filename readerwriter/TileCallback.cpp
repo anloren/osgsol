@@ -133,7 +133,7 @@ osg::Texture* TileCallback::createLayerImage(LayerType id, bool& emptyPath, cons
         placeholder->allocateImage(1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE);
         placeholder->setColor(osg::Vec4(0.0f, 0.0f, 0.0f, 0.0f), 0, 0, 0);
         tex2D->setImage(placeholder.get());
-        irh->requestImageFile(url, tex2D.get(), 0, 0.0, NULL, _imageRequests[url]);
+        irh->requestImageFile(url, tex2D.get(), 0, (double)_z, NULL, _imageRequests[url]);
     }
     else
 #endif
@@ -771,7 +771,8 @@ TileManager::TileManager()
 
 bool TileManager::check(const std::map<int, TileCallback::DataPathPair>& paths, std::vector<int>& updated)
 {
-    for (std::map<int, std::string>::iterator it = _layerPaths.begin();
+    std::lock_guard<std::mutex> lock(_layerPathsMutex);
+    for (std::map<int, std::string>::const_iterator it = _layerPaths.begin();
          it != _layerPaths.end(); ++it)
     {
         std::map<int, TileCallback::DataPathPair>::const_iterator it2 = paths.find(it->first);
@@ -779,6 +780,28 @@ bool TileManager::check(const std::map<int, TileCallback::DataPathPair>& paths, 
         else if (it2 != paths.end() && it2->second.first != it->second) updated.push_back(it->first);
     }
     return !updated.empty();
+}
+
+void TileManager::setLayerPath(TileCallback::LayerType id, const std::string& path)
+{
+    std::lock_guard<std::mutex> lock(_layerPathsMutex);
+    _layerPaths[id] = path;
+}
+
+bool TileManager::tryGetLayerPath(TileCallback::LayerType id, std::string& path) const
+{
+    std::lock_guard<std::mutex> lock(_layerPathsMutex);
+    std::map<int, std::string>::const_iterator it = _layerPaths.find((int)id);
+    if (it == _layerPaths.end()) return false;
+    path = it->second;
+    return true;
+}
+
+std::string TileManager::getLayerPath(TileCallback::LayerType id) const
+{
+    std::string path;
+    tryGetLayerPath(id, path);
+    return path;
 }
 
 bool TileManager::isHandlerExtension(const std::string& ext, std::string& suggested) const
