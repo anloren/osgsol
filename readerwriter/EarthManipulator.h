@@ -231,7 +231,7 @@ namespace osgVerse
         bool calcDoubleClickMotion(const osgGA::GUIEventAdapter& ea);
         bool calcScrollingMotion(osgGA::GUIEventAdapter::ScrollingMotion scrollMotion);
         bool calcIntersectPoint(float x, float y, osg::Vec3d& point, bool showPoint = true);
-        bool calcTiltCenter(bool useCameraMatrix = true);
+        bool calcTiltCenter(bool useCameraMatrix = true, bool updateViewingRadius = true);
 
         // Global terrain floor: every frame near the ground, keep the camera eye above the
         // REAL terrain (not the ellipsoid datum), at any location. updateTerrainFloor queries

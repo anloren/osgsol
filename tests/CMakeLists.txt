@@ -152,6 +152,7 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Satellite PRIVATE
 NEW_CTEST(osgVerse_Test_Geospatial geospatial_tests.cpp offline 120)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Geospatial PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+NEW_CTEST(osgVerse_Test_EarthManipulator earth_manipulator_tests.cpp offline 120)
 NEW_CTEST(osgVerse_Test_Ais ais_tests.cpp offline 120)  # P3 AIS ship layer: message parse / bbox decision unit tests
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Ais PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

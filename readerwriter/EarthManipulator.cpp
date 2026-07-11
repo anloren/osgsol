@@ -541,7 +541,7 @@ void EarthManipulator::performVRotate(double x0, double y0, double dx, double dy
 
 void EarthManipulator::performRotateAxis(double x0, double y0)
 {
-    calcTiltCenter(false);
+    calcTiltCenter(false, false);
 #if 0
     // Compute the rotate axis for rotating around a point
     bool ok = calcIntersectPoint(x0, y0, _rotateAxis);
@@ -655,7 +655,7 @@ bool EarthManipulator::calcIntersectPoint(float x, float y, osg::Vec3d& point, b
     return result;
 }
 
-bool EarthManipulator::calcTiltCenter(bool useCameraMatrix)
+bool EarthManipulator::calcTiltCenter(bool useCameraMatrix, bool updateViewingRadius)
 {
     if (_viewer && _world.valid())
     {
@@ -689,9 +689,12 @@ bool EarthManipulator::calcTiltCenter(bool useCameraMatrix)
             _tiltCenter = hit.getWorldIntersectPoint();
             _tiltCenter -= _worldCenter;
 
-            // Compute real radius for resetting the viewing offset
-            double realRadius = _tiltCenter.length();
-            _center = _initEyeDir * realRadius;
+            if (updateViewingRadius)
+            {
+                // Compute real radius for resetting the viewing offset
+                double realRadius = _tiltCenter.length();
+                _center = _initEyeDir * realRadius;
+            }
             return true;
         }
         else
