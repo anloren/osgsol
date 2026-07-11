@@ -125,6 +125,8 @@ int main(int, char**)
     const std::string dir = makeTempDir();
     const std::string root = dir + "/root.json";
     const std::string replaceRoot = dir + "/replace.json";
+    const std::string roughRoot = dir + "/rough.json";
+    const std::string lodRoot = dir + "/lod.json";
     writeText(root,
         "{\"asset\":{\"version\":\"1.1\"},\"geometricError\":1000,\"root\":{"
         "\"boundingVolume\":{\"sphere\":[0,0,0,1000]},\"geometricError\":500,"
@@ -140,6 +142,15 @@ int main(int, char**)
         "\"content\":{\"uri\":\"counting://rough/tileset.json\"},\"children\":["
         "{\"boundingVolume\":{\"sphere\":[0,0,0,100]},\"geometricError\":50,"
         "\"content\":{\"uri\":\"counting://refined/tileset.json\"}}]}}}");
+    writeText(roughRoot,
+        "{\"asset\":{\"version\":\"1.1\"},\"geometricError\":0,\"root\":{"
+        "\"boundingVolume\":{\"sphere\":[0,0,0,100]},\"geometricError\":0}}}");
+    writeText(lodRoot,
+        "{\"asset\":{\"version\":\"1.1\"},\"geometricError\":25,\"root\":{"
+        "\"boundingVolume\":{\"sphere\":[0,0,0,100]},\"geometricError\":25,"
+        "\"refine\":\"REPLACE\",\"content\":{\"uri\":\"rough.json\"},"
+        "\"children\":[{\"boundingVolume\":{\"sphere\":[0,0,0,50]},"
+        "\"geometricError\":10,\"content\":{\"uri\":\"refined.json\"}}]}}}");
 
     osg::ref_ptr<CountingReader> countingReader = new CountingReader;
     osgDB::Registry::instance()->addReaderWriter(countingReader.get());
@@ -203,9 +214,29 @@ int main(int, char**)
     CHECK(refinedVisitor.proxies.empty());
     CHECK(pagerOptions->getPluginStringData("DeferExternalTilesets") == "0");
 
+    osg::ref_ptr<osgDB::Options> lodOptions = new osgDB::Options;
+    lodOptions->setPluginStringData("UsePixelsOnScreen", "1");
+    lodOptions->setPluginStringData("MaxScreenSpaceError", "8");
+    osg::ref_ptr<osg::Node> lodNode =
+        osgDB::readNodeFile(lodRoot + ".verse_tiles", lodOptions.get());
+    GraphVisitor lodVisitor;
+    if (lodNode.valid()) lodNode->accept(lodVisitor);
+    CHECK(lodNode.valid());
+    CHECK(lodVisitor.pagedLods.size() == 1);
+    osg::PagedLOD* lod = lodVisitor.pagedLods.front();
+    std::cerr << "[tiles3d_paging_tests] pixel switch=" << lod->getMinRange(1)
+              << ", protected children=" << lod->getNumChildrenThatCannotBeExpired()
+              << ", refined expiry=" << lod->getMinimumExpiryTime(1) << std::endl;
+    CHECK(lod->getRangeMode() == osg::LOD::PIXEL_SIZE_ON_SCREEN);
+    CHECK(lod->getNumChildrenThatCannotBeExpired() == 1);
+    CHECK(std::fabs(lod->getMinimumExpiryTime(1) - 30.0) < 1e-9);
+    CHECK(std::fabs(lod->getMinRange(1) - 64.0f) < 1e-4f);
+
     osgDB::Registry::instance()->removeReaderWriter(countingReader.get());
     ::unlink(root.c_str());
     ::unlink(replaceRoot.c_str());
+    ::unlink(lodRoot.c_str());
+    ::unlink(roughRoot.c_str());
     ::rmdir(dir.c_str());
     std::cout << "[tiles3d_paging_tests] REPLACE refined group stayed atomic\n";
     return 0;

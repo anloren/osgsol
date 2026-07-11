@@ -20,6 +20,14 @@
 #include <limits.h>
 #define WRITE_TO_OSG 0
 
+static double computeSwitchPixels(double radius, double geometricError, double sse)
+{
+    if (!(radius > 0.0) || !(geometricError > 0.0) || !(sse > 0.0))
+        return 1.0;
+    return osg::clampBetween(2.0 * radius * sse / geometricError,
+                             1.0, (double)FLT_MAX);
+}
+
 static std::vector<std::string> split(const std::string& src, const char* seperator, bool ignoreEmpty)
 {
     std::vector<std::string> slist;
@@ -294,7 +302,8 @@ protected:
         osg::ref_ptr<osgDB::Options> opt = options ? options->cloneOptions() : new osgDB::Options;
         opt->setPluginStringData("sub_tile", name);
 
-        double range = rangeV.is<double>() ? rangeV.get<double>() : 0.0;
+        double geometricError = rangeV.is<double>() ? rangeV.get<double>() : 0.0;
+        double range = geometricError;
         double sseDenominator = 0.5629, height = 1080.0; // FIXME
         // 可选 Options 覆盖屏幕空间误差阈值(更小=更早细化/更清晰/更吃流量与内存;
         // 未设置时用成员默认值)。经 cloneOptions 向子 tileset 传播,作用于整棵树。
@@ -310,8 +319,8 @@ protected:
         if (st.empty()) st = parentRefine;
 
         osg::ref_ptr<osg::Node> tile = createTile(
-            content, children, bs, range, st, prefix, name, opt.get(), isAbsoluteBound,
-            deferExternalTilesets);
+            content, children, bs, geometricError, range, sse, st, prefix, name, opt.get(),
+            isAbsoluteBound, deferExternalTilesets);
         if (trans.is<picojson::array>())
         {
             picojson::array& tArray = trans.get<picojson::array>();
@@ -328,7 +337,8 @@ protected:
     }
 
     osg::Node* createTile(picojson::value& content, picojson::value& children,
-                          const osg::BoundingSphered& bound, double range, const std::string& st,
+                          const osg::BoundingSphered& bound, double geometricError,
+                          double range, double sse, const std::string& st,
                           const std::string& prefix, const std::string& name,
                           const osgDB::Options* options, bool absBound,
                           bool deferExternalTilesets) const
@@ -388,6 +398,8 @@ protected:
             // Add <children> as the refined level of PagedLOD
             plod->setDatabaseOptions(childOpt);
             plod->setFileName(1, childPseudoFile);
+            plod->setNumChildrenThatCannotBeExpired(1);
+            plod->setMinimumExpiryTime(1, 30.0);
 
             /*if (child0.valid())
                 std::cout << uri << ": CHILD = " << child0->getBound().center() << "; " << child0->getBound().radius()
@@ -423,11 +435,12 @@ protected:
             std::string usePixels = options ? options->getPluginStringData("UsePixelsOnScreen") : "";
             if (atoi(usePixels.c_str()) > 0)
             {
-                double switchPixels = osg::clampBetween((bound.radius() * 1873.0) / range, 5.0, 2000.0);
+                const double switchPixels =
+                    computeSwitchPixels(bound.radius(), geometricError, sse);
                 plod->setRangeMode(osg::LOD::PIXEL_SIZE_ON_SCREEN);
                 if (additive) plod->setRange(0, 0.0f, FLT_MAX);
-                else plod->setRange(0, 0.0f, (float)switchPixels);
-                plod->setRange(1, (float)switchPixels, FLT_MAX);
+                else plod->setRange(0, 0.0f, static_cast<float>(switchPixels));
+                plod->setRange(1, static_cast<float>(switchPixels), FLT_MAX);
             }
             else
             {
