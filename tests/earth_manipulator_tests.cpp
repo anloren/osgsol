@@ -8,10 +8,20 @@
 #include <osgViewer/View>
 
 #include <readerwriter/EarthManipulator.h>
+#include <readerwriter/TerrainFloorState.h>
 
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ << ": " #x << std::endl; \
     std::abort(); } } while (0)
+
+#define CHECK_NEAR(actual, expected, tolerance) do { \
+    if (std::fabs((actual) - (expected)) > (tolerance)) { \
+        std::cerr << "CHECK_NEAR failed at " << __FILE__ << ":" << __LINE__ \
+                  << ": " #actual "=" << (actual) << ", " #expected "=" << (expected) \
+                  << std::endl; \
+        std::abort(); \
+    } \
+} while (0)
 
 namespace
 {
@@ -146,6 +156,44 @@ namespace
         CHECK(!matrixNear(matrixAfterDrag, matrixAfterPush, kTolerance));
         CHECK(matrixFinite(matrixAfterDrag));
     }
+
+    void checkTerrainFloorRecordedLodSequence()
+    {
+        osgVerse::TerrainFloorState state;
+        const double samples[] = {0.0, -4602.8, 5324.9, 5099.87, 5087.47,
+                                  5081.13, 5078.19};
+        for (double sample : samples)
+            osgVerse::updateTerrainFloorSample(state, false, true, sample);
+        CHECK(state.hasSample);
+        CHECK_NEAR(state.altitude, 5324.9, 1e-6);
+
+        osgVerse::updateTerrainFloorSample(state, false, false, 0.0);
+        CHECK(state.hasSample);
+        CHECK_NEAR(state.altitude, 5324.9, 1e-6);
+
+        osgVerse::updateTerrainFloorSample(state, true, true, 5078.19);
+        CHECK(state.hasSample);
+        CHECK_NEAR(state.altitude, 5078.19, 1e-6);
+    }
+
+    void checkTerrainFloorMovementThreshold()
+    {
+        const double threshold = osgVerse::terrainFloorCellThresholdRadians();
+        const double expected = 0.003 * 3.14159265358979323846 / 180.0;
+        CHECK_NEAR(threshold, expected, 1e-15);
+        CHECK_NEAR(threshold * 6371000.0, 333.5847799336762, 1e-6);
+
+        CHECK(!osgVerse::terrainFloorMovedToNewCell(0.0, threshold, 0.0, 0.0));
+        CHECK(osgVerse::terrainFloorMovedToNewCell(0.0, threshold * 1.001, 0.0, 0.0));
+
+        osgVerse::TerrainFloorState state;
+        osgVerse::updateTerrainFloorSample(state, false, true, 5324.9);
+        osgVerse::updateTerrainFloorSample(state, true, true, 120.0);
+        CHECK_NEAR(state.altitude, 120.0, 1e-6);
+
+        osgVerse::updateTerrainFloorSample(state, true, false, 0.0);
+        CHECK(!state.hasSample);
+    }
 }
 
 int main(int, char**)
@@ -167,6 +215,9 @@ int main(int, char**)
     // Middle-button setup still acquires a usable pivot: a subsequent drag rotates safely.
     checkMiddleDragRotatesCamera();
 
-    std::cout << "[earth_manipulator_tests] button-specific PUSH setup and middle DRAG pass\n";
+    checkTerrainFloorRecordedLodSequence();
+    checkTerrainFloorMovementThreshold();
+
+    std::cout << "[earth_manipulator_tests] input setup and terrain-floor state pass\n";
     return 0;
 }

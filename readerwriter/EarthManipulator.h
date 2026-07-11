@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include "Export.h"
+#include "TerrainFloorState.h"
 
 namespace osgVerse
 {
@@ -299,8 +300,9 @@ namespace osgVerse
         double _terrainMargin;  // Min eye height above the real terrain (global terrain floor)
         double _terrainLift;  // Per-frame vertical lift keeping the eye above terrain (smoothed)
         // 地形地板求交节流:缓存上次全场景地形求交的位置/高度,避免低空每帧重做。
-        double _terrainProbeLat, _terrainProbeLon, _terrainProbeAlt;
-        bool _hasTerrainProbe;
+        double _terrainProbeLat, _terrainProbeLon;
+        TerrainFloorState _terrainFloorState;
+        bool _hasTerrainProbeLocation;
         int _terrainProbeCountdown;
         float _tilt;  // Vertical angle to the horizon
 

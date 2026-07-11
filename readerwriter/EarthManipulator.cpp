@@ -12,8 +12,8 @@ static double g_distanceToCenter = 0.0;
 EarthManipulator::EarthManipulator()
 :   _viewer(NULL), _latestLatitude(0.0), _latestLongitude(0.0), _latestAltitude(0.0),
     _minDistance(50.0), _terrainMargin(150.0), _terrainLift(0.0),
-    _terrainProbeLat(0.0), _terrainProbeLon(0.0), _terrainProbeAlt(0.0),
-    _hasTerrainProbe(false), _terrainProbeCountdown(0),
+    _terrainProbeLat(0.0), _terrainProbeLon(0.0),
+    _hasTerrainProbeLocation(false), _terrainProbeCountdown(0),
     _tilt(0.0f), _throwAllowed(true), _thrown(false), _locked(false)
 {
     _tiltCenter.set(0.0, 0.0, -DBL_MAX);
@@ -752,28 +752,42 @@ void EarthManipulator::updateTerrainFloor()
         // 昂贵的全场景地形求交不必每帧做:地形高度只随相机水平移动 / 瓦片细化变化。仅当
         // ① 水平移动超过约一个瓦片尺度(~330m)或 ② 帧倒计时到点(周期兜底,捕捉瓦片细化)
         // 才重测,否则复用缓存高度。这消除低空静止/慢移时每帧遍历整棵场景树的卡顿。
-        bool needProbe = !_hasTerrainProbe || (_terrainProbeCountdown <= 0) ||
-                         (fabs(lat - _terrainProbeLat) + fabs(lon - _terrainProbeLon) > 0.003);
+        const bool movedToNewCell = _hasTerrainProbeLocation &&
+            terrainFloorMovedToNewCell(lat, lon, _terrainProbeLat, _terrainProbeLon);
+        bool needProbe = !_hasTerrainProbeLocation || (_terrainProbeCountdown <= 0) ||
+                         movedToNewCell;
         if (needProbe)
         {
             double hTerrain = 0.0;
-            _hasTerrainProbe = terrainAltitudeAt(lat, lon, hTerrain);
-            _terrainProbeAlt = _hasTerrainProbe ? hTerrain : 0.0;
-            _terrainProbeLat = lat; _terrainProbeLon = lon;
+            const bool hit = terrainAltitudeAt(lat, lon, hTerrain);
+            updateTerrainFloorSample(_terrainFloorState, movedToNewCell, hit, hTerrain);
+            if (!_hasTerrainProbeLocation || movedToNewCell)
+            {
+                _terrainProbeLat = lat;
+                _terrainProbeLon = lon;
+                _hasTerrainProbeLocation = true;
+            }
             _terrainProbeCountdown = 15;
             static const bool s_terrainDebug = (getenv("EARTH_TERRAIN_DEBUG") != NULL);
             if (s_terrainDebug)
-                OSG_NOTICE << "[terrainfloor] PROBE hEye=" << hEye << " hTerr=" << _terrainProbeAlt << "\n";
+                OSG_NOTICE << "[terrainfloor] PROBE hEye=" << hEye
+                           << " hit=" << hit
+                           << " hTerr=" << (_terrainFloorState.hasSample ?
+                                             _terrainFloorState.altitude : 0.0) << "\n";
         }
         else _terrainProbeCountdown--;
 
-        if (_hasTerrainProbe)
+        if (_terrainFloorState.hasSample)
         {
-            double floorAlt = _terrainProbeAlt + _terrainMargin;
+            double floorAlt = _terrainFloorState.altitude + _terrainMargin;
             if (hEye < floorAlt) desiredLift = floorAlt - hEye;
         }
     }
-    else { _hasTerrainProbe = false; }  // 离开低空:作废缓存,下次入低空立即重测
+    else
+    {
+        _terrainFloorState = TerrainFloorState();
+        _hasTerrainProbeLocation = false;
+    }  // 离开低空:作废缓存,下次入低空立即重测
 
     // Hard sea-level floor (defensive fallback for when the terrain probe is unavailable/stale).
     // When the probe MISSED this frame (empty/streaming tiles, fast dive, no world node), the eye
@@ -782,12 +796,13 @@ void EarthManipulator::updateTerrainFloor()
     // sees straight through the globe to the backside (user report: in Fujian, seeing S.America
     // ~12742km away). Keeping distance-from-center > earthRadius also lets any bounding-volume
     // near/far clamp converge.
-    // Gated on !_hasTerrainProbe: when the probe DID hit real terrain this frame, trust the
-    // terrain-following lift above (even where it legitimately sits below the ellipsoid datum,
+    // Gated on the absence of a retained terrain sample: when the current cell has a valid
+    // sample, trust the terrain-following lift above (even where it legitimately sits below
+    // the ellipsoid datum,
     // e.g. Dead Sea/Turpan/Lake Assal at ~-400m) instead of overriding it with the sea-level
     // floor, which would otherwise lift the eye ~280m above where terrain-following intended.
     static const double kHardSeaFloor = 2.0;  // metres above the ellipsoid; keeps distance>rp
-    if (!_hasTerrainProbe && hEye < kHardSeaFloor)
+    if (!_terrainFloorState.hasSample && hEye < kHardSeaFloor)
     {
         double hardLift = kHardSeaFloor - hEye;
         if (hardLift > desiredLift) desiredLift = hardLift;
@@ -799,8 +814,8 @@ void EarthManipulator::updateTerrainFloor()
         }
     }
 
-    // Raise instantly (never allow a frame below terrain), ease down slowly (no pop when a
-    // higher-LOD elevation tile streams in and slightly changes the sampled height).
+    // Raise instantly (never allow a frame below terrain). User movement can lower the
+    // required lift in a new cell, so keep the existing eased downward adjustment.
     if (desiredLift > _terrainLift) _terrainLift = desiredLift;
     else _terrainLift += (desiredLift - _terrainLift) * 0.08;
     if (_terrainLift < 0.5) _terrainLift = 0.0;

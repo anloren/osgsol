@@ -1,7 +1,7 @@
 SET(LIB_NAME osgVerseReaderWriter)
 SET(LIBRARY_INCLUDE_FILES
     Utilities.h OsgbTileOptimizer.h DracoProcessor.h FileCache.h DatabasePager.h
-    TileCallback.h EarthManipulator.h GraphicsWindowGLFW.h
+    TileCallback.h EarthManipulator.h TerrainFloorState.h GraphicsWindowGLFW.h
     MaterialGraph.h NamedObjectFinder.h FeatureDefinition.h Export.h
 )
 SET(LIBRARY_FILES ${LIBRARY_INCLUDE_FILES}
