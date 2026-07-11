@@ -181,6 +181,8 @@ IF(BUILD_TESTING)
     ADD_EXECUTABLE(osgVerse_Test_ScienceBuildContract science_build_contract_tests.cpp)
     TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_ScienceBuildContract PRIVATE
                                "${CMAKE_BINARY_DIR}/generated")
+    TARGET_COMPILE_DEFINITIONS(osgVerse_Test_ScienceBuildContract PRIVATE
+                               OSGSOL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     SET_PROPERTY(TARGET osgVerse_Test_ScienceBuildContract PROPERTY FOLDER "TESTS")
     ADD_TEST(NAME osgVerse_Test_ScienceBuildContract
              COMMAND $<TARGET_FILE:osgVerse_Test_ScienceBuildContract>)

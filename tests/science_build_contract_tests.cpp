@@ -1,6 +1,8 @@
 #include "ScienceEarthBuildContract.h"
 
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #define CHECK(x) do { if (!(x)) { \
@@ -15,6 +17,12 @@ int main()
     const std::string targets = OSGSOL_BUILD_TARGETS_VALUE;
     CHECK(targets.find("osgSolScienceCore") == std::string::npos);
     CHECK(targets.find("osgdb_science") == std::string::npos);
+
+    std::ifstream rootCMakeFile(std::string(OSGSOL_SOURCE_DIR) + "/CMakeLists.txt");
+    CHECK(rootCMakeFile.good());
+    std::ostringstream rootCMakeBuffer;
+    rootCMakeBuffer << rootCMakeFile.rdbuf();
+    CHECK(rootCMakeBuffer.str().find("$<TARGET_EXISTS:") == std::string::npos);
 
     std::cout << "[OK] ScienceEarth G0-G1 science-off build contract\n";
     return 0;

@@ -311,19 +311,6 @@ SET(VERSE_USE_OSG_STATIC OFF CACHE BOOL "Use static build of OpenSceneGraph (wil
 SET(VERSE_USE_MTT_DRIVER OFF CACHE BOOL "Use MooreThreads MTT drivers")
 SET(VERSE_SUPPORT_CPP17 ON CACHE BOOL "Enable build of libraries using C++ 17 standard")
 
-IF(BUILD_TESTING)
-    STRING(CONCAT OSGSOL_SCIENCE_BUILD_CONTRACT_HEADER
-        "#pragma once\n"
-        "#define OSGSOL_BUILD_SCIENCE_VALUE $<BOOL:${OSGSOL_BUILD_SCIENCE}>\n"
-        "#define OSGSOL_SCIENCE_PHASE_VALUE \"G0-G1\"\n"
-        "#define OSGSOL_BUILD_TARGETS_VALUE \""
-        "$<$<TARGET_EXISTS:osgSolScienceCore>:osgSolScienceCore>;"
-        "$<$<TARGET_EXISTS:osgdb_science>:osgdb_science>\"\n")
-    FILE(GENERATE
-        OUTPUT "${CMAKE_BINARY_DIR}/generated/ScienceEarthBuildContract.h"
-        CONTENT "${OSGSOL_SCIENCE_BUILD_CONTRACT_HEADER}")
-ENDIF()
-
 SET(VERSE_COMPILER_NAME "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 IF(USE_WASM_OPTIONS)
     SET(VERSE_SUPPORT_CPP17 ON CACHE BOOL "Enable C++ 17 for WASM compiler" FORCE)
@@ -806,6 +793,31 @@ IF(OSG_INCLUDE_DIR AND OSG_LIB_DIR)
         ENDIF(VERSE_BUILD_EXAMPLES)
         ADD_SUBDIRECTORY(applications)
         ADD_SUBDIRECTORY(assets)
+    ENDIF()
+
+    IF(BUILD_TESTING)
+        SET(_OSGSOL_BUILD_SCIENCE_VALUE 0)
+        IF(OSGSOL_BUILD_SCIENCE)
+            SET(_OSGSOL_BUILD_SCIENCE_VALUE 1)
+        ENDIF()
+
+        SET(_OSGSOL_BUILD_TARGETS_VALUE "")
+        IF(TARGET osgSolScienceCore)
+            LIST(APPEND _OSGSOL_BUILD_TARGETS_VALUE osgSolScienceCore)
+        ENDIF()
+        IF(TARGET osgdb_science)
+            LIST(APPEND _OSGSOL_BUILD_TARGETS_VALUE osgdb_science)
+        ENDIF()
+
+        FILE(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+        FILE(WRITE "${CMAKE_BINARY_DIR}/generated/ScienceEarthBuildContract.h"
+            "#pragma once\n"
+            "#define OSGSOL_BUILD_SCIENCE_VALUE ${_OSGSOL_BUILD_SCIENCE_VALUE}\n"
+            "#define OSGSOL_SCIENCE_PHASE_VALUE \"G0-G1\"\n"
+            "#define OSGSOL_BUILD_TARGETS_VALUE \"${_OSGSOL_BUILD_TARGETS_VALUE}\"\n")
+
+        UNSET(_OSGSOL_BUILD_SCIENCE_VALUE)
+        UNSET(_OSGSOL_BUILD_TARGETS_VALUE)
     ENDIF()
 
     # Show project information at last
