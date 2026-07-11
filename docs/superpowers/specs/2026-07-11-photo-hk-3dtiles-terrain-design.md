@@ -97,7 +97,7 @@ struct PhotoCaptureRequest
 
 ### 飞行与快门门控
 
-- EarthManipulator 明确新增只读接口 `bool isAnimationRunning() const`，直接返回现有 `_animationRunning`，不新增写入口。
+- 直接复用 EarthManipulator 已有的只读接口 `bool isAnimationRunning() const`；不新增相机写入口。
 - `generate_photo` 在动画运行时返回 `camera_flight_in_progress`；AI 系统提示明确要求等待下一轮再调。
 - 动画结束后沿用 `WAITING_VIEW_RENDER`，至少让目标视角完成一帧可见渲染，再预约 SnapshotGrabber。
 - 工具开始时不提前冻结旧矩阵；在真正预约抓帧的 FRAME owner 线程读取最新主相机矩阵并写入请求。若用户在等待期间主动拖动，以快门前最后可见矩阵为准，不能回退到旧矩阵。
