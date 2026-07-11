@@ -635,3 +635,162 @@ git push origin codex/v0.2-runtime-safety
 ```
 
 Do not tag, merge, create a pull request, or create any additional Desktop app.
+
+## Task 5 integrated release evidence (2026-07-11)
+
+### Release decision and explicit polar exception
+
+The first pre-package review stopped on a visible radial imagery starburst at the North Pole. A
+read-only A/B run then used the same isolated-HOME offscreen command, `--goto 89 0 20000`, against
+the existing fixed Desktop package at source
+`c3a8ebb3002be3f9d1d1b9aaa64da1ccbaa1e303` and the current worktree at source
+`0eecbef178e19a55552b7d06eb78bb32d381a34c`. Direct inspection showed the same starburst location,
+scale, orientation, and closed globe in both. In a radius-240 polar region centered at `(960,540)`,
+the images had RGB correlation `0.996363443`, MAE `1.925544`, and PSNR `34.898839 dB`.
+
+The user then explicitly chose **“先打包”** and approved this A/B-confirmed, pre-existing North Pole
+Web Mercator starburst as a known limitation for this release. This is a release exception, not a
+fix and not evidence that the polar imagery is undistorted. The current terrain-grid changes did not
+introduce the observed pattern under this diagnostic.
+
+### Sequential build, offline, and preservation gates
+
+- All six required commands were run separately and in order; each exited `0`:
+  `osgVerse_Test_Ai_Chat`, `osgVerse_Test_Tiles3dPaging`, `osgVerse_Test_TerrainGrid`,
+  `osgVerse_Test_TileOverlay`, `osgVerse_Test_EarthManipulator`, and
+  `osgVerse_EarthExplorer`.
+- `ctest --test-dir build/osgsol_core -L offline --output-on-failure` exited `0`:
+  **15/15 passed, 0 failed**, real time `14.00 s`.
+- The preservation search found `TileElevationScale=2.0`, `ElevationFilterFunction`,
+  `TileSkirtRatio`, `UsePixelsOnScreen`, and `camera_flight_in_progress` in production and test
+  sources.
+- `git diff --check` exited `0`; the worktree was clean before this evidence-only documentation
+  update.
+
+### Offscreen diagnostics and screenshots
+
+- Global high altitude, `--goto 15 110 20000`:
+  `/tmp/osgsol-task5-global.png`, SHA-256
+  `b1ece40ca1a70a13f6d4486dff12680eb498e4a7338ed11e9a2743f55494218f`.
+  The 1920x1080 capture showed a closed globe, atmosphere rim, ocean, imagery, and star field.
+- Current North Pole global capture:
+  `/tmp/osgsol-task5-current-north-pole-global.png`, SHA-256
+  `9f0ad57cb7f3ed6f1c32f775c5a5a7128ecf108c1e95502ce365dc01aacda216`.
+- Pre-grid fixed-package North Pole A/B capture:
+  `/tmp/osgsol-task5-old-north-pole-global.png`, SHA-256
+  `8a1cf8211c2777cd3bea46448a52c9517fca377bb51ce92bec47bcbb38326c7f`.
+- Kunming low oblique:
+  `/tmp/osgsol-task5-kunming-low-oblique.png`, SHA-256
+  `ed8b68dda0bafad3187b58570db5b41756279356c9ea80905d303aadf6fea53a`.
+  The run exited `0`, but the offscreen image contained only seven near-uniform RGB values; it is
+  not underside/camera-penetration acceptance.
+- Hong Kong F2 off:
+  `/tmp/osgsol-task5-hk-f2-off.png`, SHA-256
+  `69e69999ace3bf3fcfdbdfb1ce91a6430646857528e1f653f0b6bfb6beb0b87c`.
+  The run exited `0`, but the offscreen image contained only five near-uniform RGB values; it is not
+  terrain-shape, mound, hole, or stretch acceptance.
+- Hong Kong F2 on, pinned worktree plugin:
+  `/tmp/osgsol-task5-hk-f2-on.png`, SHA-256
+  `ad6ad1333a862359f0845fe32bd1adeb5fdfc84c90268a6ae42e5bbb19e939eb`.
+  The process exited `0` in `25.525 s`. F2 began at `14:10:38.444`, the exact worktree-installed
+  `osgdb_verse_tiles.so` loaded at `14:10:40.337`, and
+  `root_attached_ms=1926 sse=8 lazy_root=1` appeared at `14:10:40.370`. Only partitions `11` and
+  `15` were requested (`2/17` top-level roots). The first KTX2 loaded at `14:10:48.491`,
+  `10.047 s` after F2 start; capture occurred at `14:10:55.919`, `17.475 s` after start. No F2
+  HTTP 4xx/5xx or `[Tiles3D] FAILED` marker appeared. The capture was still not usable as visible
+  building/refinement proof.
+
+No NVIDIA, ISS, Hong Kong altitude round-trip, neighboring-district, F2 toggle, or photo-isolation
+manual visual pass is claimed.
+
+### Fresh install and generic package
+
+- With `EARTH_AI_KEY` unset,
+  `cmake --build build/osgsol_core --target install -j2` exited `0` and freshly installed the app,
+  libraries, resources, tests, and plugins into the worktree `build/sdk_core`.
+- With `EARTH_AI_KEY` unset, the exact `OSGVERSE_SDK`/`OSG_ROOT` packaging command exited `0` and
+  printed `Built and verified: .../dist/EarthExplorer.app` after its immediate deep/strict check.
+- Generic executable SHA-256:
+  `9b3a29777bf5ee67f20e7849d9f6f0da966f688ed1a77a44a0a988233d1aefeb`.
+- The installed current plugin contained `DeferExternalTilesets` and `DeferredTileset:` and had
+  SHA-256 `a8688039dfcdeda3d3d86efc968a884988f2c0721d7cd69d99d5a609844f65b2`.
+- The package-rewritten plugin retained both markers and had SHA-256
+  `e5bb23ceb88b8a5b650d3053a683619181be9b70eab801d6ad8d135551f1c892`.
+
+### Formal identity, fixed Desktop app, and bundled-plugin proof
+
+`/tmp/osgSol Earth.app` was staged from the generic bundle, renamed to executable
+`osgSol_Earth`, ad-hoc signed, and immediately passed deep/strict verification. The staged identity
+and the fixed Desktop identity are:
+
+- `CFBundleName`: `osgSol Earth`
+- `CFBundleDisplayName`: `osgSol Earth`
+- `CFBundleIdentifier`: `com.anloren.osgsol.earth`
+- `CFBundleVersion`: `0.2.0`
+- `CFBundleShortVersionString`: `0.2.0`
+- `CFBundleExecutable`: `osgSol_Earth`
+- `OSGSolBuildChannel`: `manual-test`
+- `OSGSolSourceCommit`: `0eecbef178e19a55552b7d06eb78bb32d381a34c`
+
+Only `/Users/USER/Desktop/osgSol Earth.app` was replaced. The prior bundle's mode-555
+`Contents/MacOS` first prevented `rm`; restoring that old directory to `755` allowed the same fixed
+path to be removed and replaced, after which the new directory was returned to `555`. No additional
+Desktop app was created.
+
+The fixed basic smoke used an isolated HOME with `EARTH_AI_KEY` and `OSG_LIBRARY_PATH` unset and
+`EARTH_OFFSCREEN=1 EARTH_AUTOCAP=300`. It exited `0`, logged both the offscreen-context and
+capture-saved markers, and produced `/tmp/osgsol-task5-final-smoke.png`, SHA-256
+`09ef5bc9fea1d5441c9a0ec0ae8729f2f87c207d7923e0e41e30131031d99686`.
+
+A second fixed-app F2 run also left `OSG_LIBRARY_PATH` unset. `DYLD_PRINT_LIBRARIES=1` proved that
+the exact file loaded was:
+
+```text
+/Users/USER/Desktop/osgSol Earth.app/Contents/lib/osgPlugins-3.6.5/osgdb_verse_tiles.so
+```
+
+That file has Mach-O UUID `74AE9120-27A7-32EF-A526-C5E581425538`, retains both current deferral
+markers, and has SHA-256
+`e5bb23ceb88b8a5b650d3053a683619181be9b70eab801d6ad8d135551f1c892`. F2 began at
+`14:15:28.924`; `root_attached_ms=1916` appeared at `14:15:30.840`; only `2/17` top-level
+partitions were requested; the first KTX2 loaded at `14:15:35.740`, `6.816 s` after start. The run
+exited `0` and produced `/tmp/osgsol-task5-fixed-f2.png`, SHA-256
+`ed54563bc8ca0bd33ffa9bbf7b9ce60c8e24bd6da6950ac4830ee0a8724abb71`.
+
+### Final signature, hashes, permissions, and FileProvider caveat
+
+After `xattr -cr`, ad-hoc deep signing, and restoring `Contents/MacOS` to mode `555`, the fixed app
+immediately passed `codesign --verify --deep --strict`. Identity checks passed, both plugin markers
+remained present, and the bundle contained no `imgui.ini` or `Contents/MacOS/libhv.*.log`.
+
+- Formal/fixed executable SHA-256:
+  `707bbbdbd56baf9bcb5e5dac66786a4ee353d3301ac568db793b2a18851f1435`.
+- Fixed bundled-plugin SHA-256:
+  `e5bb23ceb88b8a5b650d3053a683619181be9b70eab801d6ad8d135551f1c892`.
+- Fixed `Info.plist` SHA-256:
+  `c2198570ce36d6e1d300adac77867326639465f63c46bea1c86eaecfc83f1c0d`.
+- Signature: ad-hoc, identifier `com.anloren.osgsol.earth`; immediate deep/strict result `0`.
+
+Two seconds after the successful immediate check, iCloud FileProvider recreated root
+`com.apple.FinderInfo` and `com.apple.fileprovider.fpfs#P` (alongside `com.apple.provenance`), and a
+later strict check reported `resource fork, Finder information, or similar detritus not allowed`.
+This known external metadata reattachment did not change the recorded executable, plugin, or plist
+hashes. Per the release brief, the immediate post-cleanup strict verification, smoke, hashes, and
+unchanged bundle contents are authoritative; the cleanup/re-sign/immediate check is repeated at final
+handoff.
+
+### Pending manual acceptance
+
+The following remain pending and are not represented as passes:
+
+1. Kunming low-oblique underside exposure and camera penetration.
+2. Hong Kong F2-off terrain smoothness and absence of bright fake mounds, holes, or stretched map.
+3. Hong Kong F2-on visible coarse/refinement, short altitude round trip, no empty REPLACE gap,
+   neighboring-district request locality, and off/on resident-content behavior.
+4. NVIDIA oblique photo with no shutter-time camera jump.
+5. ISS oblique photo preserving the visible view with no unsolicited platform/solar panels.
+6. Hong Kong photo followed by NVIDIA with no image, coordinates, prompt suffix, or output-path
+   reuse.
+
+The North Pole radial starburst remains a documented pre-existing known limitation accepted by the
+user for this release; it is not fixed.
