@@ -129,7 +129,14 @@ class ScienceBundleAuditTests(unittest.TestCase):
             findings,
             MANIFEST.BOUNDARY_COMMIT,
             MANIFEST.bundle_fingerprint(baseline),
-            {"architecture": "test"},
+            {
+                "architecture": "test",
+                "normalization_profile": {
+                    "schema": "scienceearth-g0-source-root-normalization",
+                    "version": 1,
+                    "source_root_count": 1,
+                },
+            },
         )
         return reference, MANIFEST.build_ratchet(reference, "v0.2.0")
 
@@ -548,6 +555,58 @@ class ScienceBundleAuditTests(unittest.TestCase):
                 payload = json.loads(json_path.read_text())
                 self.assertEqual(payload["status"], "STOP")
                 self.assertIn("error", payload)
+
+    def test_cli_rejects_invalid_or_mismatched_normalization_profile(self):
+        baseline = self.root / "NormalizationBaseline.app"
+        candidate = self.root / "NormalizationCandidate.app"
+        write_app_plist(baseline)
+        compile_macho(
+            baseline / "Contents" / "MacOS" / "main",
+            "int main(void) { return 0; }")
+        shutil.copytree(baseline, candidate)
+        compile_macho(
+            candidate / "Contents" / "PlugIns" / "osgdb_science.so",
+            "int science_anchor(void) { return 0; }", bundle=True)
+
+        valid_profile = {
+            "schema": "scienceearth-g0-source-root-normalization",
+            "version": 1,
+            "source_root_count": 1,
+        }
+        cases = {
+            "missing": None,
+            "wrong-schema": dict(valid_profile, schema="other"),
+            "wrong-version": dict(valid_profile, version=2),
+            "malformed-count": dict(valid_profile, source_root_count="1"),
+            "mismatched-count": dict(valid_profile, source_root_count=2),
+        }
+        for label, profile in cases.items():
+            with self.subTest(label=label):
+                reference, _ = self.manifest_chain([], baseline)
+                if profile is None:
+                    reference["metadata"].pop("normalization_profile")
+                else:
+                    reference["metadata"]["normalization_profile"] = profile
+                ratchet = MANIFEST.build_ratchet(reference, "v0.2.0")
+                reference_path = self.root / f"normalization-{label}-reference.json"
+                ratchet_path = self.root / f"normalization-{label}-ratchet.json"
+                json_path = self.root / f"normalization-{label}-audit.json"
+                reference_path.write_text(json.dumps(reference))
+                ratchet_path.write_text(json.dumps(ratchet))
+
+                result = subprocess.run([
+                    "python3", str(AUDIT_PATH),
+                    "--app", str(candidate),
+                    "--baseline", str(baseline),
+                    "--reference-manifest", str(reference_path),
+                    "--ratchet-manifest", str(ratchet_path),
+                    "--json", str(json_path),
+                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+                self.assertEqual(result.returncode, 1, result.stdout)
+                payload = json.loads(json_path.read_text())
+                self.assertEqual(payload["status"], "STOP")
+                self.assertIn("normalization profile", payload["error"])
 
     def test_cli_stop_writes_json_and_text_reports_for_real_machos(self):
         baseline = self.root / "CliBaseline.app"

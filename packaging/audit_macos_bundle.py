@@ -659,6 +659,7 @@ def main(argv=None):
             arguments.reference_manifest, "reference")
         ratchet = load_json_object(arguments.ratchet_manifest, "ratchet")
         MANIFEST.validate_chain(reference, ratchet)
+        MANIFEST.validate_normalization_profile(reference, len(source_roots))
         if reference["bundle_fingerprint"] != MANIFEST.bundle_fingerprint(baseline):
             raise ValueError("reference bundle fingerprint does not match baseline")
         result = audit_bundle(

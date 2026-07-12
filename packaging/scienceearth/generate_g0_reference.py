@@ -226,6 +226,8 @@ def main(argv=None):
             "audit_schema_version": result["schema_version"],
             "boundary_tag": arguments.boundary_tag,
             "generation_command": normalized_generation_command(arguments),
+            "normalization_profile": MANIFEST.build_normalization_profile(
+                len(source_roots)),
             "release_tag": arguments.release_tag,
         },
     )

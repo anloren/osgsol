@@ -233,6 +233,34 @@ class G0ManifestTests(unittest.TestCase):
         command = generator.normalized_generation_command(arguments)
         self.assertNotIn("/Users/USER", json.dumps(command))
 
+    def test_generator_records_versioned_source_root_normalization_profile(self):
+        generator = load_module("generate_g0_reference_profile", GENERATOR_PATH)
+        with mock.patch.object(
+                generator, "verify_boundary_tags"), mock.patch.object(
+                    generator.AUDIT, "audit_bundle", return_value={
+                        "schema_version": 3,
+                        "graph": {"Contents/MacOS/main": []},
+                        "findings": [],
+                    }), mock.patch.object(
+                        generator.MANIFEST, "bundle_fingerprint",
+                        return_value="a" * 64), mock.patch.object(
+                            generator, "write_manifest_pair") as write_pair:
+            result = generator.main([
+                "--app", str(self.root / "Protected.app"),
+                "--reference", str(self.root / "reference.json"),
+                "--ratchet", str(self.root / "ratchet.json"),
+                "--source-root", "/source/one",
+                "--source-root", "/source/two",
+            ])
+
+        self.assertEqual(result, 0)
+        reference = write_pair.call_args.args[1]
+        self.assertEqual(reference["metadata"]["normalization_profile"], {
+            "schema": "scienceearth-g0-source-root-normalization",
+            "version": 1,
+            "source_root_count": 2,
+        })
+
     def test_generator_normalizes_unconfigured_home_subjects_across_usernames(self):
         generator = load_module("generate_g0_reference_home", GENERATOR_PATH)
         filtered = []

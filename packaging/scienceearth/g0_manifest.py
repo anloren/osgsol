@@ -10,6 +10,8 @@ from pathlib import Path
 BOUNDARY_COMMIT = "0e91c7c4b121d80b929d595ea711d3dd0833ee67"
 MANIFEST_SCHEMA_VERSION = 1
 FINDING_SCHEMA_VERSION = 1
+NORMALIZATION_PROFILE_SCHEMA = "scienceearth-g0-source-root-normalization"
+NORMALIZATION_PROFILE_VERSION = 1
 LOWER_HEX_DIGITS = frozenset("0123456789abcdef")
 
 
@@ -30,6 +32,42 @@ def _validate_sha256(value, label):
 def _validate_release_tag(release_tag):
     if not isinstance(release_tag, str) or not release_tag:
         raise ValueError("release tag must be a non-empty string")
+
+
+def _validate_source_root_count(value, label):
+    if type(value) is not int or value < 1:
+        raise ValueError(f"{label} must be a positive integer")
+
+
+def build_normalization_profile(source_root_count):
+    _validate_source_root_count(
+        source_root_count, "normalization profile source_root_count")
+    return {
+        "schema": NORMALIZATION_PROFILE_SCHEMA,
+        "version": NORMALIZATION_PROFILE_VERSION,
+        "source_root_count": source_root_count,
+    }
+
+
+def validate_normalization_profile(reference, expected_source_root_count):
+    _validate_source_root_count(
+        expected_source_root_count, "expected source-root count")
+    metadata = reference.get("metadata") if isinstance(reference, dict) else None
+    profile = metadata.get("normalization_profile") if isinstance(metadata, dict) else None
+    if not isinstance(profile, dict):
+        raise ValueError("normalization profile is missing or malformed")
+    expected_fields = {"schema", "version", "source_root_count"}
+    if set(profile) != expected_fields:
+        raise ValueError("normalization profile fields are malformed")
+    if profile["schema"] != NORMALIZATION_PROFILE_SCHEMA:
+        raise ValueError("normalization profile schema does not match")
+    if profile["version"] != NORMALIZATION_PROFILE_VERSION:
+        raise ValueError("normalization profile version does not match")
+    _validate_source_root_count(
+        profile["source_root_count"], "normalization profile source_root_count")
+    if profile["source_root_count"] != expected_source_root_count:
+        raise ValueError(
+            "normalization profile source-root count does not match audit inputs")
 
 
 def validate_reference(reference):
