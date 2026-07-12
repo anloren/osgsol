@@ -24,11 +24,13 @@ MANIFEST_SPEC.loader.exec_module(MANIFEST)
 
 
 class FakeInspector:
-    def __init__(self, dependencies, rpaths=None, strings=None, symbols=None):
+    def __init__(self, dependencies, rpaths=None, strings=None, symbols=None,
+                 exported_symbols=None):
         self._dependencies = dependencies
         self._rpaths = rpaths or {}
         self._strings = strings or {}
         self._symbols = symbols or {}
+        self._exported_symbols = exported_symbols or {}
 
     def is_macho(self, path):
         return path.name in self._dependencies
@@ -44,6 +46,9 @@ class FakeInspector:
 
     def symbols(self, path):
         return self._symbols.get(path.name, [])
+
+    def exported_symbols(self, path):
+        return self._exported_symbols.get(path.name, [])
 
 
 class BundleFixture:
@@ -145,6 +150,9 @@ class ScienceBundleAuditTests(unittest.TestCase):
                 "osgdb_science.so": ["@loader_path/.."],
             },
             symbols={"libbase.dylib": []},
+            exported_symbols={"osgdb_science.so": [
+                "0000000000001000 T _osgsol_science_g0_probe_anchor",
+            ]},
         )
 
     def manifest_chain(self, findings, baseline=None):
@@ -157,6 +165,12 @@ class ScienceBundleAuditTests(unittest.TestCase):
                 "architecture": "test",
                 "normalization_profile": MANIFEST.build_normalization_profile(
                     self.policy_source_roots),
+                "toolchain_provenance": {
+                    "schema": "scienceearth-g0-toolchain-provenance",
+                    "version": 1,
+                    "compiler": {"id": "TestCompiler", "version": "1.0"},
+                    "sdk": {"name": "test-sdk", "version": "1.0", "build": "1A1"},
+                },
             },
         )
         return reference, MANIFEST.build_ratchet(reference, "v0.2.0")
@@ -235,6 +249,53 @@ class ScienceBundleAuditTests(unittest.TestCase):
             source_roots=self.policy_source_roots,
             reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(result["tier_a"]["status"], "STOP")
+
+    def test_science_closure_exports_only_the_probe_anchor(self):
+        probe = BundleFixture(self.root)
+        inspector = self.valid_inspector()
+        reference, ratchet = self.manifest_chain([])
+        result = audit(
+            probe.app, self.baseline.app, inspector,
+            source_roots=self.policy_source_roots,
+            reference_manifest=reference, ratchet_manifest=ratchet)
+        self.assertFalse(any(
+            finding["category"] == "exported_science_symbol"
+            for finding in result["findings"]))
+
+        inspector._exported_symbols["osgdb_science.so"].append(
+            "0000000000002000 T _GDALAllRegister")
+        result = audit(
+            probe.app, self.baseline.app, inspector,
+            source_roots=self.policy_source_roots,
+            reference_manifest=reference, ratchet_manifest=ratchet)
+        violations = [
+            finding for finding in result["findings"]
+            if finding["category"] == "exported_science_symbol"]
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0]["subject"], "_GDALAllRegister")
+        self.assertEqual(result["tier_a"]["status"], "STOP")
+
+    def test_real_macho_science_export_is_found_but_anchor_is_allowed(self):
+        baseline = self.root / "ExportBaseline.app"
+        candidate = self.root / "ExportCandidate.app"
+        write_app_plist(baseline)
+        compile_macho(
+            baseline / "Contents" / "MacOS" / "main",
+            "int main(void) { return 0; }")
+        shutil.copytree(baseline, candidate)
+        plugin = candidate / "Contents" / "PlugIns" / "osgdb_science.so"
+        compile_macho(
+            plugin,
+            "void osgsol_science_g0_probe_anchor(void) {} "
+            "void GDALAllRegister(void) {}", bundle=True)
+        result = AUDIT.audit_bundle(
+            app=candidate, baseline=baseline, source_roots=[ROOT],
+            main_relative="Contents/MacOS/main",
+            science_plugin_name="osgdb_science.so")
+        exported = [
+            finding["subject"] for finding in result["findings"]
+            if finding["category"] == "exported_science_symbol"]
+        self.assertEqual(exported, ["_GDALAllRegister"])
 
     def test_main_science_reachability_stops_even_when_identically_ratcheted(self):
         probe = BundleFixture(self.root)
@@ -532,7 +593,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         shutil.copytree(baseline, candidate)
         compile_macho(
             candidate / "Contents" / "PlugIns" / "osgdb_science.so",
-            "int science_anchor(void) { return 0; }", bundle=True)
+            "void osgsol_science_g0_probe_anchor(void) {}", bundle=True)
         json_path = self.root / "missing-manifest.json"
         result = subprocess.run([
             "python3", str(AUDIT_PATH),
@@ -663,7 +724,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
                 self.assertEqual(payload["status"], "STOP")
                 self.assertIn("normalization profile", payload["error"])
 
-    def test_cli_stop_writes_json_and_text_reports_for_real_machos(self):
+    def test_stop_renders_full_text_report_for_real_machos(self):
         baseline = self.root / "CliBaseline.app"
         candidate = self.root / "CliCandidate.app"
         write_app_plist(baseline)
@@ -678,23 +739,13 @@ class ScienceBundleAuditTests(unittest.TestCase):
             plugin_dir / "osgdb_bad.so",
             "extern void GDALAllRegister(void); "
             "void bad(void) { GDALAllRegister(); }", bundle=True)
-        reference_path, ratchet_path = self.write_manifest_chain(baseline)
-        json_path = self.root / "audit.json"
-        text_path = self.root / "audit.txt"
-        result = subprocess.run([
-            "python3", str(AUDIT_PATH),
-            "--app", str(candidate),
-            "--baseline", str(baseline),
-            "--reference-manifest", str(reference_path),
-            "--ratchet-manifest", str(ratchet_path),
-            "--json", str(json_path),
-            "--text", str(text_path),
-        ] + self.source_root_arguments(), stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True)
-        self.assertEqual(result.returncode, 1, result.stderr)
-        payload = json.loads(json_path.read_text())
+        reference, ratchet = self.manifest_chain([], baseline)
+        payload = AUDIT.audit_bundle(
+            app=candidate, baseline=baseline,
+            source_roots=self.policy_source_roots,
+            reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(payload["status"], "STOP")
-        report = text_path.read_text()
+        report = AUDIT.render_text(payload)
         for section in (
                 "Dependency graph", "Science-only closure", "Size gates",
                 "Isolation manifests", "Tier A science closure",
@@ -702,7 +753,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
                 "Removed debt", "New findings", "Violations"):
             self.assertIn(section, report)
 
-    def test_real_cli_uses_pass_review_and_stop_exit_codes(self):
+    def test_real_macho_audit_uses_pass_review_and_stop_exit_codes(self):
         baseline = self.root / "TierBaseline.app"
         candidate = self.root / "TierCandidate.app"
         write_app_plist(baseline)
@@ -712,34 +763,28 @@ class ScienceBundleAuditTests(unittest.TestCase):
         shutil.copytree(baseline, candidate)
         compile_macho(
             candidate / "Contents" / "PlugIns" / "osgdb_science.so",
-            "int science_anchor(void) { return 0; }", bundle=True)
-        reference_path, ratchet_path = self.write_manifest_chain(baseline)
+            "void osgsol_science_g0_probe_anchor(void) {}", bundle=True)
+        reference, ratchet = self.manifest_chain([], baseline)
 
-        def run_cli(label):
-            json_path = self.root / f"tier-{label}.json"
-            result = subprocess.run([
-                "python3", str(AUDIT_PATH),
-                "--app", str(candidate),
-                "--baseline", str(baseline),
-                "--reference-manifest", str(reference_path),
-                "--ratchet-manifest", str(ratchet_path),
-                "--json", str(json_path),
-            ] + self.source_root_arguments(), stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True)
-            return result.returncode, json.loads(json_path.read_text())
+        def run_audit():
+            payload = AUDIT.audit_bundle(
+                app=candidate, baseline=baseline,
+                source_roots=self.policy_source_roots,
+                reference_manifest=reference, ratchet_manifest=ratchet)
+            return payload["exit_code"], payload
 
-        returncode, payload = run_cli("pass")
+        returncode, payload = run_audit()
         self.assertEqual((returncode, payload["status"]), (0, "PASS"))
         base_delta = AUDIT.bundle_size(candidate) - AUDIT.bundle_size(baseline)
         padding = candidate / "Contents" / "tier-padding.bin"
         with padding.open("wb") as stream:
             stream.truncate(AUDIT.TARGET_ADDED_BYTES + 1 - base_delta)
-        returncode, payload = run_cli("review")
+        returncode, payload = run_audit()
         self.assertEqual(
             (returncode, payload["status"]), (2, "REVIEW_REQUIRED"))
         with padding.open("wb") as stream:
             stream.truncate(AUDIT.HARD_STOP_ADDED_BYTES + 1 - base_delta)
-        returncode, payload = run_cli("stop")
+        returncode, payload = run_audit()
         self.assertEqual((returncode, payload["status"]), (1, "STOP"))
 
 

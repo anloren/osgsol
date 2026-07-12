@@ -50,6 +50,19 @@ class G0ManifestTests(unittest.TestCase):
     def metadata(self, **values):
         metadata = {
             "normalization_profile": MANIFEST.expected_normalization_profile(),
+            "toolchain_provenance": {
+                "schema": "scienceearth-g0-toolchain-provenance",
+                "version": 1,
+                "compiler": {
+                    "id": "AppleClang",
+                    "version": "21.0.0.21000101",
+                },
+                "sdk": {
+                    "name": "macosx",
+                    "version": "26.5",
+                    "build": "25F70",
+                },
+            },
         }
         metadata.update(values)
         return metadata
@@ -111,6 +124,43 @@ class G0ManifestTests(unittest.TestCase):
         self.assertEqual(MANIFEST.current_finding_ids(ratchet),
                          [finding["identity"]])
 
+    def test_approved_chain_rejects_coordinated_substitution_alternate_paths_and_rollback(self):
+        reference_path = (ROOT / "packaging" / "scienceearth" / "baselines" /
+                          "v0.2.0-macos-arm64-reference.json")
+        ratchet_path = (ROOT / "packaging" / "scienceearth" / "baselines" /
+                        "current-macos-arm64-ratchet.json")
+        reference = json.loads(reference_path.read_text())
+        ratchet = json.loads(ratchet_path.read_text())
+        MANIFEST.validate_approved_chain(
+            reference, ratchet, reference_path, ratchet_path)
+
+        injected = json.loads(json.dumps(reference))
+        finding = AUDIT.make_finding(
+            "Contents/MacOS/main", "external_dependency",
+            "/evil/libgdal.dylib", [])
+        injected["findings"].append(finding)
+        injected["findings"].sort(key=lambda item: item["identity"])
+        injected["finding_ids"] = [
+            item["identity"] for item in injected["findings"]]
+        coordinated_ratchet = MANIFEST.build_ratchet(injected, "v0.2.0")
+        with self.assertRaisesRegex(ValueError, "approved reference hash"):
+            MANIFEST.validate_approved_chain(
+                injected, coordinated_ratchet, reference_path, ratchet_path)
+
+        alternate_reference = self.root / reference_path.name
+        alternate_ratchet = self.root / ratchet_path.name
+        alternate_reference.write_text(reference_path.read_text())
+        alternate_ratchet.write_text(ratchet_path.read_text())
+        with self.assertRaisesRegex(ValueError, "approved manifest path"):
+            MANIFEST.validate_approved_chain(
+                reference, ratchet, alternate_reference, alternate_ratchet)
+
+        rolled_back = json.loads(json.dumps(ratchet))
+        rolled_back["releases"][-1]["finding_ids"] = []
+        with self.assertRaisesRegex(ValueError, "approved ratchet hash"):
+            MANIFEST.validate_approved_chain(
+                reference, rolled_back, reference_path, ratchet_path)
+
     def test_git_remote_forms_have_one_canonical_repository_identity(self):
         forms = (
             "https://User:token@GitHub.com/Example/Repo.git",
@@ -151,35 +201,57 @@ class G0ManifestTests(unittest.TestCase):
                 [], MANIFEST.BOUNDARY_COMMIT, "a" * 64,
                 {"architecture": "arm64"})
 
+    def test_reference_schema_requires_deterministic_toolchain_provenance(self):
+        metadata = self.metadata()
+        metadata.pop("toolchain_provenance")
+        with self.assertRaisesRegex(ValueError, "toolchain provenance"):
+            MANIFEST.build_reference(
+                [], MANIFEST.BOUNDARY_COMMIT, "a" * 64, metadata)
+
+        malformed = self.metadata()
+        malformed["toolchain_provenance"]["sdk"].pop("build")
+        with self.assertRaisesRegex(ValueError, "toolchain provenance"):
+            MANIFEST.build_reference(
+                [], MANIFEST.BOUNDARY_COMMIT, "a" * 64, malformed)
+
     def test_release_validator_rejects_missing_or_tampered_profile(self):
         reference, ratchet = self.make_chain()
-        reference_path = self.root / "release-reference.json"
-        ratchet_path = self.root / "release-ratchet.json"
-        reference_path.write_text(json.dumps(reference))
-        ratchet_path.write_text(json.dumps(ratchet))
-
-        def validate():
-            return subprocess.run([
-                "bash", str(RELEASE_TEST_PATH), "--validate-manifests",
-                str(reference_path), str(ratchet_path),
-            ], cwd=ROOT, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-        self.assertEqual(validate().returncode, 0)
+        MANIFEST.validate_chain(reference, ratchet)
         missing = json.loads(json.dumps(reference))
         missing["metadata"].pop("normalization_profile")
-        reference_path.write_text(json.dumps(missing))
-        self.assertNotEqual(validate().returncode, 0)
+        with self.assertRaisesRegex(ValueError, "normalization profile"):
+            MANIFEST.validate_chain(missing, ratchet)
         tampered = json.loads(json.dumps(reference))
         tampered["metadata"]["normalization_profile"]["source_roots"][0][
             "subpath"] = "tampered"
-        reference_path.write_text(json.dumps(tampered))
-        self.assertNotEqual(validate().returncode, 0)
+        with self.assertRaisesRegex(ValueError, "normalization profile"):
+            MANIFEST.validate_chain(tampered, ratchet)
         substituted_reference, substituted_ratchet = (
             self.substitute_chain_and_rehash(reference, ratchet))
-        reference_path.write_text(json.dumps(substituted_reference))
-        ratchet_path.write_text(json.dumps(substituted_ratchet))
-        self.assertNotEqual(validate().returncode, 0)
+        with self.assertRaisesRegex(ValueError, "approved G0 source-root set"):
+            MANIFEST.validate_chain(substituted_reference, substituted_ratchet)
+
+    def test_release_validator_accepts_only_committed_approved_manifest_paths(self):
+        reference_path = (ROOT / "packaging" / "scienceearth" / "baselines" /
+                          "v0.2.0-macos-arm64-reference.json")
+        ratchet_path = (ROOT / "packaging" / "scienceearth" / "baselines" /
+                        "current-macos-arm64-ratchet.json")
+        canonical = subprocess.run([
+            "bash", str(RELEASE_TEST_PATH), "--validate-manifests",
+            str(reference_path), str(ratchet_path),
+        ], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(canonical.returncode, 0, canonical.stderr)
+
+        alternate_reference = self.root / reference_path.name
+        alternate_ratchet = self.root / ratchet_path.name
+        alternate_reference.write_text(reference_path.read_text())
+        alternate_ratchet.write_text(ratchet_path.read_text())
+        alternate = subprocess.run([
+            "bash", str(RELEASE_TEST_PATH), "--validate-manifests",
+            str(alternate_reference), str(alternate_ratchet),
+        ], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertNotEqual(alternate.returncode, 0)
+        self.assertIn("approved manifest path", alternate.stderr)
 
     def test_ratchet_cannot_add_identity_or_change_parent(self):
         reference, ratchet = self.make_chain()
@@ -381,6 +453,14 @@ class G0ManifestTests(unittest.TestCase):
             "source_roots": descriptors,
             "source_roots_sha256": MANIFEST.manifest_sha256(descriptors),
         })
+
+    def test_generator_collects_valid_machine_path_free_toolchain_provenance(self):
+        generator = load_module("generate_g0_reference_provenance", GENERATOR_PATH)
+        provenance = generator.collect_toolchain_provenance()
+        MANIFEST.validate_toolchain_provenance(provenance)
+        serialized = json.dumps(provenance, sort_keys=True)
+        self.assertNotIn("/Users/", serialized)
+        self.assertNotIn("/Applications/", serialized)
 
     def test_generator_rejects_substituted_source_roots_before_audit(self):
         generator = load_module("generate_g0_reference_substitution", GENERATOR_PATH)

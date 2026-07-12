@@ -1249,6 +1249,12 @@ namespace
                 "successful interval evidence does not map one-to-one to HTTP 206 responses");
     }
 
+    void verifyLiveProfileProof(RangeProfile profile, const HttpProof& proof)
+    {
+        if (profile == RangeProfile::Optimized)
+            verifyOptimizedMetadataIntervals(proof);
+    }
+
     void verifyHttpParserRegression()
     {
         DebugCapture capture;
@@ -1428,6 +1434,21 @@ namespace
         }
         require(highOffsetFirstRejected,
                 "optimized metadata check accepted a high-offset first HTTP 206");
+
+        HttpProof non128KiB = highOffsetFirstProof;
+        non128KiB.successfulByteIntervals = {{0, 65535}, {900000, 900009}};
+        non128KiB.successfulGetCount = 2;
+        bool liveProfileRejected = false;
+        try
+        {
+            verifyLiveProfileProof(RangeProfile::Optimized, non128KiB);
+        }
+        catch (const std::exception&)
+        {
+            liveProfileRejected = true;
+        }
+        require(liveProfileRejected,
+                "optimized live profile accepted a non-128 KiB first interval");
 
         DebugCapture rangedGet200;
         rangedGet200.messages.assign(capture.messages.begin(), capture.messages.begin() + 7);
@@ -2014,6 +2035,7 @@ namespace
             item.name + "-" + std::to_string(iteration);
         writeRawTransportEvidence(evidenceName, capture, statsJson);
         HttpProof proof = buildHttpProof(capture, statsJson);
+        verifyLiveProfileProof(profile, proof);
         proof.overviewFactor = LIVE_OVERVIEW_FACTOR;
         proof.rawWindowX = window.x;
         proof.rawWindowY = 8192 - window.topDownY - window.size;

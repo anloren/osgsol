@@ -25,6 +25,7 @@ SCIENCE_STRING_PATTERN = re.compile(
     r"(?:GDALAllRegister|GDALOpen(?:Ex)?|GDAL_DATA|PROJ_LIB|"
     r"proj_(?:context_create|create_crs_to_crs)|"
     r"ZSTD_(?:compress|decompress|createDStream))")
+ALLOWED_SCIENCE_EXPORTS = frozenset({"_osgsol_science_g0_probe_anchor"})
 
 
 FINDING_SCHEMA_VERSION = 1
@@ -95,6 +96,7 @@ def evaluate_isolation(findings, science_nodes, reference, ratchet_ids):
         "forbidden_runtime_reference", "forbidden_rpath", "forbidden_string",
         "unresolved_dependency", "external_dependency",
         "dynamic_science_dependency", "main_reaches_science_dependency",
+        "exported_science_symbol",
     }
     tier_a_failures = [
         item for item in findings
@@ -149,6 +151,14 @@ class CommandInspector:
 
     def symbols(self, path):
         return self._run(["nm", "-a", str(path)]).splitlines()
+
+    def exported_symbols(self, path):
+        return self._run(["nm", "-gU", str(path)]).splitlines()
+
+
+def exported_symbol_name(line):
+    fields = str(line).split()
+    return fields[-1] if fields else ""
 
 
 def bundle_size(path):
@@ -341,6 +351,7 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
         rpaths = inspector.rpaths(binary)
         strings = inspector.string_references(binary)
         symbols = inspector.symbols(binary)
+        exported_symbols = inspector.exported_symbols(binary)
         metadata[relative] = {
             "path": binary,
             "dependencies": dependencies,
@@ -348,6 +359,7 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
             "expanded_rpaths": expand_runpaths(rpaths, binary, executable),
             "strings": strings,
             "symbols": symbols,
+            "exported_symbols": exported_symbols,
         }
 
     science_nodes = [
@@ -458,6 +470,14 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
     science_closure_bytes = sum(
         (app / relative).stat().st_size for relative in science_only
         if (app / relative).is_file())
+    for relative in science_only:
+        for line in metadata[relative]["exported_symbols"]:
+            symbol = exported_symbol_name(line)
+            if not symbol or symbol in ALLOWED_SCIENCE_EXPORTS:
+                continue
+            add_finding(
+                relative, "exported_science_symbol", symbol,
+                f"externally visible symbol in science closure {relative}: {symbol}")
 
     baseline_bytes = bundle_size(baseline)
     total_bytes = bundle_size(app)
@@ -659,6 +679,9 @@ def main(argv=None):
         reference = load_json_object(
             arguments.reference_manifest, "reference")
         ratchet = load_json_object(arguments.ratchet_manifest, "ratchet")
+        MANIFEST.validate_approved_chain(
+            reference, ratchet, arguments.reference_manifest,
+            arguments.ratchet_manifest)
         result = audit_bundle(
             app=app,
             baseline=baseline,

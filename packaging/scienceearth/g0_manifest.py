@@ -16,6 +16,15 @@ MANIFEST_SCHEMA_VERSION = 1
 FINDING_SCHEMA_VERSION = 1
 NORMALIZATION_PROFILE_SCHEMA = "scienceearth-g0-source-root-normalization"
 NORMALIZATION_PROFILE_VERSION = 2
+TOOLCHAIN_PROVENANCE_SCHEMA = "scienceearth-g0-toolchain-provenance"
+TOOLCHAIN_PROVENANCE_VERSION = 1
+# These are executable policy anchors, intentionally independent of the JSON
+# files they protect. Update them only in the same reviewed change that creates
+# a new canonical reference or advances the ratchet.
+APPROVED_REFERENCE_SHA256 = (
+    "145231333a233cd356d0aa3e908db922ad1fbbc244868903a60801b334ba5ada")
+APPROVED_RATCHET_SHA256 = (
+    "fd2d67424356637dd71beb4120647726836fb9a9b3cec03223bb83378fe960cb")
 EXPECTED_G0_SOURCE_ROOT_DESCRIPTOR_ITEMS = (
     ("github.com/anloren/osgsol", "."),
     ("github.com/anloren/osgverse", "."),
@@ -70,6 +79,37 @@ def _validate_release_tag(release_tag):
 def _validate_source_root_count(value, label):
     if type(value) is not int or value < 1:
         raise ValueError(f"{label} must be a positive integer")
+
+
+def _validate_nonempty_string(value, label):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a non-empty string")
+    if value != value.strip() or "/" in value or "\\" in value:
+        raise ValueError(f"{label} must be a stable path-free string")
+
+
+def validate_toolchain_provenance(value):
+    if not isinstance(value, dict):
+        raise ValueError("toolchain provenance is missing or malformed")
+    if set(value) != {"schema", "version", "compiler", "sdk"}:
+        raise ValueError("toolchain provenance fields are malformed")
+    if value["schema"] != TOOLCHAIN_PROVENANCE_SCHEMA:
+        raise ValueError("toolchain provenance schema does not match")
+    if value["version"] != TOOLCHAIN_PROVENANCE_VERSION:
+        raise ValueError("toolchain provenance version does not match")
+    compiler = value["compiler"]
+    sdk = value["sdk"]
+    if not isinstance(compiler, dict) or set(compiler) != {"id", "version"}:
+        raise ValueError("toolchain provenance compiler fields are malformed")
+    if not isinstance(sdk, dict) or set(sdk) != {"name", "version", "build"}:
+        raise ValueError("toolchain provenance SDK fields are malformed")
+    for field, item in (
+            ("compiler id", compiler["id"]),
+            ("compiler version", compiler["version"]),
+            ("SDK name", sdk["name"]),
+            ("SDK version", sdk["version"]),
+            ("SDK build", sdk["build"])):
+        _validate_nonempty_string(item, f"toolchain provenance {field}")
 
 
 def canonical_git_repository(remote):
@@ -248,6 +288,8 @@ def validate_reference(reference):
     if not isinstance(reference.get("metadata"), dict):
         raise ValueError("reference metadata must be an object")
     validate_normalization_profile(reference)
+    validate_toolchain_provenance(
+        reference["metadata"].get("toolchain_provenance"))
 
     findings = reference.get("findings")
     finding_ids = reference.get("finding_ids")
@@ -380,6 +422,39 @@ def validate_chain(reference, ratchet):
             raise ValueError("ratchet finding identities must be sorted and unique")
         previous = set(current_ids)
         previous_ids = current_ids
+
+
+def approved_reference_path():
+    return (Path(__file__).resolve().parent / "baselines" /
+            "v0.2.0-macos-arm64-reference.json")
+
+
+def approved_ratchet_path():
+    return (Path(__file__).resolve().parent / "baselines" /
+            "current-macos-arm64-ratchet.json")
+
+
+def validate_approved_chain(reference, ratchet, reference_path=None,
+                            ratchet_path=None):
+    """Validate content plus the independent, executable G0 trust anchors."""
+    validate_chain(reference, ratchet)
+    if reference_path is not None or ratchet_path is not None:
+        if reference_path is None or ratchet_path is None:
+            raise ValueError("both approved manifest paths are required")
+        actual_paths = (
+            Path(reference_path).resolve(strict=False),
+            Path(ratchet_path).resolve(strict=False),
+        )
+        expected_paths = (
+            approved_reference_path().resolve(strict=False),
+            approved_ratchet_path().resolve(strict=False),
+        )
+        if actual_paths != expected_paths:
+            raise ValueError("approved manifest path does not match canonical policy")
+    if manifest_sha256(reference) != APPROVED_REFERENCE_SHA256:
+        raise ValueError("approved reference hash does not match executable trust anchor")
+    if manifest_sha256(ratchet) != APPROVED_RATCHET_SHA256:
+        raise ValueError("approved ratchet hash does not match anti-rollback trust anchor")
 
 
 def _file_sha256(path):

@@ -66,6 +66,8 @@ with open(reference_path, encoding="utf-8") as stream:
 with open(ratchet_path, encoding="utf-8") as stream:
     ratchet = json.load(stream)
 manifest.validate_chain(reference, ratchet)
+manifest.validate_approved_chain(
+    reference, ratchet, reference_path, ratchet_path)
 if reference["source_commit"] != immutable_commit:
     raise ValueError(
         "reference source commit does not match the immutable ScienceEarth tag")

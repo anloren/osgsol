@@ -93,16 +93,24 @@ profile binds the sorted location-independent descriptors `github.com/anloren/os
 `github.com/anloren/osgverse`, both at subpath `.`, with root-set SHA-256
 `646b5eb80be60524ca6aa8dad55921f2966cc40562b29489483f1184a04c1936`. Its generation
 command records both roots as placeholders and contains no machine-home path.
+The reference also records deterministic generation-boundary toolchain provenance:
+AppleClang `21.0.0` and macOS SDK `26.5` build `25F70`. These values are schema-validated,
+path-free identities captured by the guarded generator; cross-machine release validation checks
+the committed canonical bytes through the independent executable hashes below rather than
+re-probing the validator host's current toolchain.
 
 | Manifest | Finding count | Canonical SHA-256 | File SHA-256 |
 |---|---:|---|---|
-| `v0.2.0-macos-arm64-reference.json` | 1,086 | `0c6bb7949ac789f3c24e86b0862570ebd2997e1530d2499d9caf29a1461064d4` | `6ae2c1a946bd7bcb4eecd386109dbbcab856efd2803d7815c882c6b91f200f9f` |
-| `current-macos-arm64-ratchet.json` | 1,086 | `6a0298e26c9b32f5224db68770448dd213855b88df613c0891de4e3f77429967` | `dac1bbf6a0e4a2ae3831904a60174a9bbcb980614c528eeeae295de48cc97dfd` |
+| `v0.2.0-macos-arm64-reference.json` | 1,086 | `145231333a233cd356d0aa3e908db922ad1fbbc244868903a60801b334ba5ada` | `afd80d8ad9419882793926d781affb970246358fbf74c514b950bf0eb924a5a6` |
+| `current-macos-arm64-ratchet.json` | 1,086 | `fd2d67424356637dd71beb4120647726836fb9a9b3cec03223bb83378fe960cb` | `a732bacfec5b16b6e42ef4b4573827df6edfa73a5d8bf5b2c7b94d0d684c06cc` |
 
 The ratchet references canonical reference hash
-`0c6bb7949ac789f3c24e86b0862570ebd2997e1530d2499d9caf29a1461064d4`; its initial
+`145231333a233cd356d0aa3e908db922ad1fbbc244868903a60801b334ba5ada`; its initial
 `v0.2.0` parent-finding-set hash is
 `5eeb1fc96226557050bffecfe5ab7cb11f32713fddb83c3147b1684ad675bd55`.
+`g0_manifest.py` independently pins both canonical manifest hashes and the release validator and
+bundle-audit CLI accept only the two canonical committed paths. The ratchet hash is therefore an
+anti-rollback ceiling, not a value supplied by the manifest pair itself.
 
 The policy-bearing audit visited 128 Mach-O nodes and kept all 1,086 historical non-science
 identities visible: 572 external dependencies, 103 forbidden rpaths, 34 forbidden runtime

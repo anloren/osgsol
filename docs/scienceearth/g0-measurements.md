@@ -227,8 +227,14 @@ descriptor-tampered profiles.
 
 | Current profile-v2 manifest | Canonical SHA-256 | File SHA-256 |
 |---|---|---|
-| Reference | `0c6bb7949ac789f3c24e86b0862570ebd2997e1530d2499d9caf29a1461064d4` | `6ae2c1a946bd7bcb4eecd386109dbbcab856efd2803d7815c882c6b91f200f9f` |
-| Ratchet | `6a0298e26c9b32f5224db68770448dd213855b88df613c0891de4e3f77429967` | `dac1bbf6a0e4a2ae3831904a60174a9bbcb980614c528eeeae295de48cc97dfd` |
+| Reference | `145231333a233cd356d0aa3e908db922ad1fbbc244868903a60801b334ba5ada` | `afd80d8ad9419882793926d781affb970246358fbf74c514b950bf0eb924a5a6` |
+| Ratchet | `fd2d67424356637dd71beb4120647726836fb9a9b3cec03223bb83378fe960cb` | `a732bacfec5b16b6e42ef4b4573827df6edfa73a5d8bf5b2c7b94d0d684c06cc` |
+
+The guarded generator records path-free, deterministic generation-boundary provenance for
+AppleClang `21.0.0` and macOS SDK `26.5` build `25F70`. The reference schema requires this exact
+field shape. Release/audit validation remains cross-machine deterministic because it checks the
+committed canonical bytes against independent executable reference and ratchet anchors; it does
+not substitute the validator host's current compiler or SDK identity.
 
 The immutable reference source commit is
 `0e91c7c4b121d80b929d595ea711d3dd0833ee67`; its protected bundle fingerprint is

@@ -198,6 +198,38 @@ def normalized_generation_command(arguments):
     return command
 
 
+def _run_text(command):
+    return subprocess.run(
+        command, check=True, text=True, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE).stdout.strip()
+
+
+def collect_toolchain_provenance():
+    """Capture stable build-boundary toolchain identities without host paths."""
+    compiler_line = _run_text(["/usr/bin/clang", "--version"]).splitlines()[0]
+    compiler_match = re.fullmatch(
+        r"Apple clang version ([^ ]+)(?: \([^)]*\))?", compiler_line)
+    if not compiler_match:
+        raise ValueError("unable to identify deterministic AppleClang version")
+    provenance = {
+        "schema": MANIFEST.TOOLCHAIN_PROVENANCE_SCHEMA,
+        "version": MANIFEST.TOOLCHAIN_PROVENANCE_VERSION,
+        "compiler": {
+            "id": "AppleClang",
+            "version": compiler_match.group(1),
+        },
+        "sdk": {
+            "name": "macosx",
+            "version": _run_text(
+                ["xcrun", "--sdk", "macosx", "--show-sdk-version"]),
+            "build": _run_text(
+                ["xcrun", "--sdk", "macosx", "--show-sdk-build-version"]),
+        },
+    }
+    MANIFEST.validate_toolchain_provenance(provenance)
+    return provenance
+
+
 def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", required=True)
@@ -235,6 +267,7 @@ def main(argv=None):
             "generation_command": normalized_generation_command(arguments),
             "normalization_profile": normalization_profile,
             "release_tag": arguments.release_tag,
+            "toolchain_provenance": collect_toolchain_provenance(),
         },
     )
     ratchet = MANIFEST.build_ratchet(reference, arguments.release_tag)

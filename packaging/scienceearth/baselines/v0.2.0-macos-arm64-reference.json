@@ -8731,7 +8731,20 @@
       "source_roots_sha256": "646b5eb80be60524ca6aa8dad55921f2966cc40562b29489483f1184a04c1936",
       "version": 2
     },
-    "release_tag": "v0.2.0"
+    "release_tag": "v0.2.0",
+    "toolchain_provenance": {
+      "compiler": {
+        "id": "AppleClang",
+        "version": "21.0.0"
+      },
+      "schema": "scienceearth-g0-toolchain-provenance",
+      "sdk": {
+        "build": "25F70",
+        "name": "macosx",
+        "version": "26.5"
+      },
+      "version": 1
+    }
   },
   "schema_version": 1,
   "source_commit": "0e91c7c4b121d80b929d595ea711d3dd0833ee67"
