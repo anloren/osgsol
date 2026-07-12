@@ -49,10 +49,32 @@ class G0ManifestTests(unittest.TestCase):
 
     def metadata(self, **values):
         metadata = {
-            "normalization_profile": MANIFEST.build_normalization_profile([ROOT]),
+            "normalization_profile": MANIFEST.expected_normalization_profile(),
         }
         metadata.update(values)
         return metadata
+
+    def substitute_profile(self):
+        descriptors = [
+            {"repository": "github.com/example/unrelated-one", "subpath": "."},
+            {"repository": "github.com/example/unrelated-two", "subpath": "."},
+        ]
+        return {
+            "schema": MANIFEST.NORMALIZATION_PROFILE_SCHEMA,
+            "version": MANIFEST.NORMALIZATION_PROFILE_VERSION,
+            "source_root_count": len(descriptors),
+            "source_roots": descriptors,
+            "source_roots_sha256": MANIFEST.manifest_sha256(descriptors),
+        }
+
+    def substitute_chain_and_rehash(self, reference, ratchet):
+        substituted_reference = json.loads(json.dumps(reference))
+        substituted_reference["metadata"]["normalization_profile"] = (
+            self.substitute_profile())
+        substituted_ratchet = json.loads(json.dumps(ratchet))
+        substituted_ratchet["reference_sha256"] = MANIFEST.manifest_sha256(
+            substituted_reference)
+        return substituted_reference, substituted_ratchet
 
     def make_chain(self, two_findings=False):
         findings = [AUDIT.make_finding(
@@ -99,19 +121,15 @@ class G0ManifestTests(unittest.TestCase):
             {MANIFEST.canonical_git_repository(value) for value in forms},
             {"github.com/Example/Repo"})
 
-    def test_normalization_profile_binds_same_count_source_root_set(self):
-        first = self.make_git_root(
-            "first", "https://github.com/example/first.git")
-        second = self.make_git_root(
-            "second", "git@github.com:example/second.git")
-        profile = MANIFEST.build_normalization_profile([first])
-        reference = MANIFEST.build_reference(
-            [], MANIFEST.BOUNDARY_COMMIT, "a" * 64,
-            {"normalization_profile": profile})
+    def test_reference_and_chain_reject_independently_rehashed_root_substitution(self):
+        reference, ratchet = self.make_chain()
+        substituted_reference, substituted_ratchet = (
+            self.substitute_chain_and_rehash(reference, ratchet))
 
-        MANIFEST.validate_normalization_profile(reference, [first])
-        with self.assertRaisesRegex(ValueError, "source-root set"):
-            MANIFEST.validate_normalization_profile(reference, [second])
+        with self.assertRaisesRegex(ValueError, "approved G0 source-root set"):
+            MANIFEST.validate_reference(substituted_reference)
+        with self.assertRaisesRegex(ValueError, "approved G0 source-root set"):
+            MANIFEST.validate_chain(substituted_reference, substituted_ratchet)
 
     def test_profile_rejects_missing_remote_and_descriptor_collision(self):
         no_remote = self.root / "no-remote"
@@ -156,6 +174,11 @@ class G0ManifestTests(unittest.TestCase):
         tampered["metadata"]["normalization_profile"]["source_roots"][0][
             "subpath"] = "tampered"
         reference_path.write_text(json.dumps(tampered))
+        self.assertNotEqual(validate().returncode, 0)
+        substituted_reference, substituted_ratchet = (
+            self.substitute_chain_and_rehash(reference, ratchet))
+        reference_path.write_text(json.dumps(substituted_reference))
+        ratchet_path.write_text(json.dumps(substituted_ratchet))
         self.assertNotEqual(validate().returncode, 0)
 
     def test_ratchet_cannot_add_identity_or_change_parent(self):
@@ -324,9 +347,9 @@ class G0ManifestTests(unittest.TestCase):
     def test_generator_records_versioned_source_root_normalization_profile(self):
         generator = load_module("generate_g0_reference_profile", GENERATOR_PATH)
         first = self.make_git_root(
-            "generator-first", "https://github.com/example/first.git")
+            "generator-first", "https://github.com/anloren/osgverse.git")
         second = self.make_git_root(
-            "generator-second", "git@github.com:example/second.git")
+            "generator-second", "git@github.com:anloren/osgsol.git")
         with mock.patch.object(
                 generator, "verify_boundary_tags"), mock.patch.object(
                     generator.AUDIT, "audit_bundle", return_value={
@@ -348,8 +371,8 @@ class G0ManifestTests(unittest.TestCase):
         self.assertEqual(result, 0)
         reference = write_pair.call_args.args[1]
         descriptors = [
-            {"repository": "github.com/example/first", "subpath": "."},
-            {"repository": "github.com/example/second", "subpath": "."},
+            {"repository": "github.com/anloren/osgsol", "subpath": "."},
+            {"repository": "github.com/anloren/osgverse", "subpath": "."},
         ]
         self.assertEqual(reference["metadata"]["normalization_profile"], {
             "schema": "scienceearth-g0-source-root-normalization",
@@ -358,6 +381,28 @@ class G0ManifestTests(unittest.TestCase):
             "source_roots": descriptors,
             "source_roots_sha256": MANIFEST.manifest_sha256(descriptors),
         })
+
+    def test_generator_rejects_substituted_source_roots_before_audit(self):
+        generator = load_module("generate_g0_reference_substitution", GENERATOR_PATH)
+        first = self.make_git_root(
+            "generator-substitute-first",
+            "https://github.com/example/unrelated-one.git")
+        second = self.make_git_root(
+            "generator-substitute-second",
+            "git@github.com:example/unrelated-two.git")
+        with mock.patch.object(generator, "verify_boundary_tags"), \
+                mock.patch.object(generator.AUDIT, "audit_bundle") as audit_bundle, \
+                mock.patch.object(generator, "write_manifest_pair") as write_pair:
+            with self.assertRaisesRegex(ValueError, "approved G0 source-root set"):
+                generator.main([
+                    "--app", str(self.root / "Protected.app"),
+                    "--reference", str(self.root / "reference.json"),
+                    "--ratchet", str(self.root / "ratchet.json"),
+                    "--source-root", str(first),
+                    "--source-root", str(second),
+                ])
+        audit_bundle.assert_not_called()
+        write_pair.assert_not_called()
 
     def test_generator_normalizes_unconfigured_home_subjects_across_usernames(self):
         generator = load_module("generate_g0_reference_home", GENERATOR_PATH)
@@ -430,6 +475,32 @@ class G0ManifestTests(unittest.TestCase):
             "mac=${HOME}/a linux=${HOME}/b root=${HOME}/c "
             "varroot=${HOME}/d keep=prefix/Users/USER/e keep2=/rooted/f")
 
+    def test_file_uri_home_normalization_is_scheme_aware_and_rehashes_identity(self):
+        generator = load_module("generate_g0_reference_file_uri", GENERATOR_PATH)
+        subject = (
+            "mac=file:///Users/USER/a linux=file:///home/alice/b "
+            "root=file:///root/c linux_short=file:/home/bob/d "
+            "varroot=file://var/root/e "
+            "network=https://Users/USER/e")
+        finding = AUDIT.make_finding(
+            "Contents/MacOS/main", "forbidden_string", subject, [])
+        filtered = generator.non_science_findings({
+            "graph": {"Contents/MacOS/main": []},
+            "findings": [finding],
+        })[0]
+        expected_subject = (
+            "mac=file://${HOME}/a linux=file://${HOME}/b "
+            "root=file://${HOME}/c linux_short=file://${HOME}/d "
+            "varroot=file://${HOME}/e "
+            "network=https://Users/USER/e")
+
+        self.assertEqual(filtered["subject"], expected_subject)
+        self.assertEqual(
+            filtered["identity"],
+            AUDIT.finding_identity(
+                finding["owner"], finding["category"], expected_subject))
+        self.assertNotEqual(filtered["identity"], finding["identity"])
+
     def test_pair_rejects_any_remaining_machine_home_literal(self):
         generator = load_module("generate_g0_reference_home_guard", GENERATOR_PATH)
         reference, _ = self.make_chain()
@@ -458,6 +529,27 @@ class G0ManifestTests(unittest.TestCase):
                 reference_path, reference, ratchet_path, ratchet)
         self.assertFalse(reference_path.exists())
         self.assertFalse(ratchet_path.exists())
+
+    def test_pair_rejects_file_uri_machine_home_literals(self):
+        generator = load_module("generate_g0_reference_file_home_guard", GENERATOR_PATH)
+        for index, literal in enumerate((
+                "file:///Users/USER/work",
+                "file:///home/alice/work",
+                "file:///root/work",
+                "file:/home/alice/work",
+                "file:////var/root/work")):
+            with self.subTest(literal=literal):
+                reference, _ = self.make_chain()
+                reference["metadata"]["build_log"] = literal
+                ratchet = MANIFEST.build_ratchet(reference, "v0.2.0")
+                reference_path = self.root / f"reference-{index}.json"
+                ratchet_path = self.root / f"ratchet-{index}.json"
+
+                with self.assertRaisesRegex(ValueError, "machine-home"):
+                    generator.write_manifest_pair(
+                        reference_path, reference, ratchet_path, ratchet)
+                self.assertFalse(reference_path.exists())
+                self.assertFalse(ratchet_path.exists())
 
     def test_pair_rejects_parent_directory_alias_without_publication(self):
         generator = load_module("generate_g0_reference_parent_alias", GENERATOR_PATH)

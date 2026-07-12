@@ -16,6 +16,12 @@ MANIFEST_SCHEMA_VERSION = 1
 FINDING_SCHEMA_VERSION = 1
 NORMALIZATION_PROFILE_SCHEMA = "scienceearth-g0-source-root-normalization"
 NORMALIZATION_PROFILE_VERSION = 2
+EXPECTED_G0_SOURCE_ROOT_DESCRIPTOR_ITEMS = (
+    ("github.com/anloren/osgsol", "."),
+    ("github.com/anloren/osgverse", "."),
+)
+EXPECTED_G0_SOURCE_ROOTS_SHA256 = (
+    "646b5eb80be60524ca6aa8dad55921f2966cc40562b29489483f1184a04c1936")
 LOWER_HEX_DIGITS = frozenset("0123456789abcdef")
 SCP_REMOTE_PATTERN = re.compile(
     r"^(?:[^@/:]+@)?(?P<host>[^/:]+):(?P<path>.+)$")
@@ -27,6 +33,27 @@ def canonical_bytes(value):
 
 def manifest_sha256(value):
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def expected_source_root_descriptors():
+    descriptors = [
+        {"repository": repository, "subpath": subpath}
+        for repository, subpath in EXPECTED_G0_SOURCE_ROOT_DESCRIPTOR_ITEMS
+    ]
+    if manifest_sha256(descriptors) != EXPECTED_G0_SOURCE_ROOTS_SHA256:
+        raise RuntimeError("immutable G0 source-root descriptor hash is inconsistent")
+    return descriptors
+
+
+def expected_normalization_profile():
+    descriptors = expected_source_root_descriptors()
+    return {
+        "schema": NORMALIZATION_PROFILE_SCHEMA,
+        "version": NORMALIZATION_PROFILE_VERSION,
+        "source_root_count": len(descriptors),
+        "source_roots": descriptors,
+        "source_roots_sha256": EXPECTED_G0_SOURCE_ROOTS_SHA256,
+    }
 
 
 def _validate_sha256(value, label):
@@ -133,6 +160,14 @@ def build_normalization_profile(source_roots):
     }
 
 
+def validate_source_roots(source_roots):
+    profile = build_normalization_profile(source_roots)
+    if profile != expected_normalization_profile():
+        raise ValueError(
+            "normalization profile does not match the approved G0 source-root set")
+    return profile
+
+
 def _validate_repository_descriptor(value):
     if not isinstance(value, str) or "/" not in value or value.startswith("/"):
         raise ValueError("normalization profile repository is malformed")
@@ -190,6 +225,9 @@ def validate_normalization_profile(reference, expected_source_roots=None):
         profile["source_roots_sha256"], "normalization profile source-root hash")
     if profile["source_roots_sha256"] != manifest_sha256(descriptors):
         raise ValueError("normalization profile source-root hash does not match descriptors")
+    if profile != expected_normalization_profile():
+        raise ValueError(
+            "normalization profile does not match the approved G0 source-root set")
     if expected_source_roots is not None:
         expected = build_normalization_profile(expected_source_roots)
         if profile != expected:

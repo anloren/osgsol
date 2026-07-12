@@ -19,6 +19,10 @@ MACHINE_HOME_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_.${}~@%+\-/:])"
     r"/+(?:Users/[A-Za-z0-9._-]+|home/[A-Za-z0-9._-]+|var/root|root)"
     r"(?![A-Za-z0-9._-])")
+FILE_MACHINE_HOME_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9+.\-])(?i:file):/+"
+    r"(?:Users/[A-Za-z0-9._-]+|home/[A-Za-z0-9._-]+|var/root|root)"
+    r"(?![A-Za-z0-9._-])")
 
 
 def load_module(name, path):
@@ -167,12 +171,14 @@ def non_science_findings(result, science_plugin_name="osgdb_science.so"):
 
 
 def normalize_home_subject(subject):
-    return MACHINE_HOME_PATTERN.sub("${HOME}", str(subject))
+    normalized = FILE_MACHINE_HOME_PATTERN.sub("file://${HOME}", str(subject))
+    return MACHINE_HOME_PATTERN.sub("${HOME}", normalized)
 
 
 def _reject_machine_home_literals(*manifests):
     serialized = json.dumps(manifests, sort_keys=True)
-    match = MACHINE_HOME_PATTERN.search(serialized)
+    match = (FILE_MACHINE_HOME_PATTERN.search(serialized) or
+             MACHINE_HOME_PATTERN.search(serialized))
     if match:
         raise ValueError(
             f"manifest contains machine-home path literal: {match.group(0)}")
@@ -211,6 +217,7 @@ def main(argv=None):
 
     app = Path(arguments.app).resolve()
     source_roots = arguments.source_root or [ROOT]
+    normalization_profile = MANIFEST.validate_source_roots(source_roots)
     result = AUDIT.audit_bundle(
         app=app,
         baseline=app,
@@ -226,7 +233,7 @@ def main(argv=None):
             "audit_schema_version": result["schema_version"],
             "boundary_tag": arguments.boundary_tag,
             "generation_command": normalized_generation_command(arguments),
-            "normalization_profile": MANIFEST.build_normalization_profile(source_roots),
+            "normalization_profile": normalization_profile,
             "release_tag": arguments.release_tag,
         },
     )

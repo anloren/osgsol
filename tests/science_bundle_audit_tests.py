@@ -62,11 +62,12 @@ class BundleFixture:
 
 
 def audit(app, baseline, inspector, **kwargs):
+    source_roots = kwargs.pop("source_roots", [ROOT])
     return AUDIT.audit_bundle(
         app=app,
         baseline=baseline,
         inspector=inspector,
-        source_roots=[ROOT],
+        source_roots=source_roots,
         main_relative="Contents/MacOS/main",
         science_plugin_name="osgdb_science.so",
         **kwargs,
@@ -102,9 +103,32 @@ class ScienceBundleAuditTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.baseline = BundleFixture(self.root, "Baseline.app")
         self.baseline.plugin.unlink()
+        self.policy_source_roots = [
+            self.make_git_root(
+                "osgverse-source", "https://github.com/anloren/osgverse.git"),
+            self.make_git_root(
+                "osgsol-source", "git@github.com:anloren/osgsol.git"),
+        ]
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def make_git_root(self, name, remote):
+        root = self.root / name
+        root.mkdir()
+        subprocess.run(
+            ["git", "init", "-q", str(root)], check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(
+            ["git", "-C", str(root), "remote", "add", "origin", remote],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return root
+
+    def source_root_arguments(self):
+        arguments = []
+        for root in self.policy_source_roots:
+            arguments.extend(["--source-root", str(root)])
+        return arguments
 
     def valid_inspector(self):
         return FakeInspector(
@@ -132,7 +156,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
             {
                 "architecture": "test",
                 "normalization_profile": MANIFEST.build_normalization_profile(
-                    [ROOT]),
+                    self.policy_source_roots),
             },
         )
         return reference, MANIFEST.build_ratchet(reference, "v0.2.0")
@@ -155,6 +179,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         reference, ratchet = self.manifest_chain([baseline_finding])
         result = audit(
             probe.app, self.baseline.app, inspector,
+            source_roots=self.policy_source_roots,
             reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(result["schema_version"], 3)
         self.assertTrue(all(
@@ -164,33 +189,37 @@ class ScienceBundleAuditTests(unittest.TestCase):
         inspector._symbols["libbase.dylib"].append("_ZSTD_compress")
         result = audit(
             probe.app, self.baseline.app, inspector,
+            source_roots=self.policy_source_roots,
             reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(result["status"], "STOP")
         self.assertEqual(len(result["delta"]["new"]), 1)
 
-    def test_direct_audit_rejects_same_count_different_source_root_set(self):
+    def test_direct_audit_rejects_independently_rehashed_root_substitution(self):
         probe = BundleFixture(self.root)
         reference, ratchet = self.manifest_chain([])
-        other_root = self.root / "other-source"
-        other_root.mkdir()
-        subprocess.run(
-            ["git", "init", "-q", str(other_root)], check=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run([
-            "git", "-C", str(other_root), "remote", "add", "origin",
-            "https://github.com/example/other.git",
-        ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        substituted_roots = [
+            self.make_git_root(
+                "other-one", "https://github.com/example/unrelated-one.git"),
+            self.make_git_root(
+                "other-two", "git@github.com:example/unrelated-two.git"),
+        ]
+        substituted_reference = json.loads(json.dumps(reference))
+        substituted_reference["metadata"]["normalization_profile"] = (
+            MANIFEST.build_normalization_profile(substituted_roots))
+        substituted_ratchet = json.loads(json.dumps(ratchet))
+        substituted_ratchet["reference_sha256"] = MANIFEST.manifest_sha256(
+            substituted_reference)
 
-        with self.assertRaisesRegex(ValueError, "source-root set"):
+        with self.assertRaisesRegex(ValueError, "approved G0 source-root set"):
             AUDIT.audit_bundle(
                 app=probe.app,
                 baseline=self.baseline.app,
                 inspector=self.valid_inspector(),
-                source_roots=[other_root],
+                source_roots=substituted_roots,
                 main_relative="Contents/MacOS/main",
                 science_plugin_name="osgdb_science.so",
-                reference_manifest=reference,
-                ratchet_manifest=ratchet,
+                reference_manifest=substituted_reference,
+                ratchet_manifest=substituted_ratchet,
             )
 
     def test_science_external_lookup_stops_even_if_reference_contains_same_text(self):
@@ -203,6 +232,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         reference, ratchet = self.manifest_chain([historical])
         result = audit(
             probe.app, self.baseline.app, inspector,
+            source_roots=self.policy_source_roots,
             reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(result["tier_a"]["status"], "STOP")
 
@@ -221,6 +251,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
 
         result = audit(
             probe.app, self.baseline.app, inspector,
+            source_roots=self.policy_source_roots,
             reference_manifest=reference, ratchet_manifest=ratchet)
 
         self.assertEqual(result["status"], "STOP")
@@ -239,6 +270,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         reference, ratchet = self.manifest_chain([old])
         result = audit(
             probe.app, self.baseline.app, self.valid_inspector(),
+            source_roots=self.policy_source_roots,
             reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(result["delta"]["removed"], [old])
 
@@ -246,6 +278,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         inspector._symbols["main"] = ["_ZSTD_decompress"]
         result = audit(
             probe.app, self.baseline.app, inspector,
+            source_roots=self.policy_source_roots,
             reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(result["status"], "STOP")
         self.assertEqual(result["delta"]["removed"], [old])
@@ -261,6 +294,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         inspector._symbols["libbase.dylib"] = ["_ZSTD_compress"]
         result = audit(
             probe.app, self.baseline.app, inspector,
+            source_roots=self.policy_source_roots,
             reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(result["tier_b"]["status"], "STOP")
         self.assertEqual(len(result["delta"]["new"]), 1)
@@ -572,7 +606,8 @@ class ScienceBundleAuditTests(unittest.TestCase):
                     "--reference-manifest", str(reference_file),
                     "--ratchet-manifest", str(ratchet_file),
                     "--json", str(json_path),
-                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                ] + self.source_root_arguments(), stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True)
                 self.assertEqual(result.returncode, 1, result.stderr)
                 payload = json.loads(json_path.read_text())
                 self.assertEqual(payload["status"], "STOP")
@@ -597,7 +632,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
             "wrong-schema": dict(valid_profile, schema="other"),
             "wrong-version": dict(valid_profile, version=3),
             "malformed-count": dict(valid_profile, source_root_count="1"),
-            "mismatched-count": dict(valid_profile, source_root_count=2),
+            "mismatched-count": dict(valid_profile, source_root_count=3),
             "tampered-hash": dict(valid_profile, source_roots_sha256="0" * 64),
         }
         for label, profile in cases.items():
@@ -620,7 +655,8 @@ class ScienceBundleAuditTests(unittest.TestCase):
                     "--reference-manifest", str(reference_path),
                     "--ratchet-manifest", str(ratchet_path),
                     "--json", str(json_path),
-                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                ] + self.source_root_arguments(), stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True)
 
                 self.assertEqual(result.returncode, 1, result.stdout)
                 payload = json.loads(json_path.read_text())
@@ -653,7 +689,8 @@ class ScienceBundleAuditTests(unittest.TestCase):
             "--ratchet-manifest", str(ratchet_path),
             "--json", str(json_path),
             "--text", str(text_path),
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        ] + self.source_root_arguments(), stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True)
         self.assertEqual(result.returncode, 1, result.stderr)
         payload = json.loads(json_path.read_text())
         self.assertEqual(payload["status"], "STOP")
@@ -687,7 +724,8 @@ class ScienceBundleAuditTests(unittest.TestCase):
                 "--reference-manifest", str(reference_path),
                 "--ratchet-manifest", str(ratchet_path),
                 "--json", str(json_path),
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            ] + self.source_root_arguments(), stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True)
             return result.returncode, json.loads(json_path.read_text())
 
         returncode, payload = run_cli("pass")
