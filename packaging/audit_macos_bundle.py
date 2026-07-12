@@ -97,7 +97,10 @@ def evaluate_isolation(findings, science_nodes, reference, ratchet_ids):
         "dynamic_science_dependency", "main_reaches_science_dependency",
     }
     tier_a_failures = [
-        item for item in science if item["category"] in tier_a_categories]
+        item for item in findings
+        if item["category"] == "main_reaches_science_dependency" or (
+            item["owner"] in science_nodes and
+            item["category"] in tier_a_categories)]
     reference_by_id = {item["identity"]: item for item in reference["findings"]}
     ceiling = [reference_by_id[item] for item in sorted(ratchet_ids)]
     delta = compare_identity_sets(non_science, ceiling)

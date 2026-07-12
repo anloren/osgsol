@@ -177,6 +177,31 @@ class ScienceBundleAuditTests(unittest.TestCase):
             reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(result["tier_a"]["status"], "STOP")
 
+    def test_main_science_reachability_stops_even_when_identically_ratcheted(self):
+        probe = BundleFixture(self.root)
+        gdal = probe.add("Contents/lib/libgdal.37.dylib", 20)
+        alias = probe.app / "Contents/lib/libalias.dylib"
+        alias.symlink_to(gdal.name)
+        inspector = self.valid_inspector()
+        inspector._dependencies["main"].append("@rpath/libalias.dylib")
+        inspector._dependencies[gdal.name] = ["/usr/lib/libSystem.B.dylib"]
+        historical = AUDIT.make_finding(
+            "Contents/MacOS/main", "main_reaches_science_dependency",
+            "Contents/lib/libgdal.37.dylib", [])
+        reference, ratchet = self.manifest_chain([historical])
+
+        result = audit(
+            probe.app, self.baseline.app, inspector,
+            reference_manifest=reference, ratchet_manifest=ratchet)
+
+        self.assertEqual(result["status"], "STOP")
+        self.assertEqual(result["tier_a"]["status"], "STOP")
+        self.assertEqual(result["tier_b"]["status"], "PASS")
+        self.assertEqual(result["delta"]["new"], [])
+        self.assertEqual(
+            [item["identity"] for item in result["tier_a"]["violations"]],
+            [historical["identity"]])
+
     def test_removed_debt_is_reported_and_cannot_be_substituted(self):
         probe = BundleFixture(self.root)
         old = AUDIT.make_finding(
