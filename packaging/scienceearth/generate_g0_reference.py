@@ -70,14 +70,20 @@ def _write_temporary_json(path, value):
         raise
 
 
-def write_manifest_pair(reference_path, reference, ratchet_path, ratchet):
-    reference_path = Path(reference_path)
-    ratchet_path = Path(ratchet_path)
+def _validated_output_paths(reference_path, ratchet_path):
+    reference_path = Path(reference_path).resolve(strict=False)
+    ratchet_path = Path(ratchet_path).resolve(strict=False)
     if reference_path == ratchet_path:
         raise ValueError("reference and ratchet paths must be different")
     for path in (reference_path, ratchet_path):
         if path.exists():
             raise FileExistsError(f"refusing to overwrite manifest: {path}")
+    return reference_path, ratchet_path
+
+
+def write_manifest_pair(reference_path, reference, ratchet_path, ratchet):
+    reference_path, ratchet_path = _validated_output_paths(
+        reference_path, ratchet_path)
 
     temporary_reference = _write_temporary_json(reference_path, reference)
     temporary_ratchet = None
@@ -138,10 +144,34 @@ def non_science_findings(result, science_plugin_name="osgdb_science.so"):
         pending.extend(
             edge["resolved"] for edge in graph.get(node, [])
             if edge.get("resolved"))
-    return [{key: finding[key] for key in (
-        "schema_version", "owner", "category", "subject", "identity")}
-        for finding in result["findings"]
-        if finding["owner"] not in science_nodes]
+    findings = []
+    for finding in result["findings"]:
+        if finding["owner"] in science_nodes:
+            continue
+        subject = normalize_home_subject(finding["subject"])
+        findings.append({
+            "schema_version": finding["schema_version"],
+            "owner": finding["owner"],
+            "category": finding["category"],
+            "subject": subject,
+            "identity": AUDIT.finding_identity(
+                finding["owner"], finding["category"], subject),
+        })
+    return findings
+
+
+def normalize_home_subject(subject):
+    value = str(subject)
+    for prefix in ("/Users/", "/home/"):
+        if value.startswith(prefix):
+            remainder = value[len(prefix):]
+            username, separator, suffix = remainder.partition("/")
+            if username:
+                return "${HOME}" + (separator + suffix if separator else "")
+    for home in ("/root", "/var/root"):
+        if value == home or value.startswith(home + "/"):
+            return "${HOME}" + value[len(home):]
+    return value
 
 
 def normalized_generation_command(arguments):
@@ -172,11 +202,8 @@ def parse_arguments(argv=None):
 def main(argv=None):
     arguments = parse_arguments(argv)
     verify_boundary_tags(arguments.boundary_tag, arguments.release_tag)
-    reference_path = Path(arguments.reference)
-    ratchet_path = Path(arguments.ratchet)
-    for path in (reference_path, ratchet_path):
-        if path.exists():
-            raise FileExistsError(f"refusing to overwrite manifest: {path}")
+    reference_path, ratchet_path = _validated_output_paths(
+        arguments.reference, arguments.ratchet)
 
     app = Path(arguments.app).resolve()
     source_roots = arguments.source_root or [ROOT]

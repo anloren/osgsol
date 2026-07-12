@@ -233,6 +233,47 @@ class G0ManifestTests(unittest.TestCase):
         command = generator.normalized_generation_command(arguments)
         self.assertNotIn("/Users/USER", json.dumps(command))
 
+    def test_generator_normalizes_unconfigured_home_subjects_across_usernames(self):
+        generator = load_module("generate_g0_reference_home", GENERATOR_PATH)
+        filtered = []
+        for username in ("USER", "another-user"):
+            finding = AUDIT.make_finding(
+                "Contents/MacOS/main", "external_dependency",
+                f"/Users/{username}/local/libexample.dylib", [ROOT])
+            result = {
+                "graph": {"Contents/MacOS/main": []},
+                "findings": [finding],
+            }
+            filtered.append(generator.non_science_findings(result)[0])
+
+        self.assertEqual(filtered[0]["subject"],
+                         "${HOME}/local/libexample.dylib")
+        self.assertEqual(filtered[0]["identity"], filtered[1]["identity"])
+
+    def test_pair_rejects_parent_directory_alias_without_publication(self):
+        generator = load_module("generate_g0_reference_parent_alias", GENERATOR_PATH)
+        reference, ratchet = self.make_chain()
+        output = self.root / "out" / "manifest.json"
+        alias = self.root / "out" / "sub" / ".." / "manifest.json"
+
+        with self.assertRaisesRegex(ValueError, "must be different"):
+            generator.write_manifest_pair(alias, reference, output, ratchet)
+        self.assertFalse(output.exists())
+
+    def test_pair_rejects_symlink_parent_alias_without_publication(self):
+        generator = load_module("generate_g0_reference_symlink_alias", GENERATOR_PATH)
+        reference, ratchet = self.make_chain()
+        output_directory = self.root / "out"
+        output_directory.mkdir()
+        alias_directory = self.root / "alias"
+        alias_directory.symlink_to(output_directory, target_is_directory=True)
+        output = output_directory / "manifest.json"
+        alias = alias_directory / "manifest.json"
+
+        with self.assertRaisesRegex(ValueError, "must be different"):
+            generator.write_manifest_pair(alias, reference, output, ratchet)
+        self.assertFalse(output.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
