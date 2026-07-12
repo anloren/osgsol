@@ -153,7 +153,7 @@ for index, (left_label, left) in enumerate(items):
             )
 PY
 
-for tool in ar cc cmake curl file nm otool patch python3 shasum tar; do
+for tool in ar cc cmake curl file nm otool patch python3 shasum strings tar; do
     command -v "$tool" >/dev/null 2>&1 || die "required build tool not found: $tool"
 done
 [[ $(uname -s) == Darwin ]] || die "this pinned prefix recipe currently supports macOS only"
@@ -269,6 +269,10 @@ verify_pin_contract()
 
     actual=$(shasum -a 256 "$script_dir/gdal-3.13.1-disable-shapelib.patch" | awk '{print $1}')
     [[ $actual == "$GDAL_PATCH_SHA256" ]] || die "GDAL source patch checksum mismatch"
+    actual=$(shasum -a 256 \
+        "$script_dir/gdal-3.13.1-relocatable-static.patch" | awk '{print $1}')
+    [[ $actual == "$GDAL_RELOCATABLE_PATCH_SHA256" ]] ||
+        die "GDAL relocatable source patch checksum mismatch"
 }
 
 verify_archives()
@@ -307,6 +311,7 @@ extract_all()
     (
         cd "$src_dir/gdal-$GDAL_VERSION"
         patch --batch --forward -p1 <"$script_dir/gdal-3.13.1-disable-shapelib.patch"
+        patch --batch --forward -p1 <"$script_dir/gdal-3.13.1-relocatable-static.patch"
     )
 }
 
@@ -377,8 +382,11 @@ verify_common_cache()
     cache_expect "$cache" CMAKE_INSTALL_PREFIX "$prefix"
 }
 
+source_map="-ffile-prefix-map=${science_root}=ScienceEarthDeps"
 common_cmake_args=(
     -DCMAKE_BUILD_TYPE=Release
+    "-DCMAKE_C_FLAGS=${source_map}"
+    "-DCMAKE_CXX_FLAGS=${source_map}"
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     -DCMAKE_C_VISIBILITY_PRESET=hidden
     -DCMAKE_CXX_VISIBILITY_PRESET=hidden
@@ -472,6 +480,7 @@ build_gdal()
         -DCURL_LIBRARY="$system_curl_library" \
         -DSQLite3_INCLUDE_DIR="$sdk_root/usr/include" \
         -DSQLite3_LIBRARY="$system_sqlite_library" \
+        -D_TEST_SHARP_EMBED="$gdal_embed_supported" \
         -DEMBED_RESOURCE_FILES="$gdal_embed_supported" \
         -DUSE_ONLY_EMBEDDED_RESOURCE_FILES="$gdal_embed_supported" \
         -DGDAL_OBJECT_LIBRARIES_POSITION_INDEPENDENT_CODE=ON
@@ -643,6 +652,18 @@ PY
     if find "$prefix" -type f \( -name '*.dylib' -o -name '*.so' \) -print -quit | grep -q .; then
         die "shared library leaked into the static prefix"
     fi
+}
+
+verify_no_workspace_strings()
+{
+    local artifact
+    for artifact in \
+        "$build_dir/runtime-probe/science_deps_runtime_probe" \
+        "$prefix/lib/libgdal.a" "$prefix/lib/libproj.a" "$prefix/lib/libzstd.a"; do
+        if strings -a "$artifact" | grep -F "$science_root"; then
+            die "workspace path leaked into runtime artifact: $artifact"
+        fi
+    done
 }
 
 verify_embed_contract()
@@ -915,6 +936,7 @@ verify_prefix()
     verify_embed_contract
     verify_runtime_probe
     verify_static_artifacts
+    verify_no_workspace_strings
     emit_manifest
     local first_manifest_sha second_manifest_sha
     first_manifest_sha=$(shasum -a 256 "$manifest" | awk '{print $1}')

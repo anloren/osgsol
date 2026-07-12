@@ -1,0 +1,41 @@
+--- a/cmake/helpers/configure.cmake
++++ b/cmake/helpers/configure.cmake
+@@ -25 +25,5 @@
+-set(GDAL_PREFIX ${CMAKE_INSTALL_PREFIX})
++if(USE_ONLY_EMBEDDED_RESOURCE_FILES)
++  unset(GDAL_PREFIX)
++else()
++  set(GDAL_PREFIX ${CMAKE_INSTALL_PREFIX})
++endif()
+--- a/port/CMakeLists.txt
++++ b/port/CMakeLists.txt
+@@ -136,6 +136,8 @@
+-file(TO_CMAKE_PATH "${CMAKE_INSTALL_PREFIX}/${GDAL_RESOURCE_PATH}" INST_DATA_PATH)
+-target_compile_definitions(cpl PRIVATE INST_DATA="${INST_DATA_PATH}")
+-
+-if(CMAKE_INSTALL_FULL_SYSCONFDIR)
+-    target_compile_definitions(cpl PRIVATE SYSCONFDIR="${CMAKE_INSTALL_FULL_SYSCONFDIR}")
+-endif()
++if(NOT USE_ONLY_EMBEDDED_RESOURCE_FILES)
++  file(TO_CMAKE_PATH "${CMAKE_INSTALL_PREFIX}/${GDAL_RESOURCE_PATH}" INST_DATA_PATH)
++  target_compile_definitions(cpl PRIVATE INST_DATA="${INST_DATA_PATH}")
++
++  if(CMAKE_INSTALL_FULL_SYSCONFDIR)
++    target_compile_definitions(cpl PRIVATE SYSCONFDIR="${CMAKE_INSTALL_FULL_SYSCONFDIR}")
++  endif()
++endif()
+--- a/gcore/CMakeLists.txt
++++ b/gcore/CMakeLists.txt
+@@ -123,5 +123,7 @@
+-file(TO_CMAKE_PATH "${CMAKE_INSTALL_PREFIX}/${GDAL_RESOURCE_PATH}" INST_DATA_PATH)
+-set_property(
+-  SOURCE gdaldrivermanager.cpp
+-  APPEND
+-  PROPERTY COMPILE_DEFINITIONS INST_DATA="${INST_DATA_PATH}" INSTALL_PLUGIN_FULL_DIR="${INSTALL_PLUGIN_FULL_DIR}")
++if(NOT USE_ONLY_EMBEDDED_RESOURCE_FILES)
++  file(TO_CMAKE_PATH "${CMAKE_INSTALL_PREFIX}/${GDAL_RESOURCE_PATH}" INST_DATA_PATH)
++  set_property(
++    SOURCE gdaldrivermanager.cpp
++    APPEND
++    PROPERTY COMPILE_DEFINITIONS INST_DATA="${INST_DATA_PATH}" INSTALL_PLUGIN_FULL_DIR="${INSTALL_PLUGIN_FULL_DIR}")
++endif()

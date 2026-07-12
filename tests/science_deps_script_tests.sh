@@ -10,6 +10,7 @@ runtime_probe="$repo_root/packaging/science_deps/runtime_probe.cpp"
 runtime_probe_cmake="$repo_root/packaging/science_deps/runtime_probe_CMakeLists.txt"
 embed_probe="$repo_root/packaging/science_deps/gdal_embed_probe.c"
 gdal_patch="$repo_root/packaging/science_deps/gdal-3.13.1-disable-shapelib.patch"
+relocatable_patch="$repo_root/packaging/science_deps/gdal-3.13.1-relocatable-static.patch"
 tests_cmake="$repo_root/tests/CMakeLists.txt"
 
 fail()
@@ -43,6 +44,9 @@ assert_not_contains()
 [[ -f "$runtime_probe_cmake" ]] || fail "missing runtime probe CMake project"
 [[ -f "$embed_probe" ]] || fail "missing independent GDAL #embed probe"
 [[ -f "$gdal_patch" ]] || fail "missing pinned GDAL Shapelib-disable patch"
+[[ -f "$relocatable_patch" ]] || fail "missing pinned relocatable GDAL patch"
+assert_contains "$relocatable_patch" 'unset\(GDAL_PREFIX\)' \
+    "embedded-only GDAL patch must suppress its compiled install-prefix fallback"
 
 # shellcheck disable=SC1090
 source "$versions_file"
@@ -54,6 +58,9 @@ for variable in GDAL_SHA256 PROJ_SHA256 ZSTD_SHA256; do
     value=${!variable:-}
     [[ $value =~ ^[0-9a-f]{64}$ ]] || fail "$variable must contain a SHA-256 value"
 done
+
+[[ ${GDAL_RELOCATABLE_PATCH_SHA256:-} =~ ^[0-9a-f]{64}$ ]] ||
+    fail "GDAL_RELOCATABLE_PATCH_SHA256 must contain SHA-256"
 
 for component in GDAL PROJ ZSTD; do
     archive_variable="${component}_ARCHIVE"
@@ -67,6 +74,12 @@ done
 
 assert_contains "$builder" 'build/science-deps' \
     "builder must default below build/science-deps"
+assert_contains "$builder" 'ffile-prefix-map' \
+    "dependency build must normalize compiled source paths"
+assert_contains "$builder" 'verify_no_workspace_strings' \
+    "verify must scan linked runtime artifacts for workspace strings"
+assert_contains "$builder" 'gdal-3.13.1-relocatable-static.patch' \
+    "builder must apply the pinned relocatable GDAL patch"
 for directory in downloads src build prefix; do
     assert_contains "$builder" "${directory}" \
         "builder must define the default $directory directory"
@@ -225,6 +238,8 @@ assert_contains "$builder" 'cache_expect.*GDAL_USE_SHAPELIB_INTERNAL.*OFF' \
     "verify must require internal Shapelib disabled"
 assert_contains "$builder" 'EMBED_RESOURCE_FILES.*gdal_embed_supported' \
     "GDAL cache embedding must match the independent probe"
+assert_contains "$builder" '_TEST_SHARP_EMBED.*gdal_embed_supported' \
+    "GDAL CMake embed result must consume the independent probe under path mapping"
 assert_contains "$builder" 'share/gdal' \
     "non-embedded GDAL builds must require installed resource data"
 assert_contains "$builder" 'safe_reset_dir.*src_dir' \
