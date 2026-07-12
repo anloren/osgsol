@@ -133,3 +133,44 @@ RECORDED_BY=Codex automated Task 5 formal separate-process A/B latency run
 AUTOMATED_REVIEW=Optimized hard gate failed; downstream full G0 gates were not rerun and readiness was not asserted
 HUMAN_PRODUCT_SIGN_OFF=PENDING
 RECORDED_DATE=2026-07-12
+
+## Concurrent metadata prefetch Task 4 corrected preflight
+
+The historical
+`0926eff5871c9e8313715c08349293e74db4aef9b9d9cde224743e831b605a6e` Desktop tree digest is
+invalid as a preflight baseline because no reproducible helper invocation was preserved for it.
+The first Task 4 STOP based on that value is withdrawn. Zero public processes had started and no
+diagnostic or formal output root existed, so this correction does not constitute a rerun.
+
+Two fresh, separate invocations of the exact committed
+`ScienceProbeBuilderTests.tree_digest()` helper both returned
+`14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214` for 414 recursive entries
+and 355 regular non-symlink files. The protected canonical fingerprint was exactly
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18` before and after those
+calculations. This reproducible fingerprint/tree pair is the corrected Task 4 preflight baseline.
+
+The corrected preflight then passed on clean commit
+`905044238fda6b93f26b54ebf6a74da0dfefbeea`. The optimized control and prefetch candidate each
+ran exactly once, control first, in separate processes and output paths. The control summary
+passed: NVIDIA median/P95 was `2894.516583/3768.248083 ms` and Hong Kong was
+`2711.594750/3553.175208 ms`, with zero retries and bounded transfers. Its SHA-256 is
+`f793f1c3561e3f746ace2fca164637cd5d238fa81c39298b9a2e29ec2b781096`.
+
+The candidate exited `1` during NVIDIA iteration 1 with
+`VSINetworkStats GET operations disagree with CPL read operations`. Its atomic summary contains
+zero completed cases, has status `ERROR`, and hashes to
+`1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff`. Partial raw evidence
+recorded overlapping HTTP/2 HEAD and exact first `bytes=0-131071` Range emission, 5,010,811
+downloaded bytes, and no retry, but it did not produce the required complete parsed proof,
+accepted correctness result, latency result, or Hong Kong sample. The diagnostic is therefore
+rejected without resampling. The formal profile remains `optimized`, and no formal or downstream
+automated gate ran.
+
+G0_DECISION=STOP
+REASON=The one-shot prefetch candidate exited during NVIDIA iteration 1 because VSINetworkStats GET operations disagreed with CPL read operations; its summary is ERROR with zero completed cases.
+RECORDED_BY=Codex automated Task 4 isolated public diagnostic
+G0_AUTOMATED_GATES=NOT_RUN
+PUBLIC_PREFETCH_DIAGNOSTIC=FAIL
+HUMAN_PRODUCT_SIGN_OFF=PENDING
+DESKTOP_PACKAGE=NOT_READY
+RECORDED_DATE=2026-07-13

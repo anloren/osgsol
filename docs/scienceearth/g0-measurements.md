@@ -1,13 +1,14 @@
-# ScienceEarth G0 Task 5 measurements
+# ScienceEarth G0 measurements
 
-Date: 2026-07-12 (CST)
+Date: 2026-07-13 (CST)
 
-Status: **STOP at the Task 5 formal optimized latency gate.** The baseline and optimized profiles
-ran as separate fresh processes. Offline correctness, bounded transfer, retry accounting, both
-`<= 8 s` P95 targets, and the Hong Kong `<= 3 s` median pass. The optimized NVIDIA HQ median is
-`3058.162792 ms`, which exceeds the hard limit by `58.162792 ms`. The plan therefore stopped before
-the full regression, policy-audit, signature, and protected science-off reruns. This is not G0
-readiness and must not be interpreted as permission to start G1.
+Status: **STOP at the concurrent metadata-prefetch Task 4 diagnostic.** The corrected preflight
+passed and the authorized control and candidate each ran exactly once in separate processes and
+paths. The control passed. The candidate stopped during its first NVIDIA iteration because its
+VSINetworkStats GET-operation count disagreed with the CPL read-operation count. The candidate
+summary is `ERROR` with no completed case, so no formal profile was promoted and no formal or
+downstream automated gate ran. This is not G0 readiness and must not be interpreted as permission
+to package the Desktop app or start G1.
 
 ## Reference setup
 
@@ -248,8 +249,10 @@ The disposable `build/science_g0/osgSol Science G0 Probe.app` was rebuilt from t
 Desktop baseline, replacing only the main executable and adding the test-only probe as
 `Contents/lib/osgPlugins-3.6.5/osgdb_science.so`. It was ad-hoc signed and passed
 `codesign --verify --deep --strict`. The builder also recomputed the canonical protected bundle
-fingerprint before and after. The independent file-tree digest was identical before and after:
-`0926eff5871c9e8313715c08349293e74db4aef9b9d9cde224743e831b605a6e`.
+fingerprint before and after. The earlier record named
+`0926eff5871c9e8313715c08349293e74db4aef9b9d9cde224743e831b605a6e` as an independent
+file-tree digest without preserving a reproducible helper calculation. Task 4 review therefore
+invalidated that value as unproven; it is not a protected baseline.
 
 ## Task 5 policy-bearing bundle audit
 
@@ -346,10 +349,10 @@ The canonical two-root policy audit visited 128 Mach-O nodes and returned `PASS`
 `nm -gU` exposed only `_osgsol_science_g0_probe_anchor`. The linked plugin contained no workspace
 or `science-deps-prefetch` path in its load commands, dependencies, or strings. The protected
 Desktop canonical fingerprint remained
-`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18`, and its independent
-file-tree digest remained
-`0926eff5871c9e8313715c08349293e74db4aef9b9d9cde224743e831b605a6e` before and after the
-disposable copy.
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18`. The historical
+`0926eff5871c9e8313715c08349293e74db4aef9b9d9cde224743e831b605a6e` tree-digest statement
+was not backed by a reproducible helper invocation and is invalid as a baseline. The Task 4
+correction below establishes the reproducible value.
 
 The previous formal evidence was not rewritten. Its hashes still exactly match the protected
 values:
@@ -364,4 +367,101 @@ diagnostic, formal rerun, Desktop replacement, packaging/update, tag, push, or G
 The isolated prototype is ready only for the separately authorized public diagnostic.
 
 G0_DECISION=STOP
-PUBLIC_PREFETCH_DIAGNOSTIC=PENDING
+PUBLIC_PREFETCH_DIAGNOSTIC=PENDING_AT_TASK_3
+DESKTOP_PACKAGE=NOT_READY
+
+## Concurrent metadata prefetch Task 4 corrected preflight baseline
+
+Independent review found that the first Task 4 STOP had treated the historical `0926eff...`
+string as immutable even though no reproducible helper invocation supported it. Zero public
+control, candidate, or formal processes had started, and neither the diagnostic nor formal output
+root existed, so correcting the preflight does not resample or discard any public observation.
+
+At `2026-07-13T02:30:07+0800`, two fresh, separate Python processes imported and invoked the exact
+committed `ScienceProbeBuilderTests.tree_digest()` helper against the protected Desktop. Both
+returned
+`14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214`. The helper contract
+hashes sorted recursive relative paths plus every regular non-symlink file's bytes. Both scans
+covered 414 entries and 355 regular non-symlink files. The canonical fingerprint was
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18` immediately before and
+after the two helper processes. No Desktop mutation was observed.
+
+The reproducible Task 4 protected Desktop baseline is therefore:
+
+| Protected Desktop check | Established value | Reproduction |
+|---|---|---|
+| Canonical bundle fingerprint | `91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18` | exact before/after match |
+| Independent file-tree digest | `14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214` | two separate exact-helper matches |
+| Recursive entries / regular files | `414 / 355` | same protected tree |
+
+The immutable old summary hashes remain
+`17ff3cd876e7995c5257fad1f2da7f27bf0ae7901d46716829f1440d16a321ed` and
+`e4eb9ea1a8d5795db6197110ba96f4851c127dbe06b6bfcae5d3e9ea9b466dfe`. The active proxy is
+recorded only as a credential-free loopback HTTP endpoint. The binding pre-call snapshot at
+`2026-07-13T02:32:13+0800` passed on clean commit
+`905044238fda6b93f26b54ebf6a74da0dfefbeea`: both old summary hashes, the canonical Desktop
+fingerprint, the corrected tree digest and counts, executable path, and absent diagnostic/formal
+roots matched exactly.
+
+### One-shot diagnostic result
+
+The optimized control and prefetch candidate ran in that order as separate executable processes
+with separate evidence directories and summaries. Neither process was repeated.
+
+| Diagnostic artifact | SHA-256 | Status |
+|---|---|---|
+| `diagnostic-evidence/control-summary.json` | `f793f1c3561e3f746ace2fca164637cd5d238fa81c39298b9a2e29ec2b781096` | PASS |
+| `diagnostic-evidence/prefetch-summary.json` | `1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff` | ERROR, zero completed cases |
+| Control raw/proof tree, 30 files | `d3eb2a1adb60aa4a911b14e47854a2fc7b7fe7b81424de17779ae7862b888133` | complete |
+| Candidate partial raw/stats tree, 2 files | `054d7d76266febab932255db9658845717625d1ea348bef4021fd3330adffca0` | incomplete first iteration |
+
+The complete control measurements were:
+
+| Control case | Iterations (ms) | Median / P95 (ms) | Median open / georef / read / close (ms) | GET / HEAD / retries | Successful and conservative bytes | Outcome |
+|---|---|---|---|---:|---:|---|
+| NVIDIA HQ | 3768.248083, 3164.802084, 2860.372458, 2777.421083, 2894.516583 | 2894.516583 / 3768.248083 | 1749.556333 / 1.549542 / 1145.232375 / 0.085041 | 35 / 5 / 0 | 25,054,055 | PASS |
+| Hong Kong | 2643.870166, 3553.175208, 2774.859000, 2711.594750, 2651.743250 | 2711.594750 / 3553.175208 | 1810.881375 / 1.508083 / 918.411333 / 0.179500 | 20 / 5 / 0 | 6,320,460 | PASS |
+
+Every control iteration remained below the 16,777,216-byte budget, used one HEAD, had no retry,
+and preserved bounded single-range HTTP 206 reads. NVIDIA transferred 5,010,811 bytes per
+iteration; Hong Kong transferred 1,264,092 bytes per iteration. Both control medians and P95s
+passed the immutable limits.
+
+The candidate started NVIDIA iteration 1, wrote its raw curl/CPL log and network statistics, and
+then exited `1` with the exact error:
+
+```text
+ScienceHttpRanges failure: VSINetworkStats GET operations disagree with CPL read operations
+```
+
+The raw chronology recorded coordinator start, HTTP/2 HEAD header emission at
+`474400880674875 ns`, exact `Range: bytes=0-131071` GET emission at `474400880782000 ns`, HEAD
+200 at `474401287265500 ns`, Range 206 at `474401352775208 ns`, and cache publication at
+`474401786475791 ns`. Thus the outbound Range began before the HEAD response, but the executable
+did not produce the required complete parsed proof. The raw trace contained seven actual GETs
+(one initial exact Range plus six RGB ranges) and no retry. VSINetworkStats recorded two logical
+GET operations—one 131,072-byte Stat GET and one 4,879,739-byte ReadMultiRange operation—for
+5,010,811 downloaded bytes plus one HEAD. That disagreement is the rejected observation; it is
+not waived or reinterpreted as a passing candidate.
+
+No candidate phase timing, latency percentile, correctness result, Hong Kong iteration, or
+complete metadata-prefetch proof was accepted. The candidate summary stayed atomically published
+as `{"cases":[],"profile":"prefetch","status":"ERROR"}` with the unchanged 3000/8000 ms
+limits. Per the plan, an incomplete or failed candidate set is an immutable diagnostic rejection:
+there was no resampling, threshold change, formal CTest promotion, formal evidence directory,
+science-off rerun, dependency verification rerun, canonical audit rerun, signature/size/memory/
+correctness/range/camera/cache rerun, clean-machine launch, Desktop replacement, package, tag,
+push, or G1 work.
+
+After both processes, the old formal summary hashes remained exact, the protected Desktop
+fingerprint/tree pair remained
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18` /
+`14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214`, and the formal output
+root remained absent.
+
+G0_DECISION=STOP
+REASON=The one-shot prefetch candidate exited during NVIDIA iteration 1 because VSINetworkStats GET operations disagreed with CPL read operations; its summary is ERROR with zero completed cases.
+G0_AUTOMATED_GATES=NOT_RUN
+PUBLIC_PREFETCH_DIAGNOSTIC=FAIL
+HUMAN_PRODUCT_SIGN_OFF=PENDING
+DESKTOP_PACKAGE=NOT_READY
