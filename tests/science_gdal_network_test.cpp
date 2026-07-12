@@ -1039,8 +1039,6 @@ namespace
             proof.successfulByteIntervals.emplace_back(start, end);
             ++successfulRanges[range];
         }
-        std::sort(proof.successfulByteIntervals.begin(),
-                  proof.successfulByteIntervals.end());
         require(headResponses == proof.actualHeadCount,
                 "HEAD request/response count mismatch (possible GET 200)");
         require(connectResponses == connectRequests,
@@ -1103,6 +1101,25 @@ namespace
         require(proof.statsGetOperationCount == logicalGetOperations,
                 "VSINetworkStats GET operations disagree with CPL read operations");
         return proof;
+    }
+
+    void verifyOptimizedMetadataIntervals(const HttpProof& proof)
+    {
+        const auto metadata =
+            std::make_pair<std::uint64_t, std::uint64_t>(0, 131071);
+        require(!proof.successfulByteIntervals.empty() &&
+                proof.successfulByteIntervals.front() == metadata,
+                "optimized first data interval must be exactly bytes 0-131071");
+        for (std::size_t index = 1; index < proof.successfulByteIntervals.size(); ++index)
+        {
+            const auto& interval = proof.successfulByteIntervals[index];
+            require(!(interval.first >= metadata.first &&
+                      interval.second <= metadata.second),
+                    "later successful interval is wholly inside optimized metadata chunk");
+        }
+        require(proof.successfulByteIntervals.size() ==
+                    static_cast<std::size_t>(proof.successfulGetCount),
+                "successful interval evidence does not map one-to-one to HTTP 206 responses");
     }
 
     void verifyHttpParserRegression()
@@ -1231,8 +1248,59 @@ namespace
                 "out-of-order HTTP/2 multiplex retry regression fixture failed");
         require(multiplexedProof.successfulByteIntervals ==
                     std::vector<std::pair<std::uint64_t, std::uint64_t>>(
-                        {{10, 19}, {20, 29}}),
-                "successful byte intervals were not sorted");
+                        {{20, 29}, {10, 19}}),
+                "successful byte intervals did not retain response chronology");
+
+        DebugCapture highOffsetFirst;
+        highOffsetFirst.messages = {
+            "CURL_INFO_HEADER_OUT: HEAD /tile.tiff HTTP/2\r\nHost: data.example\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 200\r",
+            "CURL_INFO_HEADER_IN: content-length: 2000000\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\nHost: data.example\r\n"
+            "Range: bytes=900000-900009\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 206\r",
+            "CURL_INFO_HEADER_IN: content-range: bytes 900000-900009/2000000\r",
+            "CURL_INFO_HEADER_IN: content-length: 10\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "VSICURL: Got response_code=206",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\nHost: data.example\r\n"
+            "Range: bytes=0-131071\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 206\r",
+            "CURL_INFO_HEADER_IN: content-range: bytes 0-131071/2000000\r",
+            "CURL_INFO_HEADER_IN: content-length: 131072\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "VSICURL: Got response_code=206",
+        };
+        const std::string highOffsetFirstStats =
+            "{\"methods\":{\"GET\":{\"count\":2,\"downloaded_bytes\":131082},"
+            "\"HEAD\":{\"count\":1}}}";
+        const HttpProof highOffsetFirstProof =
+            buildHttpProof(highOffsetFirst, highOffsetFirstStats);
+        require(highOffsetFirstProof.successfulByteIntervals ==
+                    std::vector<std::pair<std::uint64_t, std::uint64_t>>(
+                        {{900000, 900009}, {0, 131071}}),
+                "HTTP parser changed successful byte-interval chronology");
+        require(highOffsetFirstProof.actualGetCount == 2 &&
+                highOffsetFirstProof.successfulGetCount == 2 &&
+                highOffsetFirstProof.successfulRangeBytes == 131082 &&
+                highOffsetFirstProof.actualHttpBodyBytes == 131082 &&
+                highOffsetFirstProof.conservativeBodyUpperBound == 131082,
+                "high-offset-first parser fixture changed counts or byte budgets");
+        require(serializeProof(highOffsetFirstProof).find(
+                    "[[900000,900009],[0,131071]]") != std::string::npos,
+                "serialized proof changed successful byte-interval chronology");
+        bool highOffsetFirstRejected = false;
+        try
+        {
+            verifyOptimizedMetadataIntervals(highOffsetFirstProof);
+        }
+        catch (const std::exception&)
+        {
+            highOffsetFirstRejected = true;
+        }
+        require(highOffsetFirstRejected,
+                "optimized metadata check accepted a high-offset first HTTP 206");
 
         DebugCapture rangedGet200;
         rangedGet200.messages.assign(capture.messages.begin(), capture.messages.begin() + 7);
@@ -2086,19 +2154,7 @@ int runMain(int argc, char** argv)
     const std::string statsJson = requireNetworkStatsEvidence();
     writeRawTransportEvidence("local", capture, statsJson);
     const HttpProof proof = buildHttpProof(capture, statsJson);
-    require(!proof.successfulByteIntervals.empty() &&
-            proof.successfulByteIntervals.front() ==
-                std::make_pair<std::uint64_t, std::uint64_t>(0, 131071),
-            "optimized first data interval must be exactly bytes 0-131071");
-    for (std::size_t index = 1; index < proof.successfulByteIntervals.size(); ++index)
-    {
-        const auto& interval = proof.successfulByteIntervals[index];
-        require(interval.second > 131071,
-                "later successful interval is wholly inside optimized metadata chunk");
-    }
-    require(proof.successfulByteIntervals.size() ==
-                static_cast<std::size_t>(proof.successfulGetCount),
-            "successful interval evidence does not map one-to-one to HTTP 206 responses");
+    verifyOptimizedMetadataIntervals(proof);
     server.stop();
     const LocalServerEvidence local = verifyLog(log, sourceSize);
     require(local.getCount == proof.actualGetCount &&
