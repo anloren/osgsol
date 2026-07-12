@@ -2,6 +2,7 @@
 """Recursively audit a macOS app dependency graph and ScienceEarth bundle cost."""
 
 import argparse
+import hashlib
 import json
 import plistlib
 import re
@@ -23,6 +24,50 @@ SCIENCE_STRING_PATTERN = re.compile(
     r"(?:GDALAllRegister|GDALOpen(?:Ex)?|GDAL_DATA|PROJ_LIB|"
     r"proj_(?:context_create|create_crs_to_crs)|"
     r"ZSTD_(?:compress|decompress|createDStream))")
+
+
+FINDING_SCHEMA_VERSION = 1
+
+
+def normalize_subject(subject, source_roots):
+    value = str(subject)
+    roots = sorted((str(Path(root).resolve()) for root in source_roots),
+                   key=len, reverse=True)
+    for root in roots:
+        value = value.replace(root, "${SOURCE_ROOT}")
+    return value
+
+
+def finding_identity(owner, category, normalized_subject):
+    payload = json.dumps({
+        "owner": owner,
+        "category": category,
+        "subject": normalized_subject,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def make_finding(owner, category, subject, source_roots):
+    normalized = normalize_subject(subject, source_roots)
+    return {
+        "schema_version": FINDING_SCHEMA_VERSION,
+        "owner": owner,
+        "category": category,
+        "subject": normalized,
+        "identity": finding_identity(owner, category, normalized),
+    }
+
+
+def compare_identity_sets(candidate, ceiling):
+    candidate_by_id = {item["identity"]: item for item in candidate}
+    ceiling_by_id = {item["identity"]: item for item in ceiling}
+    new_ids = sorted(set(candidate_by_id) - set(ceiling_by_id))
+    removed_ids = sorted(set(ceiling_by_id) - set(candidate_by_id))
+    return {
+        "ok": not new_ids,
+        "new": [candidate_by_id[item] for item in new_ids],
+        "removed": [ceiling_by_id[item] for item in removed_ids],
+    }
 
 
 class CommandInspector:
@@ -180,11 +225,12 @@ def discover_macho(app, inspector):
     )
 
 
-def reachable_nodes(graph, start, science_plugin_name=None):
+def reachable_nodes(graph, start, science_plugin_name=None, source_roots=None):
     pending = [(start, False)]
     visited = set()
     reached = set()
-    violations = []
+    findings = []
+    source_roots = list(source_roots or [])
     while pending:
         node, below_science = pending.pop()
         state = (node, below_science)
@@ -194,13 +240,18 @@ def reachable_nodes(graph, start, science_plugin_name=None):
         reached.add(node)
         below_science = below_science or Path(node).name == science_plugin_name
         if SCIENCE_DEPENDENCY_PATTERN.search(Path(node).name) and not below_science:
-            violations.append(
-                f"science dependency reachable from main outside {science_plugin_name}: {node}")
+            message = (
+                f"science dependency reachable from main outside "
+                f"{science_plugin_name}: {node}")
+            finding = make_finding(
+                start, "main_reaches_science_dependency", node, source_roots)
+            finding["message"] = message
+            findings.append(finding)
         for edge in graph.get(node, []):
             resolved = edge.get("resolved")
             if resolved:
                 pending.append((resolved, below_science))
-    return reached, violations
+    return reached, findings
 
 
 def audit_bundle(app, baseline, inspector=None, source_roots=None,
@@ -221,8 +272,14 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
     binary_by_relative = {internal_relative(path, app): path for path in binaries}
     if main_relative not in binary_by_relative:
         raise ValueError("main executable is not a Mach-O file")
-    violations = []
+    findings = []
     unresolved = []
+
+    def add_finding(owner, category, subject, message):
+        finding = make_finding(owner, category, subject, source_roots)
+        finding["message"] = message
+        findings.append(finding)
+
     metadata = {}
     for relative, binary in sorted(binary_by_relative.items()):
         dependencies = inspector.dependencies(binary)
@@ -243,7 +300,8 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
         if Path(relative).name == science_plugin_name]
     science_relative = science_nodes[0] if len(science_nodes) == 1 else None
     if len(science_nodes) != 1:
-        violations.append(
+        add_finding(
+            science_plugin_name, "missing_science_plugin", len(science_nodes),
             f"expected exactly one {science_plugin_name}, found {len(science_nodes)}")
 
     for relative, item in sorted(metadata.items()):
@@ -251,23 +309,34 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
         for raw in item["dependencies"]:
             forbidden = is_forbidden_reference(raw, source_roots)
             if forbidden:
-                violations.append(f"{forbidden} runtime reference in {relative}: {raw}")
+                add_finding(
+                    relative, "forbidden_runtime_reference", raw,
+                    f"{forbidden} runtime reference in {relative}: {raw}")
             if SCIENCE_DEPENDENCY_PATTERN.search(Path(raw).name) and not exempt:
-                violations.append(
+                add_finding(
+                    relative, "dynamic_science_dependency", raw,
                     f"dynamic science dependency in {relative}: {raw}")
         for rpath in item["rpaths"]:
             forbidden = is_forbidden_reference(rpath, source_roots)
             if forbidden:
-                violations.append(f"{forbidden} rpath in {relative}: {rpath}")
+                add_finding(
+                    relative, "forbidden_rpath", rpath,
+                    f"{forbidden} rpath in {relative}: {rpath}")
         for value in item["strings"]:
             forbidden = is_forbidden_reference(value, source_roots)
             if forbidden:
-                violations.append(f"{forbidden} string in {relative}: {value}")
+                add_finding(
+                    relative, "forbidden_string", value,
+                    f"{forbidden} string in {relative}: {value}")
             if SCIENCE_STRING_PATTERN.search(value) and not exempt:
-                violations.append(f"static science string in {relative}: {value}")
+                add_finding(
+                    relative, "static_science_string", value,
+                    f"static science string in {relative}: {value}")
         for value in item["symbols"]:
             if SCIENCE_SYMBOL_PATTERN.search(value) and not exempt:
-                violations.append(f"static science symbol in {relative}: {value}")
+                add_finding(
+                    relative, "static_science_symbol", value,
+                    f"static science symbol in {relative}: {value}")
 
     graph = {}
     visited_contexts = set()
@@ -296,9 +365,10 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
             if resolved_path is None:
                 message = f"unresolved dependency in {relative}: {raw}"
                 unresolved.append(message)
-                violations.append(message)
+                add_finding(relative, "unresolved_dependency", raw, message)
             elif external:
-                violations.append(
+                add_finding(
+                    relative, "external_dependency", f"{raw} -> {external}",
                     f"external dependency in {relative}: {raw} -> {external}")
             edge = {
                 "dependency": raw,
@@ -317,14 +387,14 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
         if relative != main_relative:
             traverse(relative, main_runpaths)
 
-    _, main_science_violations = reachable_nodes(
-        graph, main_relative, science_plugin_name)
-    violations.extend(main_science_violations)
+    _, main_science_findings = reachable_nodes(
+        graph, main_relative, science_plugin_name, source_roots)
+    findings.extend(main_science_findings)
     if science_relative is None:
         science_reachable = set(science_nodes)
     else:
         science_reachable, _ = reachable_nodes(
-            graph, science_relative, science_plugin_name)
+            graph, science_relative, science_plugin_name, source_roots)
     baseline_relatives = {
         str(path.relative_to(baseline)) for path in baseline.rglob("*")
         if path.is_file() or path.is_symlink()
@@ -338,9 +408,11 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
     total_bytes = bundle_size(app)
     delta_bytes = total_bytes - baseline_bytes
     size_result = evaluate_size_gates(delta_bytes, science_closure_bytes)
-    violations.extend(size_result["violations"])
     unresolved = sorted(set(unresolved))
-    violations = sorted(set(violations))
+    findings_by_id = {item["identity"]: item for item in findings}
+    findings = [findings_by_id[item] for item in sorted(findings_by_id)]
+    violations = sorted(
+        size_result["violations"] + [item["message"] for item in findings])
     if violations:
         status = "STOP"
     else:
@@ -368,6 +440,7 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
             "hard_stop_added_bytes": HARD_STOP_ADDED_BYTES,
         },
         "review_items": size_result["review_items"],
+        "findings": findings,
         "violations": violations,
     }
 

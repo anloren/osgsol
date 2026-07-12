@@ -117,10 +117,34 @@ class ScienceBundleAuditTests(unittest.TestCase):
             },
         )
 
+    def test_finding_identity_is_stable_normalized_and_owner_sensitive(self):
+        first = AUDIT.make_finding(
+            "Contents/lib/libbase.dylib", "source_build_string",
+            str(ROOT / "build" / "sdk_core" / "file.cpp"), [ROOT])
+        same = AUDIT.make_finding(
+            "Contents/lib/libbase.dylib", "source_build_string",
+            str(ROOT / "build" / "sdk_core" / "file.cpp"), [ROOT])
+        other_owner = AUDIT.make_finding(
+            "Contents/MacOS/main", "source_build_string",
+            str(ROOT / "build" / "sdk_core" / "file.cpp"), [ROOT])
+        self.assertEqual(first["subject"], "${SOURCE_ROOT}/build/sdk_core/file.cpp")
+        self.assertEqual(first["identity"], same["identity"])
+        self.assertNotEqual(first["identity"], other_owner["identity"])
+
+    def test_identity_delta_rejects_replacement_at_equal_count(self):
+        allowed = [AUDIT.make_finding("Contents/MacOS/main", "external_dependency",
+                                      "/old/lib.dylib", [])]
+        candidate = [AUDIT.make_finding("Contents/MacOS/main", "external_dependency",
+                                        "/new/lib.dylib", [])]
+        delta = AUDIT.compare_identity_sets(candidate, allowed)
+        self.assertEqual(delta["new"], candidate)
+        self.assertEqual(delta["removed"], allowed)
+        self.assertFalse(delta["ok"])
+
     def test_recursively_audits_main_libraries_and_unreferenced_plugins(self):
         probe = BundleFixture(self.root)
         result = audit(probe.app, self.baseline.app, self.valid_inspector())
-        self.assertTrue(result["ok"], result["violations"])
+        self.assertTrue(result["ok"], result["findings"])
         self.assertEqual(
             set(result["graph"]),
             {
@@ -144,7 +168,8 @@ class ScienceBundleAuditTests(unittest.TestCase):
         inspector._dependencies["main"] = ["@rpath/libmissing.dylib"]
         result = audit(probe.app, self.baseline.app, inspector)
         self.assertFalse(result["ok"])
-        self.assertTrue(any("unresolved" in item for item in result["violations"]))
+        self.assertTrue(any(
+            "unresolved" in item["message"] for item in result["findings"]))
 
     def test_rpath_uses_first_existing_candidate_even_when_external(self):
         probe = BundleFixture(self.root)
@@ -200,7 +225,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         ]
         result = audit(probe.app, self.baseline.app, inspector)
         self.assertFalse(result["ok"])
-        report = "\n".join(result["violations"])
+        report = "\n".join(item["message"] for item in result["findings"])
         self.assertIn("/opt/homebrew", report)
         self.assertIn("/usr/local", report)
         self.assertIn("source/build", report)
@@ -213,8 +238,8 @@ class ScienceBundleAuditTests(unittest.TestCase):
         inspector._dependencies[gdal.name] = ["/usr/lib/libSystem.B.dylib"]
         result = audit(probe.app, self.baseline.app, inspector)
         self.assertFalse(result["ok"])
-        self.assertTrue(any("reachable from main" in item
-                            for item in result["violations"]))
+        self.assertTrue(any("reachable from main" in item["message"]
+                            for item in result["findings"]))
 
     def test_rejects_dynamic_science_dependency_in_unreferenced_plugin(self):
         probe = BundleFixture(self.root)
@@ -225,7 +250,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         result = audit(probe.app, self.baseline.app, inspector)
         self.assertTrue(any(
             "dynamic science dependency in Contents/PlugIns/osgdb_unreferenced.so"
-            in item for item in result["violations"]), result["violations"])
+            in item["message"] for item in result["findings"]), result["findings"])
 
     def test_rejects_static_science_markers_in_unreferenced_non_science_machos(self):
         probe = BundleFixture(self.root)
@@ -239,7 +264,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         inspector._symbols[symbol_plugin.name] = ["_GDALAllRegister"]
         inspector._strings[string_library.name] = ["proj_context_create"]
         result = audit(probe.app, self.baseline.app, inspector)
-        report = "\n".join(result["violations"])
+        report = "\n".join(item["message"] for item in result["findings"])
         self.assertIn("static science symbol", report)
         self.assertIn("static science string", report)
 
@@ -251,7 +276,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
             "@loader_path/../libgdal.37.dylib")
         inspector._dependencies[gdal.name] = ["/usr/lib/libSystem.B.dylib"]
         result = audit(probe.app, self.baseline.app, inspector)
-        self.assertTrue(result["ok"], result["violations"])
+        self.assertTrue(result["ok"], result["findings"])
         self.assertIn("Contents/lib/libgdal.37.dylib",
                       result["science_only_closure"])
 
