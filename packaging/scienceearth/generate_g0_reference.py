@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -14,6 +15,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BOUNDARY_TAG = "ScienceEarth"
 INITIAL_RELEASE_TAG = "v0.2.0"
+MACHINE_HOME_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_.${}~@%+\-/])"
+    r"(?:/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+|/var/root|/root)"
+    r"(?![A-Za-z0-9._-])")
 
 
 def load_module(name, path):
@@ -95,6 +100,7 @@ def write_manifest_pair(reference_path, reference, ratchet_path, ratchet):
         with temporary_ratchet.open(encoding="utf-8") as stream:
             written_ratchet = json.load(stream)
         MANIFEST.validate_chain(written_reference, written_ratchet)
+        _reject_machine_home_literals(written_reference, written_ratchet)
         for path in (reference_path, ratchet_path):
             if path.exists():
                 raise FileExistsError(f"refusing to overwrite manifest: {path}")
@@ -161,17 +167,15 @@ def non_science_findings(result, science_plugin_name="osgdb_science.so"):
 
 
 def normalize_home_subject(subject):
-    value = str(subject)
-    for prefix in ("/Users/", "/home/"):
-        if value.startswith(prefix):
-            remainder = value[len(prefix):]
-            username, separator, suffix = remainder.partition("/")
-            if username:
-                return "${HOME}" + (separator + suffix if separator else "")
-    for home in ("/root", "/var/root"):
-        if value == home or value.startswith(home + "/"):
-            return "${HOME}" + value[len(home):]
-    return value
+    return MACHINE_HOME_PATTERN.sub("${HOME}", str(subject))
+
+
+def _reject_machine_home_literals(*manifests):
+    serialized = json.dumps(manifests, sort_keys=True)
+    match = MACHINE_HOME_PATTERN.search(serialized)
+    if match:
+        raise ValueError(
+            f"manifest contains machine-home path literal: {match.group(0)}")
 
 
 def normalized_generation_command(arguments):

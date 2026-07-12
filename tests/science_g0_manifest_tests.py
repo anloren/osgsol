@@ -250,6 +250,61 @@ class G0ManifestTests(unittest.TestCase):
                          "${HOME}/local/libexample.dylib")
         self.assertEqual(filtered[0]["identity"], filtered[1]["identity"])
 
+    def test_generator_normalizes_embedded_and_repeated_home_paths(self):
+        generator = load_module("generate_g0_reference_embedded_home", GENERATOR_PATH)
+        subject = (
+            "@rpath/libexample.dylib -> /Users/USER/local/libexample.dylib; "
+            "fallback=/Users/USER/alternate/libexample.dylib")
+        finding = AUDIT.make_finding(
+            "Contents/MacOS/main", "external_dependency", subject, [ROOT])
+        result = {
+            "graph": {"Contents/MacOS/main": []},
+            "findings": [finding],
+        }
+        filtered = generator.non_science_findings(result)
+        reference = MANIFEST.build_reference(
+            filtered, MANIFEST.BOUNDARY_COMMIT, "a" * 64, {})
+        ratchet = MANIFEST.build_ratchet(reference, "v0.2.0")
+        reference_path = self.root / "reference.json"
+        ratchet_path = self.root / "ratchet.json"
+
+        generator.write_manifest_pair(
+            reference_path, reference, ratchet_path, ratchet)
+
+        written_reference = json.loads(reference_path.read_text())
+        written_ratchet = json.loads(ratchet_path.read_text())
+        self.assertEqual(
+            written_reference["findings"][0]["subject"],
+            "@rpath/libexample.dylib -> ${HOME}/local/libexample.dylib; "
+            "fallback=${HOME}/alternate/libexample.dylib")
+        self.assertNotIn("/Users/USER", reference_path.read_text())
+        MANIFEST.validate_chain(written_reference, written_ratchet)
+
+    def test_home_normalization_is_path_boundary_aware_for_all_platforms(self):
+        generator = load_module("generate_g0_reference_home_boundaries", GENERATOR_PATH)
+        subject = (
+            "mac=/Users/USER/a linux=/home/bob/b root=/root/c "
+            "varroot=/var/root/d keep=prefix/Users/USER/e keep2=/rooted/f")
+
+        self.assertEqual(
+            generator.normalize_home_subject(subject),
+            "mac=${HOME}/a linux=${HOME}/b root=${HOME}/c "
+            "varroot=${HOME}/d keep=prefix/Users/USER/e keep2=/rooted/f")
+
+    def test_pair_rejects_any_remaining_machine_home_literal(self):
+        generator = load_module("generate_g0_reference_home_guard", GENERATOR_PATH)
+        reference, _ = self.make_chain()
+        reference["metadata"]["build_log"] = "built in /Users/USER/work"
+        ratchet = MANIFEST.build_ratchet(reference, "v0.2.0")
+        reference_path = self.root / "reference.json"
+        ratchet_path = self.root / "ratchet.json"
+
+        with self.assertRaisesRegex(ValueError, "machine-home"):
+            generator.write_manifest_pair(
+                reference_path, reference, ratchet_path, ratchet)
+        self.assertFalse(reference_path.exists())
+        self.assertFalse(ratchet_path.exists())
+
     def test_pair_rejects_parent_directory_alias_without_publication(self):
         generator = load_module("generate_g0_reference_parent_alias", GENERATOR_PATH)
         reference, ratchet = self.make_chain()
