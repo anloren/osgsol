@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 BOUNDARY_TAG = "ScienceEarth"
 INITIAL_RELEASE_TAG = "v0.2.0"
 MACHINE_HOME_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9_.${}~@%+\-/])"
-    r"(?:/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+|/var/root|/root)"
+    r"(?<![A-Za-z0-9_.${}~@%+\-/:])"
+    r"/+(?:Users/[A-Za-z0-9._-]+|home/[A-Za-z0-9._-]+|var/root|root)"
     r"(?![A-Za-z0-9._-])")
 
 

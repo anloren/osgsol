@@ -280,6 +280,19 @@ class G0ManifestTests(unittest.TestCase):
         self.assertNotIn("/Users/USER", reference_path.read_text())
         MANIFEST.validate_chain(written_reference, written_ratchet)
 
+    def test_generator_normalizes_repeated_leading_slashes_at_path_boundaries(self):
+        generator = load_module("generate_g0_reference_repeated_slashes", GENERATOR_PATH)
+        subject = (
+            "mac=//Users/USER/a mac2=///Users/USER/b "
+            "linux=////home/bob/c root=//root/d varroot=///var/root/e "
+            "url=https://Users/USER/f nonpath=prefix//Users/USER/g")
+
+        self.assertEqual(
+            generator.normalize_home_subject(subject),
+            "mac=${HOME}/a mac2=${HOME}/b linux=${HOME}/c "
+            "root=${HOME}/d varroot=${HOME}/e "
+            "url=https://Users/USER/f nonpath=prefix//Users/USER/g")
+
     def test_home_normalization_is_path_boundary_aware_for_all_platforms(self):
         generator = load_module("generate_g0_reference_home_boundaries", GENERATOR_PATH)
         subject = (
@@ -295,6 +308,21 @@ class G0ManifestTests(unittest.TestCase):
         generator = load_module("generate_g0_reference_home_guard", GENERATOR_PATH)
         reference, _ = self.make_chain()
         reference["metadata"]["build_log"] = "built in /Users/USER/work"
+        ratchet = MANIFEST.build_ratchet(reference, "v0.2.0")
+        reference_path = self.root / "reference.json"
+        ratchet_path = self.root / "ratchet.json"
+
+        with self.assertRaisesRegex(ValueError, "machine-home"):
+            generator.write_manifest_pair(
+                reference_path, reference, ratchet_path, ratchet)
+        self.assertFalse(reference_path.exists())
+        self.assertFalse(ratchet_path.exists())
+
+    def test_pair_rejects_repeated_leading_slash_machine_home_literal(self):
+        generator = load_module("generate_g0_reference_repeated_home_guard", GENERATOR_PATH)
+        reference, _ = self.make_chain()
+        reference["metadata"]["build_log"] = (
+            "built in //Users/USER/work then copied from ///home/alice/work")
         ratchet = MANIFEST.build_ratchet(reference, "v0.2.0")
         reference_path = self.root / "reference.json"
         ratchet_path = self.root / "ratchet.json"
