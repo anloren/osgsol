@@ -99,25 +99,94 @@ sample, so later planning must use these measured fixture sizes.
 
 ## Test-only probe closure
 
-`osgdb_science_g0_probe.so` is a test-only, non-installed Mach-O arm64 bundle. It is 21,283,608
-bytes with SHA-256 `835bc36a6f395d285e9a7f5d494c9d15dd56509f760728b26da24090d15011ad`.
+`osgdb_science_g0_probe.so` is a test-only, non-installed Mach-O arm64 bundle. The fresh Task 5
+build is 21,283,576 bytes with SHA-256
+`664b284db20530a28586a573d01f78e4b8bd244075617936a77596f6298131ba`.
 It links the private `libgdal.a`, `libproj.a`, and `libzstd.a` plus SDK curl and SQLite.
 
 `nm -gU` exposes exactly `_osgsol_science_g0_probe_anchor`. `otool -L` lists only system curl,
 System, SQLite, and libc++; there is no `LC_RPATH` and no install rule. The link command inherits
 an unused `-L/opt/homebrew/lib` from the wider project, but no Homebrew library or RPATH enters the
-bundle. Static GDAL source/build strings remain a Task 6 bundle-audit concern.
+bundle. The private dependency verifier and linked-probe scan contain no private dependency
+workspace root.
 
-## Task 6 recursive bundle audit
+## Protected reference generation and normalization provenance
+
+The first guarded generation exposed 37 historical subjects beginning with a doubled
+`//Users/USER` slash. The residual-home guard had checked only a single leading slash. No such
+manifest was accepted or committed. Focused RED tests proved both normalization and publication
+could be bypassed; the fixed tests and full audit/manifest suite passed before commit `06887b9`.
+
+A corrected one-root pre-acceptance pair then passed chain and home-path validation but the first
+formal policy audit correctly stopped: Tier A passed, while Tier B reported exactly 74 new and 74
+removed `forbidden_string` identities. The bytes were historical; the reference had normalized the
+osgSol worktree as `${HOME}/osgsol/...`, while the formal two-root audit normalized the same paths
+as `${SOURCE_ROOT}/...`. The rejected file hashes were:
+
+| Rejected one-root file | SHA-256 |
+|---|---|
+| `v0.2.0-macos-arm64-reference.json` | `f196c693a70f3a775c76eea7a966a671ef45315b58fc5c51d9bcec72d3a38f52` |
+| `current-macos-arm64-ratchet.json` | `25b12045ee44dbeba09cfde440955f6a3d49b59635ed928ed9b0787f313abba4` |
+
+Those two uncommitted files alone were deleted with reason: `initial reference failed first policy
+audit due normalization-profile mismatch`. No audit fallback, ratchet relaxation, or hand edit was
+used. Commit `94c95c2` added a required normalization profile with exact schema, version, and
+source-root count; the policy CLI now stops before identity comparison for a missing, malformed,
+wrong-version, wrong-schema, or count-mismatched profile.
+
+The explicitly approved pre-acceptance generation was then run once with both formal audit roots:
+
+```bash
+python3 packaging/scienceearth/generate_g0_reference.py \
+  --app '/Users/USER/Desktop/osgSol Earth.app' \
+  --reference packaging/scienceearth/baselines/v0.2.0-macos-arm64-reference.json \
+  --ratchet packaging/scienceearth/baselines/current-macos-arm64-ratchet.json \
+  --boundary-tag ScienceEarth \
+  --release-tag v0.2.0 \
+  --source-root /Users/USER/osgverse \
+  --source-root /Users/USER/osgsol/.worktrees/v0.2-runtime-safety
+```
+
+The accepted profile is `scienceearth-g0-source-root-normalization` version 1 with
+`source_root_count=2`. Both normalized generation-command roots are placeholders. Reference and
+initial ratchet each contain 1,086 identities; neither manifest contains `/Users/USER` or
+`//Users/USER`.
+
+| Accepted manifest | Canonical SHA-256 | File SHA-256 |
+|---|---|---|
+| Reference | `da541f190e0679b3e3b67234b1d100d7d20caa7aa3eccbaa0177040930b83f4d` | `d08bb3e27b240a6d371e8941b01e9d41eea09b91ee9ea8bb6a6607b744b41a81` |
+| Ratchet | `439dadb3ba459785c573ef3ca09401e9e1a6e429a8b6a96e869998318af08c41` | `5ab42ff0ceeb361732c98f15d07354d0e8cb7ae04e0d2b83f35e7c821c869a22` |
+
+The immutable reference source commit is
+`0e91c7c4b121d80b929d595ea711d3dd0833ee67`; its protected bundle fingerprint is
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18`. The ratchet's
+reference hash matches the canonical reference hash, and its initial parent-finding-set hash is
+`5eeb1fc96226557050bffecfe5ab7cb11f32713fddb83c3147b1684ad675bd55`.
+
+## Protected baseline and disposable candidate
 
 The disposable `build/science_g0/osgSol Science G0 Probe.app` was rebuilt from the protected
 Desktop baseline, replacing only the main executable and adding the test-only probe as
 `Contents/lib/osgPlugins-3.6.5/osgdb_science.so`. It was ad-hoc signed and passed
-`codesign --verify --deep --strict`. The protected app was not changed: its directory mtime stayed
-`1783759487`, its main executable SHA-256 stayed
-`e79ce979af31227c39137e1caa75aced48ed297bcc1927716284d9f273090fde`, and its
-`CodeResources` SHA-256 stayed
-`14858b06c343ef2d98ae2c27c118b695c8357af893324b8bb233dd6108a9940f`.
+`codesign --verify --deep --strict`. The builder also recomputed the canonical protected bundle
+fingerprint before and after. The independent file-tree digest was identical before and after:
+`0926eff5871c9e8313715c08349293e74db4aef9b9d9cde224743e831b605a6e`.
+
+## Task 5 policy-bearing bundle audit
+
+The formal audit used the same two normalization roots as the accepted reference:
+
+```bash
+python3 packaging/audit_macos_bundle.py \
+  --app 'build/science_g0/osgSol Science G0 Probe.app' \
+  --baseline '/Users/USER/Desktop/osgSol Earth.app' \
+  --reference-manifest packaging/scienceearth/baselines/v0.2.0-macos-arm64-reference.json \
+  --ratchet-manifest packaging/scienceearth/baselines/current-macos-arm64-ratchet.json \
+  --source-root /Users/USER/osgverse \
+  --source-root /Users/USER/osgsol/.worktrees/v0.2-runtime-safety \
+  --json build/science_g0/bundle-audit.json \
+  --text build/science_g0/bundle-audit.txt
+```
 
 The recursive audit visited all 128 Mach-O executables, dylibs, and plugins. Its JSON and readable
 graph are `build/science_g0/bundle-audit.json` and `build/science_g0/bundle-audit.txt`.
@@ -125,26 +194,31 @@ graph are `build/science_g0/bundle-audit.json` and `build/science_g0/bundle-audi
 | Measurement | Result |
 |---|---:|
 | Protected baseline size | 542,594,200 bytes (517.46 MiB) |
-| Disposable probe size | 563,877,967 bytes (537.76 MiB) |
-| Added size | 21,283,767 bytes (20.30 MiB) |
-| Science-only closure | 21,283,608 bytes (20.30 MiB), probe plugin only |
-| Science dependencies reachable from main | 0 |
+| Disposable probe size | 563,877,935 bytes (537.76 MiB) |
+| Added size | 21,283,735 bytes (20.30 MiB) |
+| Science-only closure | 21,283,576 bytes (20.30 MiB), probe plugin only |
+| Tier A absolute science findings | 0 |
+| Tier B new non-science identities | 0 |
+| Tier B removed non-science identities | 0 |
+| Historical non-science identities | 1,086 |
 | Unresolved dependencies | 0 |
-| External dependency resolutions | 572 |
-| Forbidden-prefix references | 36 |
-| Source/build references | 252 |
-| Static science markers outside the science plugin | 49 |
+| Historical external dependencies | 572 |
+| Historical forbidden rpaths | 103 |
+| Historical forbidden runtime references | 34 |
+| Historical forbidden strings | 77 |
+| Historical static science symbols / strings | 299 / 1 |
 
-Both immutable size tiers pass: added size and science closure are below the 40 MiB target. The
-main executable reaches no GDAL/PROJ/ZSTD edge, but the stronger all-Mach-O isolation gate fails.
-The audit finds 48 ZSTD symbols and one ZSTD string in the pre-existing non-science
-`libosgVerseReaderWriter.so`. It also resolves 572 dependency edges outside the bundle in true
-dyld runpath order, plus 36 forbidden-prefix and 252 source/build references. A separate recursive
-audit of the unchanged baseline attributes all 572 external resolutions, all 36 forbidden-prefix
-references, all 49 non-science static markers, and 178 source/build references to the pre-existing
-app closure. The probe adds 74 static-GDAL source/data-prefix strings. The candidate has 909
-grouped violations; the unchanged baseline has 836 including its expected missing-probe finding.
+Both immutable size tiers pass. Tier A passes absolutely: the science-only closure adds no
+external dependency, forbidden runtime/source/build lookup, unresolved install name, or
+main-reachable science edge. Tier B passes by exact identity: the candidate non-science set equals
+the ratchet ceiling, with no new or removed identity. The 1,086 historical findings remain fully
+visible and are not reclassified as clean.
 
-Fresh gate verification passed the bundle-audit unit suite 17/17, the private dependency hashes and
-static-prefix verifier, Task 5 offline tests 3/3, and the science-off targeted regressions 15/15.
-These passes do not override the failed system-isolation or corrected median-latency hard gates.
+Fresh final verification passed the combined audit/manifest unit suites 51/51 in 1.83 seconds, the
+private dependency builder contract, the release boundary/manifest contract, the pinned private
+prefix verifier, and deep strict app signature verification. The protected science-off selection
+passed 15/15 in 10.16 seconds. These isolation passes do not override the independent corrected
+median-latency hard gate.
+
+G0 remains `STOP`. Delta isolation is no longer a blocker; only uncached first-RGB median latency
+remains failed, and human product sign-off is still pending. G1 has not started.

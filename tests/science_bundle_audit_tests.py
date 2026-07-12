@@ -722,6 +722,7 @@ class ScienceProbeBuilderTests(unittest.TestCase):
                 science, "int science_anchor(void) { return 0; }", bundle=True)
             output = root_path / "build" / "Science Probe.app"
             before = self.tree_digest(baseline)
+            before_fingerprint = MANIFEST.bundle_fingerprint(baseline)
             environment = os.environ.copy()
             environment.update({
                 "SCIENCE_G0_BASELINE_APP": str(baseline),
@@ -730,8 +731,13 @@ class ScienceProbeBuilderTests(unittest.TestCase):
                 "SCIENCE_G0_OUTPUT_APP": str(output),
                 "CODESIGN_BIN": "/usr/bin/false",
             })
-            subprocess.run(["bash", str(BUILDER_PATH)], check=True, env=environment)
+            result = subprocess.run(
+                ["bash", str(BUILDER_PATH)], check=True, env=environment,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             self.assertEqual(before, self.tree_digest(baseline))
+            self.assertIn(
+                f"protected baseline fingerprint unchanged: {before_fingerprint}",
+                result.stdout)
             output_main = output / "Contents" / "MacOS" / "osgSol_Earth"
             output_plugin = (output / "Contents" / "lib" /
                              "osgPlugins-3.6.5" / "osgdb_science.so")

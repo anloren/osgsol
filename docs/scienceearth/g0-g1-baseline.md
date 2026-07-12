@@ -83,21 +83,42 @@ permit relaxing these limits.
 | Cache | Separate bounded science cache with deterministic eviction and no use of the existing terrain cache |
 | Missing plugin/offline | App starts normally; science reports unavailable/partial without affecting existing layers |
 
-## Task 6 recorded G0 decision
+## Task 5 protected delta-isolation decision
+
+The immutable reference and current ratchet are committed release inputs, not audit outputs. The
+reference is bound to commit `0e91c7c4b121d80b929d595ea711d3dd0833ee67`, bundle fingerprint
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18`, and normalization
+profile `scienceearth-g0-source-root-normalization` version 1 with exactly two source roots. Its
+generation command records both roots as placeholders and contains no machine-home path.
+
+| Manifest | Finding count | Canonical SHA-256 | File SHA-256 |
+|---|---:|---|---|
+| `v0.2.0-macos-arm64-reference.json` | 1,086 | `da541f190e0679b3e3b67234b1d100d7d20caa7aa3eccbaa0177040930b83f4d` | `d08bb3e27b240a6d371e8941b01e9d41eea09b91ee9ea8bb6a6607b744b41a81` |
+| `current-macos-arm64-ratchet.json` | 1,086 | `439dadb3ba459785c573ef3ca09401e9e1a6e429a8b6a96e869998318af08c41` | `5ab42ff0ceeb361732c98f15d07354d0e8cb7ae04e0d2b83f35e7c821c869a22` |
+
+The ratchet references canonical reference hash
+`da541f190e0679b3e3b67234b1d100d7d20caa7aa3eccbaa0177040930b83f4d`; its initial
+`v0.2.0` parent-finding-set hash is
+`5eeb1fc96226557050bffecfe5ab7cb11f32713fddb83c3147b1684ad675bd55`.
+
+The policy-bearing audit visited 128 Mach-O nodes and kept all 1,086 historical non-science
+identities visible: 572 external dependencies, 103 forbidden rpaths, 34 forbidden runtime
+references, 77 forbidden strings, 299 static science symbols, and one static science string.
+Tier A has zero science findings. Tier B has zero new identities and zero removed identities.
 
 | Gate | Acceptance limit | Measured result | Outcome |
 |---|---|---|---|
-| Existing behavior | Science-off targeted suite passes unchanged | 15/15 passed | PASS |
-| Dependency build | Pinned private static prefix verifies | GDAL 3.13.1 / PROJ 9.8.1 / ZSTD 1.5.7 hashes and prefix passed | PASS |
-| Link isolation | No dynamic or static GDAL/PROJ/ZSTD marker in any non-science Mach-O | 0 main-reachable, but 49 pre-existing static ZSTD markers in one non-science library | **FAIL** |
-| System isolation | No external, Homebrew, `/usr/local`, source, build, or unresolved references | 572 external resolutions, 36 forbidden-prefix, 252 source/build, 0 unresolved | **FAIL** |
-| Added bundle size | `<= 40 MiB` target | 21,283,767 bytes (20.30 MiB) | PASS |
-| AlphaEarth correctness and HTTP | Correct fixtures and bounded byte ranges | Task 5 offline suite 3/3 passed; both formal live transfers stayed bounded | PASS |
+| Existing behavior | Science-off targeted suite passes unchanged | Fresh protected selection passed 15/15 in 10.16 s | PASS |
+| Dependency build | Pinned private static prefix verifies | GDAL 3.13.1 / PROJ 9.8.1 / ZSTD 1.5.7 hashes, package metadata, and prefix passed | PASS |
+| Tier A absolute science isolation | No external, source/build, unresolved, or main-reachable science finding | 0 absolute science findings; 0 unresolved dependencies | PASS |
+| Tier B historical delta | Candidate non-science identities are a subset of the ratchet | 1,086 absolute historical identities; 0 new; 0 removed | PASS |
+| Added bundle size | `<= 40 MiB` target | 21,283,735 bytes (20.30 MiB); science closure 21,283,576 bytes | PASS |
+| AlphaEarth correctness and HTTP | Correct fixtures and bounded byte ranges | Prior G0 offline suite 3/3 passed; both formal live transfers stayed bounded | PASS |
 | Uncached first RGB latency | Median `<= 3 s`, P95 `<= 8 s` | NVIDIA 4.23269 s / 4.69879 s; Hong Kong 3.68769 s / 4.17196 s | **FAIL** |
 
 G0_DECISION=STOP
-REASON=Corrected uncached AlphaEarth RGB medians exceed the hard 3 s limit; all-Mach-O auditing also finds external forbidden paths, source/build references, and non-science static ZSTD markers.
-RECORDED_BY=Codex automated Task 6 audit
-AUTOMATED_REVIEW=Root review findings implemented and verified
+REASON=Delta isolation now passes Tier A and Tier B; only the independent corrected uncached AlphaEarth RGB median latency gate remains failed.
+RECORDED_BY=Codex automated Task 5 protected delta-isolation audit
+AUTOMATED_REVIEW=Normalization provenance and release contracts implemented and verified
 HUMAN_PRODUCT_SIGN_OFF=PENDING
 RECORDED_DATE=2026-07-12

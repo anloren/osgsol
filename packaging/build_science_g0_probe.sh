@@ -16,6 +16,22 @@ fail()
     exit 1
 }
 
+bundle_fingerprint()
+{
+    PYTHONDONTWRITEBYTECODE=1 python3 - \
+        "$ROOT/packaging/scienceearth/g0_manifest.py" "$1" <<'PY'
+import importlib.util
+import sys
+
+module_path, app_path = sys.argv[1:]
+spec = importlib.util.spec_from_file_location(
+    "scienceearth_g0_manifest_for_probe_builder", module_path)
+manifest = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(manifest)
+print(manifest.bundle_fingerprint(app_path))
+PY
+}
+
 [ -d "$BASELINE" ] || fail "baseline app is missing: $BASELINE"
 BASELINE="$(python3 -c \
     'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve())' "$BASELINE")"
@@ -35,6 +51,7 @@ case "$OUTPUT" in
     *.app) ;;
     *) fail "output must be an .app path" ;;
 esac
+BASELINE_FINGERPRINT_BEFORE="$(bundle_fingerprint "$BASELINE")"
 
 rm -rf "$OUTPUT"
 mkdir -p "$(dirname "$OUTPUT")"
@@ -50,5 +67,9 @@ chmod 755 "$OUTPUT/$PLUGIN_RELATIVE"
 
 /usr/bin/codesign --force --deep --sign - "$OUTPUT"
 /usr/bin/codesign --verify --deep --strict "$OUTPUT"
+BASELINE_FINGERPRINT_AFTER="$(bundle_fingerprint "$BASELINE")"
+[ "$BASELINE_FINGERPRINT_BEFORE" = "$BASELINE_FINGERPRINT_AFTER" ] || \
+    fail "protected baseline fingerprint changed during probe build"
 
+echo "[science-g0-probe] protected baseline fingerprint unchanged: $BASELINE_FINGERPRINT_AFTER"
 echo "[science-g0-probe] built disposable probe: $OUTPUT"

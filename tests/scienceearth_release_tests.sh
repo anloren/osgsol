@@ -6,6 +6,9 @@ script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 script_path="${script_directory}/$(basename "${BASH_SOURCE[0]}")"
 repo_root="$(cd "${script_directory}/.." && pwd -P)"
 baseline_document="${repo_root}/docs/scienceearth/g0-g1-baseline.md"
+reference_manifest="${repo_root}/packaging/scienceearth/baselines/v0.2.0-macos-arm64-reference.json"
+ratchet_manifest="${repo_root}/packaging/scienceearth/baselines/current-macos-arm64-ratchet.json"
+manifest_module="${repo_root}/packaging/scienceearth/g0_manifest.py"
 failures=0
 
 fail()
@@ -61,6 +64,38 @@ test "$(git rev-parse 'ScienceEarth^{}')" = \
 
 [[ -f "${baseline_document}" ]] || \
     fail "baseline evidence document is missing: docs/scienceearth/g0-g1-baseline.md"
+[[ -f "${reference_manifest}" ]] || \
+    fail "immutable reference manifest is missing: \
+packaging/scienceearth/baselines/v0.2.0-macos-arm64-reference.json"
+[[ -f "${ratchet_manifest}" ]] || \
+    fail "current ratchet manifest is missing: \
+packaging/scienceearth/baselines/current-macos-arm64-ratchet.json"
+
+if [[ -f "${reference_manifest}" && -f "${ratchet_manifest}" ]]; then
+    immutable_commit="$(git rev-parse 'ScienceEarth^{}')"
+    if ! python3 - "${manifest_module}" "${reference_manifest}" \
+            "${ratchet_manifest}" "${immutable_commit}" <<'PY'
+import importlib.util
+import json
+import sys
+
+module_path, reference_path, ratchet_path, immutable_commit = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("scienceearth_g0_manifest", module_path)
+manifest = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(manifest)
+with open(reference_path, encoding="utf-8") as stream:
+    reference = json.load(stream)
+with open(ratchet_path, encoding="utf-8") as stream:
+    ratchet = json.load(stream)
+manifest.validate_chain(reference, ratchet)
+if reference["source_commit"] != immutable_commit:
+    raise ValueError(
+        "reference source commit does not match the immutable ScienceEarth tag")
+PY
+    then
+        fail "committed G0 reference/ratchet manifest contract is invalid"
+    fi
+fi
 
 if ! "${script_path}" --validate-release-pair v0.2.0 ScienceEarth; then
     fail "release-pair validation entry point is missing or rejects the valid boundary pair"
