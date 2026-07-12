@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cerrno>
+#include <cstring>
 #include <CommonCrypto/CommonDigest.h>
 #include <cstdint>
 #include <cstdlib>
@@ -23,6 +24,8 @@
 #include <vector>
 
 #include <csignal>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -54,6 +57,14 @@
 
 #ifndef OSGSOL_SCIENCE_EVIDENCE_DIR
 #error OSGSOL_SCIENCE_EVIDENCE_DIR must name a build-tree evidence directory
+#endif
+
+#ifndef OSGSOL_SCIENCE_BUILD_DIR
+#error OSGSOL_SCIENCE_BUILD_DIR must name the active build directory
+#endif
+
+#ifndef OSGSOL_SCIENCE_PROTECTED_EVIDENCE_DIR
+#error OSGSOL_SCIENCE_PROTECTED_EVIDENCE_DIR must name the protected evidence directory
 #endif
 
 namespace
@@ -117,6 +128,21 @@ namespace
         std::vector<int> responseCodes;
     };
 
+    struct MetadataPrefetchProof
+    {
+        bool enabled = false;
+        int headRequestCount = 0;
+        int rangeRequestCount = 0;
+        std::uint64_t rangeStart = 0;
+        std::uint64_t rangeEnd = 0;
+        int headHttpVersion = 0;
+        int rangeHttpVersion = 0;
+        bool sharedConnection = false;
+        bool requestsOverlapped = false;
+        bool cachePublished = false;
+        std::string fallbackReason;
+    };
+
     struct HttpProof
     {
         int actualGetCount = 0;
@@ -143,6 +169,7 @@ namespace
         std::map<int, int> transientRetryCodes;
         std::vector<int> responseCodes;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> successfulByteIntervals;
+        MetadataPrefetchProof metadataPrefetch;
     };
 
     struct LocalServerEvidence
@@ -192,7 +219,11 @@ namespace
     {
         std::mutex mutex;
         std::vector<std::string> messages;
+        std::vector<std::chrono::steady_clock::time_point> timestamps;
     };
+
+    MetadataPrefetchProof buildMetadataPrefetchProof(
+        const DebugCapture& capture, const HttpProof& httpProof);
 
     void CPL_STDCALL captureGdalMessage(CPLErr errorClass, CPLErrorNum errorNumber,
                                         const char* message);
@@ -245,6 +276,32 @@ namespace
             bool present;
         };
         std::vector<PreviousValue> _previous;
+    };
+
+    class ScopedPathSpecificOption
+    {
+    public:
+        ScopedPathSpecificOption(const std::string& path,
+                                 const char* key, const char* value)
+            : _path(path), _key(key)
+        {
+            if (_path.empty() || _key.empty() || value == nullptr)
+                throw std::invalid_argument(
+                    "path-specific option arguments must not be empty");
+            VSISetPathSpecificOption(_path.c_str(), _key.c_str(), value);
+        }
+
+        ~ScopedPathSpecificOption()
+        {
+            VSISetPathSpecificOption(_path.c_str(), _key.c_str(), nullptr);
+        }
+
+        ScopedPathSpecificOption(const ScopedPathSpecificOption&) = delete;
+        ScopedPathSpecificOption& operator=(const ScopedPathSpecificOption&) = delete;
+
+    private:
+        std::string _path;
+        std::string _key;
     };
 
     const picojson::value& field(const picojson::object& object,
@@ -1075,28 +1132,36 @@ namespace
         return evidence;
     }
 
-    enum class RangeProfile { Baseline, Optimized };
+    enum class RangeProfile { Baseline, Optimized, Prefetch };
+
+    bool usesOptimizedRangeSettings(RangeProfile profile)
+    {
+        return profile != RangeProfile::Baseline;
+    }
 
     struct LiveCommand
     {
         std::filesystem::path casesPath;
         int iterations = 0;
         RangeProfile profile = RangeProfile::Optimized;
+        std::filesystem::path evidenceDirectory;
         std::filesystem::path summaryPath;
         bool enforceLatency = false;
     };
 
     const char* profileName(RangeProfile profile)
     {
+        if (profile == RangeProfile::Prefetch) return "prefetch";
         return profile == RangeProfile::Optimized ? "optimized" : "baseline";
     }
 
     LiveCommand parseLiveCommand(const std::vector<std::string>& arguments)
     {
-        require(arguments.size() == 8 || arguments.size() == 9,
-                "live command requires cases, iterations, profile, and summary path");
+        require(arguments.size() == 10 || arguments.size() == 11,
+                "live command requires cases, iterations, profile, evidence, and summary paths");
         require(arguments[0] == "--live-cases" && arguments[2] == "--iterations" &&
-                arguments[4] == "--profile" && arguments[6] == "--summary-json",
+                arguments[4] == "--profile" && arguments[6] == "--evidence-dir" &&
+                arguments[8] == "--summary-json",
                 "live command arguments are malformed or out of order");
         require(!arguments[1].empty(), "live case fixture path must not be empty");
 
@@ -1114,15 +1179,19 @@ namespace
             command.profile = RangeProfile::Baseline;
         else if (arguments[5] == "optimized")
             command.profile = RangeProfile::Optimized;
+        else if (arguments[5] == "prefetch")
+            command.profile = RangeProfile::Prefetch;
         else
-            fail("live profile must be baseline or optimized");
-        require(!arguments[7].empty() &&
-                !std::filesystem::path(arguments[7]).filename().empty(),
+            fail("live profile must be baseline, optimized, or prefetch");
+        require(!arguments[7].empty(), "live evidence directory must not be empty");
+        command.evidenceDirectory = arguments[7];
+        require(!arguments[9].empty() &&
+                !std::filesystem::path(arguments[9]).filename().empty(),
                 "live summary path must name a file");
-        command.summaryPath = arguments[7];
-        if (arguments.size() == 9)
+        command.summaryPath = arguments[9];
+        if (arguments.size() == 11)
         {
-            require(arguments[8] == "--enforce-latency",
+            require(arguments[10] == "--enforce-latency",
                     "unknown trailing live command argument");
             command.enforceLatency = true;
             require(command.iterations == 5,
@@ -1156,44 +1225,13 @@ namespace
             profile, cases, std::string(passed ? "PASS" : "FAIL"));
     }
 
+    void writeSecureBuildFile(const std::filesystem::path& path,
+                              const std::string& payload);
+
     void writeAtomicSummary(const std::filesystem::path& path,
                             const std::string& payload)
     {
-        require(!path.empty() && !path.filename().empty(),
-                "live summary path must name a file");
-        const std::filesystem::path directory = path.parent_path();
-        std::error_code error;
-        if (!directory.empty())
-        {
-            std::filesystem::create_directories(directory, error);
-            require(!error, "failed to create live summary directory: " +
-                            error.message());
-        }
-        const std::filesystem::path temporary = path.string() + ".tmp-" +
-            std::to_string(static_cast<long long>(getpid()));
-        bool written = false;
-        {
-            std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-            if (stream.good())
-            {
-                stream << payload;
-                stream.flush();
-                written = stream.good();
-            }
-        }
-        if (!written)
-        {
-            std::error_code ignored;
-            std::filesystem::remove(temporary, ignored);
-            fail("failed to write temporary live summary");
-        }
-        std::filesystem::rename(temporary, path, error);
-        if (error)
-        {
-            std::error_code ignored;
-            std::filesystem::remove(temporary, ignored);
-            fail("failed to atomically publish live summary: " + error.message());
-        }
+        writeSecureBuildFile(path, payload);
     }
 
     void initializeLiveSummary(const std::filesystem::path& path,
@@ -1207,7 +1245,7 @@ namespace
         RangeProfile profile)
     {
         return {
-            {"GDAL_HTTP_MULTIRANGE", profile == RangeProfile::Optimized ?
+            {"GDAL_HTTP_MULTIRANGE", usesOptimizedRangeSettings(profile) ?
                 "PARALLEL" : "YES"},
             {"GDAL_HTTP_MULTIPLEX", "YES"},
             {"GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES"},
@@ -1215,7 +1253,7 @@ namespace
             {"GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR"},
             {"CPL_VSIL_CURL_USE_HEAD", "YES"},
             {"CPL_VSIL_CURL_CHUNK_SIZE",
-                profile == RangeProfile::Optimized ? "131072" : "16384"},
+                usesOptimizedRangeSettings(profile) ? "131072" : "16384"},
             {"CPL_VSIL_CURL_CACHE_SIZE", "16777216"},
             {"GDAL_HTTP_MAX_RETRY", "3"},
             {"GDAL_HTTP_RETRY_DELAY", "0.1"},
@@ -1232,6 +1270,11 @@ namespace
         ScopedGdalConfig baseline(rangeAccessConfig(RangeProfile::Baseline));
         require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
                     "16384", "baseline chunk changed");
+        const std::string activationPath =
+            "/vsicurl/https://data.example/profile-regression.tiff";
+        require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
+                "baseline profile leaked the metadata prefetch option");
         {
             ScopedGdalConfig optimized(rangeAccessConfig(RangeProfile::Optimized));
             require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
@@ -1242,6 +1285,30 @@ namespace
                         "YES", "HTTP/2 multiplexing must remain enabled");
             require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_USE_HEAD", "")) ==
                         "YES", "optimized profile must retain HEAD");
+            require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                        "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
+                    "optimized profile leaked the metadata prefetch option");
+        }
+        {
+            ScopedGdalConfig prefetch(rangeAccessConfig(RangeProfile::Prefetch));
+            require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
+                        "131072", "prefetch profile must inherit the optimized chunk");
+            require(std::string(CPLGetConfigOption("GDAL_HTTP_MULTIRANGE", "")) ==
+                        "PARALLEL",
+                    "prefetch profile must inherit optimized multirange");
+            require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                        "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
+                    "prefetch activation escaped the dataset-open scope");
+            {
+                ScopedPathSpecificOption activation(activationPath,
+                    "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
+                require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                            "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")) == "YES",
+                        "prefetch path option did not activate");
+            }
+            require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                        "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
+                    "prefetch path option survived RAII cleanup");
         }
         require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
                     "16384", "nested profile did not restore baseline chunk");
@@ -1252,7 +1319,7 @@ namespace
     void verifyRangeAccessConfig(RangeProfile profile)
     {
         require(std::string(CPLGetConfigOption("GDAL_HTTP_MULTIRANGE", "")) ==
-                    (profile == RangeProfile::Optimized ? "PARALLEL" : "YES"),
+                    (usesOptimizedRangeSettings(profile) ? "PARALLEL" : "YES"),
                 "GDAL_HTTP_MULTIRANGE does not match the selected profile");
         require(std::string(CPLGetConfigOption("GDAL_HTTP_MULTIPLEX", "")) == "YES" &&
                 std::string(CPLGetConfigOption("CPL_VSIL_CURL_USE_HEAD", "")) == "YES" &&
@@ -1269,6 +1336,32 @@ namespace
     {
         std::ostringstream stream;
         stream << "{\n"
+               << "  \"metadata_prefetch\": {\n"
+               << "    \"enabled\": "
+               << (proof.metadataPrefetch.enabled ? "true" : "false") << ",\n"
+               << "    \"head_request_count\": "
+               << proof.metadataPrefetch.headRequestCount << ",\n"
+               << "    \"range_request_count\": "
+               << proof.metadataPrefetch.rangeRequestCount << ",\n"
+               << "    \"range_start\": " << proof.metadataPrefetch.rangeStart
+               << ",\n"
+               << "    \"range_end\": " << proof.metadataPrefetch.rangeEnd << ",\n"
+               << "    \"head_http_version\": "
+               << proof.metadataPrefetch.headHttpVersion << ",\n"
+               << "    \"range_http_version\": "
+               << proof.metadataPrefetch.rangeHttpVersion << ",\n"
+               << "    \"shared_connection\": "
+               << (proof.metadataPrefetch.sharedConnection ? "true" : "false")
+               << ",\n"
+               << "    \"requests_overlapped\": "
+               << (proof.metadataPrefetch.requestsOverlapped ? "true" : "false")
+               << ",\n"
+               << "    \"cache_published\": "
+               << (proof.metadataPrefetch.cachePublished ? "true" : "false")
+               << ",\n"
+               << "    \"fallback_reason\": "
+               << picojson::value(proof.metadataPrefetch.fallbackReason).serialize()
+               << "\n  },\n"
                << "  \"actual_http_get_count\": " << proof.actualGetCount << ",\n"
                << "  \"successful_http_get_count\": " << proof.successfulGetCount
                << ",\n  \"transient_retry_count\": " << proof.transientRetryCount
@@ -1336,28 +1429,267 @@ namespace
         return stream.str();
     }
 
-    void writeRawTransportEvidence(const std::string& name,
+    class SecureDirectoryHandle
+    {
+    public:
+        explicit SecureDirectoryHandle(int descriptor = -1) : _descriptor(descriptor) {}
+        ~SecureDirectoryHandle()
+        {
+            if (_descriptor >= 0) close(_descriptor);
+        }
+
+        SecureDirectoryHandle(SecureDirectoryHandle&& other) noexcept
+            : _descriptor(other._descriptor)
+        {
+            other._descriptor = -1;
+        }
+
+        SecureDirectoryHandle& operator=(SecureDirectoryHandle&& other) noexcept
+        {
+            if (this != &other)
+            {
+                if (_descriptor >= 0) close(_descriptor);
+                _descriptor = other._descriptor;
+                other._descriptor = -1;
+            }
+            return *this;
+        }
+
+        SecureDirectoryHandle(const SecureDirectoryHandle&) = delete;
+        SecureDirectoryHandle& operator=(const SecureDirectoryHandle&) = delete;
+
+        int descriptor() const
+        {
+            require(_descriptor >= 0, "secure directory descriptor is closed");
+            return _descriptor;
+        }
+
+    private:
+        int _descriptor = -1;
+    };
+
+    bool isStrictDescendant(const std::filesystem::path& path,
+                            const std::filesystem::path& parent)
+    {
+        const std::filesystem::path relative = path.lexically_relative(parent);
+        if (relative.empty() || relative == "." || relative.is_absolute()) return false;
+        const auto first = relative.begin();
+        return first != relative.end() && *first != "..";
+    }
+
+    std::filesystem::path absoluteNormalizedPath(const std::filesystem::path& path)
+    {
+        require(!path.empty(), "live output path must not be empty");
+        std::error_code error;
+        const std::filesystem::path absolute = std::filesystem::absolute(path, error);
+        require(!error, "failed to make live output path absolute: " +
+                        error.message());
+        return absolute.lexically_normal();
+    }
+
+    std::filesystem::path secureBuildRelativePath(const std::filesystem::path& path)
+    {
+        const std::filesystem::path candidate = absoluteNormalizedPath(path);
+        const std::filesystem::path buildRoot =
+            absoluteNormalizedPath(OSGSOL_SCIENCE_BUILD_DIR);
+        const std::filesystem::path protectedDirectory =
+            absoluteNormalizedPath(OSGSOL_SCIENCE_PROTECTED_EVIDENCE_DIR);
+        require(candidate != protectedDirectory &&
+                !isStrictDescendant(candidate, protectedDirectory),
+                "live output path is the protected old evidence directory");
+        require(isStrictDescendant(candidate, buildRoot),
+                "live output path must be within the active build tree");
+        return candidate.lexically_relative(buildRoot);
+    }
+
+    [[noreturn]] void failSystemCall(const std::string& operation, int errorNumber)
+    {
+        fail(operation + ": " + std::strerror(errorNumber));
+    }
+
+    SecureDirectoryHandle openSecureBuildDirectory(
+        const std::filesystem::path& path, bool create)
+    {
+        const std::filesystem::path relative = secureBuildRelativePath(path);
+        const std::filesystem::path buildRoot =
+            absoluteNormalizedPath(OSGSOL_SCIENCE_BUILD_DIR);
+        int descriptor = open(buildRoot.c_str(),
+                              O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (descriptor < 0)
+            failSystemCall("failed to open active build directory", errno);
+        SecureDirectoryHandle current(descriptor);
+        for (const auto& component : relative)
+        {
+            const std::string name = component.string();
+            require(!name.empty() && name != "." && name != "..",
+                    "live output path contains an unsafe component");
+            int next = openat(current.descriptor(), name.c_str(),
+                              O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            if (next < 0 && errno == ENOENT && create)
+            {
+                if (mkdirat(current.descriptor(), name.c_str(), 0700) != 0 &&
+                    errno != EEXIST)
+                {
+                    failSystemCall("failed to atomically create live output directory",
+                                   errno);
+                }
+                next = openat(current.descriptor(), name.c_str(),
+                              O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            }
+            if (next < 0)
+                failSystemCall("failed to securely open live output directory", errno);
+            current = SecureDirectoryHandle(next);
+        }
+        return current;
+    }
+
+    void requireSafeDestinationAt(const SecureDirectoryHandle& directory,
+                                  const std::string& name)
+    {
+        require(!name.empty() && std::filesystem::path(name).filename() == name,
+                "live output filename must be a single path component");
+        struct stat status = {};
+        if (fstatat(directory.descriptor(), name.c_str(), &status,
+                    AT_SYMLINK_NOFOLLOW) == 0)
+        {
+            require(S_ISREG(status.st_mode),
+                    "existing live output target must be a regular file");
+            return;
+        }
+        require(errno == ENOENT,
+                "failed to inspect live output destination: " +
+                std::string(std::strerror(errno)));
+    }
+
+    void writeAtomicFileAt(const SecureDirectoryHandle& directory,
+                           const std::string& name, const std::string& payload)
+    {
+        requireSafeDestinationAt(directory, name);
+        std::string temporary;
+        int descriptor = -1;
+        for (int attempt = 0; attempt < 100 && descriptor < 0; ++attempt)
+        {
+            temporary = "." + name + ".tmp-" +
+                std::to_string(static_cast<long long>(getpid())) + "-" +
+                std::to_string(attempt);
+            descriptor = openat(directory.descriptor(), temporary.c_str(),
+                                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+                                0600);
+            if (descriptor < 0 && errno != EEXIST)
+                failSystemCall("failed to create temporary live output", errno);
+        }
+        require(descriptor >= 0, "failed to allocate a unique live output filename");
+        try
+        {
+            std::size_t written = 0;
+            while (written < payload.size())
+            {
+                const ssize_t result = write(descriptor, payload.data() + written,
+                                             payload.size() - written);
+                if (result < 0 && errno == EINTR) continue;
+                if (result <= 0)
+                    failSystemCall("failed to write temporary live output",
+                                   result < 0 ? errno : EIO);
+                written += static_cast<std::size_t>(result);
+            }
+            if (fsync(descriptor) != 0)
+                failSystemCall("failed to sync temporary live output", errno);
+            if (close(descriptor) != 0)
+            {
+                descriptor = -1;
+                failSystemCall("failed to close temporary live output", errno);
+            }
+            descriptor = -1;
+            if (renameat(directory.descriptor(), temporary.c_str(),
+                         directory.descriptor(), name.c_str()) != 0)
+                failSystemCall("failed to atomically publish live output", errno);
+            temporary.clear();
+            if (fsync(directory.descriptor()) != 0)
+                failSystemCall("failed to sync live output directory", errno);
+        }
+        catch (...)
+        {
+            if (descriptor >= 0) close(descriptor);
+            if (!temporary.empty())
+                unlinkat(directory.descriptor(), temporary.c_str(), 0);
+            throw;
+        }
+    }
+
+    void writeSecureBuildFile(const std::filesystem::path& path,
+                              const std::string& payload)
+    {
+        require(!path.empty() && !path.filename().empty(),
+                "live output path must name a file");
+        SecureDirectoryHandle directory =
+            openSecureBuildDirectory(path.parent_path(), true);
+        writeAtomicFileAt(directory, path.filename().string(), payload);
+    }
+
+    void prepareLiveEvidenceDirectory(const std::filesystem::path& path)
+    {
+        static_cast<void>(openSecureBuildDirectory(path, true));
+    }
+
+    bool rejectedEvidenceDirectory(const std::filesystem::path& path)
+    {
+        try
+        {
+            static_cast<void>(openSecureBuildDirectory(path, false));
+            return false;
+        }
+        catch (const std::exception&)
+        {
+            return true;
+        }
+    }
+
+    bool rejectedLiveSummaryPath(const std::filesystem::path& path)
+    {
+        try
+        {
+            require(!path.empty() && !path.filename().empty(),
+                    "live summary path must name a file");
+            SecureDirectoryHandle directory =
+                openSecureBuildDirectory(path.parent_path(), false);
+            requireSafeDestinationAt(directory, path.filename().string());
+            return false;
+        }
+        catch (const std::exception&)
+        {
+            return true;
+        }
+    }
+
+    void writeRawTransportEvidence(const std::filesystem::path& directory,
+                                   const std::string& name,
                                    const DebugCapture& capture,
                                    const std::string& statsJson)
     {
-        const std::filesystem::path directory = OSGSOL_SCIENCE_EVIDENCE_DIR;
-        std::filesystem::create_directories(directory);
-        std::ofstream debugStream(directory / (name + "-curl-cpl.log"));
-        require(debugStream.good(), "failed to create raw curl/CPL evidence");
-        for (const std::string& message : capture.messages)
-            debugStream << message << '\n';
-        std::ofstream statsStream(directory / (name + "-network-stats.json"));
-        require(statsStream.good(), "failed to create raw VSINetworkStats evidence");
-        statsStream << statsJson << '\n';
+        SecureDirectoryHandle secureDirectory =
+            openSecureBuildDirectory(directory, true);
+        require(capture.messages.size() == capture.timestamps.size(),
+                "raw curl/CPL evidence is missing steady-clock timestamps");
+        std::ostringstream debugPayload;
+        for (std::size_t index = 0; index < capture.messages.size(); ++index)
+        {
+            const auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                capture.timestamps[index].time_since_epoch()).count();
+            debugPayload << timestamp << "ns " << capture.messages[index] << '\n';
+        }
+        writeAtomicFileAt(secureDirectory, name + "-curl-cpl.log",
+                          debugPayload.str());
+        writeAtomicFileAt(secureDirectory, name + "-network-stats.json",
+                          statsJson + '\n');
     }
 
-    void writeParsedProof(const std::string& name, const HttpProof& proof)
+    void writeParsedProof(const std::filesystem::path& directory,
+                          const std::string& name, const HttpProof& proof)
     {
-        const std::filesystem::path directory = OSGSOL_SCIENCE_EVIDENCE_DIR;
-        std::filesystem::create_directories(directory);
-        std::ofstream proofStream(directory / (name + "-proof.json"));
-        require(proofStream.good(), "failed to create parsed HTTP proof evidence");
-        proofStream << serializeProof(proof);
+        SecureDirectoryHandle secureDirectory =
+            openSecureBuildDirectory(directory, true);
+        writeAtomicFileAt(secureDirectory, name + "-proof.json",
+                          serializeProof(proof));
     }
 
     std::string requireNetworkStatsEvidence()
@@ -1385,6 +1717,7 @@ namespace
         {
             std::lock_guard<std::mutex> lock(capture->mutex);
             capture->messages.emplace_back(message);
+            capture->timestamps.push_back(std::chrono::steady_clock::now());
         }
         if (errorClass >= CE_Warning && message)
             std::cerr << "GDAL: " << message << std::endl;
@@ -1767,6 +2100,254 @@ namespace
         return proof;
     }
 
+    int parseHttpVersion(const std::string& token)
+    {
+        require(token.rfind("HTTP/", 0) == 0,
+                "metadata prefetch evidence omitted the HTTP version");
+        const std::string version = token.substr(5);
+        if (version == "2" || version == "2.0") return 2;
+        if (version == "1.1" || version == "1.0") return 1;
+        fail("metadata prefetch evidence used an unknown HTTP version");
+    }
+
+    MetadataPrefetchProof buildMetadataPrefetchProof(
+        const DebugCapture& capture, const HttpProof& httpProof)
+    {
+        struct RequestEvidence
+        {
+            std::string method;
+            std::string uri;
+            std::string range;
+            int httpVersion = 0;
+            int streamId = -1;
+            bool multiplexReuse = false;
+            std::chrono::steady_clock::time_point sent;
+        };
+        struct ResponseEvidence
+        {
+            int code = 0;
+            int httpVersion = 0;
+            std::map<std::string, std::string> headers;
+            std::chrono::steady_clock::time_point completed;
+            long long connectionId = -1;
+        };
+
+        require(capture.messages.size() == capture.timestamps.size(),
+                "metadata prefetch evidence is missing steady-clock timestamps");
+        std::vector<RequestEvidence> requests;
+        std::vector<ResponseEvidence> responses;
+        int activeResponse = -1;
+        std::vector<int> pendingConnections;
+        int pendingStreamId = -1;
+        bool pendingMultiplexReuse = false;
+        int publicationCount = 0;
+        std::vector<std::string> fallbackReasons;
+        static const std::regex connectionPattern(
+            R"(Connection #([0-9]+) to host .+ left intact)");
+        static const std::regex streamPattern(
+            R"(\[HTTP/2\] \[([0-9]+)\] OPENED stream)");
+
+        for (std::size_t index = 0; index < capture.messages.size(); ++index)
+        {
+            const std::string& message = capture.messages[index];
+            const std::string outputPrefix = "CURL_INFO_HEADER_OUT: ";
+            const std::string inputPrefix = "CURL_INFO_HEADER_IN: ";
+            if (message.rfind(outputPrefix, 0) == 0)
+            {
+                std::istringstream stream(message.substr(outputPrefix.size()));
+                std::string firstLine;
+                std::getline(stream, firstLine);
+                if (!firstLine.empty() && firstLine.back() == '\r') firstLine.pop_back();
+                std::istringstream firstLineStream(firstLine);
+                RequestEvidence request;
+                std::string version;
+                firstLineStream >> request.method >> request.uri >> version;
+                request.httpVersion = parseHttpVersion(version);
+                request.streamId = pendingStreamId;
+                request.multiplexReuse = pendingMultiplexReuse;
+                const auto headers = parseHeaders(stream);
+                const auto range = headers.find("range");
+                if (range != headers.end()) request.range = range->second;
+                request.sent = capture.timestamps[index];
+                requests.push_back(request);
+                pendingStreamId = -1;
+                pendingMultiplexReuse = false;
+            }
+            else if (message.rfind(inputPrefix, 0) == 0)
+            {
+                std::string line = message.substr(inputPrefix.size());
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.rfind("HTTP/", 0) == 0)
+                {
+                    require(activeResponse < 0,
+                            "metadata prefetch response chronology is ambiguous");
+                    std::istringstream status(line);
+                    std::string version;
+                    ResponseEvidence response;
+                    status >> version >> response.code;
+                    response.httpVersion = parseHttpVersion(version);
+                    responses.push_back(response);
+                    activeResponse = static_cast<int>(responses.size() - 1);
+                }
+                else if (line.empty())
+                {
+                    require(activeResponse >= 0,
+                            "metadata prefetch response ended without a status");
+                    ResponseEvidence& response = responses[activeResponse];
+                    response.completed = capture.timestamps[index];
+                    const bool isHead = response.code == 200 &&
+                        response.headers.count("content-length") != 0 &&
+                        response.headers.count("content-range") == 0;
+                    const bool isRange = response.code == 206 &&
+                        response.headers.count("content-range") != 0;
+                    if (isHead || isRange)
+                        pendingConnections.push_back(activeResponse);
+                    activeResponse = -1;
+                }
+                else
+                {
+                    require(activeResponse >= 0,
+                            "metadata prefetch response header preceded its status");
+                    const std::size_t separator = line.find(':');
+                    require(separator != std::string::npos,
+                            "metadata prefetch response header is malformed");
+                    std::string value = line.substr(separator + 1);
+                    while (!value.empty() && value.front() == ' ') value.erase(value.begin());
+                    responses[activeResponse].headers[lower(line.substr(0, separator))] =
+                        value;
+                }
+            }
+            else
+            {
+                std::smatch streamMatch;
+                if (std::regex_search(message, streamMatch, streamPattern))
+                    pendingStreamId = std::stoi(streamMatch[1].str());
+                if (message.find("Multiplexed connection found") !=
+                    std::string::npos)
+                {
+                    pendingMultiplexReuse = true;
+                }
+                std::smatch connectionMatch;
+                if (std::regex_search(message, connectionMatch, connectionPattern))
+                {
+                    const long long connectionId =
+                        std::stoll(connectionMatch[1].str());
+                    if (!pendingConnections.empty())
+                    {
+                        require(pendingConnections.size() == 1,
+                                "metadata prefetch connection roles are ambiguous");
+                        responses[pendingConnections.front()].connectionId =
+                            connectionId;
+                        pendingConnections.clear();
+                    }
+                }
+                if (message.find("ParallelHeadRange: published") != std::string::npos)
+                    ++publicationCount;
+                const std::string fallbackPrefix = "ParallelHeadRange: fallback=";
+                const std::size_t fallback = message.find(fallbackPrefix);
+                if (fallback != std::string::npos)
+                    fallbackReasons.push_back(message.substr(
+                        fallback + fallbackPrefix.size()));
+            }
+        }
+        require(activeResponse < 0 && pendingConnections.empty(),
+                "metadata prefetch response or connection evidence is incomplete");
+
+        const RequestEvidence* headRequest = nullptr;
+        const RequestEvidence* rangeRequest = nullptr;
+        int headRequestCount = 0;
+        int rangeRequestCount = 0;
+        bool sawGet = false;
+        for (const RequestEvidence& request : requests)
+        {
+            if (request.method == "CONNECT") continue;
+            if (request.method == "HEAD")
+            {
+                ++headRequestCount;
+                if (!headRequest) headRequest = &request;
+                continue;
+            }
+            if (request.method == "GET")
+            {
+                if (!sawGet)
+                {
+                    require(request.range == "bytes=0-131071",
+                            "metadata prefetch was not the first GET");
+                    sawGet = true;
+                }
+                if (request.range == "bytes=0-131071")
+                {
+                    ++rangeRequestCount;
+                    if (!rangeRequest) rangeRequest = &request;
+                }
+            }
+        }
+        require(headRequestCount == 1 && headRequest != nullptr &&
+                httpProof.actualHeadCount == 1,
+                "metadata prefetch requires exactly one HEAD request");
+        require(rangeRequestCount == 1 && rangeRequest != nullptr,
+                "metadata prefetch requires exactly one initial 128 KiB Range request");
+        require(!httpProof.successfulByteIntervals.empty() &&
+                httpProof.successfulByteIntervals.front() ==
+                    std::make_pair<std::uint64_t, std::uint64_t>(0, 131071),
+                "metadata prefetch HTTP proof omitted the exact initial interval");
+
+        const ResponseEvidence* headResponse = nullptr;
+        const ResponseEvidence* rangeResponse = nullptr;
+        int headResponseCount = 0;
+        int rangeResponseCount = 0;
+        for (const ResponseEvidence& response : responses)
+        {
+            const auto contentRange = response.headers.find("content-range");
+            if (response.code == 200 && contentRange == response.headers.end() &&
+                response.headers.count("content-length") != 0)
+            {
+                ++headResponseCount;
+                headResponse = &response;
+            }
+            if (response.code == 206 && contentRange != response.headers.end() &&
+                contentRange->second.rfind("bytes 0-131071/", 0) == 0)
+            {
+                ++rangeResponseCount;
+                rangeResponse = &response;
+            }
+        }
+        require(headResponseCount == 1 && rangeResponseCount == 1 &&
+                headResponse != nullptr && rangeResponse != nullptr,
+                "metadata prefetch requires one HEAD 200 and one exact Range 206");
+        require(headRequest->httpVersion == 2 && rangeRequest->httpVersion == 2 &&
+                headResponse->httpVersion == 2 && rangeResponse->httpVersion == 2,
+                "metadata prefetch requires HTTP/2 for HEAD and Range");
+        require(headRequest->streamId > 0 && rangeRequest->streamId > 0 &&
+                rangeRequest->streamId > headRequest->streamId &&
+                headRequest->uri == rangeRequest->uri &&
+                rangeRequest->multiplexReuse &&
+                headResponse->connectionId >= 0 &&
+                headResponse->connectionId == rangeResponse->connectionId,
+                "metadata prefetch lacks unambiguous shared HTTP/2 connection evidence");
+        require(headRequest->sent < rangeRequest->sent &&
+                rangeRequest->sent < headResponse->completed,
+                "metadata prefetch request headers did not overlap HEAD completion");
+        require(publicationCount == 1,
+                "metadata prefetch cache publication evidence is missing or ambiguous");
+        require(fallbackReasons.empty(),
+                "metadata prefetch formal proof contains a fallback");
+
+        MetadataPrefetchProof proof;
+        proof.enabled = true;
+        proof.headRequestCount = headRequestCount;
+        proof.rangeRequestCount = rangeRequestCount;
+        proof.rangeStart = 0;
+        proof.rangeEnd = 131071;
+        proof.headHttpVersion = headRequest->httpVersion;
+        proof.rangeHttpVersion = rangeRequest->httpVersion;
+        proof.sharedConnection = true;
+        proof.requestsOverlapped = true;
+        proof.cachePublished = true;
+        proof.fallbackReason.clear();
+        return proof;
+    }
+
     void verifyOptimizedMetadataIntervals(const HttpProof& proof)
     {
         const auto metadata =
@@ -1788,8 +2369,10 @@ namespace
 
     void verifyLiveProfileProof(RangeProfile profile, const HttpProof& proof)
     {
-        if (profile == RangeProfile::Optimized)
+        if (usesOptimizedRangeSettings(profile))
             verifyOptimizedMetadataIntervals(proof);
+        require(proof.metadataPrefetch.enabled == (profile == RangeProfile::Prefetch),
+                "metadata prefetch proof activation does not match the selected profile");
     }
 
     void verifyHttpParserRegression()
@@ -2003,6 +2586,162 @@ namespace
         unknown.messages[3] =
             "CURL_INFO_HEADER_OUT: POST /tile.tiff HTTP/1.1\r\nHost: data.example\r\n\r\n";
         require(isRejected(unknown), "HTTP parser accepted an unknown outbound method");
+
+        DebugCapture prefetch;
+        const auto epoch = std::chrono::steady_clock::time_point();
+        prefetch.messages = {
+            "CURL_INFO_TEXT: [HTTP/2] [1] OPENED stream for https://data.example/tile.tiff",
+            "CURL_INFO_HEADER_OUT: HEAD /tile.tiff HTTP/2\r\nHost: data.example\r\n\r\n",
+            "CURL_INFO_TEXT: Multiplexed connection found",
+            "CURL_INFO_TEXT: Re-using existing connection with proxy proxy.example",
+            "CURL_INFO_TEXT: [HTTP/2] [3] OPENED stream for https://data.example/tile.tiff",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\nHost: data.example\r\n"
+            "Range: bytes=0-131071\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 206\r",
+            "CURL_INFO_HEADER_IN: content-range: bytes 0-131071/1000000\r",
+            "CURL_INFO_HEADER_IN: content-length: 131072\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "CURL_INFO_TEXT: Connection #7 to host proxy.example left intact",
+            "CURL_INFO_HEADER_IN: HTTP/2 200\r",
+            "CURL_INFO_HEADER_IN: content-length: 1000000\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "CURL_INFO_TEXT: Connection #7 to host proxy.example left intact",
+            "ParallelHeadRange: published",
+        };
+        prefetch.timestamps = {
+            epoch + std::chrono::milliseconds(1),
+            epoch + std::chrono::milliseconds(2),
+            epoch + std::chrono::milliseconds(3),
+            epoch + std::chrono::milliseconds(4),
+            epoch + std::chrono::milliseconds(5),
+            epoch + std::chrono::milliseconds(6),
+            epoch + std::chrono::milliseconds(7),
+            epoch + std::chrono::milliseconds(8),
+            epoch + std::chrono::milliseconds(9),
+            epoch + std::chrono::milliseconds(10),
+            epoch + std::chrono::milliseconds(11),
+            epoch + std::chrono::milliseconds(12),
+            epoch + std::chrono::milliseconds(13),
+            epoch + std::chrono::milliseconds(14),
+            epoch + std::chrono::milliseconds(15),
+            epoch + std::chrono::milliseconds(16),
+        };
+        HttpProof prefetchHttp;
+        prefetchHttp.actualHeadCount = 1;
+        prefetchHttp.actualGetCount = 1;
+        prefetchHttp.successfulGetCount = 1;
+        prefetchHttp.successfulByteIntervals = {{0, 131071}};
+        prefetchHttp.metadataPrefetch = buildMetadataPrefetchProof(prefetch, prefetchHttp);
+        const std::string expectedMetadata =
+            "  \"metadata_prefetch\": {\n"
+            "    \"enabled\": true,\n"
+            "    \"head_request_count\": 1,\n"
+            "    \"range_request_count\": 1,\n"
+            "    \"range_start\": 0,\n"
+            "    \"range_end\": 131071,\n"
+            "    \"head_http_version\": 2,\n"
+            "    \"range_http_version\": 2,\n"
+            "    \"shared_connection\": true,\n"
+            "    \"requests_overlapped\": true,\n"
+            "    \"cache_published\": true,\n"
+            "    \"fallback_reason\": \"\"\n"
+            "  }";
+        require(serializeProof(prefetchHttp).find(expectedMetadata) != std::string::npos,
+                "metadata_prefetch exact serialized object changed");
+
+        const auto prefetchRejected = [&prefetchHttp](const DebugCapture& candidate)
+        {
+            try
+            {
+                static_cast<void>(buildMetadataPrefetchProof(candidate, prefetchHttp));
+                return false;
+            }
+            catch (const std::exception&)
+            {
+                return true;
+            }
+        };
+        DebugCapture missingTimestamp;
+        missingTimestamp.messages = prefetch.messages;
+        missingTimestamp.timestamps.assign(prefetch.timestamps.begin(),
+                                           prefetch.timestamps.end() - 1);
+        require(prefetchRejected(missingTimestamp),
+                "metadata prefetch proof accepted missing timestamps");
+        DebugCapture distinctConnection;
+        distinctConnection.messages = prefetch.messages;
+        distinctConnection.timestamps = prefetch.timestamps;
+        distinctConnection.messages[14] =
+            "CURL_INFO_TEXT: Connection #8 to host proxy.example left intact";
+        require(prefetchRejected(distinctConnection),
+                "metadata prefetch proof accepted distinct connections");
+        DebugCapture missingRangeConnection;
+        missingRangeConnection.messages = prefetch.messages;
+        missingRangeConnection.timestamps = prefetch.timestamps;
+        missingRangeConnection.messages.erase(
+            missingRangeConnection.messages.begin() + 10);
+        missingRangeConnection.timestamps.erase(
+            missingRangeConnection.timestamps.begin() + 10);
+        require(prefetchRejected(missingRangeConnection),
+                "metadata prefetch proof accepted one marker for two responses");
+        DebugCapture ambiguousConnections;
+        ambiguousConnections.messages = prefetch.messages;
+        ambiguousConnections.timestamps = prefetch.timestamps;
+        ambiguousConnections.messages.erase(
+            ambiguousConnections.messages.begin() + 10);
+        ambiguousConnections.timestamps.erase(
+            ambiguousConnections.timestamps.begin() + 10);
+        ambiguousConnections.messages.insert(
+            ambiguousConnections.messages.begin() + 14,
+            "CURL_INFO_TEXT: Connection #8 to host proxy.example left intact");
+        ambiguousConnections.timestamps.insert(
+            ambiguousConnections.timestamps.begin() + 14,
+            epoch + std::chrono::milliseconds(16));
+        require(prefetchRejected(ambiguousConnections),
+                "metadata prefetch proof mapped ambiguous responses to connection #7");
+        DebugCapture noOverlap;
+        noOverlap.messages = prefetch.messages;
+        noOverlap.timestamps = prefetch.timestamps;
+        noOverlap.timestamps[5] = epoch + std::chrono::milliseconds(15);
+        require(prefetchRejected(noOverlap),
+                "metadata prefetch proof accepted a GET after HEAD completion");
+        DebugCapture ambiguousPublication;
+        ambiguousPublication.messages = prefetch.messages;
+        ambiguousPublication.timestamps = prefetch.timestamps;
+        ambiguousPublication.messages.push_back("ParallelHeadRange: published");
+        ambiguousPublication.timestamps.push_back(epoch + std::chrono::milliseconds(17));
+        require(prefetchRejected(ambiguousPublication),
+                "metadata prefetch proof accepted ambiguous cache publication");
+        DebugCapture duplicateHead;
+        duplicateHead.messages = prefetch.messages;
+        duplicateHead.timestamps = prefetch.timestamps;
+        duplicateHead.messages.insert(duplicateHead.messages.begin() + 2,
+            "CURL_INFO_HEADER_OUT: HEAD /tile.tiff HTTP/2\r\n"
+            "Host: data.example\r\n\r\n");
+        duplicateHead.timestamps.insert(duplicateHead.timestamps.begin() + 2,
+                                        epoch + std::chrono::milliseconds(2));
+        require(prefetchRejected(duplicateHead),
+                "metadata prefetch proof accepted duplicate HEAD requests");
+        DebugCapture http1Range;
+        http1Range.messages = prefetch.messages;
+        http1Range.timestamps = prefetch.timestamps;
+        http1Range.messages[5].replace(
+            http1Range.messages[5].find("HTTP/2"), 6, "HTTP/1.1");
+        require(prefetchRejected(http1Range),
+                "metadata prefetch proof accepted an HTTP/1.1 Range");
+        DebugCapture fallback;
+        fallback.messages = prefetch.messages;
+        fallback.timestamps = prefetch.timestamps;
+        fallback.messages.push_back("ParallelHeadRange: fallback=protocol");
+        fallback.timestamps.push_back(epoch + std::chrono::milliseconds(17));
+        require(prefetchRejected(fallback),
+                "metadata prefetch proof accepted a runtime fallback");
+        DebugCapture missingRangeResponse;
+        missingRangeResponse.messages = prefetch.messages;
+        missingRangeResponse.timestamps = prefetch.timestamps;
+        missingRangeResponse.messages[7] =
+            "CURL_INFO_HEADER_IN: content-type: application/octet-stream\r";
+        require(prefetchRejected(missingRangeResponse),
+                "metadata prefetch proof accepted missing exact HTTP 206 evidence");
     }
 
     struct PixelWindow
@@ -2508,7 +3247,8 @@ namespace
     using DatasetPtr = std::unique_ptr<GDALDataset, decltype(&closeDataset)>;
 
     LiveMeasurement runLiveIteration(const LiveCase& item, int iteration,
-                                     RangeProfile profile)
+                                     RangeProfile profile,
+                                     const std::filesystem::path& evidenceDirectory)
     {
         VSICurlClearCache();
         DebugCapture capture;
@@ -2516,6 +3256,15 @@ namespace
         VSINetworkStatsReset();
         const auto started = std::chrono::steady_clock::now();
         const std::string vsiUrl = "/vsicurl/" + item.url;
+        require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
+                "metadata prefetch path option leaked between live iterations");
+        std::unique_ptr<ScopedPathSpecificOption> prefetchActivation;
+        if (profile == RangeProfile::Prefetch)
+        {
+            prefetchActivation = std::make_unique<ScopedPathSpecificOption>(
+                vsiUrl, "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
+        }
         DatasetPtr raw(static_cast<GDALDataset*>(GDALOpenEx(
             vsiUrl.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
             nullptr, nullptr, nullptr)), closeDataset);
@@ -2539,7 +3288,7 @@ namespace
                     rawBand->GetMaskBand() != nullptr,
                     item.name + " RGB band metadata changed");
         }
-        const NormalizedRgbWindow normalized = profile == RangeProfile::Optimized
+        const NormalizedRgbWindow normalized = usesOptimizedRangeSettings(profile)
             ? readNormalizedOverviewRgbBatched(raw.get(), window, bandMap)
             : readNormalizedOverviewRgbOracle(raw.get(), window, bandMap);
         const auto read = std::chrono::steady_clock::now();
@@ -2549,6 +3298,10 @@ namespace
                             [](std::int8_t value) { return value != 0; }),
                 item.name + " RGB window is empty after HTTP retries");
         raw.reset();
+        prefetchActivation.reset();
+        require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
+                "metadata prefetch path option survived dataset close");
         const auto finished = std::chrono::steady_clock::now();
 
         PhaseTimings phases;
@@ -2570,8 +3323,10 @@ namespace
         const std::string statsJson = requireNetworkStatsEvidence();
         const std::string evidenceName = std::string(profileName(profile)) + "-" +
             item.name + "-" + std::to_string(iteration);
-        writeRawTransportEvidence(evidenceName, capture, statsJson);
+        writeRawTransportEvidence(evidenceDirectory, evidenceName, capture, statsJson);
         HttpProof proof = buildHttpProof(capture, statsJson);
+        if (profile == RangeProfile::Prefetch)
+            proof.metadataPrefetch = buildMetadataPrefetchProof(capture, proof);
         verifyLiveProfileProof(profile, proof);
         proof.overviewFactor = LIVE_OVERVIEW_FACTOR;
         proof.rawWindowX = window.x;
@@ -2586,7 +3341,7 @@ namespace
         require(proof.conservativeBodyUpperBound <= proof.transferBudget &&
                 proof.conservativeBodyUpperBound < proof.sourceSize,
                 item.name + " conservative HTTP body bound exceeded the live budget");
-        writeParsedProof(evidenceName, proof);
+        writeParsedProof(evidenceDirectory, evidenceName, proof);
         LiveMeasurement measurement;
         measurement.phases = phases;
         measurement.successfulRangeBytes = proof.successfulRangeBytes;
@@ -2846,43 +3601,64 @@ namespace
             }
         };
         require(rejected({"--live-cases", "cases.json", "--iterations", "5",
-                          "--profile", "unknown", "--summary-json", "summary.json"}),
+                          "--profile", "unknown", "--evidence-dir", "evidence",
+                          "--summary-json", "summary.json"}),
                 "unknown live profile was accepted");
         require(rejected({"--live-cases", "cases.json", "--iterations", "one",
-                          "--profile", "baseline", "--summary-json", "summary.json"}),
+                          "--profile", "baseline", "--evidence-dir", "evidence",
+                          "--summary-json", "summary.json"}),
                 "malformed iteration count was accepted");
         require(rejected({"--live-cases", "cases.json", "--iterations", "2",
-                          "--profile", "baseline", "--summary-json", "summary.json"}),
+                          "--profile", "baseline", "--evidence-dir", "evidence",
+                          "--summary-json", "summary.json"}),
                 "unsupported iteration count was accepted");
         require(rejected({"--live-cases", "cases.json", "--iterations", "5",
                           "--profile", "optimized"}),
                 "live command without summary path was accepted");
         require(rejected({"--live-cases", "cases.json", "--iterations", "5",
-                          "--profile", "optimized", "--summary-json", ""}),
+                          "--profile", "optimized", "--evidence-dir", "evidence",
+                          "--summary-json", ""}),
                 "live command with an empty summary path was accepted");
         require(rejected({"--live-cases", "cases.json", "--iterations", "5",
-                          "--profile", "optimized", "--summary-json", "/"}),
+                          "--profile", "optimized", "--evidence-dir", "evidence",
+                          "--summary-json", "/"}),
                 "live command with a directory summary target was accepted");
         require(rejected({"--live-cases", "cases.json", "--iterations", "1",
-                          "--profile", "optimized", "--summary-json", "summary.json",
+                          "--profile", "optimized", "--evidence-dir", "evidence",
+                          "--summary-json", "summary.json",
                           "--enforce-latency"}),
                 "latency enforcement with fewer than five iterations was accepted");
         require(rejected({"--live-cases", "cases.json", "--iteration", "5",
-                          "--profile", "optimized", "--summary-json", "summary.json"}),
+                          "--profile", "optimized", "--evidence-dir", "evidence",
+                          "--summary-json", "summary.json"}),
                 "unknown live argument was accepted");
+        require(rejected({"--live-cases", "cases.json", "--iterations", "5",
+                          "--profile", "prefetch", "--summary-json", "summary.json"}),
+                "prefetch command without an explicit evidence directory was accepted");
 
         const auto baseline = parseLiveCommand(
             {"--live-cases", "cases.json", "--iterations", "1", "--profile",
-             "baseline", "--summary-json", "baseline.json"});
+             "baseline", "--evidence-dir", "baseline-evidence",
+             "--summary-json", "baseline.json"});
         require(baseline.profile == RangeProfile::Baseline && baseline.iterations == 1 &&
-                !baseline.enforceLatency && baseline.summaryPath == "baseline.json",
+                !baseline.enforceLatency && baseline.summaryPath == "baseline.json" &&
+                baseline.evidenceDirectory == "baseline-evidence",
                 "baseline smoke command parsed incorrectly");
         const auto optimized = parseLiveCommand(
             {"--live-cases", "cases.json", "--iterations", "5", "--profile",
-             "optimized", "--summary-json", "optimized.json", "--enforce-latency"});
+             "optimized", "--evidence-dir", "optimized-evidence",
+             "--summary-json", "optimized.json", "--enforce-latency"});
         require(optimized.profile == RangeProfile::Optimized &&
                 optimized.iterations == 5 && optimized.enforceLatency,
                 "optimized enforced command parsed incorrectly");
+        const auto prefetchCommand = parseLiveCommand(
+            {"--live-cases", "cases.json", "--iterations", "5", "--profile",
+             "prefetch", "--evidence-dir", "prefetch-evidence",
+             "--summary-json", "prefetch.json", "--enforce-latency"});
+        require(prefetchCommand.profile == RangeProfile::Prefetch &&
+                prefetchCommand.evidenceDirectory == "prefetch-evidence" &&
+                std::string(profileName(prefetchCommand.profile)) == "prefetch",
+                "prefetch enforced command parsed incorrectly");
 
         const std::string serialized = serializeLiveSummary(
             RangeProfile::Optimized, picojson::array(), true);
@@ -2972,8 +3748,15 @@ namespace
                     .count("503") == 1,
                 "live case aggregate HTTP, byte, retry, or response JSON changed");
 
-        UniqueTempDirectory temporary("osgsol-science-summary-regression");
-        const std::filesystem::path summaryPath = temporary.path() / "summary.json";
+        const std::filesystem::path evidenceRoot =
+            std::filesystem::path(OSGSOL_SCIENCE_BUILD_DIR) /
+            ("evidence-directory-regression-" +
+             std::to_string(static_cast<long long>(getpid())));
+        std::error_code cleanupError;
+        std::filesystem::remove_all(evidenceRoot, cleanupError);
+        const std::filesystem::path summaryDirectory = evidenceRoot / "summary";
+        prepareLiveEvidenceDirectory(summaryDirectory);
+        const std::filesystem::path summaryPath = summaryDirectory / "summary.json";
         {
             std::ofstream previous(summaryPath);
             previous << "stale";
@@ -2991,19 +3774,76 @@ namespace
         require(summaryStream.good() && picojson::parse(written, summaryStream).empty() &&
                 written.is<picojson::object>(),
                 "atomic live summary replacement is not valid JSON");
-        for (const auto& entry : std::filesystem::directory_iterator(temporary.path()))
+        for (const auto& entry : std::filesystem::directory_iterator(summaryDirectory))
             require(entry.path() == summaryPath,
                     "atomic live summary left a temporary sibling behind");
+
+        prepareLiveEvidenceDirectory(evidenceRoot / "valid");
+        require(std::filesystem::is_directory(evidenceRoot / "valid"),
+                "live evidence directory was not created before iteration one");
+        {
+            std::ofstream file(evidenceRoot / "file");
+            file << "not a directory";
+        }
+        require(rejectedEvidenceDirectory(evidenceRoot / "file"),
+                "live evidence accepted an existing non-directory");
+        std::filesystem::create_directory_symlink(evidenceRoot / "valid",
+                                                  evidenceRoot / "symlink");
+        require(rejectedEvidenceDirectory(evidenceRoot / "symlink"),
+                "live evidence accepted a symlink");
+        require(rejectedEvidenceDirectory(std::filesystem::temp_directory_path() /
+                                          "outside-active-build"),
+                "live evidence accepted a path outside the active build tree");
+        require(rejectedEvidenceDirectory(OSGSOL_SCIENCE_PROTECTED_EVIDENCE_DIR),
+                "live evidence accepted the protected old evidence directory");
+        require(rejectedLiveSummaryPath(
+                    std::filesystem::path(OSGSOL_SCIENCE_PROTECTED_EVIDENCE_DIR) /
+                    "live-summary.json"),
+                "live summary accepted the protected old evidence directory");
+        require(rejectedLiveSummaryPath(
+                    std::filesystem::temp_directory_path() / "outside-summary.json"),
+                "live summary accepted a path outside the active build tree");
+        const std::filesystem::path summaryTarget = evidenceRoot / "summary-target.json";
+        const std::filesystem::path summarySymlink = evidenceRoot / "summary-symlink.json";
+        {
+            std::ofstream target(summaryTarget);
+            target << "protected target";
+        }
+        std::filesystem::create_symlink(summaryTarget, summarySymlink);
+        require(rejectedLiveSummaryPath(summarySymlink),
+                "live summary accepted an existing symlink target");
+
+        const std::filesystem::path originalDirectory = evidenceRoot / "original";
+        const std::filesystem::path movedDirectory = evidenceRoot / "moved";
+        const std::filesystem::path decoyDirectory = evidenceRoot / "decoy";
+        std::filesystem::create_directory(originalDirectory);
+        std::filesystem::create_directory(decoyDirectory);
+        {
+            auto secureDirectory = openSecureBuildDirectory(originalDirectory, false);
+            std::filesystem::rename(originalDirectory, movedDirectory);
+            std::filesystem::create_directory_symlink(decoyDirectory,
+                                                      originalDirectory);
+            writeAtomicFileAt(secureDirectory, "proof.json", "trusted\n");
+        }
+        std::ifstream trustedStream(movedDirectory / "proof.json");
+        std::string trustedPayload;
+        std::getline(trustedStream, trustedPayload);
+        require(trustedPayload == "trusted" &&
+                !std::filesystem::exists(decoyDirectory / "proof.json"),
+                "evidence publication followed a substituted directory symlink");
+        std::filesystem::remove_all(evidenceRoot, cleanupError);
     }
 
     int runLive(const std::filesystem::path& casesPath, int iterations,
-                RangeProfile profile, const std::filesystem::path& summaryPath,
-                bool enforceLatency)
+                RangeProfile profile,
+                const std::filesystem::path& evidenceDirectory,
+                const std::filesystem::path& summaryPath, bool enforceLatency)
     {
         require(iterations == 1 || iterations == 5,
                 "live evidence accepts one smoke iteration or five measured iterations");
         require(!enforceLatency || iterations == 5,
                 "latency enforcement requires exactly five iterations");
+        prepareLiveEvidenceDirectory(evidenceDirectory);
         verifyRangeAccessConfig(profile);
         const std::vector<LiveCase> cases = loadLiveCases(casesPath);
         picojson::array caseSummaries;
@@ -3031,7 +3871,8 @@ namespace
             std::map<int, int> retryCodes;
             for (int iteration = 1; iteration <= iterations; ++iteration)
             {
-                LiveMeasurement measurement = runLiveIteration(item, iteration, profile);
+                LiveMeasurement measurement = runLiveIteration(
+                    item, iteration, profile, evidenceDirectory);
                 timings.push_back(measurement.milliseconds);
                 openTimings.push_back(measurement.phases.openMs);
                 georeferenceTimings.push_back(measurement.phases.georeferenceMs);
@@ -3141,10 +3982,14 @@ int runMain(int argc, char** argv)
     }
     require(localMode || validateMode || liveMode,
             "usage: no arguments, --validate-live-cases FILE, or "
-            "--live-cases FILE --iterations 1|5 --profile baseline|optimized "
+            "--live-cases FILE --iterations 1|5 "
+            "--profile baseline|optimized|prefetch --evidence-dir DIRECTORY "
             "--summary-json FILE [--enforce-latency]");
     if (liveMode)
+    {
+        prepareLiveEvidenceDirectory(liveCommand.evidenceDirectory);
         initializeLiveSummary(liveCommand.summaryPath, liveCommand.profile);
+    }
 
     const RangeProfile processProfile = liveMode
         ? liveCommand.profile : RangeProfile::Optimized;
@@ -3165,7 +4010,8 @@ int runMain(int argc, char** argv)
     }
     if (liveMode)
         return runLive(liveCommand.casesPath, liveCommand.iterations,
-                       liveCommand.profile, liveCommand.summaryPath,
+                       liveCommand.profile, liveCommand.evidenceDirectory,
+                       liveCommand.summaryPath,
                        liveCommand.enforceLatency);
     UniqueTempDirectory temporary("osgsol-science-http-range");
     const std::filesystem::path root = temporary.path();
@@ -3232,7 +4078,8 @@ int runMain(int argc, char** argv)
             "bounded RGB window read failed");
     GDALClose(dataset);
     const std::string statsJson = requireNetworkStatsEvidence();
-    writeRawTransportEvidence("local", capture, statsJson);
+    writeRawTransportEvidence(OSGSOL_SCIENCE_EVIDENCE_DIR,
+                              "local", capture, statsJson);
     const HttpProof proof = buildHttpProof(capture, statsJson);
     verifyOptimizedMetadataIntervals(proof);
     server.stop();
@@ -3242,7 +4089,7 @@ int runMain(int argc, char** argv)
             local.committedBytes == proof.actualHttpBodyBytes &&
             proof.actualHttpBodyBytes <= TRANSFER_BUDGET,
             "local server, curl headers, and VSINetworkStats evidence disagree");
-    writeParsedProof("local", proof);
+    writeParsedProof(OSGSOL_SCIENCE_EVIDENCE_DIR, "local", proof);
     return 0;
 }
 

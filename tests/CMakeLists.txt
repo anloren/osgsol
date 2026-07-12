@@ -291,7 +291,9 @@ IF(BUILD_TESTING)
             OSGSOL_NODE="${OSGSOL_NODE_EXECUTABLE}"
             OSGSOL_SCIENCE_RANGE_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/science_http_range_server.py"
             OSGSOL_SCIENCE_HTTP2_RANGE_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/science_http2_range_server.mjs"
-            OSGSOL_SCIENCE_EVIDENCE_DIR="${CMAKE_BINARY_DIR}/science-network-evidence")
+            OSGSOL_SCIENCE_EVIDENCE_DIR="${CMAKE_BINARY_DIR}/science-network-evidence"
+            OSGSOL_SCIENCE_BUILD_DIR="${CMAKE_BINARY_DIR}"
+            OSGSOL_SCIENCE_PROTECTED_EVIDENCE_DIR="${PROJECT_SOURCE_DIR}/build/science_g0/science-network-evidence")
         TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_ScienceHttpRanges PRIVATE
                                    "${PROJECT_SOURCE_DIR}/3rdparty")
         TARGET_LINK_LIBRARIES(osgVerse_Test_ScienceHttpRanges PRIVATE
@@ -336,6 +338,8 @@ IF(BUILD_TESTING)
                         "${CMAKE_CURRENT_SOURCE_DIR}/data/science/alphaearth_rgb_cases.json"
                         --iterations 5
                         --profile optimized
+                        --evidence-dir
+                        "${CMAKE_BINARY_DIR}/science-network-evidence"
                         --summary-json
                         "${CMAKE_BINARY_DIR}/science-network-evidence/live-summary.json"
                         --enforce-latency)
