@@ -88,16 +88,19 @@ permit relaxing these limits.
 The immutable reference and current ratchet are committed release inputs, not audit outputs. The
 reference is bound to commit `0e91c7c4b121d80b929d595ea711d3dd0833ee67`, bundle fingerprint
 `91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18`, and normalization
-profile `scienceearth-g0-source-root-normalization` version 1 with exactly two source roots. Its
-generation command records both roots as placeholders and contains no machine-home path.
+profile `scienceearth-g0-source-root-normalization` version 2 with exactly two source roots. The
+profile binds the sorted location-independent descriptors `github.com/anloren/osgsol` and
+`github.com/anloren/osgverse`, both at subpath `.`, with root-set SHA-256
+`646b5eb80be60524ca6aa8dad55921f2966cc40562b29489483f1184a04c1936`. Its generation
+command records both roots as placeholders and contains no machine-home path.
 
 | Manifest | Finding count | Canonical SHA-256 | File SHA-256 |
 |---|---:|---|---|
-| `v0.2.0-macos-arm64-reference.json` | 1,086 | `da541f190e0679b3e3b67234b1d100d7d20caa7aa3eccbaa0177040930b83f4d` | `d08bb3e27b240a6d371e8941b01e9d41eea09b91ee9ea8bb6a6607b744b41a81` |
-| `current-macos-arm64-ratchet.json` | 1,086 | `439dadb3ba459785c573ef3ca09401e9e1a6e429a8b6a96e869998318af08c41` | `5ab42ff0ceeb361732c98f15d07354d0e8cb7ae04e0d2b83f35e7c821c869a22` |
+| `v0.2.0-macos-arm64-reference.json` | 1,086 | `0c6bb7949ac789f3c24e86b0862570ebd2997e1530d2499d9caf29a1461064d4` | `6ae2c1a946bd7bcb4eecd386109dbbcab856efd2803d7815c882c6b91f200f9f` |
+| `current-macos-arm64-ratchet.json` | 1,086 | `6a0298e26c9b32f5224db68770448dd213855b88df613c0891de4e3f77429967` | `dac1bbf6a0e4a2ae3831904a60174a9bbcb980614c528eeeae295de48cc97dfd` |
 
 The ratchet references canonical reference hash
-`da541f190e0679b3e3b67234b1d100d7d20caa7aa3eccbaa0177040930b83f4d`; its initial
+`0c6bb7949ac789f3c24e86b0862570ebd2997e1530d2499d9caf29a1461064d4`; its initial
 `v0.2.0` parent-finding-set hash is
 `5eeb1fc96226557050bffecfe5ab7cb11f32713fddb83c3147b1684ad675bd55`.
 
@@ -108,7 +111,7 @@ Tier A has zero science findings. Tier B has zero new identities and zero remove
 
 | Gate | Acceptance limit | Measured result | Outcome |
 |---|---|---|---|
-| Existing behavior | Science-off targeted suite passes unchanged | Fresh protected selection passed 15/15 in 10.16 s | PASS |
+| Existing behavior | Science-off targeted suite passes unchanged | Fresh protected selection passed 15/15 in 9.81 s | PASS |
 | Dependency build | Pinned private static prefix verifies | GDAL 3.13.1 / PROJ 9.8.1 / ZSTD 1.5.7 hashes, package metadata, and prefix passed | PASS |
 | Tier A absolute science isolation | No external, source/build, unresolved, or main-reachable science finding | 0 absolute science findings; 0 unresolved dependencies | PASS |
 | Tier B historical delta | Candidate non-science identities are a subset of the ratchet | 1,086 absolute historical identities; 0 new; 0 removed | PASS |
@@ -119,6 +122,6 @@ Tier A has zero science findings. Tier B has zero new identities and zero remove
 G0_DECISION=STOP
 REASON=Delta isolation now passes Tier A and Tier B; only the independent corrected uncached AlphaEarth RGB median latency gate remains failed.
 RECORDED_BY=Codex automated Task 5 protected delta-isolation audit
-AUTOMATED_REVIEW=Normalization provenance and release contracts implemented and verified
+AUTOMATED_REVIEW=Independent normalization review findings implemented and verified with profile v2
 HUMAN_PRODUCT_SIGN_OFF=PENDING
 RECORDED_DATE=2026-07-12

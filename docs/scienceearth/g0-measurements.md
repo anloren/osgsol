@@ -147,15 +147,45 @@ python3 packaging/scienceearth/generate_g0_reference.py \
   --source-root /Users/USER/osgsol/.worktrees/v0.2-runtime-safety
 ```
 
-The accepted profile is `scienceearth-g0-source-root-normalization` version 1 with
-`source_root_count=2`. Both normalized generation-command roots are placeholders. Reference and
-initial ratchet each contain 1,086 identities; neither manifest contains `/Users/USER` or
+The initial committed profile was `scienceearth-g0-source-root-normalization` version 1 with
+`source_root_count=2`. Both normalized generation-command roots were placeholders. Reference and
+initial ratchet each contained 1,086 identities; neither manifest contained `/Users/USER` or
 `//Users/USER`.
 
-| Accepted manifest | Canonical SHA-256 | File SHA-256 |
+| Committed profile-v1 manifest | Canonical SHA-256 | File SHA-256 |
 |---|---|---|
 | Reference | `da541f190e0679b3e3b67234b1d100d7d20caa7aa3eccbaa0177040930b83f4d` | `d08bb3e27b240a6d371e8941b01e9d41eea09b91ee9ea8bb6a6607b744b41a81` |
 | Ratchet | `439dadb3ba459785c573ef3ca09401e9e1a6e429a8b6a96e869998318af08c41` | `5ab42ff0ceeb361732c98f15d07354d0e8cb7ae04e0d2b83f35e7c821c869a22` |
+
+Independent review found that count alone did not bind which two roots defined `${SOURCE_ROOT}`
+identities, and that direct `audit_bundle()` callers bypassed the CLI-only profile check. The
+explicit pre-release migration retained history, recorded the v1 hashes above, removed/recreated
+only the two tracked manifests through the guarded generator, and committed profile v2 in
+`f976c1c`.
+
+Profile v2 canonicalizes `remote.origin.url` across HTTPS, SSH URL, and scp forms by stripping
+credentials, scheme, leading slash, and trailing `.git`, while lowercasing the host. Every root
+must be inside a Git worktree and have a canonical remote; duplicate descriptors stop generation.
+The current sorted descriptors are:
+
+```json
+[
+  {"repository": "github.com/anloren/osgsol", "subpath": "."},
+  {"repository": "github.com/anloren/osgverse", "subpath": "."}
+]
+```
+
+Their canonical SHA-256 is
+`646b5eb80be60524ca6aa8dad55921f2966cc40562b29489483f1184a04c1936`. The profile stores
+both inspectable descriptors and this hash. `validate_reference()` requires the exact v2 shape and
+self-consistent hash; `audit_bundle()` recomputes the descriptor set from its actual source roots.
+The CLI uses that same boundary, while the release/chain contract rejects missing, malformed, or
+descriptor-tampered profiles.
+
+| Current profile-v2 manifest | Canonical SHA-256 | File SHA-256 |
+|---|---|---|
+| Reference | `0c6bb7949ac789f3c24e86b0862570ebd2997e1530d2499d9caf29a1461064d4` | `6ae2c1a946bd7bcb4eecd386109dbbcab856efd2803d7815c882c6b91f200f9f` |
+| Ratchet | `6a0298e26c9b32f5224db68770448dd213855b88df613c0891de4e3f77429967` | `dac1bbf6a0e4a2ae3831904a60174a9bbcb980614c528eeeae295de48cc97dfd` |
 
 The immutable reference source commit is
 `0e91c7c4b121d80b929d595ea711d3dd0833ee67`; its protected bundle fingerprint is
@@ -214,10 +244,11 @@ main-reachable science edge. Tier B passes by exact identity: the candidate non-
 the ratchet ceiling, with no new or removed identity. The 1,086 historical findings remain fully
 visible and are not reclassified as clean.
 
-Fresh final verification passed the combined audit/manifest unit suites 51/51 in 1.83 seconds, the
-private dependency builder contract, the release boundary/manifest contract, the pinned private
-prefix verifier, and deep strict app signature verification. The protected science-off selection
-passed 15/15 in 10.16 seconds. These isolation passes do not override the independent corrected
+Fresh profile-v2 verification passed the combined audit/manifest unit suites 57/57 in 2.73
+seconds, the private dependency builder contract, the release boundary/manifest contract, the
+pinned private prefix verifier, and deep strict app signature verification. The protected
+science-off selection passed 15/15 in 9.81 seconds. These isolation passes do not override the
+independent corrected
 median-latency hard gate.
 
 G0 remains `STOP`. Delta isolation is no longer a blocker; only uncached first-RGB median latency
