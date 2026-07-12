@@ -309,7 +309,11 @@ IF(BUILD_TESTING)
                 COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>
                         --live-cases
                         "${CMAKE_CURRENT_SOURCE_DIR}/data/science/alphaearth_rgb_cases.json"
-                        --iterations 5)
+                        --iterations 5
+                        --profile optimized
+                        --summary-json
+                        "${CMAKE_BINARY_DIR}/science-network-evidence/live-summary.json"
+                        --enforce-latency)
             SET_TESTS_PROPERTIES(osgVerse_Test_ScienceGdalLive PROPERTIES
                 LABELS "network;scienceearth"
                 TIMEOUT 300)

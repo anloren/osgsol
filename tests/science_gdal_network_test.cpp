@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cerrno>
@@ -538,6 +539,132 @@ namespace
     }
 
     enum class RangeProfile { Baseline, Optimized };
+
+    struct LiveCommand
+    {
+        std::filesystem::path casesPath;
+        int iterations = 0;
+        RangeProfile profile = RangeProfile::Optimized;
+        std::filesystem::path summaryPath;
+        bool enforceLatency = false;
+    };
+
+    const char* profileName(RangeProfile profile)
+    {
+        return profile == RangeProfile::Optimized ? "optimized" : "baseline";
+    }
+
+    LiveCommand parseLiveCommand(const std::vector<std::string>& arguments)
+    {
+        require(arguments.size() == 8 || arguments.size() == 9,
+                "live command requires cases, iterations, profile, and summary path");
+        require(arguments[0] == "--live-cases" && arguments[2] == "--iterations" &&
+                arguments[4] == "--profile" && arguments[6] == "--summary-json",
+                "live command arguments are malformed or out of order");
+        require(!arguments[1].empty(), "live case fixture path must not be empty");
+
+        LiveCommand command;
+        command.casesPath = arguments[1];
+        const char* first = arguments[3].data();
+        const char* last = first + arguments[3].size();
+        const std::from_chars_result parsed =
+            std::from_chars(first, last, command.iterations);
+        require(parsed.ec == std::errc() && parsed.ptr == last,
+                "live iteration count must be an integer");
+        require(command.iterations == 1 || command.iterations == 5,
+                "live evidence accepts one smoke iteration or five measured iterations");
+        if (arguments[5] == "baseline")
+            command.profile = RangeProfile::Baseline;
+        else if (arguments[5] == "optimized")
+            command.profile = RangeProfile::Optimized;
+        else
+            fail("live profile must be baseline or optimized");
+        require(!arguments[7].empty() &&
+                !std::filesystem::path(arguments[7]).filename().empty(),
+                "live summary path must name a file");
+        command.summaryPath = arguments[7];
+        if (arguments.size() == 9)
+        {
+            require(arguments[8] == "--enforce-latency",
+                    "unknown trailing live command argument");
+            command.enforceLatency = true;
+            require(command.iterations == 5,
+                    "latency enforcement requires exactly five iterations");
+        }
+        return command;
+    }
+
+    std::string serializeLiveSummary(RangeProfile profile,
+                                     const picojson::array& cases,
+                                     const std::string& status)
+    {
+        require(status == "PASS" || status == "FAIL" || status == "ERROR",
+                "live summary status is invalid");
+        picojson::object limits;
+        limits["median_ms"] = picojson::value(MAX_MEDIAN_MS);
+        limits["p95_ms"] = picojson::value(MAX_P95_MS);
+        picojson::object root;
+        root["profile"] = picojson::value(profileName(profile));
+        root["limits"] = picojson::value(limits);
+        root["cases"] = picojson::value(cases);
+        root["status"] = picojson::value(status);
+        return picojson::value(root).serialize(true) + '\n';
+    }
+
+    std::string serializeLiveSummary(RangeProfile profile,
+                                     const picojson::array& cases,
+                                     bool passed)
+    {
+        return serializeLiveSummary(
+            profile, cases, std::string(passed ? "PASS" : "FAIL"));
+    }
+
+    void writeAtomicSummary(const std::filesystem::path& path,
+                            const std::string& payload)
+    {
+        require(!path.empty() && !path.filename().empty(),
+                "live summary path must name a file");
+        const std::filesystem::path directory = path.parent_path();
+        std::error_code error;
+        if (!directory.empty())
+        {
+            std::filesystem::create_directories(directory, error);
+            require(!error, "failed to create live summary directory: " +
+                            error.message());
+        }
+        const std::filesystem::path temporary = path.string() + ".tmp-" +
+            std::to_string(static_cast<long long>(getpid()));
+        bool written = false;
+        {
+            std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+            if (stream.good())
+            {
+                stream << payload;
+                stream.flush();
+                written = stream.good();
+            }
+        }
+        if (!written)
+        {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            fail("failed to write temporary live summary");
+        }
+        std::filesystem::rename(temporary, path, error);
+        if (error)
+        {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            fail("failed to atomically publish live summary: " + error.message());
+        }
+    }
+
+    void initializeLiveSummary(const std::filesystem::path& path,
+                               RangeProfile profile)
+    {
+        writeAtomicSummary(path, serializeLiveSummary(
+            profile, picojson::array(), std::string("ERROR")));
+    }
 
     std::vector<std::pair<std::string, std::string>> rangeAccessConfig(
         RangeProfile profile)
@@ -1822,7 +1949,8 @@ namespace
 
     using DatasetPtr = std::unique_ptr<GDALDataset, decltype(&closeDataset)>;
 
-    LiveMeasurement runLiveIteration(const LiveCase& item, int iteration)
+    LiveMeasurement runLiveIteration(const LiveCase& item, int iteration,
+                                     RangeProfile profile)
     {
         VSICurlClearCache();
         DebugCapture capture;
@@ -1853,8 +1981,9 @@ namespace
                     rawBand->GetMaskBand() != nullptr,
                     item.name + " RGB band metadata changed");
         }
-        const NormalizedRgbWindow normalized =
-            readNormalizedOverviewRgbBatched(raw.get(), window, bandMap);
+        const NormalizedRgbWindow normalized = profile == RangeProfile::Optimized
+            ? readNormalizedOverviewRgbBatched(raw.get(), window, bandMap)
+            : readNormalizedOverviewRgbOracle(raw.get(), window, bandMap);
         const auto read = std::chrono::steady_clock::now();
         require(normalized.mask.size() == normalized.rgb.size(),
                 item.name + " RGB mask size differs from RGB window");
@@ -1881,7 +2010,8 @@ namespace
                 "latency phases do not sum to total");
 
         const std::string statsJson = requireNetworkStatsEvidence();
-        const std::string evidenceName = item.name + "-" + std::to_string(iteration);
+        const std::string evidenceName = std::string(profileName(profile)) + "-" +
+            item.name + "-" + std::to_string(iteration);
         writeRawTransportEvidence(evidenceName, capture, statsJson);
         HttpProof proof = buildHttpProof(capture, statsJson);
         proof.overviewFactor = LIVE_OVERVIEW_FACTOR;
@@ -1935,6 +2065,201 @@ namespace
         return summary.medianMs <= MAX_MEDIAN_MS && summary.p95Ms <= MAX_P95_MS;
     }
 
+    int liveGateExitCode(bool enforceLatency, bool passed)
+    {
+        return enforceLatency && !passed ? 2 : 0;
+    }
+
+    picojson::object retryCountsJson(const std::map<int, int>& counts)
+    {
+        picojson::object result;
+        for (const auto& count : counts)
+            result[std::to_string(count.first)] = picojson::value(
+                static_cast<double>(count.second));
+        return result;
+    }
+
+    picojson::array responseCodesJson(const std::vector<int>& codes)
+    {
+        picojson::array result;
+        for (int code : codes)
+            result.emplace_back(static_cast<double>(code));
+        return result;
+    }
+
+    picojson::value liveIterationJson(int iteration,
+                                      const LiveMeasurement& measurement)
+    {
+        picojson::object phases;
+        phases["open"] = picojson::value(measurement.phases.openMs);
+        phases["georeference"] = picojson::value(
+            measurement.phases.georeferenceMs);
+        phases["read"] = picojson::value(measurement.phases.readMs);
+        phases["close"] = picojson::value(measurement.phases.closeMs);
+        phases["total"] = picojson::value(measurement.phases.totalMs);
+
+        picojson::object httpCounts;
+        httpCounts["actual_get"] = picojson::value(
+            static_cast<double>(measurement.actualGetCount));
+        httpCounts["actual_head"] = picojson::value(
+            static_cast<double>(measurement.actualHeadCount));
+        httpCounts["stats_get_operations"] = picojson::value(
+            static_cast<double>(measurement.statsGetOperationCount));
+        httpCounts["successful_get"] = picojson::value(
+            static_cast<double>(measurement.successfulGetCount));
+        httpCounts["transient_retries"] = picojson::value(
+            static_cast<double>(measurement.transientRetryCount));
+
+        picojson::object bytes;
+        bytes["successful_range"] = picojson::value(
+            static_cast<double>(measurement.successfulRangeBytes));
+        bytes["declared_transient"] = picojson::value(
+            static_cast<double>(measurement.declaredTransientBytes));
+        bytes["actual_http_body"] = picojson::value(
+            static_cast<double>(measurement.actualHttpBodyBytes));
+        bytes["conservative_body_upper_bound"] = picojson::value(
+            static_cast<double>(measurement.conservativeBodyUpperBound));
+        bytes["source_size"] = picojson::value(
+            static_cast<double>(measurement.sourceSize));
+
+        picojson::object result;
+        result["iteration"] = picojson::value(static_cast<double>(iteration));
+        result["timing_ms"] = picojson::value(measurement.milliseconds);
+        result["phases_ms"] = picojson::value(phases);
+        result["http_counts"] = picojson::value(httpCounts);
+        result["bytes"] = picojson::value(bytes);
+        result["transient_retry_codes"] = picojson::value(
+            retryCountsJson(measurement.transientRetryCodes));
+        result["response_codes"] = picojson::value(
+            responseCodesJson(measurement.responseCodes));
+        return picojson::value(result);
+    }
+
+    picojson::value liveCaseSummaryJson(
+        const LiveCase& item, const std::vector<LiveMeasurement>& measurements)
+    {
+        require(!measurements.empty(), "live case summary requires measurements");
+        std::vector<double> timings;
+        std::vector<double> openTimings;
+        std::vector<double> georeferenceTimings;
+        std::vector<double> readTimings;
+        std::vector<double> closeTimings;
+        picojson::array iterations;
+        double summedOpenMs = 0.0;
+        double summedGeoreferenceMs = 0.0;
+        double summedReadMs = 0.0;
+        double summedCloseMs = 0.0;
+        double summedTotalMs = 0.0;
+        std::uint64_t totalSuccessfulBytes = 0;
+        std::uint64_t totalDeclaredTransientBytes = 0;
+        std::uint64_t totalActualBodyBytes = 0;
+        std::uint64_t totalConservativeBodyUpperBound = 0;
+        std::uint64_t sourceSize = 0;
+        int totalActualGets = 0;
+        int totalActualHeads = 0;
+        int totalStatsGetOperations = 0;
+        int totalSuccessfulGets = 0;
+        int totalRetries = 0;
+        std::map<int, int> retryCodes;
+        std::set<int> responseCodes;
+        for (std::size_t index = 0; index < measurements.size(); ++index)
+        {
+            const LiveMeasurement& measurement = measurements[index];
+            timings.push_back(measurement.milliseconds);
+            openTimings.push_back(measurement.phases.openMs);
+            georeferenceTimings.push_back(measurement.phases.georeferenceMs);
+            readTimings.push_back(measurement.phases.readMs);
+            closeTimings.push_back(measurement.phases.closeMs);
+            summedOpenMs += measurement.phases.openMs;
+            summedGeoreferenceMs += measurement.phases.georeferenceMs;
+            summedReadMs += measurement.phases.readMs;
+            summedCloseMs += measurement.phases.closeMs;
+            summedTotalMs += measurement.phases.totalMs;
+            totalSuccessfulBytes += measurement.successfulRangeBytes;
+            totalDeclaredTransientBytes += measurement.declaredTransientBytes;
+            totalActualBodyBytes += measurement.actualHttpBodyBytes;
+            totalConservativeBodyUpperBound +=
+                measurement.conservativeBodyUpperBound;
+            totalActualGets += measurement.actualGetCount;
+            totalActualHeads += measurement.actualHeadCount;
+            totalStatsGetOperations += measurement.statsGetOperationCount;
+            totalSuccessfulGets += measurement.successfulGetCount;
+            totalRetries += measurement.transientRetryCount;
+            for (const auto& retry : measurement.transientRetryCodes)
+                retryCodes[retry.first] += retry.second;
+            require(sourceSize == 0 || sourceSize == measurement.sourceSize,
+                    item.name + " source size changed between live iterations");
+            sourceSize = measurement.sourceSize;
+            responseCodes.insert(measurement.responseCodes.begin(),
+                                 measurement.responseCodes.end());
+            iterations.push_back(liveIterationJson(
+                static_cast<int>(index + 1), measurement));
+        }
+
+        const LatencySummary latency = summarizeLatency(timings);
+        picojson::object latencyJson;
+        latencyJson["median"] = picojson::value(latency.medianMs);
+        latencyJson["p95"] = picojson::value(latency.p95Ms);
+        picojson::object phaseTotals;
+        phaseTotals["open"] = picojson::value(summedOpenMs);
+        phaseTotals["georeference"] = picojson::value(summedGeoreferenceMs);
+        phaseTotals["read"] = picojson::value(summedReadMs);
+        phaseTotals["close"] = picojson::value(summedCloseMs);
+        phaseTotals["total"] = picojson::value(summedTotalMs);
+        picojson::object phaseMedians;
+        phaseMedians["open"] = picojson::value(percentile(openTimings, 0.5));
+        phaseMedians["georeference"] = picojson::value(
+            percentile(georeferenceTimings, 0.5));
+        phaseMedians["read"] = picojson::value(percentile(readTimings, 0.5));
+        phaseMedians["close"] = picojson::value(percentile(closeTimings, 0.5));
+        phaseMedians["total"] = picojson::value(latency.medianMs);
+        picojson::object phases;
+        phases["summed"] = picojson::value(phaseTotals);
+        phases["median"] = picojson::value(phaseMedians);
+        picojson::object httpCounts;
+        httpCounts["actual_get"] = picojson::value(
+            static_cast<double>(totalActualGets));
+        httpCounts["actual_head"] = picojson::value(
+            static_cast<double>(totalActualHeads));
+        httpCounts["stats_get_operations"] = picojson::value(
+            static_cast<double>(totalStatsGetOperations));
+        httpCounts["successful_get"] = picojson::value(
+            static_cast<double>(totalSuccessfulGets));
+        httpCounts["transient_retries"] = picojson::value(
+            static_cast<double>(totalRetries));
+        picojson::object bytes;
+        bytes["successful_range"] = picojson::value(
+            static_cast<double>(totalSuccessfulBytes));
+        bytes["actual_http_body"] = picojson::value(
+            static_cast<double>(totalActualBodyBytes));
+        bytes["declared_transient"] = picojson::value(
+            static_cast<double>(totalDeclaredTransientBytes));
+        bytes["conservative_body_upper_bound"] = picojson::value(
+            static_cast<double>(totalConservativeBodyUpperBound));
+        bytes["source_size"] = picojson::value(static_cast<double>(sourceSize));
+        picojson::array responseCodeSummary;
+        for (int response : responseCodes)
+            responseCodeSummary.emplace_back(static_cast<double>(response));
+        picojson::object result;
+        result["name"] = picojson::value(item.name);
+        result["fid"] = picojson::value(item.datasetId);
+        result["year"] = picojson::value(static_cast<double>(item.year));
+        result["iteration_count"] = picojson::value(
+            static_cast<double>(measurements.size()));
+        result["iterations"] = picojson::value(iterations);
+        result["latency_ms"] = picojson::value(latencyJson);
+        result["phases_ms"] = picojson::value(phases);
+        result["http_counts"] = picojson::value(httpCounts);
+        result["bytes"] = picojson::value(bytes);
+        result["transient_retry_codes"] = picojson::value(
+            retryCountsJson(retryCodes));
+        result["response_codes"] = picojson::value(responseCodeSummary);
+        result["complete_cog"] = picojson::value(false);
+        result["status"] = picojson::value(
+            passesLatencyGate(latency) ? "PASS" : "FAIL");
+        return picojson::value(result);
+    }
+
     void verifyLatencyGateRegression()
     {
         const LatencySummary exact = summarizeLatency({1000, 2000, 3000, 7000, 8000});
@@ -1947,24 +2272,191 @@ namespace
                 "P95 above 8 seconds was accepted");
     }
 
+    void verifyLiveCommandAndSummaryRegression()
+    {
+        const auto rejected = [](const std::vector<std::string>& arguments)
+        {
+            try
+            {
+                parseLiveCommand(arguments);
+                return false;
+            }
+            catch (const std::exception&)
+            {
+                return true;
+            }
+        };
+        require(rejected({"--live-cases", "cases.json", "--iterations", "5",
+                          "--profile", "unknown", "--summary-json", "summary.json"}),
+                "unknown live profile was accepted");
+        require(rejected({"--live-cases", "cases.json", "--iterations", "one",
+                          "--profile", "baseline", "--summary-json", "summary.json"}),
+                "malformed iteration count was accepted");
+        require(rejected({"--live-cases", "cases.json", "--iterations", "2",
+                          "--profile", "baseline", "--summary-json", "summary.json"}),
+                "unsupported iteration count was accepted");
+        require(rejected({"--live-cases", "cases.json", "--iterations", "5",
+                          "--profile", "optimized"}),
+                "live command without summary path was accepted");
+        require(rejected({"--live-cases", "cases.json", "--iterations", "5",
+                          "--profile", "optimized", "--summary-json", ""}),
+                "live command with an empty summary path was accepted");
+        require(rejected({"--live-cases", "cases.json", "--iterations", "5",
+                          "--profile", "optimized", "--summary-json", "/"}),
+                "live command with a directory summary target was accepted");
+        require(rejected({"--live-cases", "cases.json", "--iterations", "1",
+                          "--profile", "optimized", "--summary-json", "summary.json",
+                          "--enforce-latency"}),
+                "latency enforcement with fewer than five iterations was accepted");
+        require(rejected({"--live-cases", "cases.json", "--iteration", "5",
+                          "--profile", "optimized", "--summary-json", "summary.json"}),
+                "unknown live argument was accepted");
+
+        const auto baseline = parseLiveCommand(
+            {"--live-cases", "cases.json", "--iterations", "1", "--profile",
+             "baseline", "--summary-json", "baseline.json"});
+        require(baseline.profile == RangeProfile::Baseline && baseline.iterations == 1 &&
+                !baseline.enforceLatency && baseline.summaryPath == "baseline.json",
+                "baseline smoke command parsed incorrectly");
+        const auto optimized = parseLiveCommand(
+            {"--live-cases", "cases.json", "--iterations", "5", "--profile",
+             "optimized", "--summary-json", "optimized.json", "--enforce-latency"});
+        require(optimized.profile == RangeProfile::Optimized &&
+                optimized.iterations == 5 && optimized.enforceLatency,
+                "optimized enforced command parsed incorrectly");
+
+        const std::string serialized = serializeLiveSummary(
+            RangeProfile::Optimized, picojson::array(), true);
+        picojson::value root;
+        const std::string error = picojson::parse(root, serialized);
+        require(error.empty() && root.is<picojson::object>(),
+                "live summary serializer did not produce a JSON object");
+        const picojson::object& object = root.get<picojson::object>();
+        require(field(object, "profile").get<std::string>() == "optimized" &&
+                field(object, "cases").get<picojson::array>().empty() &&
+                field(object, "status").get<std::string>() == "PASS",
+                "live summary top-level contract changed");
+        const picojson::object& limits = field(object, "limits").get<picojson::object>();
+        require(field(limits, "median_ms").get<double>() == 3000.0 &&
+                field(limits, "p95_ms").get<double>() == 8000.0,
+                "live summary latency limits changed");
+        require(liveGateExitCode(false, false) == 0,
+                "unenforced baseline latency failure returned nonzero");
+        require(liveGateExitCode(true, true) == 0,
+                "passing enforced latency gate returned nonzero");
+        require(liveGateExitCode(true, false) != 0,
+                "failing enforced latency gate returned zero");
+        picojson::value failedRoot;
+        require(picojson::parse(failedRoot, serializeLiveSummary(
+                    RangeProfile::Optimized, picojson::array(), false)).empty() &&
+                field(failedRoot.get<picojson::object>(), "status").get<std::string>() ==
+                    "FAIL",
+                "failing live summary did not preserve the gate outcome");
+
+        LiveCase syntheticCase;
+        syntheticCase.name = "synthetic";
+        syntheticCase.datasetId = "42";
+        syntheticCase.year = 2025;
+        std::vector<LiveMeasurement> syntheticMeasurements(5);
+        for (std::size_t index = 0; index < syntheticMeasurements.size(); ++index)
+        {
+            LiveMeasurement& measurement = syntheticMeasurements[index];
+            measurement.milliseconds = 1000.0 * (index + 1);
+            measurement.phases = {100.0, 200.0, 300.0,
+                                  400.0 + 1000.0 * index,
+                                  measurement.milliseconds};
+            measurement.actualGetCount = 2;
+            measurement.actualHeadCount = 1;
+            measurement.statsGetOperationCount = 1;
+            measurement.successfulGetCount = 1;
+            measurement.transientRetryCount = 1;
+            measurement.transientRetryCodes = {{503, 1}};
+            measurement.responseCodes = {503, 206};
+            measurement.successfulRangeBytes = 128;
+            measurement.declaredTransientBytes = 8;
+            measurement.actualHttpBodyBytes = 128;
+            measurement.conservativeBodyUpperBound = 136;
+            measurement.sourceSize = 4096;
+        }
+        const picojson::object synthetic = liveCaseSummaryJson(
+            syntheticCase, syntheticMeasurements).get<picojson::object>();
+        require(field(synthetic, "name").get<std::string>() == "synthetic" &&
+                field(synthetic, "fid").get<std::string>() == "42" &&
+                field(synthetic, "iteration_count").get<double>() == 5.0 &&
+                field(synthetic, "status").get<std::string>() == "PASS",
+                "live case identity or gate outcome JSON changed");
+        const picojson::array& iterations =
+            field(synthetic, "iterations").get<picojson::array>();
+        require(iterations.size() == 5,
+                "live case JSON omitted iteration evidence");
+        const picojson::object& firstIteration =
+            iterations.front().get<picojson::object>();
+        require(field(firstIteration, "timing_ms").get<double>() == 1000.0 &&
+                field(field(firstIteration, "phases_ms").get<picojson::object>(),
+                      "open").get<double>() == 100.0 &&
+                field(field(firstIteration, "http_counts").get<picojson::object>(),
+                      "actual_get").get<double>() == 2.0 &&
+                field(field(firstIteration, "bytes").get<picojson::object>(),
+                      "successful_range").get<double>() == 128.0,
+                "live iteration timing, phase, HTTP, or byte JSON changed");
+        const picojson::object& latency =
+            field(synthetic, "latency_ms").get<picojson::object>();
+        require(field(latency, "median").get<double>() == 3000.0 &&
+                field(latency, "p95").get<double>() == 5000.0,
+                "live case latency summary JSON changed");
+        require(field(field(synthetic, "http_counts").get<picojson::object>(),
+                      "actual_get").get<double>() == 10.0 &&
+                field(field(synthetic, "bytes").get<picojson::object>(),
+                      "successful_range").get<double>() == 640.0 &&
+                field(synthetic, "response_codes").get<picojson::array>().size() == 2 &&
+                field(synthetic, "transient_retry_codes").get<picojson::object>()
+                    .count("503") == 1,
+                "live case aggregate HTTP, byte, retry, or response JSON changed");
+
+        UniqueTempDirectory temporary("osgsol-science-summary-regression");
+        const std::filesystem::path summaryPath = temporary.path() / "summary.json";
+        {
+            std::ofstream previous(summaryPath);
+            previous << "stale";
+        }
+        initializeLiveSummary(summaryPath, RangeProfile::Optimized);
+        std::ifstream initialStream(summaryPath);
+        picojson::value initial;
+        require(initialStream.good() && picojson::parse(initial, initialStream).empty() &&
+                field(initial.get<picojson::object>(), "status").get<std::string>() ==
+                    "ERROR",
+                "live startup left stale summary evidence in place");
+        writeAtomicSummary(summaryPath, serialized);
+        std::ifstream summaryStream(summaryPath);
+        picojson::value written;
+        require(summaryStream.good() && picojson::parse(written, summaryStream).empty() &&
+                written.is<picojson::object>(),
+                "atomic live summary replacement is not valid JSON");
+        for (const auto& entry : std::filesystem::directory_iterator(temporary.path()))
+            require(entry.path() == summaryPath,
+                    "atomic live summary left a temporary sibling behind");
+    }
+
     int runLive(const std::filesystem::path& casesPath, int iterations,
-                const std::string& caseFilter = "")
+                RangeProfile profile, const std::filesystem::path& summaryPath,
+                bool enforceLatency)
     {
         require(iterations == 1 || iterations == 5,
                 "live evidence accepts one smoke iteration or five measured iterations");
-        ScopedGdalConfig config(rangeAccessConfig(RangeProfile::Optimized));
-        verifyRangeAccessConfig(RangeProfile::Optimized);
+        require(!enforceLatency || iterations == 5,
+                "latency enforcement requires exactly five iterations");
+        verifyRangeAccessConfig(profile);
         const std::vector<LiveCase> cases = loadLiveCases(casesPath);
-        int casesRun = 0;
+        picojson::array caseSummaries;
+        bool allCasesPassed = true;
         for (const LiveCase& item : cases)
         {
-            if (!caseFilter.empty() && item.name != caseFilter) continue;
-            ++casesRun;
             std::vector<double> timings;
             std::vector<double> openTimings;
             std::vector<double> georeferenceTimings;
             std::vector<double> readTimings;
             std::vector<double> closeTimings;
+            std::vector<LiveMeasurement> measurements;
             double summedOpenMs = 0.0;
             double summedGeoreferenceMs = 0.0;
             double summedReadMs = 0.0;
@@ -1980,7 +2472,7 @@ namespace
             std::map<int, int> retryCodes;
             for (int iteration = 1; iteration <= iterations; ++iteration)
             {
-                LiveMeasurement measurement = runLiveIteration(item, iteration);
+                LiveMeasurement measurement = runLiveIteration(item, iteration, profile);
                 timings.push_back(measurement.milliseconds);
                 openTimings.push_back(measurement.phases.openMs);
                 georeferenceTimings.push_back(measurement.phases.georeferenceMs);
@@ -1999,9 +2491,12 @@ namespace
                 totalRetries += measurement.transientRetryCount;
                 for (const auto& retry : measurement.transientRetryCodes)
                     retryCodes[retry.first] += retry.second;
+                require(sourceSize == 0 || sourceSize == measurement.sourceSize,
+                        item.name + " source size changed between live iterations");
                 sourceSize = measurement.sourceSize;
                 responses.insert(measurement.responseCodes.begin(),
                                  measurement.responseCodes.end());
+                measurements.push_back(measurement);
                 std::cout << "ScienceGdalLive case=" << item.name
                           << " fid=" << item.datasetId << " year=" << item.year
                           << " iteration=" << iteration
@@ -2028,10 +2523,13 @@ namespace
                           << " stats_get_operations=" << measurement.statsGetOperationCount
                           << " source_size=" << measurement.sourceSize << std::endl;
             }
+            const LatencySummary latency = summarizeLatency(timings);
+            const bool casePassed = passesLatencyGate(latency);
+            allCasesPassed = allCasesPassed && casePassed;
             std::cout << "ScienceGdalLive summary case=" << item.name
                       << " fid=" << item.datasetId << " year=" << item.year
-                      << " median_ms=" << percentile(timings, 0.5)
-                      << " p95_ms=" << percentile(timings, 0.95)
+                      << " median_ms=" << latency.medianMs
+                      << " p95_ms=" << latency.p95Ms
                       << " summed_open_ms=" << summedOpenMs
                       << " median_open_ms=" << percentile(openTimings, 0.5)
                       << " summed_georeference_ms=" << summedGeoreferenceMs
@@ -2056,39 +2554,60 @@ namespace
             std::cout
                       << " source_size=" << sourceSize << " response_codes=";
             for (int response : responses) std::cout << response << ',';
-            std::cout << " complete_cog=false" << std::endl;
+            std::cout << " complete_cog=false status="
+                      << (casePassed ? "PASS" : "FAIL") << std::endl;
+            caseSummaries.push_back(liveCaseSummaryJson(item, measurements));
         }
-        require(casesRun > 0, "requested live case was not found in the pinned fixture");
-        return 0;
+        require(!caseSummaries.empty(), "pinned fixture contained no live cases");
+        writeAtomicSummary(summaryPath,
+                           serializeLiveSummary(profile, caseSummaries, allCasesPassed));
+        return liveGateExitCode(enforceLatency, allCasesPassed);
     }
 }
 
 int runMain(int argc, char** argv)
 {
-    ScopedGdalConfig defaultConfig(rangeAccessConfig(RangeProfile::Optimized));
+    const bool localMode = argc == 1;
+    const bool validateMode = argc == 3 &&
+        std::string(argv[1]) == "--validate-live-cases";
+    const bool liveMode = argc > 1 && std::string(argv[1]) == "--live-cases";
+    LiveCommand liveCommand;
+    if (liveMode)
+    {
+        std::vector<std::string> arguments;
+        arguments.reserve(static_cast<std::size_t>(argc - 1));
+        for (int index = 1; index < argc; ++index)
+            arguments.emplace_back(argv[index]);
+        liveCommand = parseLiveCommand(arguments);
+    }
+    require(localMode || validateMode || liveMode,
+            "usage: no arguments, --validate-live-cases FILE, or "
+            "--live-cases FILE --iterations 1|5 --profile baseline|optimized "
+            "--summary-json FILE [--enforce-latency]");
+    if (liveMode)
+        initializeLiveSummary(liveCommand.summaryPath, liveCommand.profile);
+
+    const RangeProfile processProfile = liveMode
+        ? liveCommand.profile : RangeProfile::Optimized;
+    ScopedGdalConfig processConfig(rangeAccessConfig(processProfile));
     verifyRangeProfiles();
-    verifyRangeAccessConfig(RangeProfile::Optimized);
+    verifyRangeAccessConfig(processProfile);
     verifyLatencyGateRegression();
+    verifyLiveCommandAndSummaryRegression();
     verifyHttpParserRegression();
     registerScienceRuntime();
     verifyGeoreferenceRegression();
-    if (argc == 3 && std::string(argv[1]) == "--validate-live-cases")
+    if (validateMode)
     {
         const std::vector<LiveCase> cases = loadLiveCases(argv[2]);
         std::cout << "ScienceGdalCases: validated " << cases.size()
                   << " pinned raw rows" << std::endl;
         return 0;
     }
-    if (argc == 5 && std::string(argv[1]) == "--live-cases" &&
-        std::string(argv[3]) == "--iterations")
-        return runLive(argv[2], std::stoi(argv[4]));
-    if (argc == 6 && std::string(argv[1]) == "--live-case" &&
-        std::string(argv[4]) == "--iterations")
-        return runLive(argv[2], std::stoi(argv[5]), argv[3]);
-    require(argc == 1,
-            "usage: no arguments, --validate-live-cases FILE, or "
-            "--live-cases FILE --iterations 1|5, or "
-            "--live-case FILE NAME --iterations 1|5");
+    if (liveMode)
+        return runLive(liveCommand.casesPath, liveCommand.iterations,
+                       liveCommand.profile, liveCommand.summaryPath,
+                       liveCommand.enforceLatency);
     UniqueTempDirectory temporary("osgsol-science-http-range");
     const std::filesystem::path root = temporary.path();
     const std::filesystem::path fixture = root / "alphaearth-range-fixture.tif";
