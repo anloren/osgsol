@@ -45,8 +45,15 @@ assert_not_contains()
 [[ -f "$embed_probe" ]] || fail "missing independent GDAL #embed probe"
 [[ -f "$gdal_patch" ]] || fail "missing pinned GDAL Shapelib-disable patch"
 [[ -f "$relocatable_patch" ]] || fail "missing pinned relocatable GDAL patch"
-assert_contains "$relocatable_patch" 'unset\(GDAL_PREFIX\)' \
-    "embedded-only GDAL patch must suppress its compiled install-prefix fallback"
+assert_not_contains "$relocatable_patch" '^--- a/cmake/helpers/configure\.cmake' \
+    "embedded-only GDAL patch must preserve GDAL_PREFIX for installed package metadata"
+assert_contains "$relocatable_patch" '^\+configure_file\($' \
+    "embedded-only GDAL patch must narrow prefix suppression to cpl_config.h generation"
+assert_contains "$relocatable_patch" '^\+  \$\{GDAL_CMAKE_TEMPLATE_PATH\}/cpl_config\.h\.in$' \
+    "embedded-only GDAL patch must configure cpl_config.h while the prefix is hidden"
+assert_contains "$relocatable_patch" \
+    'set\(GDAL_PREFIX "\$\{_gdal_prefix_for_package_metadata\}"\)' \
+    "embedded-only GDAL patch must restore the prefix used by package metadata"
 
 # shellcheck disable=SC1090
 source "$versions_file"
@@ -78,6 +85,12 @@ assert_contains "$builder" 'ffile-prefix-map' \
     "dependency build must normalize compiled source paths"
 assert_contains "$builder" 'verify_no_workspace_strings' \
     "verify must scan linked runtime artifacts for workspace strings"
+assert_contains "$builder" 'verify_gdal_pkgconfig_metadata' \
+    "verify must validate installed GDAL pkg-config metadata"
+assert_contains "$builder" 'lib/pkgconfig/gdal\.pc' \
+    "verify must inspect the installed GDAL pkg-config file"
+assert_contains "$builder" 'CONFIG_INST_PREFIX' \
+    "verify must require GDAL pkg-config metadata to retain the private prefix"
 assert_contains "$builder" 'gdal-3.13.1-relocatable-static.patch' \
     "builder must apply the pinned relocatable GDAL patch"
 for directory in downloads src build prefix; do

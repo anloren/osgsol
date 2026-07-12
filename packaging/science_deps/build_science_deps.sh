@@ -666,6 +666,48 @@ verify_no_workspace_strings()
     done
 }
 
+verify_gdal_pkgconfig_metadata()
+{
+    local metadata="$prefix/lib/pkgconfig/gdal.pc"
+    [[ -f $metadata ]] || die "installed GDAL pkg-config metadata is missing"
+    python3 - "$metadata" "$prefix" <<'PY'
+import os
+import re
+import sys
+
+metadata_path, expected_prefix = sys.argv[1:]
+values = {}
+with open(metadata_path, encoding="utf-8") as stream:
+    for raw in stream:
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", raw.rstrip("\n"))
+        if match:
+            values[match.group(1)] = match.group(2)
+
+actual_prefix = values.get("CONFIG_INST_PREFIX")
+if actual_prefix != expected_prefix:
+    raise SystemExit(
+        f"GDAL CONFIG_INST_PREFIX is {actual_prefix!r}; expected {expected_prefix!r}"
+    )
+
+variable_pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+def resolve(name, stack=()):
+    if name in stack:
+        raise SystemExit(f"recursive GDAL pkg-config variable: {name}")
+    if name not in values:
+        raise SystemExit(f"missing GDAL pkg-config variable: {name}")
+    return variable_pattern.sub(
+        lambda match: resolve(match.group(1), stack + (name,)), values[name]
+    )
+
+for name, suffix in (("libdir", "lib"), ("includedir", "include")):
+    actual = os.path.normpath(resolve(name))
+    expected = os.path.join(expected_prefix, suffix)
+    if actual != expected:
+        raise SystemExit(f"GDAL {name} resolves to {actual!r}; expected {expected!r}")
+PY
+}
+
 verify_embed_contract()
 {
     probe_gdal_embed_capability
@@ -937,6 +979,7 @@ verify_prefix()
     verify_runtime_probe
     verify_static_artifacts
     verify_no_workspace_strings
+    verify_gdal_pkgconfig_metadata
     emit_manifest
     local first_manifest_sha second_manifest_sha
     first_manifest_sha=$(shasum -a 256 "$manifest" | awk '{print $1}')

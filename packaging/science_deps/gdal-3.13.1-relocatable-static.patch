@@ -1,12 +1,30 @@
---- a/cmake/helpers/configure.cmake
-+++ b/cmake/helpers/configure.cmake
-@@ -25 +25,5 @@
--set(GDAL_PREFIX ${CMAKE_INSTALL_PREFIX})
+--- a/gdal.cmake
++++ b/gdal.cmake
+@@ -127,8 +127,21 @@
+ # find 3rd party libraries
+ include(CheckDependentLibraries)
+-
++
+ # Generates now port/cpl_config.h (it depends on at least iconv detection in CheckDependentLibraries)
+-configure_file(${GDAL_CMAKE_TEMPLATE_PATH}/cpl_config.h.in ${PROJECT_BINARY_DIR}/port/cpl_config.h @ONLY)
 +if(USE_ONLY_EMBEDDED_RESOURCE_FILES)
++  set(_gdal_prefix_for_package_metadata "${GDAL_PREFIX}")
 +  unset(GDAL_PREFIX)
-+else()
-+  set(GDAL_PREFIX ${CMAKE_INSTALL_PREFIX})
 +endif()
++
++configure_file(
++  ${GDAL_CMAKE_TEMPLATE_PATH}/cpl_config.h.in
++  ${PROJECT_BINARY_DIR}/port/cpl_config.h
++  @ONLY)
++
++if(USE_ONLY_EMBEDDED_RESOURCE_FILES)
++  set(GDAL_PREFIX "${_gdal_prefix_for_package_metadata}")
++  unset(_gdal_prefix_for_package_metadata)
++endif()
+-
++
+ set(CMAKE_C_FLAGS ${_CMAKE_C_FLAGS_backup})
+ set(CMAKE_CXX_FLAGS ${_CMAKE_CXX_FLAGS_backup})
 --- a/port/CMakeLists.txt
 +++ b/port/CMakeLists.txt
 @@ -136,6 +136,8 @@
@@ -26,7 +44,7 @@
 +endif()
 --- a/gcore/CMakeLists.txt
 +++ b/gcore/CMakeLists.txt
-@@ -123,5 +123,7 @@
+@@ -123,5 +123,9 @@
 -file(TO_CMAKE_PATH "${CMAKE_INSTALL_PREFIX}/${GDAL_RESOURCE_PATH}" INST_DATA_PATH)
 -set_property(
 -  SOURCE gdaldrivermanager.cpp
@@ -37,5 +55,7 @@
 +  set_property(
 +    SOURCE gdaldrivermanager.cpp
 +    APPEND
-+    PROPERTY COMPILE_DEFINITIONS INST_DATA="${INST_DATA_PATH}" INSTALL_PLUGIN_FULL_DIR="${INSTALL_PLUGIN_FULL_DIR}")
++    PROPERTY COMPILE_DEFINITIONS
++      INST_DATA="${INST_DATA_PATH}"
++      INSTALL_PLUGIN_FULL_DIR="${INSTALL_PLUGIN_FULL_DIR}")
 +endif()
