@@ -302,3 +302,66 @@ passes do not override the independent current median-latency hard gate.
 
 G0 remains `STOP`. Delta isolation is no longer a blocker; only uncached first-RGB median latency
 remains failed, and human product sign-off is still pending. G1 has not started.
+
+## Concurrent metadata prefetch prototype isolation proof
+
+On 2026-07-13, the opt-in parallel HEAD/Range prototype was rebuilt and audited locally without a
+public-network run. The guarded clean build removed only the repository-owned
+`build/science-deps-prefetch` root, seeded the three checksum-verified source archives from the
+existing local cache, and rebuilt with four jobs in 136.87 seconds. The standalone verifier then
+passed. The prefix measured 52,356 KiB (51 MiB), contained 404 regular files and 52 symlinks, and
+produced manifest SHA-256
+`a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116`.
+The resolved prefetch patch SHA-256 was the pinned
+`d545c492eda3a7c9c7faa4ed06334dfd0723c50aa99ca5f62cb6c7ae664255e8`.
+
+The rebuilt runtime probe reported raster drivers `GTiff`, `MEM`, and `VRT`, OGR driver `MEM`, and
+only `/vsicurl/` as an active remote VFS. Its ZSTD GeoTIFF, VRT, MEM, and PROJ warp checks passed;
+COG and GNM remained inactive. The complete non-public regression set also passed:
+
+| Regression | Result |
+|---|---:|
+| Manifest and bundle-audit Python suites | 66/66 passed |
+| Private dependency builder contract | passed |
+| `build/osgsol_core` CTest | 16/16 passed |
+| Selected `build/science_g0_prefetch` release/index/manifest/dependency/GDAL/local HTTP CTest | 7/7 passed |
+
+The disposable probe was relinked against the clean prefetch prefix, copied into
+`build/science_g0_prefetch/osgSol Science G0 Probe.app`, ad-hoc signed, and strictly verified. Its
+plugin SHA-256 was
+`276f66d1814a032b9748d7ce96038b428771af60744e1840e1e820d1997d9c7c`.
+The canonical two-root policy audit visited 128 Mach-O nodes and returned `PASS`:
+
+| Isolation measurement | Result |
+|---|---:|
+| Protected baseline size | 542,594,200 bytes |
+| Disposable probe size | 563,878,831 bytes |
+| Added size | 21,284,631 bytes (20.30 MiB) |
+| Science-only closure | 21,284,472 bytes, probe plugin only |
+| Tier A absolute science findings | 0 |
+| Tier B new / removed identities | 0 / 0 |
+| Unresolved dependencies | 0 |
+| Historical non-science identities still visible | 1,086 |
+
+`nm -gU` exposed only `_osgsol_science_g0_probe_anchor`. The linked plugin contained no workspace
+or `science-deps-prefetch` path in its load commands, dependencies, or strings. The protected
+Desktop canonical fingerprint remained
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18`, and its independent
+file-tree digest remained
+`0926eff5871c9e8313715c08349293e74db4aef9b9d9cde224743e831b605a6e` before and after the
+disposable copy.
+
+The previous formal evidence was not rewritten. Its hashes still exactly match the protected
+values:
+
+| Protected summary | SHA-256 |
+|---|---|
+| Baseline | `17ff3cd876e7995c5257fad1f2da7f27bf0ae7901d46716829f1440d16a321ed` |
+| Optimized | `e4eb9ea1a8d5795db6197110ba96f4851c127dbe06b6bfcae5d3e9ea9b466dfe` |
+
+`git diff` contained no path below `build/science_g0/science-network-evidence`. No public
+diagnostic, formal rerun, Desktop replacement, packaging/update, tag, push, or G1 work occurred.
+The isolated prototype is ready only for the separately authorized public diagnostic.
+
+G0_DECISION=STOP
+PUBLIC_PREFETCH_DIAGNOSTIC=PENDING

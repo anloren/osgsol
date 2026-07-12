@@ -23,7 +23,12 @@ with the three archive names and hashes before it reads an archive. It also veri
 the pinned `gdal-3.13.1-disable-shapelib.patch` (SHA-256
 `f7a2824634fdf6ed1ce1bd53b685a6e4f7053793c295f4f34e996e8a19546040`). The patch disables
 the internal Shapelib fallback when the Shape driver is off and lets GDAL's own C23 `#embed`
-compile test recognize AppleClang.
+compile test recognize AppleClang. The private build additionally verifies and applies the
+relocatable-resource patch (SHA-256
+`17741b49beeb10a4f6663e0e3197807e7a3daa84610d4c092ddc9c6e81b9fa79`) and the opt-in
+parallel HEAD/Range prototype patch (SHA-256
+`d545c492eda3a7c9c7faa4ed06334dfd0723c50aa99ca5f62cb6c7ae664255e8`). The latter remains
+path-specific and off by default; it is not part of the protected Desktop runtime.
 
 ## Rebuild commands
 
@@ -215,3 +220,25 @@ The runtime link dependencies recorded in the manifest are `/usr/lib/libcurl.4.d
 `/usr/lib/libsqlite3.dylib`, `/usr/lib/libc++.1.dylib`, and `/usr/lib/libSystem.B.dylib`; configure
 inputs record the active SDK's curl and SQLite `.tbd` files. No dependency library/include/package
 cache entry resolves below `/opt/homebrew` or `/usr/local`.
+
+### Concurrent metadata prefetch prototype rebuild
+
+On 2026-07-13, the repository-bound ownership marker, canonical path, child markers, and
+non-symlink guards passed for the exact private root `build/science-deps-prefetch`. Only that
+owned root was removed. The three already-downloaded source archives were copied from the local
+verified `build/science-deps` cache and rechecked against the pins, so this rebuild did not contact
+the public network.
+
+The exact clean command used `SCIENCE_DEPS_ROOT="$PWD/build/science-deps-prefetch"`, `--build
+--jobs 4`, and completed in 136.87 seconds. A separate `--verify` passed immediately afterward.
+The installed prefix is 52,356 KiB (`du -sh`: 51 MiB), with 404 regular files and 52 symlinks.
+Its regenerated manifest SHA-256 is
+`a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116`.
+
+The resolved parallel HEAD/Range patch hash is
+`d545c492eda3a7c9c7faa4ed06334dfd0723c50aa99ca5f62cb6c7ae664255e8`, exactly matching
+`GDAL_PREFETCH_PATCH_SHA256`. The rebuilt runtime probe passed its tiled ZSTD GeoTIFF, VRT, MEM,
+and PROJ warp operations. It reported raster drivers `GTiff`, `MEM`, and `VRT`; OGR driver `MEM`;
+only `/vsicurl/` as an active remote VFS; inactive COG and GNM; and independent/upstream GDAL
+resource embedding enabled. These are private-prefix results only; the public latency diagnostic
+and any promotion remain pending.
