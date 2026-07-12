@@ -179,6 +179,7 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_MediaThreading PRIVATE
 
 IF(BUILD_TESTING)
     FIND_PROGRAM(OSGSOL_PYTHON3_EXECUTABLE NAMES python3)
+    FIND_PROGRAM(OSGSOL_NODE_EXECUTABLE NAMES node)
     IF(OSGSOL_PYTHON3_EXECUTABLE)
         ADD_TEST(NAME osgSol_Test_AefIndexTool
                  COMMAND "${OSGSOL_PYTHON3_EXECUTABLE}" -m unittest
@@ -223,6 +224,9 @@ IF(BUILD_TESTING)
         ENDIF()
         IF(NOT OSGSOL_PYTHON3_EXECUTABLE)
             MESSAGE(FATAL_ERROR "Python 3 is required for the instrumented range test")
+        ENDIF()
+        IF(NOT OSGSOL_NODE_EXECUTABLE)
+            MESSAGE(FATAL_ERROR "Node.js is required for the local HTTP/2 range test")
         ENDIF()
 
         IF(NOT APPLE)
@@ -284,18 +288,39 @@ IF(BUILD_TESTING)
         TARGET_COMPILE_FEATURES(osgVerse_Test_ScienceHttpRanges PRIVATE cxx_std_17)
         TARGET_COMPILE_DEFINITIONS(osgVerse_Test_ScienceHttpRanges PRIVATE
             OSGSOL_PYTHON3="${OSGSOL_PYTHON3_EXECUTABLE}"
+            OSGSOL_NODE="${OSGSOL_NODE_EXECUTABLE}"
             OSGSOL_SCIENCE_RANGE_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/science_http_range_server.py"
+            OSGSOL_SCIENCE_HTTP2_RANGE_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/science_http2_range_server.mjs"
             OSGSOL_SCIENCE_EVIDENCE_DIR="${CMAKE_BINARY_DIR}/science-network-evidence")
         TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_ScienceHttpRanges PRIVATE
                                    "${PROJECT_SOURCE_DIR}/3rdparty")
         TARGET_LINK_LIBRARIES(osgVerse_Test_ScienceHttpRanges PRIVATE
                               osgSolScienceGdalTestDeps)
+        IF(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            ADD_LIBRARY(osgSol_Test_CurlRemoveFault SHARED
+                        science_curl_remove_fault.cpp)
+            TARGET_COMPILE_FEATURES(osgSol_Test_CurlRemoveFault PRIVATE cxx_std_17)
+            TARGET_LINK_LIBRARIES(osgSol_Test_CurlRemoveFault PRIVATE
+                                  "${_OSGSOL_SCIENCE_CURL_STUB}")
+            SET_PROPERTY(TARGET osgSol_Test_CurlRemoveFault PROPERTY FOLDER "TESTS")
+            ADD_DEPENDENCIES(osgVerse_Test_ScienceHttpRanges
+                             osgSol_Test_CurlRemoveFault)
+        ENDIF()
         SET_PROPERTY(TARGET osgVerse_Test_ScienceHttpRanges PROPERTY FOLDER "TESTS")
         ADD_TEST(NAME osgVerse_Test_ScienceHttpRanges
                  COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>)
         SET_TESTS_PROPERTIES(osgVerse_Test_ScienceHttpRanges PROPERTIES
             LABELS "offline;scienceearth;network-local"
             TIMEOUT 120)
+        IF(APPLE)
+            SET_PROPERTY(TEST osgVerse_Test_ScienceHttpRanges APPEND PROPERTY
+                ENVIRONMENT
+                "DYLD_INSERT_LIBRARIES=$<TARGET_FILE:osgSol_Test_CurlRemoveFault>")
+        ELSEIF(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            SET_PROPERTY(TEST osgVerse_Test_ScienceHttpRanges APPEND PROPERTY
+                ENVIRONMENT
+                "LD_PRELOAD=$<TARGET_FILE:osgSol_Test_CurlRemoveFault>")
+        ENDIF()
         ADD_TEST(NAME osgSol_Test_ScienceHttpRangeServer
             COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
                     "${OSGSOL_PYTHON3_EXECUTABLE}" -m unittest

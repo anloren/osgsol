@@ -11,6 +11,7 @@ runtime_probe_cmake="$repo_root/packaging/science_deps/runtime_probe_CMakeLists.
 embed_probe="$repo_root/packaging/science_deps/gdal_embed_probe.c"
 gdal_patch="$repo_root/packaging/science_deps/gdal-3.13.1-disable-shapelib.patch"
 relocatable_patch="$repo_root/packaging/science_deps/gdal-3.13.1-relocatable-static.patch"
+prefetch_patch="$repo_root/packaging/science_deps/gdal-3.13.1-parallel-head-range.patch"
 tests_cmake="$repo_root/tests/CMakeLists.txt"
 
 fail()
@@ -45,6 +46,10 @@ assert_not_contains()
 [[ -f "$embed_probe" ]] || fail "missing independent GDAL #embed probe"
 [[ -f "$gdal_patch" ]] || fail "missing pinned GDAL Shapelib-disable patch"
 [[ -f "$relocatable_patch" ]] || fail "missing pinned relocatable GDAL patch"
+[[ -f "$prefetch_patch" ]] || fail "missing pinned parallel HEAD/Range GDAL patch"
+if grep -nE '[[:blank:]]$' "$prefetch_patch" >/dev/null; then
+    fail "parallel HEAD/Range patch must not contain nested trailing whitespace"
+fi
 assert_not_contains "$relocatable_patch" '^--- a/cmake/helpers/configure\.cmake' \
     "embedded-only GDAL patch must preserve GDAL_PREFIX for installed package metadata"
 assert_contains "$relocatable_patch" '^\+configure_file\($' \
@@ -68,6 +73,53 @@ done
 
 [[ ${GDAL_RELOCATABLE_PATCH_SHA256:-} =~ ^[0-9a-f]{64}$ ]] ||
     fail "GDAL_RELOCATABLE_PATCH_SHA256 must contain SHA-256"
+[[ ${GDAL_PREFETCH_PATCH_SHA256:-} =~ ^[0-9a-f]{64}$ ]] ||
+    fail "GDAL_PREFETCH_PATCH_SHA256 must contain SHA-256"
+
+assert_contains "$prefetch_patch" 'OSGSOL_VSICURL_PREFETCH_HEAD_RANGE' \
+    "prefetch patch must consume the path-specific opt-in"
+assert_contains "$prefetch_patch" 'CURLOPT_PIPEWAIT' \
+    "prefetch Range must wait for HTTP/2 multiplexing"
+assert_contains "$prefetch_patch" 'ParallelHeadRangeResult' \
+    "prefetch patch must expose explicit coordinator state"
+assert_contains "$prefetch_patch" 'bHeadDone' \
+    "prefetch coordinator must require HEAD completion"
+assert_contains "$prefetch_patch" 'bRangeDone' \
+    "prefetch coordinator must require Range completion"
+assert_contains "$prefetch_patch" 'CURLINFO_HTTP_VERSION' \
+    "prefetch coordinator must prove HTTP/2 on both handles"
+assert_contains "$prefetch_patch" 'CURLINFO_CONN_ID' \
+    "prefetch coordinator must prove one shared libcurl connection"
+assert_contains "$prefetch_patch" 'CURLINFO_REDIRECT_COUNT' \
+    "prefetch coordinator must discard redirected prefetches"
+assert_contains "$prefetch_patch" 'writer-overflow' \
+    "prefetch patch must distinguish a capped-writer abort"
+assert_contains "$prefetch_patch" 'nParsedTotal <= nEnd' \
+    "Content-Range total must extend beyond the returned interval"
+assert_contains "$prefetch_patch" 'cleanup-success=%s' \
+    "prefetch patch must expose successful role-aware cleanup proof"
+assert_contains "$prefetch_patch" 'cleanup-blocked=%s reason=attached' \
+    "prefetch patch must block cleanup while a handle remains attached"
+assert_contains "$prefetch_patch" 'file-property-published' \
+    "prefetch patch must expose file-property publication proof"
+assert_contains "$prefetch_patch" 'eHeadRemove == CURLM_OK' \
+    "prefetch patch must verify first-HEAD detach success"
+assert_contains "$prefetch_patch" 'eRangeRemove == CURLM_OK' \
+    "prefetch patch must verify Range detach success"
+assert_contains "$prefetch_patch" 'cleanup-call=%s' \
+    "prefetch patch must count every role-aware cleanup call"
+assert_contains "$prefetch_patch" 'attempt=2 code=%d' \
+    "prefetch patch must retry a failed detach before abandonment"
+assert_contains "$prefetch_patch" 'AbandonCurlMultiHandle' \
+    "prefetch patch must quarantine a persistently attached cached multi"
+assert_contains "$prefetch_patch" 'bParallelHeadRangeDisabled = true' \
+    "prefetch patch must bound abandonment to one parallel attempt per thread and filesystem"
+assert_contains "$prefetch_patch" 'file-property-publication-blocked' \
+    "prefetch patch must block metadata publication after multi abandonment"
+assert_not_contains "$prefetch_patch" 'PREFETCH_TEST_' \
+    "prefetch patch must not ship runtime fault-injection controls"
+assert_contains "$prefetch_patch" 'AddRegion\(m_pszURL, 0, 131072' \
+    "validated prefetch bytes must use the existing region cache"
 
 for component in GDAL PROJ ZSTD; do
     archive_variable="${component}_ARCHIVE"
@@ -93,6 +145,21 @@ assert_contains "$builder" 'CONFIG_INST_PREFIX' \
     "verify must require GDAL pkg-config metadata to retain the private prefix"
 assert_contains "$builder" 'gdal-3.13.1-relocatable-static.patch' \
     "builder must apply the pinned relocatable GDAL patch"
+assert_contains "$builder" 'gdal-3.13.1-parallel-head-range.patch' \
+    "builder must apply the pinned parallel HEAD/Range patch"
+assert_contains "$builder" 'GDAL_PREFETCH_PATCH_SHA256' \
+    "builder must verify the independent prefetch patch checksum"
+shapelib_apply_line=$(grep -n 'patch --batch --forward -p1.*gdal-3.13.1-disable-shapelib.patch' \
+    "$builder" | cut -d: -f1)
+relocatable_apply_line=$(grep -n \
+    'patch --batch --forward -p1.*gdal-3.13.1-relocatable-static.patch' \
+    "$builder" | cut -d: -f1)
+prefetch_apply_line=$(grep -n 'patch --batch --forward -p1.*gdal-3.13.1-parallel-head-range.patch' \
+    "$builder" | cut -d: -f1)
+[[ -n $shapelib_apply_line && -n $relocatable_apply_line && -n $prefetch_apply_line &&
+      $shapelib_apply_line -lt $relocatable_apply_line &&
+      $relocatable_apply_line -lt $prefetch_apply_line ]] ||
+    fail "prefetch patch must apply after Shapelib-disable and relocatable patches"
 for directory in downloads src build prefix; do
     assert_contains "$builder" "${directory}" \
         "builder must define the default $directory directory"

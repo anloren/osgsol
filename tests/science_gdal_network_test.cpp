@@ -44,6 +44,14 @@
 #error OSGSOL_PYTHON3 must name the Python interpreter
 #endif
 
+#ifndef OSGSOL_NODE
+#error OSGSOL_NODE must name the Node.js interpreter
+#endif
+
+#ifndef OSGSOL_SCIENCE_HTTP2_RANGE_SERVER
+#error OSGSOL_SCIENCE_HTTP2_RANGE_SERVER must name the local HTTP/2 server
+#endif
+
 #ifndef OSGSOL_SCIENCE_EVIDENCE_DIR
 #error OSGSOL_SCIENCE_EVIDENCE_DIR must name a build-tree evidence directory
 #endif
@@ -142,6 +150,42 @@ namespace
         int getCount = 0;
         int headCount = 0;
         std::uint64_t committedBytes = 0;
+    };
+
+    struct Http2StreamEvidence
+    {
+        std::string sessionId;
+        int streamId = 0;
+        std::string method;
+        std::string range;
+        std::uint64_t start = 0;
+        std::uint64_t end = 0;
+        int status = 0;
+        std::uint64_t attemptedBodyBytes = 0;
+        bool aborted = false;
+    };
+
+    struct Http2Evidence
+    {
+        std::vector<Http2StreamEvidence> streams;
+        std::uint64_t maximumAttemptedBodyBytes = 0;
+        std::uint64_t totalAttemptedBodyBytes = 0;
+    };
+
+    struct PrefetchCase
+    {
+        const char* mode;
+        bool opens;
+        bool fallback;
+        const char* variant = "";
+        const char* httpVersion = "2TLS";
+        int exactRangeCount = -1;
+        const char* fallbackReason = "";
+        bool requireSharedHttp2 = true;
+        const char* activation = "path";
+        const char* completionOrder = "";
+        int exactHeadCount = -1;
+        int expectedFilePropertyPublications = 1;
     };
 
     struct DebugCapture
@@ -426,6 +470,499 @@ namespace
             _exit(127);
         }
         return process;
+    }
+
+    void createSelfSignedCertificate(const std::filesystem::path& certificate,
+                                     const std::filesystem::path& key)
+    {
+        const pid_t pid = fork();
+        require(pid >= 0, "fork failed while starting openssl");
+        if (pid == 0)
+        {
+            execl("/usr/bin/openssl", "/usr/bin/openssl", "req", "-x509",
+                  "-newkey", "rsa:2048", "-nodes", "-keyout",
+                  key.string().c_str(), "-out", certificate.string().c_str(),
+                  "-days", "1", "-subj", "/CN=127.0.0.1",
+                  static_cast<char*>(nullptr));
+            _exit(127);
+        }
+        int status = 0;
+        require(waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
+                    WEXITSTATUS(status) == 0,
+                "failed to generate the local HTTP/2 certificate");
+        require(std::filesystem::file_size(certificate) > 0 &&
+                    std::filesystem::file_size(key) > 0,
+                "openssl did not publish the local HTTP/2 certificate");
+    }
+
+    ServerProcess startHttp2Server(const std::filesystem::path& fixture,
+                                   const std::filesystem::path& ready,
+                                   const std::filesystem::path& log,
+                                   const std::filesystem::path& certificate,
+                                   const std::filesystem::path& key,
+                                   const std::string& mode,
+                                   const std::string& protocol)
+    {
+        ServerProcess process;
+        process.pid = fork();
+        require(process.pid >= 0, "fork failed while starting HTTP/2 server");
+        if (process.pid == 0)
+        {
+            const std::string budget = std::to_string(4 * 131072);
+            setenv("OSGSOL_TEST_SERVER_PROTOCOL", protocol.c_str(), 1);
+            execl(OSGSOL_NODE, OSGSOL_NODE, OSGSOL_SCIENCE_HTTP2_RANGE_SERVER,
+                  "--file", fixture.string().c_str(),
+                  "--ready-file", ready.string().c_str(),
+                  "--log-file", log.string().c_str(),
+                  "--cert", certificate.string().c_str(),
+                  "--key", key.string().c_str(),
+                  "--budget-bytes", budget.c_str(),
+                  "--mode", mode.c_str(), static_cast<char*>(nullptr));
+            _exit(127);
+        }
+        return process;
+    }
+
+    Http2Evidence verifyHttp2Log(const std::filesystem::path& log)
+    {
+        std::ifstream stream(log);
+        require(stream.good(), "HTTP/2 range log is missing");
+        std::map<std::pair<std::string, int>, Http2StreamEvidence> records;
+        Http2Evidence evidence;
+        std::string line;
+        while (std::getline(stream, line))
+        {
+            picojson::value value;
+            const std::string error = picojson::parse(value, line);
+            require(error.empty() && value.is<picojson::object>(),
+                    "HTTP/2 log line is not a JSON object");
+            const picojson::object& object = value.get<picojson::object>();
+            const std::string event = field(object, "event").get<std::string>();
+            if (event == "session_start") continue;
+            require(event == "stream_start" || event == "response_headers" ||
+                        event == "stream_end",
+                    "HTTP/2 server emitted an unknown event");
+            const std::string session =
+                field(object, "session_id").get<std::string>();
+            const int streamId =
+                static_cast<int>(field(object, "stream_id").get<double>());
+            Http2StreamEvidence& record = records[{session, streamId}];
+            record.sessionId = session;
+            record.streamId = streamId;
+            const std::uint64_t timestamp = static_cast<std::uint64_t>(
+                field(object, "monotonic_ns").get<double>());
+            if (event == "stream_start")
+            {
+                require(record.start == 0, "duplicate HTTP/2 stream_start event");
+                record.start = timestamp;
+                record.method = field(object, "method").get<std::string>();
+                const picojson::value& range = field(object, "range");
+                record.range = range.is<std::string>() ? range.get<std::string>() : "";
+            }
+            else if (event == "response_headers")
+            {
+                record.status =
+                    static_cast<int>(field(object, "status").get<double>());
+                require(field(object, "violation").is<picojson::null>(),
+                        "HTTP/2 server rejected a client request");
+            }
+            else
+            {
+                require(record.end == 0, "duplicate HTTP/2 stream_end event");
+                record.end = timestamp;
+                record.attemptedBodyBytes = static_cast<std::uint64_t>(
+                    field(object, "attempted_body_bytes").get<double>());
+                evidence.totalAttemptedBodyBytes = std::max(
+                    evidence.totalAttemptedBodyBytes,
+                    static_cast<std::uint64_t>(
+                        field(object,
+                            "total_attempted_body_bytes").get<double>()));
+                record.aborted = field(object, "aborted").get<bool>();
+            }
+        }
+        for (const auto& item : records)
+        {
+            require(item.second.start > 0 && item.second.end > item.second.start &&
+                        item.second.status > 0,
+                    "HTTP/2 stream evidence is incomplete for " +
+                        item.second.method + " stream " +
+                        std::to_string(item.second.streamId) +
+                        " status=" + std::to_string(item.second.status) +
+                        " start=" + std::to_string(item.second.start) +
+                        " end=" + std::to_string(item.second.end));
+            evidence.maximumAttemptedBodyBytes = std::max(
+                evidence.maximumAttemptedBodyBytes,
+                item.second.attemptedBodyBytes);
+            evidence.streams.push_back(item.second);
+        }
+        require(!evidence.streams.empty(), "HTTP/2 server logged no streams");
+        return evidence;
+    }
+
+    bool containsDebug(const DebugCapture& capture, const std::string& needle)
+    {
+        return std::any_of(capture.messages.begin(), capture.messages.end(),
+            [&needle](const std::string& message)
+            {
+                return message.find(needle) != std::string::npos;
+            });
+    }
+
+    int countDebug(const DebugCapture& capture, const std::string& needle)
+    {
+        return static_cast<int>(std::count_if(
+            capture.messages.begin(), capture.messages.end(),
+            [&needle](const std::string& message)
+            {
+                return message.find(needle) != std::string::npos;
+            }));
+    }
+
+    std::string parallelDebugSummary(const DebugCapture& capture)
+    {
+        std::string summary;
+        for (const std::string& message : capture.messages)
+        {
+            if (message.find("ParallelHeadRange:") == std::string::npos)
+                continue;
+            if (!summary.empty()) summary += " | ";
+            summary += message;
+        }
+        return summary;
+    }
+
+    void verifyParallelMetadataPrefetch(const std::filesystem::path& fixture,
+                                        const std::filesystem::path& root)
+    {
+        const std::filesystem::path certificate = root / "http2-cert.pem";
+        const std::filesystem::path key = root / "http2-key.pem";
+        createSelfSignedCertificate(certificate, key);
+
+        const PrefetchCase cases[] = {
+            {"success", true, false},
+            {"range-503", true, true},
+            {"range-200", false, false},
+            {"range-200-body", false, false},
+            {"short-range", false, false},
+            {"size-mismatch", false, false},
+            {"success", true, true, "head-503", "2TLS", 2,
+                "head-invalid", true},
+            {"success", true, true, "head-405", "2TLS", 2,
+                "head-invalid", true},
+            {"success", true, true, "redirect-source", "2TLS", 4,
+                "redirect", true},
+            {"success", true, true, "http1", "1.1", 2,
+                "protocol", false},
+            {"success", false, false, "content-range-missing", "2TLS", 1,
+                "", true},
+            {"success", false, false, "content-range-malformed", "2TLS", 1,
+                "", true},
+            {"success", false, false, "content-range-spoof", "2TLS", 1,
+                "", true},
+            {"success", false, false, "content-range-duplicate", "2TLS", 1,
+                "", true},
+            {"success", false, false, "content-range-undersized-total",
+                "2TLS", 1, "", true},
+            {"success", true, false, "range-first", "2TLS", 1,
+                "", true, "path", "range-first"},
+            {"success", true, false, "head-first", "2TLS", 1,
+                "", true, "path", "head-first"},
+            {"success", false, true, "head-503-exhaust", "2TLS", 1,
+                "head-invalid", true, "path", "", 3},
+            {"success", true, true, "transport-interrupt", "2TLS", -1,
+                "transport", true, "path", "", 1},
+            {"success", true, false, "default-off", "2TLS", 1,
+                "", false, "none", "", 1, 0},
+            {"success", true, false, "global-only", "2TLS", 1,
+                "", false, "global", "", 1, 0},
+            {"success", true, true, "remove-retry", "2TLS", 2,
+                "detach", true},
+            {"success", true, true, "remove-failure", "2TLS", 2,
+                "detach", true, "path", "", 2, 0},
+        };
+        const char* selectedMode =
+            CPLGetConfigOption("OSGSOL_TEST_PREFETCH_CASE", nullptr);
+        int executedCases = 0;
+        for (const PrefetchCase& prefetchCase : cases)
+        {
+            const std::string caseName = std::string(prefetchCase.mode) +
+                (prefetchCase.variant[0] ? "-" + std::string(prefetchCase.variant) : "");
+            if (selectedMode && std::string(selectedMode) != caseName)
+                continue;
+            ++executedCases;
+            const std::filesystem::path ready =
+                root / (std::string("http2-") + caseName + ".ready");
+            const std::filesystem::path log =
+                root / (std::string("http2-") + caseName + ".jsonl");
+            ServerProcess server = startHttp2Server(
+                fixture, ready, log, certificate, key, prefetchCase.mode,
+                std::string(prefetchCase.variant) == "http1" ? "http1" : "h2");
+            const int port = waitForPort(ready);
+            const std::string vsiUrl = "/vsicurl/https://127.0.0.1:" +
+                std::to_string(port) + "/" + caseName +
+                "/alphaearth-range-fixture.tif";
+
+            ScopedGdalConfig config({
+                {"GDAL_HTTP_UNSAFESSL", "YES"},
+                {"GDAL_HTTP_VERSION", prefetchCase.httpVersion},
+                {"GDAL_HTTP_PROXY", ""},
+                {"GDAL_HTTPS_PROXY", ""},
+                {"GDAL_HTTP_MAX_RETRY", "2"},
+                {"GDAL_HTTP_RETRY_DELAY", "0.01"},
+                {"OSGSOL_VSICURL_PREFETCH_HEAD_RANGE",
+                    std::string(prefetchCase.activation) == "global" ? "YES" : ""},
+            });
+            VSICurlClearCache();
+            VSINetworkStatsReset();
+            DebugCapture capture;
+            bool opened = false;
+            {
+                ScopedGdalErrorCapture errorCapture(capture);
+                if (std::string(prefetchCase.activation) == "path")
+                {
+                    VSISetPathSpecificOption(vsiUrl.c_str(),
+                        "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
+                    if (std::string(prefetchCase.variant) == "remove-retry")
+                    {
+                        setenv("OSGSOL_TEST_FAIL_NEXT_CURL_REMOVE", "1", 1);
+                    }
+                    if (std::string(prefetchCase.variant) == "remove-failure")
+                    {
+                        setenv("OSGSOL_TEST_FAIL_NEXT_CURL_REMOVE", "2", 1);
+                    }
+                }
+                GDALDataset* dataset = static_cast<GDALDataset*>(GDALOpenEx(
+                    vsiUrl.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
+                    nullptr, nullptr, nullptr));
+                opened = dataset != nullptr;
+                if (dataset)
+                {
+                    std::int8_t byteZero = 0;
+                    require(dataset->GetRasterBand(1)->RasterIO(
+                                GF_Read, 0, 0, 1, 1, &byteZero,
+                                1, 1, GDT_Int8, 0, 0, nullptr) == CE_None,
+                            "prefetch fixture byte-zero read failed");
+                    GDALClose(dataset);
+                }
+                if (std::string(prefetchCase.activation) == "path")
+                    VSIClearPathSpecificOptions(vsiUrl.c_str());
+            }
+            server.stop();
+            const Http2Evidence evidence = verifyHttp2Log(log);
+
+            const Http2StreamEvidence* head = nullptr;
+            const Http2StreamEvidence* firstRange = nullptr;
+            int rangeCount = 0;
+            int getWithoutRangeCount = 0;
+            int headCount = 0;
+            for (const Http2StreamEvidence& stream : evidence.streams)
+            {
+                if (stream.method == "HEAD")
+                {
+                    ++headCount;
+                    if (head == nullptr) head = &stream;
+                }
+                if (stream.method == "GET")
+                {
+                    if (stream.range.empty())
+                        ++getWithoutRangeCount;
+                    else
+                    {
+                        ++rangeCount;
+                        if (firstRange == nullptr) firstRange = &stream;
+                    }
+                }
+            }
+            require(head != nullptr && firstRange != nullptr,
+                    "prefetch case omitted HEAD or first Range");
+            const auto verifyTransport = [&]()
+            {
+                require(head->start < firstRange->start &&
+                            firstRange->start < head->end,
+                        "HEAD and first Range did not overlap");
+                require(head->sessionId == firstRange->sessionId,
+                        "HEAD and first Range used different HTTP/2 sessions");
+                require(firstRange->range == "bytes=0-131071",
+                        "prefetch Range changed");
+            };
+            if (std::string(prefetchCase.mode) == "success" &&
+                (prefetchCase.variant[0] == '\0' ||
+                 std::string(prefetchCase.variant).find("content-range-") == 0 ||
+                 prefetchCase.completionOrder[0] != '\0'))
+                verifyTransport();
+            require(opened == prefetchCase.opens,
+                    std::string(prefetchCase.mode) +
+                        " prefetch open result changed: " +
+                        parallelDebugSummary(capture));
+            const bool expectedStarted =
+                std::string(prefetchCase.activation) == "path";
+            require(containsDebug(capture, "ParallelHeadRange: started") ==
+                        expectedStarted,
+                    caseName + " coordinator activation changed");
+            if (std::string(prefetchCase.mode) != "success" &&
+                prefetchCase.requireSharedHttp2)
+                verifyTransport();
+
+            const bool published =
+                containsDebug(capture, "ParallelHeadRange: published");
+            const bool fallback =
+                containsDebug(capture, "ParallelHeadRange: fallback=");
+            const bool expectedPublication =
+                std::string(prefetchCase.mode) == "success" &&
+                (prefetchCase.variant[0] == '\0' ||
+                 prefetchCase.completionOrder[0] != '\0');
+            require(countDebug(capture, "ParallelHeadRange: published") ==
+                        (expectedPublication ? 1 : 0),
+                    std::string(prefetchCase.mode) +
+                        " cache publication result changed: " +
+                        parallelDebugSummary(capture));
+            require(fallback == prefetchCase.fallback,
+                    std::string(prefetchCase.mode) +
+                        " runtime fallback result changed");
+            if (prefetchCase.exactHeadCount >= 0)
+            {
+                require(headCount == prefetchCase.exactHeadCount,
+                        caseName + " emitted " + std::to_string(headCount) +
+                            " HEADs; expected " +
+                            std::to_string(prefetchCase.exactHeadCount));
+            }
+            if (prefetchCase.completionOrder[0])
+            {
+                const bool rangeFirst = firstRange->end < head->end;
+                require(rangeFirst ==
+                            (std::string(prefetchCase.completionOrder) ==
+                             "range-first"),
+                        caseName + " completion order changed");
+            }
+            if (!expectedStarted)
+            {
+                require(head->end < firstRange->start,
+                        caseName + " activated overlapping prefetch");
+            }
+            const bool removeFailure =
+                std::string(prefetchCase.variant) == "remove-failure";
+            const bool removeRetry =
+                std::string(prefetchCase.variant) == "remove-retry";
+            require(countDebug(capture,
+                        "ParallelHeadRange: detach-success=head") ==
+                        (expectedStarted ? 1 : 0) &&
+                    countDebug(capture,
+                        "ParallelHeadRange: detach-success=range") ==
+                        (expectedStarted && !removeFailure && !removeRetry
+                             ? 1 : 0),
+                    caseName + " detach results changed");
+            require(countDebug(capture,
+                        "ParallelHeadRange: cleanup-call=head") ==
+                        (expectedStarted ? 1 : 0) &&
+                    countDebug(capture,
+                        "ParallelHeadRange: cleanup-call=range") ==
+                        (expectedStarted ? 1 : 0),
+                    caseName + " cleanup call counts changed");
+            require(countDebug(capture,
+                        "ParallelHeadRange: cleanup-success=head") ==
+                        (expectedStarted ? 1 : 0) &&
+                    countDebug(capture,
+                        "ParallelHeadRange: cleanup-success=range") ==
+                        (expectedStarted && !removeFailure ? 1 : 0),
+                    caseName + " cleanup success counts changed");
+            if (removeFailure)
+            {
+                require(countDebug(capture,
+                            "ParallelHeadRange: detach-failure=range "
+                            "attempt=1") == 1 &&
+                        countDebug(capture,
+                            "ParallelHeadRange: detach-failure=range "
+                            "attempt=2") == 1 &&
+                        countDebug(capture,
+                            "ParallelHeadRange: multi-abandoned=success") == 1 &&
+                        countDebug(capture,
+                            "ParallelHeadRange: cleanup-blocked=range "
+                            "reason=attached") == 1 &&
+                        countDebug(capture,
+                            "ParallelHeadRange: file-property-publication-"
+                            "blocked") == 1,
+                        "persistent remove failure did not safely abandon "
+                        "multi ownership");
+            }
+            if (removeRetry)
+            {
+                require(countDebug(capture,
+                            "ParallelHeadRange: detach-failure=range "
+                            "attempt=1") == 1 &&
+                        countDebug(capture,
+                            "ParallelHeadRange: detach-retry-success=range") ==
+                            1 &&
+                        countDebug(capture,
+                            "ParallelHeadRange: multi-abandoned=success") == 0,
+                        "transient remove failure did not recover by retry");
+            }
+            require(countDebug(capture,
+                        "ParallelHeadRange: file-property-published") ==
+                        prefetchCase.expectedFilePropertyPublications,
+                    caseName + " file-property publication count changed");
+            if (prefetchCase.exactRangeCount >= 0)
+            {
+                require(rangeCount == prefetchCase.exactRangeCount,
+                        caseName + " emitted " + std::to_string(rangeCount) +
+                            " exact Ranges; expected " +
+                            std::to_string(prefetchCase.exactRangeCount));
+            }
+            else if (prefetchCase.opens)
+            {
+                require(rangeCount == (prefetchCase.fallback ? 2 : 1),
+                        std::string(prefetchCase.mode) +
+                            " emitted " + std::to_string(rangeCount) +
+                            " exact Ranges; expected " +
+                            std::to_string(prefetchCase.fallback ? 2 : 1));
+            }
+            if (std::string(prefetchCase.variant) == "head-405")
+                require(getWithoutRangeCount == 1,
+                        "HEAD 405 fallback did not issue one header-only GET");
+            if (prefetchCase.fallbackReason[0])
+                require(containsDebug(capture,
+                            std::string("ParallelHeadRange: fallback=") +
+                                prefetchCase.fallbackReason),
+                        caseName + " fallback reason changed");
+            else if (!prefetchCase.opens)
+            {
+                require(rangeCount == 1,
+                        std::string(prefetchCase.mode) +
+                            " retried an invalid integrity response");
+            }
+            if (!prefetchCase.opens && !prefetchCase.fallback &&
+                std::string(prefetchCase.mode) != "range-200-body")
+            {
+                require(!published, std::string(prefetchCase.mode) +
+                            " published invalid prefetch bytes");
+                require(evidence.maximumAttemptedBodyBytes <= 131072 &&
+                            evidence.totalAttemptedBodyBytes <= 131072,
+                        std::string(prefetchCase.mode) +
+                            " attempted more than the bounded 131072-byte body");
+            }
+            if (std::string(prefetchCase.mode) == "range-200-body")
+            {
+                require(containsDebug(capture,
+                            "ParallelHeadRange: rejected=writer-overflow "
+                            "attempted=131073 accepted=131072") &&
+                            evidence.maximumAttemptedBodyBytes == 131073 &&
+                            evidence.totalAttemptedBodyBytes == 131073,
+                        "capped writer overflow evidence changed");
+            }
+            std::cout << "ScienceHttp2Prefetch: mode=" << caseName
+                      << " opened=" << (opened ? "true" : "false")
+                      << " ranges=" << rangeCount
+                      << " shared_session="
+                      << (prefetchCase.requireSharedHttp2
+                              ? "true" : "not-required")
+                      << " overlap="
+                      << (prefetchCase.requireSharedHttp2
+                              ? "true" : "not-required")
+                      << " max_attempted_body_bytes="
+                      << evidence.maximumAttemptedBodyBytes
+                      << std::endl;
+        }
+        require(executedCases > 0,
+                "OSGSOL_TEST_PREFETCH_CASE did not name a prefetch mode");
     }
 
     LocalServerEvidence verifyLog(const std::filesystem::path& log,
@@ -2669,6 +3206,8 @@ int runMain(int argc, char** argv)
         require(hasNoData && hasValidZero,
                 "batched RGB mask does not distinguish NoData from valid zero");
     }
+
+    verifyParallelMetadataPrefetch(fixture, root);
 
     ServerProcess server = startServer(fixture, ready, log);
     const int port = waitForPort(ready);

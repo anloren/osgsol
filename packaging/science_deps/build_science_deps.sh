@@ -273,6 +273,10 @@ verify_pin_contract()
         "$script_dir/gdal-3.13.1-relocatable-static.patch" | awk '{print $1}')
     [[ $actual == "$GDAL_RELOCATABLE_PATCH_SHA256" ]] ||
         die "GDAL relocatable source patch checksum mismatch"
+    actual=$(shasum -a 256 \
+        "$script_dir/gdal-3.13.1-parallel-head-range.patch" | awk '{print $1}')
+    [[ $actual == "$GDAL_PREFETCH_PATCH_SHA256" ]] ||
+        die "GDAL parallel HEAD/Range patch checksum mismatch"
 }
 
 verify_archives()
@@ -312,6 +316,7 @@ extract_all()
         cd "$src_dir/gdal-$GDAL_VERSION"
         patch --batch --forward -p1 <"$script_dir/gdal-3.13.1-disable-shapelib.patch"
         patch --batch --forward -p1 <"$script_dir/gdal-3.13.1-relocatable-static.patch"
+        patch --batch --forward -p1 <"$script_dir/gdal-3.13.1-parallel-head-range.patch"
     )
 }
 

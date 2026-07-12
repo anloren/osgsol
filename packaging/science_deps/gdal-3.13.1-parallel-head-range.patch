@@ -1,0 +1,716 @@
+--- a/port/cpl_vsil_curl_class.h
++++ b/port/cpl_vsil_curl_class.h
+@@ -310,0 +311,2 @@
++    bool AbandonCurlMultiHandle(CURLM *hFailedMultiHandle);
++    bool IsParallelHeadRangeDisabled();
+--- a/port/cpl_vsil_curl.cpp
++++ b/port/cpl_vsil_curl.cpp
+@@ -18,0 +19,2 @@
++#include <cctype>
++#include <cstdlib>
+@@ -494,0 +497,89 @@
++{
++
++struct ParallelHeadRangeResult
++{
++    bool bAttempted = false;
++    bool bHeadDone = false;
++    bool bRangeDone = false;
++    bool bHeadValid = false;
++    bool bRangeValid = false;
++    bool bCachePublished = false;
++    bool bFallback = false;
++    bool bMultiAbandoned = false;
++    bool bWriterOverflow = false;
++    bool bDeclaredOverflow = false;
++    long nHeadCode = 0;
++    long nRangeCode = 0;
++    long nHeadHTTPVersion = 0;
++    long nRangeHTTPVersion = 0;
++    long nHeadRedirectCount = 0;
++    long nRangeRedirectCount = 0;
++    curl_off_t nHeadConnectionId = -1;
++    curl_off_t nRangeConnectionId = -1;
++    vsi_l_offset nHeadSize = 0;
++    size_t nRangeSize = 0;
++    size_t nRangeAttemptedSize = 0;
++    int nFilePropertyPublishCount = 0;
++    int nHeadCleanupCallCount = 0;
++    int nRangeCleanupCallCount = 0;
++    bool bHeadDetached = false;
++    bool bRangeDetached = false;
++    CURLcode eHeadCurlCode = CURLE_FAILED_INIT;
++    CURLcode eRangeCurlCode = CURLE_FAILED_INIT;
++    std::string osRangeHeaders{};
++    std::vector<GByte> abyRangeBuffer{};
++    std::string osReason{};
++};
++
++struct ParallelHeadRangeWriter
++{
++    static constexpr size_t knCAPACITY = 131072;
++    CURL *hCurlHandle = nullptr;
++    curl_off_t nConnectionId = -1;
++    std::vector<GByte> abyBuffer{};
++    size_t nAttemptedSize = 0;
++    bool bOverflow = false;
++};
++
++struct ParallelHeadRangeHeaderWriter
++{
++    CURL *hCurlHandle = nullptr;
++    WriteFuncStruct *psHeaderData = nullptr;
++    curl_off_t nConnectionId = -1;
++};
++
++static size_t ParallelHeadRangeWriteFunc(void *pBuffer, size_t nSize,
++                                         size_t nCount, void *pUserData)
++{
++    auto *psWriter = static_cast<ParallelHeadRangeWriter *>(pUserData);
++    if (psWriter->nConnectionId < 0 && psWriter->hCurlHandle)
++    {
++        curl_easy_getinfo(psWriter->hCurlHandle, CURLINFO_CONN_ID,
++                          &psWriter->nConnectionId);
++    }
++    if (nSize != 0 && nCount > std::numeric_limits<size_t>::max() / nSize)
++    {
++        psWriter->bOverflow = true;
++        return 0;
++    }
++    const size_t nBytes = nSize * nCount;
++    if (nBytes > std::numeric_limits<size_t>::max() - psWriter->nAttemptedSize)
++    {
++        psWriter->nAttemptedSize = std::numeric_limits<size_t>::max();
++        psWriter->bOverflow = true;
++        return 0;
++    }
++    psWriter->nAttemptedSize += nBytes;
++    if (nBytes > ParallelHeadRangeWriter::knCAPACITY - psWriter->abyBuffer.size())
++    {
++        psWriter->bOverflow = true;
++        return 0;
++    }
++    const auto *pabyData = static_cast<const GByte *>(pBuffer);
++    psWriter->abyBuffer.insert(psWriter->abyBuffer.end(), pabyData,
++                               pabyData + nBytes);
++    return nBytes;
++}
++
++static bool ParseParallelContentRange(const std::string &osHeaders,
++                                      GUIntBig &nTotal)
+@@ -495,0 +587,32 @@
++    std::string osValue{};
++    size_t nLineOffset = 0;
++    int nContentRangeCount = 0;
++    while (nLineOffset < osHeaders.size())
++    {
++        const size_t nLineEnd = osHeaders.find('\n', nLineOffset);
++        std::string osLine = osHeaders.substr(
++            nLineOffset, nLineEnd == std::string::npos
++                             ? std::string::npos
++                             : nLineEnd - nLineOffset);
++        if (!osLine.empty() && osLine.back() == '\r')
++            osLine.pop_back();
++        const size_t nColonOffset = osLine.find(':');
++        if (nColonOffset != std::string::npos &&
++            EQUAL(osLine.substr(0, nColonOffset).c_str(), "Content-Range"))
++        {
++            if (++nContentRangeCount != 1)
++                return false;
++            osValue = osLine.substr(nColonOffset + 1);
++        }
++        if (nLineEnd == std::string::npos)
++            break;
++        nLineOffset = nLineEnd + 1;
++    }
++    if (nContentRangeCount != 1)
++        return false;
++    while (!osValue.empty() && isspace(static_cast<unsigned char>(osValue.front())))
++        osValue.erase(osValue.begin());
++    while (!osValue.empty() && isspace(static_cast<unsigned char>(osValue.back())))
++        osValue.pop_back();
++    std::transform(osValue.begin(), osValue.end(), osValue.begin(),
++                   [](unsigned char ch) { return static_cast<char>(tolower(ch)); });
+@@ -496,0 +620,14 @@
++    unsigned long long nStart = 0;
++    unsigned long long nEnd = 0;
++    unsigned long long nParsedTotal = 0;
++    char chTrailing = '\0';
++    if (sscanf(osValue.c_str(), "bytes %llu-%llu/%llu%c", &nStart, &nEnd,
++               &nParsedTotal, &chTrailing) != 3 ||
++        nStart != 0 || nEnd != 131071 || nParsedTotal <= nEnd)
++    {
++        return false;
++    }
++    nTotal = static_cast<GUIntBig>(nParsedTotal);
++    return true;
++}
++
+@@ -809,0 +947,15 @@
++}
++
++static size_t ParallelHeadRangeHeaderWriteFunc(void *pBuffer, size_t nSize,
++                                                size_t nCount,
++                                                void *pUserData)
++{
++    auto *psWriter =
++        static_cast<cpl::ParallelHeadRangeHeaderWriter *>(pUserData);
++    if (psWriter->nConnectionId < 0 && psWriter->hCurlHandle)
++    {
++        curl_easy_getinfo(psWriter->hCurlHandle, CURLINFO_CONN_ID,
++                          &psWriter->nConnectionId);
++    }
++    return VSICurlHandleWriteFunc(pBuffer, nSize, nCount,
++                                  psWriter->psHeaderData);
+@@ -1151,0 +1304,63 @@
++
++    const bool bColdFileProperty =
++        !oFileProp.bHasComputedFileSize && oFileProp.eExists == EXIST_UNKNOWN;
++    ParallelHeadRangeResult sParallelResult;
++    int nTryCount = 0;
++    const auto CleanupParallelHandle =
++        [&](CURL *hCurlHandle, const char *pszRole, int &nCallCount,
++            bool bDetached, const auto &PrepareCleanup)
++    {
++        ++nCallCount;
++        CPLDebug(poFS->GetDebugKey(),
++                 "ParallelHeadRange: cleanup-call=%s count=%d",
++                 pszRole, nCallCount);
++        if (nCallCount != 1)
++        {
++            CPLDebug(poFS->GetDebugKey(),
++                     "ParallelHeadRange: cleanup-blocked=%s reason=duplicate",
++                     pszRole);
++            return;
++        }
++        if (!bDetached)
++        {
++            CPLDebug(poFS->GetDebugKey(),
++                     "ParallelHeadRange: cleanup-blocked=%s reason=attached",
++                     pszRole);
++            return;
++        }
++        PrepareCleanup();
++        curl_easy_cleanup(hCurlHandle);
++        CPLDebug(poFS->GetDebugKey(),
++                 "ParallelHeadRange: cleanup-success=%s", pszRole);
++    };
++    const auto CleanupCurlHandle = [&](CURL *hCurlHandle)
++    {
++        const bool bParallelHead =
++            sParallelResult.bAttempted && nTryCount == 1;
++        if (bParallelHead)
++        {
++            CleanupParallelHandle(
++                hCurlHandle, "head",
++                sParallelResult.nHeadCleanupCallCount,
++                sParallelResult.bHeadDetached, []() {});
++            return;
++        }
++        curl_easy_cleanup(hCurlHandle);
++    };
++    const auto PublishFileProperty = [&]()
++    {
++        if (sParallelResult.bMultiAbandoned)
++        {
++            CPLDebug(poFS->GetDebugKey(),
++                     "ParallelHeadRange: file-property-publication-blocked");
++            return;
++        }
++        poFS->SetCachedFileProp(m_pszURL, oFileProp);
++        if (sParallelResult.bAttempted)
++        {
++            ++sParallelResult.nFilePropertyPublishCount;
++            CPLDebug(poFS->GetDebugKey(),
++                     "ParallelHeadRange: file-property-published count=%d",
++                     sParallelResult.nFilePropertyPublishCount);
++        }
++    };
+@@ -1164 +1378,0 @@
+-    int nTryCount = 0;
+@@ -1200,0 +1415,2 @@
++    ParallelHeadRangeHeaderWriter sHeadHeaderWriter{
++        hCurlHandle, &sWriteFuncHeaderData, -1};
+@@ -1249 +1465 @@
+-                               &sWriteFuncHeaderData);
++                               &sHeadHeaderWriter);
+@@ -1251 +1467 @@
+-                               VSICurlHandleWriteFunc);
++                               ParallelHeadRangeHeaderWriteFunc);
+@@ -1268 +1484,17 @@
+-    VSICURLMultiPerform(hCurlMultiHandle, hCurlHandle, &m_bInterrupt);
++    const char *pszPrefetchOption = VSIGetPathSpecificOption(
++        m_osFilename.c_str(), "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", nullptr);
++    const char *pszGlobalPrefetchOption = CPLGetConfigOption(
++        "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", nullptr);
++    const bool bHasPathSpecificPrefetch =
++        pszPrefetchOption != nullptr && CPLTestBool(pszPrefetchOption) &&
++        pszPrefetchOption != pszGlobalPrefetchOption;
++    const bool bOrdinaryHTTP =
++        STARTS_WITH(m_osFilename.c_str(), "/vsicurl/http://") ||
++        STARTS_WITH(m_osFilename.c_str(), "/vsicurl/https://");
++    const bool bColdRegion = poFS->GetRegion(m_pszURL, 0) == nullptr;
++    const bool bAttemptParallel =
++        !sParallelResult.bAttempted && bOrdinaryHTTP && osVerb == "HEAD" &&
++        m_bUseHead && bHasPathSpecificPrefetch && bColdFileProperty &&
++        bColdRegion && !bGetHeaders && nTryCount == 1 && !bRetryWithGet &&
++        !bS3LikeRedirect && knDOWNLOAD_CHUNK_SIZE == 131072 &&
++        !poFS->IsParallelHeadRangeDisabled();
+@@ -1269,0 +1502,232 @@
++    if (bAttemptParallel)
++    {
++        sParallelResult.bAttempted = true;
++        CPLDebug(poFS->GetDebugKey(), "ParallelHeadRange: started");
++
++        CURL *hRangeHandle = curl_easy_init();
++        WriteFuncStruct sRangeHeaderData;
++        VSICURLInitWriteFuncStruct(&sRangeHeaderData, nullptr, nullptr, nullptr);
++        sRangeHeaderData.bDetectRangeDownloadingError = false;
++        sRangeHeaderData.bIsHTTP = true;
++        ParallelHeadRangeWriter sRangeWriter;
++        sRangeWriter.hCurlHandle = hRangeHandle;
++        ParallelHeadRangeHeaderWriter sRangeHeaderWriter{
++            hRangeHandle, &sRangeHeaderData, -1};
++        struct curl_slist *rangeHeaders = VSICurlSetOptions(
++            hRangeHandle, osURL.c_str(), m_aosHTTPOptions.List());
++        rangeHeaders =
++            curl_slist_append(rangeHeaders, "Range: bytes=0-131071");
++        rangeHeaders = GetCurlHeaders("GET", rangeHeaders);
++
++        unchecked_curl_easy_setopt(hRangeHandle, CURLOPT_HTTPGET, 1L);
++        unchecked_curl_easy_setopt(hRangeHandle, CURLOPT_NOBODY, 0L);
++        unchecked_curl_easy_setopt(hRangeHandle, CURLOPT_PIPEWAIT, 1L);
++        unchecked_curl_easy_setopt(hRangeHandle, CURLOPT_HTTPHEADER,
++                                   rangeHeaders);
++        unchecked_curl_easy_setopt(hRangeHandle, CURLOPT_HEADERDATA,
++                                   &sRangeHeaderWriter);
++        unchecked_curl_easy_setopt(hRangeHandle, CURLOPT_HEADERFUNCTION,
++                                   ParallelHeadRangeHeaderWriteFunc);
++        unchecked_curl_easy_setopt(hRangeHandle, CURLOPT_WRITEDATA,
++                                   &sRangeWriter);
++        unchecked_curl_easy_setopt(hRangeHandle, CURLOPT_WRITEFUNCTION,
++                                   ParallelHeadRangeWriteFunc);
++        if (!AllowAutomaticRedirection())
++            unchecked_curl_easy_setopt(hRangeHandle, CURLOPT_FOLLOWLOCATION,
++                                       0L);
++
++        bool bDetachError = false;
++        const auto RemoveParallelHandle =
++            [&](CURL *hEasyHandle, const char *pszRole)
++        {
++            CURLMcode eRemove =
++                curl_multi_remove_handle(hCurlMultiHandle, hEasyHandle);
++            if (eRemove == CURLM_OK)
++            {
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: detach-success=%s", pszRole);
++                return eRemove;
++            }
++            bDetachError = true;
++            CPLDebug(poFS->GetDebugKey(),
++                     "ParallelHeadRange: detach-failure=%s attempt=1 code=%d",
++                     pszRole, static_cast<int>(eRemove));
++            eRemove =
++                curl_multi_remove_handle(hCurlMultiHandle, hEasyHandle);
++            if (eRemove == CURLM_OK)
++            {
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: detach-retry-success=%s",
++                         pszRole);
++            }
++            else
++            {
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: detach-failure=%s "
++                         "attempt=2 code=%d",
++                         pszRole, static_cast<int>(eRemove));
++            }
++            return eRemove;
++        };
++
++        const CURLMcode eHeadAdd =
++            curl_multi_add_handle(hCurlMultiHandle, hCurlHandle);
++        const CURLMcode eRangeAdd = eHeadAdd == CURLM_OK
++            ? curl_multi_add_handle(hCurlMultiHandle, hRangeHandle)
++            : eHeadAdd;
++        if (eHeadAdd == CURLM_OK && eRangeAdd == CURLM_OK)
++        {
++            VSICURLMultiPerform(hCurlMultiHandle, nullptr, &m_bInterrupt);
++            int nMessages = 0;
++            while (CURLMsg *psMessage =
++                       curl_multi_info_read(hCurlMultiHandle, &nMessages))
++            {
++                if (psMessage->msg != CURLMSG_DONE)
++                    continue;
++                if (psMessage->easy_handle == hCurlHandle)
++                {
++                    sParallelResult.bHeadDone = true;
++                    sParallelResult.eHeadCurlCode = psMessage->data.result;
++                }
++                else if (psMessage->easy_handle == hRangeHandle)
++                {
++                    sParallelResult.bRangeDone = true;
++                    sParallelResult.eRangeCurlCode = psMessage->data.result;
++                }
++            }
++            curl_easy_getinfo(hCurlHandle, CURLINFO_HTTP_VERSION,
++                              &sParallelResult.nHeadHTTPVersion);
++            curl_easy_getinfo(hRangeHandle, CURLINFO_HTTP_VERSION,
++                              &sParallelResult.nRangeHTTPVersion);
++            curl_easy_getinfo(hCurlHandle, CURLINFO_CONN_ID,
++                              &sParallelResult.nHeadConnectionId);
++            curl_easy_getinfo(hRangeHandle, CURLINFO_CONN_ID,
++                              &sParallelResult.nRangeConnectionId);
++            curl_easy_getinfo(hCurlHandle, CURLINFO_REDIRECT_COUNT,
++                              &sParallelResult.nHeadRedirectCount);
++            curl_easy_getinfo(hRangeHandle, CURLINFO_REDIRECT_COUNT,
++                              &sParallelResult.nRangeRedirectCount);
++            const CURLMcode eRangeRemove =
++                RemoveParallelHandle(hRangeHandle, "range");
++            const CURLMcode eHeadRemove =
++                RemoveParallelHandle(hCurlHandle, "head");
++            sParallelResult.bHeadDetached = eHeadRemove == CURLM_OK;
++            sParallelResult.bRangeDetached = eRangeRemove == CURLM_OK;
++            if (!sParallelResult.bHeadDetached ||
++                !sParallelResult.bRangeDetached)
++            {
++                if (!poFS->AbandonCurlMultiHandle(hCurlMultiHandle))
++                {
++                    CPLError(CE_Fatal, CPLE_AppDefined,
++                             "Cannot abandon libcurl multi ownership after "
++                             "parallel HEAD/Range detach failure");
++                    std::abort();
++                }
++                hCurlMultiHandle =
++                    poFS->GetCurlMultiHandleFor(m_pszURL);
++                sParallelResult.bMultiAbandoned = true;
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: multi-abandoned=success");
++            }
++            if (bDetachError)
++            {
++                sParallelResult.bFallback = true;
++                sParallelResult.osReason = "detach";
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: fallback=detach");
++            }
++            if (sParallelResult.nHeadConnectionId < 0)
++            {
++                sParallelResult.nHeadConnectionId =
++                    sHeadHeaderWriter.nConnectionId;
++            }
++            if (sParallelResult.nRangeConnectionId < 0)
++            {
++                sParallelResult.nRangeConnectionId =
++                    sRangeHeaderWriter.nConnectionId >= 0
++                    ? sRangeHeaderWriter.nConnectionId
++                    : sRangeWriter.nConnectionId;
++            }
++        }
++        else
++        {
++            if (eRangeAdd == CURLM_OK)
++            {
++                const CURLMcode eRangeRemove =
++                    RemoveParallelHandle(hRangeHandle, "range");
++                sParallelResult.bRangeDetached =
++                    eRangeRemove == CURLM_OK;
++            }
++            else
++                sParallelResult.bRangeDetached = true;
++            if (eHeadAdd == CURLM_OK)
++            {
++                const CURLMcode eHeadRemove =
++                    RemoveParallelHandle(hCurlHandle, "head");
++                sParallelResult.bHeadDetached = eHeadRemove == CURLM_OK;
++            }
++            else
++                sParallelResult.bHeadDetached = true;
++            if (!sParallelResult.bHeadDetached ||
++                !sParallelResult.bRangeDetached)
++            {
++                if (!poFS->AbandonCurlMultiHandle(hCurlMultiHandle))
++                {
++                    CPLError(CE_Fatal, CPLE_AppDefined,
++                             "Cannot abandon libcurl multi ownership after "
++                             "parallel HEAD/Range add rollback failure");
++                    std::abort();
++                }
++                hCurlMultiHandle =
++                    poFS->GetCurlMultiHandleFor(m_pszURL);
++                sParallelResult.bMultiAbandoned = true;
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: multi-abandoned=success");
++            }
++            sParallelResult.bFallback = true;
++            sParallelResult.osReason = "multi-add";
++            CPLDebug(poFS->GetDebugKey(),
++                     "ParallelHeadRange: fallback=multi-add");
++            if (sParallelResult.bHeadDetached)
++                VSICURLMultiPerform(hCurlMultiHandle, hCurlHandle,
++                                    &m_bInterrupt);
++        }
++
++        curl_easy_getinfo(hRangeHandle, CURLINFO_HTTP_CODE,
++                          &sParallelResult.nRangeCode);
++        sParallelResult.nRangeSize = sRangeWriter.abyBuffer.size();
++        sParallelResult.nRangeAttemptedSize = sRangeWriter.nAttemptedSize;
++        sParallelResult.bWriterOverflow = sRangeWriter.bOverflow;
++        sParallelResult.bDeclaredOverflow =
++            sRangeHeaderData.nContentLength >
++            static_cast<vsi_l_offset>(ParallelHeadRangeWriter::knCAPACITY);
++        sParallelResult.abyRangeBuffer = std::move(sRangeWriter.abyBuffer);
++        if (sRangeHeaderData.pBuffer)
++            sParallelResult.osRangeHeaders = sRangeHeaderData.pBuffer;
++        NetworkStatisticsLogger::LogGET(sParallelResult.nRangeSize);
++        const auto CleanupRangeHandle = [&]()
++        {
++            CleanupParallelHandle(
++                hRangeHandle, "range",
++                sParallelResult.nRangeCleanupCallCount,
++                sParallelResult.bRangeDetached, [&]()
++                {
++                    VSICURLResetHeaderAndWriterFunctions(hRangeHandle);
++                    CPLFree(sRangeHeaderData.pBuffer);
++                    curl_slist_free_all(rangeHeaders);
++                });
++        };
++        CleanupRangeHandle();
++    }
++    else
++    {
++        VSICURLMultiPerform(hCurlMultiHandle, hCurlHandle, &m_bInterrupt);
++    }
++
++    if (sParallelResult.bMultiAbandoned &&
++        !sParallelResult.bHeadDetached)
++    {
++        oFileProp = FileProp();
++        return GetFileSizeOrHeaders(bSetError, bGetHeaders);
++    }
++
+@@ -1318,0 +1783,9 @@
++        if (sParallelResult.bAttempted && !sParallelResult.bFallback &&
++            response_code != 200)
++        {
++            sParallelResult.bFallback = true;
++            sParallelResult.osReason = "head-invalid";
++            sParallelResult.abyRangeBuffer.clear();
++            CPLDebug(poFS->GetDebugKey(),
++                     "ParallelHeadRange: fallback=head-invalid");
++        }
+@@ -1367 +1840 @@
+-                poFS->SetCachedFileProp(m_pszURL, oFileProp);
++                PublishFileProperty();
+@@ -1394 +1867 @@
+-                    curl_easy_cleanup(hCurlHandle);
++                    CleanupCurlHandle(hCurlHandle);
+@@ -1412 +1885 @@
+-                curl_easy_cleanup(hCurlHandle);
++                CleanupCurlHandle(hCurlHandle);
+@@ -1437 +1910 @@
+-                poFS->SetCachedFileProp(m_pszURL, oFileProp);
++                PublishFileProperty();
+@@ -1505 +1978 @@
+-                                curl_easy_cleanup(hCurlHandle);
++                                CleanupCurlHandle(hCurlHandle);
+@@ -1516 +1989 @@
+-                        curl_easy_cleanup(hCurlHandle);
++                        CleanupCurlHandle(hCurlHandle);
+@@ -1643 +2116 @@
+-            curl_easy_cleanup(hCurlHandle);
++            CleanupCurlHandle(hCurlHandle);
+@@ -1666 +2139 @@
+-                curl_easy_cleanup(hCurlHandle);
++                CleanupCurlHandle(hCurlHandle);
+@@ -1679 +2152 @@
+-                    curl_easy_cleanup(hCurlHandle);
++                    CleanupCurlHandle(hCurlHandle);
+@@ -1755,0 +2229,16 @@
++        }
++    }
++
++    if (sParallelResult.bAttempted && !sParallelResult.bFallback)
++    {
++        sParallelResult.nHeadCode = response_code;
++        sParallelResult.nHeadSize = oFileProp.fileSize;
++        sParallelResult.bHeadValid =
++            response_code == 200 && oFileProp.eExists == EXIST_YES &&
++            oFileProp.fileSize > 0;
++
++        bool bReject = false;
++        if (!sParallelResult.bHeadValid)
++        {
++            sParallelResult.bFallback = true;
++            sParallelResult.osReason = "head-invalid";
+@@ -1756,0 +2246,137 @@
++        else if (sParallelResult.bWriterOverflow)
++        {
++            bReject = true;
++            sParallelResult.osReason = "writer-overflow";
++        }
++        else if (sParallelResult.bDeclaredOverflow)
++        {
++            bReject = true;
++            sParallelResult.osReason = "body-overflow";
++        }
++        else if (!sParallelResult.bHeadDone || !sParallelResult.bRangeDone)
++        {
++            sParallelResult.bFallback = true;
++            sParallelResult.osReason = "incomplete";
++        }
++        else if (sParallelResult.eHeadCurlCode != CURLE_OK ||
++                 sParallelResult.eRangeCurlCode != CURLE_OK)
++        {
++            sParallelResult.bFallback = true;
++            sParallelResult.osReason = "transport";
++        }
++        else if (sParallelResult.nHeadRedirectCount != 0 ||
++                 sParallelResult.nRangeRedirectCount != 0)
++        {
++            sParallelResult.bFallback = true;
++            sParallelResult.osReason = "redirect";
++        }
++        else if (nTryCount != 1 || osVerb != "HEAD")
++        {
++            sParallelResult.bFallback = true;
++            sParallelResult.osReason = "method";
++        }
++        else if (sParallelResult.nRangeCode == 200)
++        {
++            bReject = true;
++            sParallelResult.osReason = "range-200";
++        }
++        else if (sParallelResult.nRangeCode == 0 ||
++                 sParallelResult.nRangeCode >= 400)
++        {
++            sParallelResult.bFallback = true;
++            sParallelResult.osReason = sParallelResult.nRangeCode > 0
++                ? CPLSPrintf("status-%ld", sParallelResult.nRangeCode)
++                : "transport";
++        }
++        else if (sParallelResult.nRangeCode != 206 ||
++                 sParallelResult.nRangeSize != 131072)
++        {
++            bReject = true;
++            sParallelResult.osReason = "short-range";
++        }
++        else
++        {
++            GUIntBig nRangeTotal = 0;
++            if (!ParseParallelContentRange(sParallelResult.osRangeHeaders,
++                                           nRangeTotal))
++            {
++                bReject = true;
++                sParallelResult.osReason = "content-range";
++            }
++            else if (nRangeTotal !=
++                     static_cast<GUIntBig>(sParallelResult.nHeadSize))
++            {
++                bReject = true;
++                sParallelResult.osReason = "size-mismatch";
++            }
++            else if (sParallelResult.nHeadHTTPVersion !=
++                         CURL_HTTP_VERSION_2_0 ||
++                     sParallelResult.nRangeHTTPVersion !=
++                         CURL_HTTP_VERSION_2_0)
++            {
++                sParallelResult.bFallback = true;
++                sParallelResult.osReason = "protocol";
++            }
++            else if (sParallelResult.nHeadConnectionId < 0 ||
++                     sParallelResult.nRangeConnectionId < 0 ||
++                     sParallelResult.nHeadConnectionId !=
++                         sParallelResult.nRangeConnectionId)
++            {
++                sParallelResult.bFallback = true;
++                sParallelResult.osReason = "connection";
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: connection head=" CPL_FRMT_GIB
++                         " range=" CPL_FRMT_GIB,
++                         static_cast<GIntBig>(
++                             sParallelResult.nHeadConnectionId),
++                         static_cast<GIntBig>(
++                             sParallelResult.nRangeConnectionId));
++            }
++            else
++            {
++                sParallelResult.bRangeValid = true;
++                poFS->AddRegion(m_pszURL, 0, 131072,
++                                reinterpret_cast<const char *>(
++                                    sParallelResult.abyRangeBuffer.data()));
++                sParallelResult.bCachePublished = true;
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: published");
++            }
++        }
++
++        if (bReject)
++        {
++            if (sParallelResult.bWriterOverflow)
++            {
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: rejected=%s attempted=%zu "
++                         "accepted=%zu",
++                         sParallelResult.osReason.c_str(),
++                         sParallelResult.nRangeAttemptedSize,
++                         sParallelResult.nRangeSize);
++            }
++            else
++            {
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: rejected=%s",
++                         sParallelResult.osReason.c_str());
++            }
++            VSIError(VSIE_HttpError,
++                     "Parallel HEAD/Range integrity failure: %s",
++                     sParallelResult.osReason.c_str());
++            poFS->InvalidateCachedData(m_pszURL);
++            CPLFree(sWriteFuncData.pBuffer);
++            CPLFree(sWriteFuncHeaderData.pBuffer);
++            CleanupCurlHandle(hCurlHandle);
++            oFileProp = FileProp();
++            oFileProp.bHasComputedFileSize = true;
++            oFileProp.eExists = EXIST_NO;
++            PublishFileProperty();
++            return 0;
++        }
++        if (sParallelResult.bFallback)
++        {
++            sParallelResult.abyRangeBuffer.clear();
++            CPLDebug(poFS->GetDebugKey(), "ParallelHeadRange: fallback=%s",
++                     sParallelResult.osReason.c_str());
++        }
+@@ -1761 +2387 @@
+-    curl_easy_cleanup(hCurlHandle);
++    CleanupCurlHandle(hCurlHandle);
+@@ -1768 +2394 @@
+-        poFS->SetCachedFileProp(m_pszURL, oFileProp);
++        PublishFileProperty();
+@@ -4003,0 +4630 @@
++    bool bParallelHeadRangeDisabled = false;
+@@ -4124,0 +4752,24 @@
++/*                    AbandonCurlMultiHandle()                          */
++/************************************************************************/
++
++bool VSICurlFilesystemHandlerBase::AbandonCurlMultiHandle(
++    CURLM *hFailedMultiHandle)
++{
++    auto &conn = GetConnectionCache()[this];
++    if (conn.hCurlMultiHandle != hFailedMultiHandle)
++        return false;
++    conn.hCurlMultiHandle = nullptr;
++    conn.bParallelHeadRangeDisabled = true;
++    return true;
++}
++
++/************************************************************************/
++/*                  IsParallelHeadRangeDisabled()                       */
++/************************************************************************/
++
++bool VSICurlFilesystemHandlerBase::IsParallelHeadRangeDisabled()
++{
++    return GetConnectionCache()[this].bParallelHeadRangeDisabled;
++}
++
++/************************************************************************/
