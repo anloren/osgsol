@@ -51,6 +51,7 @@ namespace
 {
     constexpr int SIZE = 256;
     constexpr int BAND_COUNT = 64;
+    constexpr std::int8_t NODATA_VALUE = -128;
     constexpr int LIVE_OVERVIEW_FACTOR = 4;
     constexpr std::uint64_t TRANSFER_BUDGET = 1024 * 1024;
     constexpr std::uint64_t LIVE_TRANSFER_BUDGET = 16 * 1024 * 1024;
@@ -373,7 +374,13 @@ namespace
                 state = state * 1664525U + 1013904223U;
                 pixel = static_cast<std::int8_t>((state >> 24) & 0x7fU);
             }
+            for (int y = 16; y < 20; ++y)
+                std::fill_n(pixels.begin() + y * SIZE + 16, 4, NODATA_VALUE);
+            for (int y = 24; y < 28; ++y)
+                std::fill_n(pixels.begin() + y * SIZE + 24, 4, 0);
             GDALRasterBand* band = dataset->GetRasterBand(bandIndex + 1);
+            require(band->SetNoDataValue(NODATA_VALUE) == CE_None,
+                    "failed to assign local range fixture NoData");
             require(band->RasterIO(GF_Write, 0, 0, SIZE, SIZE, pixels.data(),
                                    SIZE, SIZE, GDT_Int8, 0, 0, nullptr) == CE_None,
                     "failed to write local range fixture");
@@ -1526,7 +1533,13 @@ namespace
         fail("source COG has no exact " + std::to_string(factor) + "x overview");
     }
 
-    std::vector<std::int8_t> readNormalizedOverviewRgb(
+    struct NormalizedRgbWindow
+    {
+        std::vector<std::int8_t> rgb;
+        std::vector<unsigned char> mask;
+    };
+
+    NormalizedRgbWindow readNormalizedOverviewRgbOracle(
         GDALDataset* raw, const PixelWindow& window, const int* bandMap)
     {
         require(window.size % LIVE_OVERVIEW_FACTOR == 0 &&
@@ -1599,7 +1612,85 @@ namespace
         }
         require(hasValidNonZero,
                 "normalized source-overview RGB window has no valid non-zero sample");
-        return rgb;
+        return {std::move(rgb), std::move(normalizedMasks)};
+    }
+
+    NormalizedRgbWindow readNormalizedOverviewRgbBatched(
+        GDALDataset* raw, const PixelWindow& window, const int* bandMap)
+    {
+        require(raw != nullptr, "batched RGB dataset is null");
+        require(window.size % LIVE_OVERVIEW_FACTOR == 0 &&
+                window.x % LIVE_OVERVIEW_FACTOR == 0 &&
+                window.topDownY % LIVE_OVERVIEW_FACTOR == 0,
+                "batched RGB window is not aligned to the chosen source overview");
+        const int rawWindowY = raw->GetRasterYSize() - window.topDownY - window.size;
+        require(rawWindowY >= 0 && rawWindowY % LIVE_OVERVIEW_FACTOR == 0,
+                "batched mirrored raw window is not overview-aligned");
+        const int overviewSize = window.size / LIVE_OVERVIEW_FACTOR;
+        require(overviewSize == 64,
+                "batched RGB sample must be an exact 64x64 overview window");
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            GDALRasterBand* overview = exactOverview(
+                raw->GetRasterBand(bandMap[channel]), LIVE_OVERVIEW_FACTOR);
+            require(overview->GetRasterDataType() == GDT_Int8,
+                    "batched RGB overview is not signed Int8");
+        }
+
+        std::vector<std::int8_t> rawRgb(overviewSize * overviewSize * 3);
+        GDALRasterIOExtraArg extra;
+        INIT_RASTERIO_EXTRA_ARG(extra);
+        extra.eResampleAlg = GRIORA_NearestNeighbour;
+        require(raw->RasterIO(
+                    GF_Read, window.x, rawWindowY, window.size, window.size,
+                    rawRgb.data(), overviewSize, overviewSize, GDT_Int8,
+                    3, const_cast<int*>(bandMap), 3, overviewSize * 3, 1,
+                    &extra) == CE_None,
+                "batched exact-overview RGB read failed");
+
+        std::vector<unsigned char> masks(overviewSize * overviewSize * 3, 255);
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            GDALRasterBand* overview = exactOverview(
+                raw->GetRasterBand(bandMap[channel]), LIVE_OVERVIEW_FACTOR);
+            const int flags = overview->GetMaskFlags();
+            if ((flags & GMF_ALL_VALID) != 0) continue;
+            std::vector<unsigned char> channelMask(overviewSize * overviewSize);
+            require(overview->GetMaskBand()->RasterIO(
+                        GF_Read, window.x / LIVE_OVERVIEW_FACTOR,
+                        rawWindowY / LIVE_OVERVIEW_FACTOR,
+                        overviewSize, overviewSize, channelMask.data(),
+                        overviewSize, overviewSize, GDT_Byte, 0, 0, nullptr) == CE_None,
+                    "batched RGB mask read failed");
+            for (std::size_t pixel = 0; pixel < channelMask.size(); ++pixel)
+                masks[pixel * 3 + channel] = channelMask[pixel];
+        }
+
+        std::vector<std::int8_t> topDown(rawRgb.size());
+        std::vector<unsigned char> topDownMasks(masks.size());
+        for (int topY = 0; topY < overviewSize; ++topY)
+        {
+            const int sourceY = overviewSize - 1 - topY;
+            for (int x = 0; x < overviewSize; ++x)
+            {
+                for (int channel = 0; channel < 3; ++channel)
+                {
+                    const std::size_t source =
+                        (sourceY * overviewSize + x) * 3 + channel;
+                    const std::size_t destination =
+                        (topY * overviewSize + x) * 3 + channel;
+                    topDown[destination] = rawRgb[source];
+                    topDownMasks[destination] = masks[source];
+                    require(masks[source] == 0 ||
+                            std::isfinite(checkedDequantize(rawRgb[source])),
+                            "batched valid sample dequantized non-finite");
+                }
+            }
+        }
+        require(std::any_of(topDown.begin(), topDown.end(),
+                            [](std::int8_t value) { return value != 0; }),
+                "batched RGB is empty");
+        return {std::move(topDown), std::move(topDownMasks)};
     }
 
     void closeDataset(GDALDataset* dataset)
@@ -1640,10 +1731,12 @@ namespace
                     rawBand->GetMaskBand() != nullptr,
                     item.name + " RGB band metadata changed");
         }
-        const std::vector<std::int8_t> rgb =
-            readNormalizedOverviewRgb(raw.get(), window, bandMap);
+        const NormalizedRgbWindow normalized =
+            readNormalizedOverviewRgbBatched(raw.get(), window, bandMap);
         const auto read = std::chrono::steady_clock::now();
-        require(std::any_of(rgb.begin(), rgb.end(),
+        require(normalized.mask.size() == normalized.rgb.size(),
+                item.name + " RGB mask size differs from RGB window");
+        require(std::any_of(normalized.rgb.begin(), normalized.rgb.end(),
                             [](std::int8_t value) { return value != 0; }),
                 item.name + " RGB window is empty after HTTP retries");
         raw.reset();
@@ -1878,6 +1971,38 @@ int runMain(int argc, char** argv)
     const std::filesystem::path log = root / "requests.jsonl";
     createFixture(fixture);
     const std::uint64_t sourceSize = std::filesystem::file_size(fixture);
+
+    {
+        DatasetPtr localDataset(static_cast<GDALDataset*>(GDALOpenEx(
+            fixture.string().c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
+            nullptr, nullptr, nullptr)), closeDataset);
+        require(localDataset != nullptr, "failed to open local RGB oracle fixture");
+        PixelWindow window;
+        window.size = std::min(localDataset->GetRasterXSize(),
+                               localDataset->GetRasterYSize());
+        window.size -= window.size % LIVE_OVERVIEW_FACTOR;
+        window.x = (localDataset->GetRasterXSize() - window.size) / 2;
+        window.topDownY = (localDataset->GetRasterYSize() - window.size) / 2;
+        window.x -= window.x % LIVE_OVERVIEW_FACTOR;
+        window.topDownY -= window.topDownY % LIVE_OVERVIEW_FACTOR;
+        const int bandMap[] = {2, 17, 10};
+        const auto oracle =
+            readNormalizedOverviewRgbOracle(localDataset.get(), window, bandMap);
+        const auto batched =
+            readNormalizedOverviewRgbBatched(localDataset.get(), window, bandMap);
+        require(batched.rgb == oracle.rgb && batched.mask == oracle.mask,
+                "batched RGB differs from the exact per-band overview oracle");
+        bool hasNoData = false;
+        bool hasValidZero = false;
+        for (std::size_t pixel = 0; pixel < batched.rgb.size(); pixel += 3)
+        {
+            hasNoData = hasNoData || batched.mask[pixel] == 0;
+            hasValidZero = hasValidZero ||
+                (batched.rgb[pixel] == 0 && batched.mask[pixel] != 0);
+        }
+        require(hasNoData && hasValidZero,
+                "batched RGB mask does not distinguish NoData from valid zero");
+    }
 
     ServerProcess server = startServer(fixture, ready, log);
     const int port = waitForPort(ready);
