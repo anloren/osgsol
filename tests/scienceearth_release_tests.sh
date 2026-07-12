@@ -44,14 +44,52 @@ validate_release_pair()
     printf '[OK] release refs share commit %s\n' "${normal_commit}"
 }
 
+validate_manifests()
+{
+    local reference_path="$1"
+    local ratchet_path="$2"
+    local immutable_commit
+
+    immutable_commit="$(git -C "${repo_root}" rev-parse 'ScienceEarth^{}')" || return 1
+    python3 - "${manifest_module}" "${reference_path}" \
+            "${ratchet_path}" "${immutable_commit}" <<'PY'
+import importlib.util
+import json
+import sys
+
+module_path, reference_path, ratchet_path, immutable_commit = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("scienceearth_g0_manifest", module_path)
+manifest = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(manifest)
+with open(reference_path, encoding="utf-8") as stream:
+    reference = json.load(stream)
+with open(ratchet_path, encoding="utf-8") as stream:
+    ratchet = json.load(stream)
+manifest.validate_chain(reference, ratchet)
+if reference["source_commit"] != immutable_commit:
+    raise ValueError(
+        "reference source commit does not match the immutable ScienceEarth tag")
+PY
+}
+
 if [[ $# -gt 0 ]]; then
-    if [[ $# -ne 3 || "$1" != "--validate-release-pair" ]]; then
-        printf 'usage: %s --validate-release-pair vX.Y.Z ScienceEarth-vX.Y.Z\n' \
-            "${BASH_SOURCE[0]}" >&2
-        exit 64
-    fi
-    validate_release_pair "$2" "$3"
-    exit $?
+    case "$1" in
+        --validate-release-pair)
+            [[ $# -eq 3 ]] || exit 64
+            validate_release_pair "$2" "$3"
+            exit $?
+            ;;
+        --validate-manifests)
+            [[ $# -eq 3 ]] || exit 64
+            validate_manifests "$2" "$3"
+            exit $?
+            ;;
+        *)
+            printf 'usage: %s --validate-release-pair REF REF | \
+--validate-manifests REFERENCE RATCHET\n' "${BASH_SOURCE[0]}" >&2
+            exit 64
+            ;;
+    esac
 fi
 
 cd "${repo_root}"
@@ -72,27 +110,7 @@ packaging/scienceearth/baselines/v0.2.0-macos-arm64-reference.json"
 packaging/scienceearth/baselines/current-macos-arm64-ratchet.json"
 
 if [[ -f "${reference_manifest}" && -f "${ratchet_manifest}" ]]; then
-    immutable_commit="$(git rev-parse 'ScienceEarth^{}')"
-    if ! python3 - "${manifest_module}" "${reference_manifest}" \
-            "${ratchet_manifest}" "${immutable_commit}" <<'PY'
-import importlib.util
-import json
-import sys
-
-module_path, reference_path, ratchet_path, immutable_commit = sys.argv[1:]
-spec = importlib.util.spec_from_file_location("scienceearth_g0_manifest", module_path)
-manifest = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(manifest)
-with open(reference_path, encoding="utf-8") as stream:
-    reference = json.load(stream)
-with open(ratchet_path, encoding="utf-8") as stream:
-    ratchet = json.load(stream)
-manifest.validate_chain(reference, ratchet)
-if reference["source_commit"] != immutable_commit:
-    raise ValueError(
-        "reference source commit does not match the immutable ScienceEarth tag")
-PY
-    then
+    if ! validate_manifests "${reference_manifest}" "${ratchet_manifest}"; then
         fail "committed G0 reference/ratchet manifest contract is invalid"
     fi
 fi

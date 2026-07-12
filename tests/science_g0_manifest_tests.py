@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 AUDIT_PATH = ROOT / "packaging" / "audit_macos_bundle.py"
 MANIFEST_PATH = ROOT / "packaging" / "scienceearth" / "g0_manifest.py"
 GENERATOR_PATH = ROOT / "packaging" / "scienceearth" / "generate_g0_reference.py"
+RELEASE_TEST_PATH = ROOT / "tests" / "scienceearth_release_tests.sh"
 
 
 def load_module(name, path):
@@ -35,6 +36,24 @@ class G0ManifestTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def make_git_root(self, name, remote):
+        root = self.root / name
+        root.mkdir()
+        subprocess.run(
+            ["git", "init", "-q", str(root)], check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(
+            ["git", "-C", str(root), "remote", "add", "origin", remote],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return root
+
+    def metadata(self, **values):
+        metadata = {
+            "normalization_profile": MANIFEST.build_normalization_profile([ROOT]),
+        }
+        metadata.update(values)
+        return metadata
+
     def make_chain(self, two_findings=False):
         findings = [AUDIT.make_finding(
             "Contents/MacOS/main", "external_dependency",
@@ -45,7 +64,7 @@ class G0ManifestTests(unittest.TestCase):
                 "/usr/local/lib", []))
         reference = MANIFEST.build_reference(
             findings, "0e91c7c4b121d80b929d595ea711d3dd0833ee67",
-            "a" * 64, {"architecture": "arm64"})
+            "a" * 64, self.metadata(architecture="arm64"))
         return reference, MANIFEST.build_ratchet(reference, "v0.2.0")
 
     def run_generator(self, reference):
@@ -64,11 +83,80 @@ class G0ManifestTests(unittest.TestCase):
                                      "/opt/example/lib.dylib", [])
         reference = MANIFEST.build_reference(
             [finding], "0e91c7c4b121d80b929d595ea711d3dd0833ee67",
-            "a" * 64, {"architecture": "arm64"})
+            "a" * 64, self.metadata(architecture="arm64"))
         ratchet = MANIFEST.build_ratchet(reference, "v0.2.0")
         MANIFEST.validate_chain(reference, ratchet)
         self.assertEqual(MANIFEST.current_finding_ids(ratchet),
                          [finding["identity"]])
+
+    def test_git_remote_forms_have_one_canonical_repository_identity(self):
+        forms = (
+            "https://User:token@GitHub.com/Example/Repo.git",
+            "ssh://git@github.com/Example/Repo.git",
+            "git@GITHUB.COM:Example/Repo.git",
+        )
+        self.assertEqual(
+            {MANIFEST.canonical_git_repository(value) for value in forms},
+            {"github.com/Example/Repo"})
+
+    def test_normalization_profile_binds_same_count_source_root_set(self):
+        first = self.make_git_root(
+            "first", "https://github.com/example/first.git")
+        second = self.make_git_root(
+            "second", "git@github.com:example/second.git")
+        profile = MANIFEST.build_normalization_profile([first])
+        reference = MANIFEST.build_reference(
+            [], MANIFEST.BOUNDARY_COMMIT, "a" * 64,
+            {"normalization_profile": profile})
+
+        MANIFEST.validate_normalization_profile(reference, [first])
+        with self.assertRaisesRegex(ValueError, "source-root set"):
+            MANIFEST.validate_normalization_profile(reference, [second])
+
+    def test_profile_rejects_missing_remote_and_descriptor_collision(self):
+        no_remote = self.root / "no-remote"
+        no_remote.mkdir()
+        subprocess.run(
+            ["git", "init", "-q", str(no_remote)], check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        with self.assertRaisesRegex(ValueError, "canonical remote.origin.url"):
+            MANIFEST.build_normalization_profile([no_remote])
+
+        root = self.make_git_root(
+            "collision", "https://github.com/example/collision.git")
+        with self.assertRaisesRegex(ValueError, "descriptors collide"):
+            MANIFEST.build_normalization_profile([root, root])
+
+    def test_reference_chain_rejects_missing_normalization_profile(self):
+        with self.assertRaisesRegex(ValueError, "normalization profile"):
+            MANIFEST.build_reference(
+                [], MANIFEST.BOUNDARY_COMMIT, "a" * 64,
+                {"architecture": "arm64"})
+
+    def test_release_validator_rejects_missing_or_tampered_profile(self):
+        reference, ratchet = self.make_chain()
+        reference_path = self.root / "release-reference.json"
+        ratchet_path = self.root / "release-ratchet.json"
+        reference_path.write_text(json.dumps(reference))
+        ratchet_path.write_text(json.dumps(ratchet))
+
+        def validate():
+            return subprocess.run([
+                "bash", str(RELEASE_TEST_PATH), "--validate-manifests",
+                str(reference_path), str(ratchet_path),
+            ], cwd=ROOT, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        self.assertEqual(validate().returncode, 0)
+        missing = json.loads(json.dumps(reference))
+        missing["metadata"].pop("normalization_profile")
+        reference_path.write_text(json.dumps(missing))
+        self.assertNotEqual(validate().returncode, 0)
+        tampered = json.loads(json.dumps(reference))
+        tampered["metadata"]["normalization_profile"]["source_roots"][0][
+            "subpath"] = "tampered"
+        reference_path.write_text(json.dumps(tampered))
+        self.assertNotEqual(validate().returncode, 0)
 
     def test_ratchet_cannot_add_identity_or_change_parent(self):
         reference, ratchet = self.make_chain()
@@ -105,7 +193,7 @@ class G0ManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "64 lowercase hex"):
             MANIFEST.build_reference(
                 [finding], "0e91c7c4b121d80b929d595ea711d3dd0833ee67",
-                "a" * 64, {})
+                "a" * 64, self.metadata())
 
     def test_reference_sorts_ids_and_rejects_duplicates(self):
         first = AUDIT.make_finding(
@@ -114,13 +202,13 @@ class G0ManifestTests(unittest.TestCase):
             "Contents/MacOS/main", "external_dependency", "/a/lib.dylib", [])
         reference = MANIFEST.build_reference(
             [first, second], "0e91c7c4b121d80b929d595ea711d3dd0833ee67",
-            "a" * 64, {})
+            "a" * 64, self.metadata())
         self.assertEqual(reference["finding_ids"],
                          sorted([first["identity"], second["identity"]]))
         with self.assertRaisesRegex(ValueError, "unique"):
             MANIFEST.build_reference(
                 [first, first], "0e91c7c4b121d80b929d595ea711d3dd0833ee67",
-                "a" * 64, {})
+                "a" * 64, self.metadata())
 
     def test_reference_rejects_finding_field_tampering(self):
         reference, _ = self.make_chain()
@@ -235,6 +323,10 @@ class G0ManifestTests(unittest.TestCase):
 
     def test_generator_records_versioned_source_root_normalization_profile(self):
         generator = load_module("generate_g0_reference_profile", GENERATOR_PATH)
+        first = self.make_git_root(
+            "generator-first", "https://github.com/example/first.git")
+        second = self.make_git_root(
+            "generator-second", "git@github.com:example/second.git")
         with mock.patch.object(
                 generator, "verify_boundary_tags"), mock.patch.object(
                     generator.AUDIT, "audit_bundle", return_value={
@@ -249,16 +341,22 @@ class G0ManifestTests(unittest.TestCase):
                 "--app", str(self.root / "Protected.app"),
                 "--reference", str(self.root / "reference.json"),
                 "--ratchet", str(self.root / "ratchet.json"),
-                "--source-root", "/source/one",
-                "--source-root", "/source/two",
+                "--source-root", str(first),
+                "--source-root", str(second),
             ])
 
         self.assertEqual(result, 0)
         reference = write_pair.call_args.args[1]
+        descriptors = [
+            {"repository": "github.com/example/first", "subpath": "."},
+            {"repository": "github.com/example/second", "subpath": "."},
+        ]
         self.assertEqual(reference["metadata"]["normalization_profile"], {
             "schema": "scienceearth-g0-source-root-normalization",
-            "version": 1,
+            "version": 2,
             "source_root_count": 2,
+            "source_roots": descriptors,
+            "source_roots_sha256": MANIFEST.manifest_sha256(descriptors),
         })
 
     def test_generator_normalizes_unconfigured_home_subjects_across_usernames(self):
@@ -291,7 +389,7 @@ class G0ManifestTests(unittest.TestCase):
         }
         filtered = generator.non_science_findings(result)
         reference = MANIFEST.build_reference(
-            filtered, MANIFEST.BOUNDARY_COMMIT, "a" * 64, {})
+            filtered, MANIFEST.BOUNDARY_COMMIT, "a" * 64, self.metadata())
         ratchet = MANIFEST.build_ratchet(reference, "v0.2.0")
         reference_path = self.root / "reference.json"
         ratchet_path = self.root / "ratchet.json"

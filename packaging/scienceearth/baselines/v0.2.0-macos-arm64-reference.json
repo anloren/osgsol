@@ -8718,7 +8718,18 @@
     "normalization_profile": {
       "schema": "scienceearth-g0-source-root-normalization",
       "source_root_count": 2,
-      "version": 1
+      "source_roots": [
+        {
+          "repository": "github.com/anloren/osgsol",
+          "subpath": "."
+        },
+        {
+          "repository": "github.com/anloren/osgverse",
+          "subpath": "."
+        }
+      ],
+      "source_roots_sha256": "646b5eb80be60524ca6aa8dad55921f2966cc40562b29489483f1184a04c1936",
+      "version": 2
     },
     "release_tag": "v0.2.0"
   },

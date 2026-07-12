@@ -314,6 +314,7 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
         raise ValueError("reference and ratchet manifests must be provided together")
     if reference_manifest is not None:
         MANIFEST.validate_chain(reference_manifest, ratchet_manifest)
+        MANIFEST.validate_normalization_profile(reference_manifest, source_roots)
         if reference_manifest["bundle_fingerprint"] != MANIFEST.bundle_fingerprint(
                 baseline):
             raise ValueError("reference bundle fingerprint does not match baseline")
@@ -658,10 +659,6 @@ def main(argv=None):
         reference = load_json_object(
             arguments.reference_manifest, "reference")
         ratchet = load_json_object(arguments.ratchet_manifest, "ratchet")
-        MANIFEST.validate_chain(reference, ratchet)
-        MANIFEST.validate_normalization_profile(reference, len(source_roots))
-        if reference["bundle_fingerprint"] != MANIFEST.bundle_fingerprint(baseline):
-            raise ValueError("reference bundle fingerprint does not match baseline")
         result = audit_bundle(
             app=app,
             baseline=baseline,

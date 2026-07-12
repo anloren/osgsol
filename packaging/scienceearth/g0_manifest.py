@@ -4,15 +4,21 @@ import copy
 import hashlib
 import json
 import os
+import re
+import subprocess
 from pathlib import Path
+from pathlib import PurePosixPath
+from urllib.parse import urlsplit
 
 
 BOUNDARY_COMMIT = "0e91c7c4b121d80b929d595ea711d3dd0833ee67"
 MANIFEST_SCHEMA_VERSION = 1
 FINDING_SCHEMA_VERSION = 1
 NORMALIZATION_PROFILE_SCHEMA = "scienceearth-g0-source-root-normalization"
-NORMALIZATION_PROFILE_VERSION = 1
+NORMALIZATION_PROFILE_VERSION = 2
 LOWER_HEX_DIGITS = frozenset("0123456789abcdef")
+SCP_REMOTE_PATTERN = re.compile(
+    r"^(?:[^@/:]+@)?(?P<host>[^/:]+):(?P<path>.+)$")
 
 
 def canonical_bytes(value):
@@ -39,24 +45,124 @@ def _validate_source_root_count(value, label):
         raise ValueError(f"{label} must be a positive integer")
 
 
-def build_normalization_profile(source_root_count):
-    _validate_source_root_count(
-        source_root_count, "normalization profile source_root_count")
+def canonical_git_repository(remote):
+    if not isinstance(remote, str) or not remote.strip():
+        raise ValueError("Git remote must be a non-empty string")
+    value = remote.strip()
+    if "://" in value:
+        parsed = urlsplit(value)
+        if parsed.scheme.lower() not in {"git", "http", "https", "ssh"}:
+            raise ValueError("Git remote scheme is not canonicalizable")
+        host = parsed.hostname
+        path = parsed.path
+    else:
+        match = SCP_REMOTE_PATTERN.fullmatch(value)
+        if not match:
+            raise ValueError("Git remote is not a canonical network remote")
+        host = match.group("host")
+        path = match.group("path")
+    if not host or not path or "\\" in path:
+        raise ValueError("Git remote is missing a canonical host or path")
+    parts = []
+    for part in path.split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            raise ValueError("Git remote path cannot contain parent traversal")
+        parts.append(part)
+    if not parts:
+        raise ValueError("Git remote is missing a repository path")
+    if parts[-1].endswith(".git"):
+        parts[-1] = parts[-1][:-4]
+    if not parts[-1]:
+        raise ValueError("Git remote is missing a repository name")
+    return f"{host.lower()}/{'/'.join(parts)}"
+
+
+def _run_git(root, *arguments):
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), *arguments], check=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError(
+            f"source root is not a usable Git worktree: {root}") from error
+
+
+def source_root_descriptor(root):
+    root = Path(root).resolve()
+    if not root.is_dir():
+        raise ValueError(f"source root is not an existing directory: {root}")
+    top_level = Path(_run_git(root, "rev-parse", "--show-toplevel")).resolve()
+    try:
+        relative = root.relative_to(top_level)
+    except ValueError as error:
+        raise ValueError(
+            f"source root is outside its Git worktree: {root}") from error
+    try:
+        remote = _run_git(top_level, "config", "--get", "remote.origin.url")
+        repository = canonical_git_repository(remote)
+    except ValueError as error:
+        raise ValueError(
+            f"source root has no canonical remote.origin.url: {root}") from error
     return {
-        "schema": NORMALIZATION_PROFILE_SCHEMA,
-        "version": NORMALIZATION_PROFILE_VERSION,
-        "source_root_count": source_root_count,
+        "repository": repository,
+        "subpath": relative.as_posix() if relative.parts else ".",
     }
 
 
-def validate_normalization_profile(reference, expected_source_root_count):
-    _validate_source_root_count(
-        expected_source_root_count, "expected source-root count")
+def source_root_descriptors(source_roots):
+    roots = list(source_roots)
+    _validate_source_root_count(len(roots), "normalization profile source_root_count")
+    descriptors = sorted(
+        (source_root_descriptor(root) for root in roots), key=canonical_bytes)
+    encoded = [canonical_bytes(descriptor) for descriptor in descriptors]
+    if len(set(encoded)) != len(encoded):
+        raise ValueError("normalization profile source-root descriptors collide")
+    return descriptors
+
+
+def build_normalization_profile(source_roots):
+    descriptors = source_root_descriptors(source_roots)
+    return {
+        "schema": NORMALIZATION_PROFILE_SCHEMA,
+        "version": NORMALIZATION_PROFILE_VERSION,
+        "source_root_count": len(descriptors),
+        "source_roots": descriptors,
+        "source_roots_sha256": manifest_sha256(descriptors),
+    }
+
+
+def _validate_repository_descriptor(value):
+    if not isinstance(value, str) or "/" not in value or value.startswith("/"):
+        raise ValueError("normalization profile repository is malformed")
+    host, path = value.split("/", 1)
+    if (not host or host != host.lower() or not path or "@" in host or
+            ":" in host or path.endswith(".git")):
+        raise ValueError("normalization profile repository is not canonical")
+    if any(part in {"", ".", ".."} for part in path.split("/")):
+        raise ValueError("normalization profile repository path is malformed")
+
+
+def _validate_subpath(value):
+    if not isinstance(value, str) or not value:
+        raise ValueError("normalization profile source-root subpath is malformed")
+    if value == ".":
+        return
+    path = PurePosixPath(value)
+    if path.is_absolute() or path.as_posix() != value or ".." in path.parts:
+        raise ValueError("normalization profile source-root subpath is not canonical")
+
+
+def validate_normalization_profile(reference, expected_source_roots=None):
     metadata = reference.get("metadata") if isinstance(reference, dict) else None
     profile = metadata.get("normalization_profile") if isinstance(metadata, dict) else None
     if not isinstance(profile, dict):
         raise ValueError("normalization profile is missing or malformed")
-    expected_fields = {"schema", "version", "source_root_count"}
+    expected_fields = {
+        "schema", "version", "source_root_count", "source_roots",
+        "source_roots_sha256",
+    }
     if set(profile) != expected_fields:
         raise ValueError("normalization profile fields are malformed")
     if profile["schema"] != NORMALIZATION_PROFILE_SCHEMA:
@@ -65,9 +171,30 @@ def validate_normalization_profile(reference, expected_source_root_count):
         raise ValueError("normalization profile version does not match")
     _validate_source_root_count(
         profile["source_root_count"], "normalization profile source_root_count")
-    if profile["source_root_count"] != expected_source_root_count:
-        raise ValueError(
-            "normalization profile source-root count does not match audit inputs")
+    descriptors = profile["source_roots"]
+    if not isinstance(descriptors, list):
+        raise ValueError("normalization profile source_roots must be an array")
+    if len(descriptors) != profile["source_root_count"]:
+        raise ValueError("normalization profile source-root count does not match descriptors")
+    for descriptor in descriptors:
+        if not isinstance(descriptor, dict) or set(descriptor) != {"repository", "subpath"}:
+            raise ValueError("normalization profile source-root descriptor is malformed")
+        _validate_repository_descriptor(descriptor["repository"])
+        _validate_subpath(descriptor["subpath"])
+    if descriptors != sorted(descriptors, key=canonical_bytes):
+        raise ValueError("normalization profile source-root descriptors are not sorted")
+    encoded = [canonical_bytes(descriptor) for descriptor in descriptors]
+    if len(set(encoded)) != len(encoded):
+        raise ValueError("normalization profile source-root descriptors collide")
+    _validate_sha256(
+        profile["source_roots_sha256"], "normalization profile source-root hash")
+    if profile["source_roots_sha256"] != manifest_sha256(descriptors):
+        raise ValueError("normalization profile source-root hash does not match descriptors")
+    if expected_source_roots is not None:
+        expected = build_normalization_profile(expected_source_roots)
+        if profile != expected:
+            raise ValueError(
+                "normalization profile source-root set does not match audit inputs")
 
 
 def validate_reference(reference):
@@ -82,6 +209,7 @@ def validate_reference(reference):
     _validate_sha256(reference.get("bundle_fingerprint"), "bundle fingerprint")
     if not isinstance(reference.get("metadata"), dict):
         raise ValueError("reference metadata must be an object")
+    validate_normalization_profile(reference)
 
     findings = reference.get("findings")
     finding_ids = reference.get("finding_ids")

@@ -131,11 +131,8 @@ class ScienceBundleAuditTests(unittest.TestCase):
             MANIFEST.bundle_fingerprint(baseline),
             {
                 "architecture": "test",
-                "normalization_profile": {
-                    "schema": "scienceearth-g0-source-root-normalization",
-                    "version": 1,
-                    "source_root_count": 1,
-                },
+                "normalization_profile": MANIFEST.build_normalization_profile(
+                    [ROOT]),
             },
         )
         return reference, MANIFEST.build_ratchet(reference, "v0.2.0")
@@ -170,6 +167,31 @@ class ScienceBundleAuditTests(unittest.TestCase):
             reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(result["status"], "STOP")
         self.assertEqual(len(result["delta"]["new"]), 1)
+
+    def test_direct_audit_rejects_same_count_different_source_root_set(self):
+        probe = BundleFixture(self.root)
+        reference, ratchet = self.manifest_chain([])
+        other_root = self.root / "other-source"
+        other_root.mkdir()
+        subprocess.run(
+            ["git", "init", "-q", str(other_root)], check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run([
+            "git", "-C", str(other_root), "remote", "add", "origin",
+            "https://github.com/example/other.git",
+        ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        with self.assertRaisesRegex(ValueError, "source-root set"):
+            AUDIT.audit_bundle(
+                app=probe.app,
+                baseline=self.baseline.app,
+                inspector=self.valid_inspector(),
+                source_roots=[other_root],
+                main_relative="Contents/MacOS/main",
+                science_plugin_name="osgdb_science.so",
+                reference_manifest=reference,
+                ratchet_manifest=ratchet,
+            )
 
     def test_science_external_lookup_stops_even_if_reference_contains_same_text(self):
         probe = BundleFixture(self.root)
@@ -568,30 +590,27 @@ class ScienceBundleAuditTests(unittest.TestCase):
             candidate / "Contents" / "PlugIns" / "osgdb_science.so",
             "int science_anchor(void) { return 0; }", bundle=True)
 
-        valid_profile = {
-            "schema": "scienceearth-g0-source-root-normalization",
-            "version": 1,
-            "source_root_count": 1,
-        }
+        reference, ratchet = self.manifest_chain([], baseline)
+        valid_profile = reference["metadata"]["normalization_profile"]
         cases = {
             "missing": None,
             "wrong-schema": dict(valid_profile, schema="other"),
-            "wrong-version": dict(valid_profile, version=2),
+            "wrong-version": dict(valid_profile, version=3),
             "malformed-count": dict(valid_profile, source_root_count="1"),
             "mismatched-count": dict(valid_profile, source_root_count=2),
+            "tampered-hash": dict(valid_profile, source_roots_sha256="0" * 64),
         }
         for label, profile in cases.items():
             with self.subTest(label=label):
-                reference, _ = self.manifest_chain([], baseline)
+                invalid_reference = json.loads(json.dumps(reference))
                 if profile is None:
-                    reference["metadata"].pop("normalization_profile")
+                    invalid_reference["metadata"].pop("normalization_profile")
                 else:
-                    reference["metadata"]["normalization_profile"] = profile
-                ratchet = MANIFEST.build_ratchet(reference, "v0.2.0")
+                    invalid_reference["metadata"]["normalization_profile"] = profile
                 reference_path = self.root / f"normalization-{label}-reference.json"
                 ratchet_path = self.root / f"normalization-{label}-ratchet.json"
                 json_path = self.root / f"normalization-{label}-audit.json"
-                reference_path.write_text(json.dumps(reference))
+                reference_path.write_text(json.dumps(invalid_reference))
                 ratchet_path.write_text(json.dumps(ratchet))
 
                 result = subprocess.run([

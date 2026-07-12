@@ -1,7 +1,7 @@
 {
   "boundary_commit": "0e91c7c4b121d80b929d595ea711d3dd0833ee67",
   "kind": "ratchet",
-  "reference_sha256": "da541f190e0679b3e3b67234b1d100d7d20caa7aa3eccbaa0177040930b83f4d",
+  "reference_sha256": "0c6bb7949ac789f3c24e86b0862570ebd2997e1530d2499d9caf29a1461064d4",
   "releases": [
     {
       "finding_ids": [
