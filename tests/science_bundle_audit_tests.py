@@ -13,10 +13,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT_PATH = ROOT / "packaging" / "audit_macos_bundle.py"
+MANIFEST_PATH = ROOT / "packaging" / "scienceearth" / "g0_manifest.py"
 BUILDER_PATH = ROOT / "packaging" / "build_science_g0_probe.sh"
 SPEC = importlib.util.spec_from_file_location("audit_macos_bundle", AUDIT_PATH)
 AUDIT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(AUDIT)
+MANIFEST_SPEC = importlib.util.spec_from_file_location("g0_manifest", MANIFEST_PATH)
+MANIFEST = importlib.util.module_from_spec(MANIFEST_SPEC)
+MANIFEST_SPEC.loader.exec_module(MANIFEST)
 
 
 class FakeInspector:
@@ -57,7 +61,7 @@ class BundleFixture:
         return path
 
 
-def audit(app, baseline, inspector):
+def audit(app, baseline, inspector, **kwargs):
     return AUDIT.audit_bundle(
         app=app,
         baseline=baseline,
@@ -65,6 +69,7 @@ def audit(app, baseline, inspector):
         source_roots=[ROOT],
         main_relative="Contents/MacOS/main",
         science_plugin_name="osgdb_science.so",
+        **kwargs,
     )
 
 
@@ -115,7 +120,97 @@ class ScienceBundleAuditTests(unittest.TestCase):
                 "main": ["@executable_path/../lib"],
                 "osgdb_science.so": ["@loader_path/.."],
             },
+            symbols={"libbase.dylib": []},
         )
+
+    def manifest_chain(self, findings, baseline=None):
+        baseline = baseline or self.baseline.app
+        reference = MANIFEST.build_reference(
+            findings,
+            MANIFEST.BOUNDARY_COMMIT,
+            MANIFEST.bundle_fingerprint(baseline),
+            {"architecture": "test"},
+        )
+        return reference, MANIFEST.build_ratchet(reference, "v0.2.0")
+
+    def write_manifest_chain(self, baseline, findings=None):
+        reference, ratchet = self.manifest_chain(findings or [], baseline)
+        reference_path = self.root / "reference.json"
+        ratchet_path = self.root / "ratchet.json"
+        reference_path.write_text(json.dumps(reference))
+        ratchet_path.write_text(json.dumps(ratchet))
+        return reference_path, ratchet_path
+
+    def test_baseline_debt_passes_but_new_non_science_identity_stops(self):
+        probe = BundleFixture(self.root)
+        inspector = self.valid_inspector()
+        inspector._symbols["libbase.dylib"] = ["_ZSTD_decompress"]
+        baseline_finding = AUDIT.make_finding(
+            "Contents/lib/libbase.dylib", "static_science_symbol",
+            "_ZSTD_decompress", [])
+        reference, ratchet = self.manifest_chain([baseline_finding])
+        result = audit(
+            probe.app, self.baseline.app, inspector,
+            reference_manifest=reference, ratchet_manifest=ratchet)
+        self.assertEqual(result["schema_version"], 3)
+        self.assertTrue(all(
+            key in result for key in
+            ("manifests", "tier_a", "tier_b", "absolute", "delta")))
+        self.assertEqual(result["delta"]["new"], [])
+        inspector._symbols["libbase.dylib"].append("_ZSTD_compress")
+        result = audit(
+            probe.app, self.baseline.app, inspector,
+            reference_manifest=reference, ratchet_manifest=ratchet)
+        self.assertEqual(result["status"], "STOP")
+        self.assertEqual(len(result["delta"]["new"]), 1)
+
+    def test_science_external_lookup_stops_even_if_reference_contains_same_text(self):
+        probe = BundleFixture(self.root)
+        inspector = self.valid_inspector()
+        inspector._rpaths["osgdb_science.so"] = ["/opt/homebrew/lib"]
+        historical = AUDIT.make_finding(
+            "Contents/lib/libbase.dylib", "forbidden_rpath",
+            "/opt/homebrew/lib", [])
+        reference, ratchet = self.manifest_chain([historical])
+        result = audit(
+            probe.app, self.baseline.app, inspector,
+            reference_manifest=reference, ratchet_manifest=ratchet)
+        self.assertEqual(result["tier_a"]["status"], "STOP")
+
+    def test_removed_debt_is_reported_and_cannot_be_substituted(self):
+        probe = BundleFixture(self.root)
+        old = AUDIT.make_finding(
+            "Contents/lib/libbase.dylib", "static_science_symbol",
+            "_ZSTD_decompress", [])
+        reference, ratchet = self.manifest_chain([old])
+        result = audit(
+            probe.app, self.baseline.app, self.valid_inspector(),
+            reference_manifest=reference, ratchet_manifest=ratchet)
+        self.assertEqual(result["delta"]["removed"], [old])
+
+        inspector = self.valid_inspector()
+        inspector._symbols["main"] = ["_ZSTD_decompress"]
+        result = audit(
+            probe.app, self.baseline.app, inspector,
+            reference_manifest=reference, ratchet_manifest=ratchet)
+        self.assertEqual(result["status"], "STOP")
+        self.assertEqual(result["delta"]["removed"], [old])
+        self.assertEqual(len(result["delta"]["new"]), 1)
+
+    def test_equal_count_replacement_stops_tier_b(self):
+        probe = BundleFixture(self.root)
+        old = AUDIT.make_finding(
+            "Contents/lib/libbase.dylib", "static_science_symbol",
+            "_ZSTD_decompress", [])
+        reference, ratchet = self.manifest_chain([old])
+        inspector = self.valid_inspector()
+        inspector._symbols["libbase.dylib"] = ["_ZSTD_compress"]
+        result = audit(
+            probe.app, self.baseline.app, inspector,
+            reference_manifest=reference, ratchet_manifest=ratchet)
+        self.assertEqual(result["tier_b"]["status"], "STOP")
+        self.assertEqual(len(result["delta"]["new"]), 1)
+        self.assertEqual(result["delta"]["removed"], [old])
 
     def test_finding_identity_is_stable_normalized_and_owner_sensitive(self):
         first = AUDIT.make_finding(
@@ -339,6 +434,96 @@ class ScienceBundleAuditTests(unittest.TestCase):
             ["forbidden_string"],
         )
 
+    def test_cli_missing_manifests_stops_and_writes_json_error_report(self):
+        baseline = self.root / "MissingManifestBaseline.app"
+        candidate = self.root / "MissingManifestCandidate.app"
+        write_app_plist(baseline)
+        compile_macho(
+            baseline / "Contents" / "MacOS" / "main",
+            "int main(void) { return 0; }")
+        shutil.copytree(baseline, candidate)
+        compile_macho(
+            candidate / "Contents" / "PlugIns" / "osgdb_science.so",
+            "int science_anchor(void) { return 0; }", bundle=True)
+        json_path = self.root / "missing-manifest.json"
+        result = subprocess.run([
+            "python3", str(AUDIT_PATH),
+            "--app", str(candidate),
+            "--baseline", str(baseline),
+            "--json", str(json_path),
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        payload = json.loads(json_path.read_text())
+        self.assertEqual(payload["status"], "STOP")
+        self.assertIn("manifest", payload["error"].lower())
+
+    def test_cli_rejects_malformed_schema_parent_and_bundle_fingerprint(self):
+        baseline = self.root / "InvalidManifestBaseline.app"
+        candidate = self.root / "InvalidManifestCandidate.app"
+        write_app_plist(baseline)
+        compile_macho(
+            baseline / "Contents" / "MacOS" / "main",
+            "int main(void) { return 0; }")
+        shutil.copytree(baseline, candidate)
+        compile_macho(
+            candidate / "Contents" / "PlugIns" / "osgdb_science.so",
+            "int science_anchor(void) { return 0; }", bundle=True)
+
+        cases = {}
+        reference, ratchet = self.manifest_chain([], baseline)
+        malformed_reference = self.root / "malformed-reference.json"
+        malformed_reference.write_text("{not json")
+        valid_ratchet = self.root / "valid-ratchet.json"
+        valid_ratchet.write_text(json.dumps(ratchet))
+        reference_path = self.root / "valid-reference.json"
+        reference_path.write_text(json.dumps(reference))
+        cases["malformed"] = (malformed_reference, valid_ratchet)
+
+        schema_reference = dict(reference)
+        schema_reference["schema_version"] = 999
+        schema_path = self.root / "schema-reference.json"
+        schema_path.write_text(json.dumps(schema_reference))
+        cases["schema"] = (schema_path, valid_ratchet)
+
+        schema_ratchet = json.loads(json.dumps(ratchet))
+        schema_ratchet["schema_version"] = 999
+        schema_ratchet_path = self.root / "schema-ratchet.json"
+        schema_ratchet_path.write_text(json.dumps(schema_ratchet))
+        cases["ratchet-schema"] = (reference_path, schema_ratchet_path)
+
+        parent_ratchet = json.loads(json.dumps(ratchet))
+        parent_ratchet["reference_sha256"] = "0" * 64
+        parent_path = self.root / "parent-ratchet.json"
+        parent_path.write_text(json.dumps(parent_ratchet))
+        cases["parent"] = (reference_path, parent_path)
+
+        fingerprint_reference = json.loads(json.dumps(reference))
+        fingerprint_reference["bundle_fingerprint"] = "f" * 64
+        fingerprint_ratchet = MANIFEST.build_ratchet(
+            fingerprint_reference, "v0.2.0")
+        fingerprint_reference_path = self.root / "fingerprint-reference.json"
+        fingerprint_ratchet_path = self.root / "fingerprint-ratchet.json"
+        fingerprint_reference_path.write_text(json.dumps(fingerprint_reference))
+        fingerprint_ratchet_path.write_text(json.dumps(fingerprint_ratchet))
+        cases["fingerprint"] = (
+            fingerprint_reference_path, fingerprint_ratchet_path)
+
+        for label, (reference_file, ratchet_file) in cases.items():
+            with self.subTest(label=label):
+                json_path = self.root / f"invalid-{label}.json"
+                result = subprocess.run([
+                    "python3", str(AUDIT_PATH),
+                    "--app", str(candidate),
+                    "--baseline", str(baseline),
+                    "--reference-manifest", str(reference_file),
+                    "--ratchet-manifest", str(ratchet_file),
+                    "--json", str(json_path),
+                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                payload = json.loads(json_path.read_text())
+                self.assertEqual(payload["status"], "STOP")
+                self.assertIn("error", payload)
+
     def test_cli_stop_writes_json_and_text_reports_for_real_machos(self):
         baseline = self.root / "CliBaseline.app"
         candidate = self.root / "CliCandidate.app"
@@ -354,12 +539,15 @@ class ScienceBundleAuditTests(unittest.TestCase):
             plugin_dir / "osgdb_bad.so",
             "extern void GDALAllRegister(void); "
             "void bad(void) { GDALAllRegister(); }", bundle=True)
+        reference_path, ratchet_path = self.write_manifest_chain(baseline)
         json_path = self.root / "audit.json"
         text_path = self.root / "audit.txt"
         result = subprocess.run([
             "python3", str(AUDIT_PATH),
             "--app", str(candidate),
             "--baseline", str(baseline),
+            "--reference-manifest", str(reference_path),
+            "--ratchet-manifest", str(ratchet_path),
             "--json", str(json_path),
             "--text", str(text_path),
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -367,8 +555,11 @@ class ScienceBundleAuditTests(unittest.TestCase):
         payload = json.loads(json_path.read_text())
         self.assertEqual(payload["status"], "STOP")
         report = text_path.read_text()
-        for section in ("Dependency graph", "Science-only closure",
-                        "Size gates", "Violations"):
+        for section in (
+                "Dependency graph", "Science-only closure", "Size gates",
+                "Isolation manifests", "Tier A science closure",
+                "Tier B non-science delta", "Historical absolute debt",
+                "Removed debt", "New findings", "Violations"):
             self.assertIn(section, report)
 
     def test_real_cli_uses_pass_review_and_stop_exit_codes(self):
@@ -382,6 +573,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         compile_macho(
             candidate / "Contents" / "PlugIns" / "osgdb_science.so",
             "int science_anchor(void) { return 0; }", bundle=True)
+        reference_path, ratchet_path = self.write_manifest_chain(baseline)
 
         def run_cli(label):
             json_path = self.root / f"tier-{label}.json"
@@ -389,6 +581,8 @@ class ScienceBundleAuditTests(unittest.TestCase):
                 "python3", str(AUDIT_PATH),
                 "--app", str(candidate),
                 "--baseline", str(baseline),
+                "--reference-manifest", str(reference_path),
+                "--ratchet-manifest", str(ratchet_path),
                 "--json", str(json_path),
             ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             return result.returncode, json.loads(json_path.read_text())

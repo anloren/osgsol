@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import plistlib
 import re
@@ -19,7 +20,7 @@ FORBIDDEN_PREFIXES = ("/opt/homebrew", "/usr/local")
 SCIENCE_DEPENDENCY_PATTERN = re.compile(
     r"(?:^|[/_.-])(?:lib)?(?:gdal|proj|zstd)(?:$|[/_.-])", re.IGNORECASE)
 SCIENCE_SYMBOL_PATTERN = re.compile(
-    r"(?:^|\s)_?(?:GDAL[A-Z_]|OGR[A-Z_]|OSR[A-Z_]|proj_[a-z]|ZSTD_[A-Z])")
+    r"(?:^|\s)_?(?:GDAL[A-Z_]|OGR[A-Z_]|OSR[A-Z_]|proj_[a-z]|ZSTD_[A-Za-z])")
 SCIENCE_STRING_PATTERN = re.compile(
     r"(?:GDALAllRegister|GDALOpen(?:Ex)?|GDAL_DATA|PROJ_LIB|"
     r"proj_(?:context_create|create_crs_to_crs)|"
@@ -27,6 +28,18 @@ SCIENCE_STRING_PATTERN = re.compile(
 
 
 FINDING_SCHEMA_VERSION = 1
+
+
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+MANIFEST = load_module(
+    "scienceearth_g0_manifest_for_audit",
+    Path(__file__).resolve().parent / "scienceearth" / "g0_manifest.py")
 
 
 def normalize_subject(subject, source_roots):
@@ -67,6 +80,35 @@ def compare_identity_sets(candidate, ceiling):
         "ok": not new_ids,
         "new": [candidate_by_id[item] for item in new_ids],
         "removed": [ceiling_by_id[item] for item in removed_ids],
+    }
+
+
+def _finding_summary(finding):
+    return (f"{finding['owner']} {finding['category']}: "
+            f"{finding['subject']}")
+
+
+def evaluate_isolation(findings, science_nodes, reference, ratchet_ids):
+    science = [item for item in findings if item["owner"] in science_nodes]
+    non_science = [item for item in findings if item["owner"] not in science_nodes]
+    tier_a_categories = {
+        "forbidden_runtime_reference", "forbidden_rpath", "forbidden_string",
+        "unresolved_dependency", "external_dependency",
+        "dynamic_science_dependency", "main_reaches_science_dependency",
+    }
+    tier_a_failures = [
+        item for item in science if item["category"] in tier_a_categories]
+    reference_by_id = {item["identity"]: item for item in reference["findings"]}
+    ceiling = [reference_by_id[item] for item in sorted(ratchet_ids)]
+    delta = compare_identity_sets(non_science, ceiling)
+    return {
+        "tier_a": {
+            "status": "PASS" if not tier_a_failures else "STOP",
+            "violations": tier_a_failures,
+        },
+        "tier_b": {"status": "PASS" if delta["ok"] else "STOP"},
+        "delta": delta,
+        "absolute": {"science": science, "non_science": non_science},
     }
 
 
@@ -257,13 +299,21 @@ def reachable_nodes(graph, start, science_plugin_name=None, source_roots=None):
 def audit_bundle(app, baseline, inspector=None, source_roots=None,
                  main_relative=None,
                  science_plugin_name="osgdb_science.so",
-                 require_science_plugin=True):
+                 require_science_plugin=True,
+                 reference_manifest=None, ratchet_manifest=None):
     app = Path(app).resolve()
     baseline = Path(baseline).resolve()
     inspector = inspector or CommandInspector()
     source_roots = list(source_roots or [])
     if not app.is_dir() or not baseline.is_dir():
         raise ValueError("app and baseline must both be existing directories")
+    if (reference_manifest is None) != (ratchet_manifest is None):
+        raise ValueError("reference and ratchet manifests must be provided together")
+    if reference_manifest is not None:
+        MANIFEST.validate_chain(reference_manifest, ratchet_manifest)
+        if reference_manifest["bundle_fingerprint"] != MANIFEST.bundle_fingerprint(
+                baseline):
+            raise ValueError("reference bundle fingerprint does not match baseline")
     main_relative = main_relative or infer_main_relative(app)
     executable = (app / main_relative).resolve()
     if not executable.is_file():
@@ -412,14 +462,48 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
     unresolved = sorted(set(unresolved))
     findings_by_id = {item["identity"]: item for item in findings}
     findings = [findings_by_id[item] for item in sorted(findings_by_id)]
-    violations = sorted(
-        size_result["violations"] + [item["message"] for item in findings])
-    if violations:
+    if reference_manifest is None:
+        policy = {
+            "tier_a": {"status": "NOT_EVALUATED", "violations": []},
+            "tier_b": {"status": "NOT_EVALUATED"},
+            "delta": {"ok": True, "new": [], "removed": []},
+            "absolute": {"science": [], "non_science": findings},
+        }
+        manifests = {"reference": None, "ratchet": None}
+        policy_violations = [item["message"] for item in findings]
+    else:
+        # Baseline-owned libraries remain Tier B even when the new science plugin
+        # links them. Tier A owns only the plugin's bundle delta closure.
+        policy = evaluate_isolation(
+            findings, set(science_only), reference_manifest,
+            MANIFEST.current_finding_ids(ratchet_manifest))
+        release = ratchet_manifest["releases"][-1]
+        manifests = {
+            "reference": {
+                "source_commit": reference_manifest["source_commit"],
+                "bundle_fingerprint": reference_manifest["bundle_fingerprint"],
+                "finding_ids": list(reference_manifest["finding_ids"]),
+            },
+            "ratchet": {
+                "boundary_commit": ratchet_manifest["boundary_commit"],
+                "reference_sha256": ratchet_manifest["reference_sha256"],
+                "release_tag": release["release_tag"],
+                "finding_ids": list(release["finding_ids"]),
+            },
+        }
+        policy_violations = [
+            item.get("message", _finding_summary(item))
+            for item in policy["tier_a"]["violations"] + policy["delta"]["new"]]
+    violations = sorted(size_result["violations"] + policy_violations)
+    policy_stops = (
+        policy["tier_a"]["status"] == "STOP" or
+        policy["tier_b"]["status"] == "STOP")
+    if violations or policy_stops:
         status = "STOP"
     else:
         status = size_result["status"]
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "ok": status == "PASS",
         "status": status,
         "exit_code": {"PASS": 0, "STOP": 1, "REVIEW_REQUIRED": 2}[status],
@@ -442,11 +526,20 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
         },
         "review_items": size_result["review_items"],
         "findings": findings,
+        "manifests": manifests,
+        "tier_a": policy["tier_a"],
+        "tier_b": policy["tier_b"],
+        "absolute": policy["absolute"],
+        "delta": policy["delta"],
         "violations": violations,
     }
 
 
 def render_text(result):
+    if "error" in result:
+        return (
+            f"ScienceEarth macOS bundle audit: {result['status']}\n"
+            f"Error: {result['error']}\n")
     lines = [
         f"ScienceEarth macOS bundle audit: {result['status']}",
         f"App: {result['app']}",
@@ -480,6 +573,32 @@ def render_text(result):
     lines.extend(f"  {item}" for item in result["review_items"])
     if not result["review_items"]:
         lines.append("  none")
+    lines.extend(["", "Isolation manifests"])
+    for label in ("reference", "ratchet"):
+        value = result["manifests"][label]
+        lines.append(f"  {label}: {'none' if value is None else json.dumps(value, sort_keys=True)}")
+    lines.extend(["", "Tier A science closure"])
+    lines.append(f"  status: {result['tier_a']['status']}")
+    lines.extend(
+        f"  {_finding_summary(item)}" for item in result["tier_a"]["violations"])
+    if not result["tier_a"]["violations"]:
+        lines.append("  none")
+    lines.extend(["", "Tier B non-science delta"])
+    lines.append(f"  status: {result['tier_b']['status']}")
+    lines.extend(["", "Historical absolute debt"])
+    lines.extend(
+        f"  {_finding_summary(item)}" for item in result["absolute"]["non_science"])
+    if not result["absolute"]["non_science"]:
+        lines.append("  none")
+    lines.extend(["", "Removed debt"])
+    lines.extend(
+        f"  {_finding_summary(item)}" for item in result["delta"]["removed"])
+    if not result["delta"]["removed"]:
+        lines.append("  none")
+    lines.extend(["", "New findings"])
+    lines.extend(f"  {_finding_summary(item)}" for item in result["delta"]["new"])
+    if not result["delta"]["new"]:
+        lines.append("  none")
     lines.extend(["", "Violations"])
     lines.extend(f"  {item}" for item in result["violations"])
     if not result["violations"]:
@@ -493,8 +612,34 @@ def parse_arguments(argv=None):
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--json", required=True)
     parser.add_argument("--text")
+    parser.add_argument("--reference-manifest")
+    parser.add_argument("--ratchet-manifest")
     parser.add_argument("--source-root", action="append", default=[])
     return parser.parse_args(argv)
+
+
+def load_json_object(path, label):
+    if not path:
+        raise ValueError(f"missing required {label} manifest")
+    with Path(path).open(encoding="utf-8") as stream:
+        value = json.load(stream)
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} manifest must be an object")
+    return value
+
+
+def error_result(message, reference_path=None, ratchet_path=None):
+    return {
+        "schema_version": 3,
+        "ok": False,
+        "status": "STOP",
+        "exit_code": 1,
+        "error": str(message),
+        "manifests": {
+            "reference": reference_path,
+            "ratchet": ratchet_path,
+        },
+    }
 
 
 def main(argv=None):
@@ -502,15 +647,30 @@ def main(argv=None):
     app = Path(arguments.app).resolve()
     baseline = Path(arguments.baseline).resolve()
     source_roots = arguments.source_root or [Path(__file__).resolve().parents[1]]
-    result = audit_bundle(
-        app=app,
-        baseline=baseline,
-        source_roots=source_roots,
-    )
     json_path = Path(arguments.json)
     text_path = Path(arguments.text) if arguments.text else json_path.with_suffix(".txt")
     json_path.parent.mkdir(parents=True, exist_ok=True)
     text_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        reference = load_json_object(
+            arguments.reference_manifest, "reference")
+        ratchet = load_json_object(arguments.ratchet_manifest, "ratchet")
+        MANIFEST.validate_chain(reference, ratchet)
+        if reference["bundle_fingerprint"] != MANIFEST.bundle_fingerprint(baseline):
+            raise ValueError("reference bundle fingerprint does not match baseline")
+        result = audit_bundle(
+            app=app,
+            baseline=baseline,
+            source_roots=source_roots,
+            reference_manifest=reference,
+            ratchet_manifest=ratchet,
+        )
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        result = error_result(
+            f"manifest validation failed: {error}",
+            arguments.reference_manifest,
+            arguments.ratchet_manifest,
+        )
     json_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     report = render_text(result)
     text_path.write_text(report)
