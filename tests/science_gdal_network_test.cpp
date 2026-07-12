@@ -54,6 +54,8 @@ namespace
     constexpr int LIVE_OVERVIEW_FACTOR = 4;
     constexpr std::uint64_t TRANSFER_BUDGET = 1024 * 1024;
     constexpr std::uint64_t LIVE_TRANSFER_BUDGET = 16 * 1024 * 1024;
+    constexpr double MAX_MEDIAN_MS = 3000.0;
+    constexpr double MAX_P95_MS = 8000.0;
 
     struct LiveCase
     {
@@ -72,9 +74,25 @@ namespace
         std::vector<double> utmBbox;
     };
 
+    struct PhaseTimings
+    {
+        double openMs = 0.0;
+        double georeferenceMs = 0.0;
+        double readMs = 0.0;
+        double closeMs = 0.0;
+        double totalMs = 0.0;
+    };
+
+    struct LatencySummary
+    {
+        double medianMs = 0.0;
+        double p95Ms = 0.0;
+    };
+
     struct LiveMeasurement
     {
         double milliseconds = 0.0;
+        PhaseTimings phases;
         std::uint64_t successfulRangeBytes = 0;
         std::uint64_t declaredTransientBytes = 0;
         std::uint64_t actualHttpBodyBytes = 0;
@@ -1602,6 +1620,7 @@ namespace
         DatasetPtr raw(static_cast<GDALDataset*>(GDALOpenEx(
             vsiUrl.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
             nullptr, nullptr, nullptr)), closeDataset);
+        const auto opened = std::chrono::steady_clock::now();
         require(raw != nullptr, item.name + " COG open failed");
         require(raw->GetRasterXSize() == 8192 && raw->GetRasterYSize() == 8192 &&
                 raw->GetRasterCount() == 64,
@@ -1609,6 +1628,7 @@ namespace
         GeoreferenceProof georeference;
         const PixelWindow window =
             deriveGeoreferencedWindow(raw.get(), item, &georeference);
+        const auto georeferenced = std::chrono::steady_clock::now();
 
         const int bandMap[] = {2, 17, 10};
         const std::string bandNames[] = {"A01", "A16", "A09"};
@@ -1622,11 +1642,28 @@ namespace
         }
         const std::vector<std::int8_t> rgb =
             readNormalizedOverviewRgb(raw.get(), window, bandMap);
+        const auto read = std::chrono::steady_clock::now();
         require(std::any_of(rgb.begin(), rgb.end(),
                             [](std::int8_t value) { return value != 0; }),
                 item.name + " RGB window is empty after HTTP retries");
         raw.reset();
         const auto finished = std::chrono::steady_clock::now();
+
+        PhaseTimings phases;
+        phases.openMs =
+            std::chrono::duration<double, std::milli>(opened - started).count();
+        phases.georeferenceMs =
+            std::chrono::duration<double, std::milli>(georeferenced - opened).count();
+        phases.readMs =
+            std::chrono::duration<double, std::milli>(read - georeferenced).count();
+        phases.closeMs =
+            std::chrono::duration<double, std::milli>(finished - read).count();
+        phases.totalMs =
+            std::chrono::duration<double, std::milli>(finished - started).count();
+        require(std::abs(phases.totalMs -
+                (phases.openMs + phases.georeferenceMs +
+                 phases.readMs + phases.closeMs)) < 0.5,
+                "latency phases do not sum to total");
 
         const std::string statsJson = requireNetworkStatsEvidence();
         const std::string evidenceName = item.name + "-" + std::to_string(iteration);
@@ -1647,6 +1684,7 @@ namespace
                 item.name + " conservative HTTP body bound exceeded the live budget");
         writeParsedProof(evidenceName, proof);
         LiveMeasurement measurement;
+        measurement.phases = phases;
         measurement.successfulRangeBytes = proof.successfulRangeBytes;
         measurement.declaredTransientBytes = proof.declaredTransientBytes;
         measurement.actualHttpBodyBytes = proof.actualHttpBodyBytes;
@@ -1659,8 +1697,7 @@ namespace
         measurement.transientRetryCount = proof.transientRetryCount;
         measurement.transientRetryCodes = proof.transientRetryCodes;
         measurement.responseCodes = proof.responseCodes;
-        measurement.milliseconds =
-            std::chrono::duration<double, std::milli>(finished - started).count();
+        measurement.milliseconds = phases.totalMs;
         return measurement;
     }
 
@@ -1671,6 +1708,28 @@ namespace
         const std::size_t index = static_cast<std::size_t>(
             std::ceil(fraction * static_cast<double>(values.size()))) - 1;
         return values[std::min(index, values.size() - 1)];
+    }
+
+    LatencySummary summarizeLatency(const std::vector<double>& values)
+    {
+        return {percentile(values, 0.5), percentile(values, 0.95)};
+    }
+
+    bool passesLatencyGate(const LatencySummary& summary)
+    {
+        return summary.medianMs <= MAX_MEDIAN_MS && summary.p95Ms <= MAX_P95_MS;
+    }
+
+    void verifyLatencyGateRegression()
+    {
+        const LatencySummary exact = summarizeLatency({1000, 2000, 3000, 7000, 8000});
+        require(exact.medianMs == 3000.0 && exact.p95Ms == 8000.0,
+                "latency percentile boundary changed");
+        require(passesLatencyGate(exact), "exact latency limits must pass");
+        require(!passesLatencyGate(summarizeLatency({1000, 2000, 3000.01, 7000, 8000})),
+                "median above 3 seconds was accepted");
+        require(!passesLatencyGate(summarizeLatency({1000, 2000, 2500, 7000, 8000.01})),
+                "P95 above 8 seconds was accepted");
     }
 
     int runLive(const std::filesystem::path& casesPath, int iterations,
@@ -1687,6 +1746,15 @@ namespace
             if (!caseFilter.empty() && item.name != caseFilter) continue;
             ++casesRun;
             std::vector<double> timings;
+            std::vector<double> openTimings;
+            std::vector<double> georeferenceTimings;
+            std::vector<double> readTimings;
+            std::vector<double> closeTimings;
+            double summedOpenMs = 0.0;
+            double summedGeoreferenceMs = 0.0;
+            double summedReadMs = 0.0;
+            double summedCloseMs = 0.0;
+            double summedTotalMs = 0.0;
             std::uint64_t totalSuccessfulBytes = 0;
             std::uint64_t totalDeclaredTransientBytes = 0;
             std::uint64_t totalActualBodyBytes = 0;
@@ -1699,6 +1767,15 @@ namespace
             {
                 LiveMeasurement measurement = runLiveIteration(item, iteration);
                 timings.push_back(measurement.milliseconds);
+                openTimings.push_back(measurement.phases.openMs);
+                georeferenceTimings.push_back(measurement.phases.georeferenceMs);
+                readTimings.push_back(measurement.phases.readMs);
+                closeTimings.push_back(measurement.phases.closeMs);
+                summedOpenMs += measurement.phases.openMs;
+                summedGeoreferenceMs += measurement.phases.georeferenceMs;
+                summedReadMs += measurement.phases.readMs;
+                summedCloseMs += measurement.phases.closeMs;
+                summedTotalMs += measurement.phases.totalMs;
                 totalSuccessfulBytes += measurement.successfulRangeBytes;
                 totalDeclaredTransientBytes += measurement.declaredTransientBytes;
                 totalActualBodyBytes += measurement.actualHttpBodyBytes;
@@ -1714,6 +1791,11 @@ namespace
                           << " fid=" << item.datasetId << " year=" << item.year
                           << " iteration=" << iteration
                           << " milliseconds=" << measurement.milliseconds
+                          << " open_ms=" << measurement.phases.openMs
+                          << " georeference_ms=" << measurement.phases.georeferenceMs
+                          << " read_ms=" << measurement.phases.readMs
+                          << " close_ms=" << measurement.phases.closeMs
+                          << " total_ms=" << measurement.phases.totalMs
                           << " successful_range_bytes="
                           << measurement.successfulRangeBytes
                           << " actual_http_body_bytes="
@@ -1735,6 +1817,17 @@ namespace
                       << " fid=" << item.datasetId << " year=" << item.year
                       << " median_ms=" << percentile(timings, 0.5)
                       << " p95_ms=" << percentile(timings, 0.95)
+                      << " summed_open_ms=" << summedOpenMs
+                      << " median_open_ms=" << percentile(openTimings, 0.5)
+                      << " summed_georeference_ms=" << summedGeoreferenceMs
+                      << " median_georeference_ms="
+                      << percentile(georeferenceTimings, 0.5)
+                      << " summed_read_ms=" << summedReadMs
+                      << " median_read_ms=" << percentile(readTimings, 0.5)
+                      << " summed_close_ms=" << summedCloseMs
+                      << " median_close_ms=" << percentile(closeTimings, 0.5)
+                      << " summed_total_ms=" << summedTotalMs
+                      << " median_total_ms=" << percentile(timings, 0.5)
                       << " total_successful_range_bytes=" << totalSuccessfulBytes
                       << " total_actual_http_body_bytes=" << totalActualBodyBytes
                       << " total_declared_transient_bytes="
@@ -1757,6 +1850,7 @@ namespace
 
 int runMain(int argc, char** argv)
 {
+    verifyLatencyGateRegression();
     verifyHttpParserRegression();
     registerScienceRuntime();
     verifyGeoreferenceRegression();
