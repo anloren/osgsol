@@ -310,6 +310,35 @@ class ScienceBundleAuditTests(unittest.TestCase):
         encoded = json.dumps(result, sort_keys=True)
         self.assertEqual(json.loads(encoded)["sizes"]["delta_bytes"], 60)
 
+    def test_missing_science_plugin_is_rejected_by_default(self):
+        result = AUDIT.audit_bundle(
+            app=self.baseline.app,
+            baseline=self.baseline.app,
+            inspector=self.valid_inspector(),
+            source_roots=[ROOT],
+            main_relative="Contents/MacOS/main",
+        )
+        self.assertEqual(
+            [item["category"] for item in result["findings"]],
+            ["missing_science_plugin"],
+        )
+
+    def test_baseline_inventory_suppresses_only_missing_science_plugin(self):
+        inspector = self.valid_inspector()
+        inspector._strings["main"] = [str(ROOT / "build" / "sdk_core" / "main.cpp")]
+        result = AUDIT.audit_bundle(
+            app=self.baseline.app,
+            baseline=self.baseline.app,
+            inspector=inspector,
+            source_roots=[ROOT],
+            main_relative="Contents/MacOS/main",
+            require_science_plugin=False,
+        )
+        self.assertEqual(
+            [item["category"] for item in result["findings"]],
+            ["forbidden_string"],
+        )
+
     def test_cli_stop_writes_json_and_text_reports_for_real_machos(self):
         baseline = self.root / "CliBaseline.app"
         candidate = self.root / "CliCandidate.app"

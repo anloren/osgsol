@@ -256,7 +256,8 @@ def reachable_nodes(graph, start, science_plugin_name=None, source_roots=None):
 
 def audit_bundle(app, baseline, inspector=None, source_roots=None,
                  main_relative=None,
-                 science_plugin_name="osgdb_science.so"):
+                 science_plugin_name="osgdb_science.so",
+                 require_science_plugin=True):
     app = Path(app).resolve()
     baseline = Path(baseline).resolve()
     inspector = inspector or CommandInspector()
@@ -299,7 +300,7 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
         relative for relative in metadata
         if Path(relative).name == science_plugin_name]
     science_relative = science_nodes[0] if len(science_nodes) == 1 else None
-    if len(science_nodes) != 1:
+    if len(science_nodes) != 1 and require_science_plugin:
         add_finding(
             science_plugin_name, "missing_science_plugin", len(science_nodes),
             f"expected exactly one {science_plugin_name}, found {len(science_nodes)}")
