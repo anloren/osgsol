@@ -133,6 +133,7 @@ namespace
         std::array<double, 4> verifiedWgs84Bbox = {};
         std::map<int, int> transientRetryCodes;
         std::vector<int> responseCodes;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> successfulByteIntervals;
     };
 
     struct LocalServerEvidence
@@ -536,14 +537,22 @@ namespace
         return evidence;
     }
 
-    std::vector<std::pair<std::string, std::string>> rangeAccessConfig()
+    enum class RangeProfile { Baseline, Optimized };
+
+    std::vector<std::pair<std::string, std::string>> rangeAccessConfig(
+        RangeProfile profile)
     {
         return {
-            {"GDAL_HTTP_MULTIRANGE", "YES"},
+            {"GDAL_HTTP_MULTIRANGE", profile == RangeProfile::Optimized ?
+                "PARALLEL" : "YES"},
+            {"GDAL_HTTP_MULTIPLEX", "YES"},
             {"GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES"},
             {"CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.tiff,.vrt"},
             {"GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR"},
             {"CPL_VSIL_CURL_USE_HEAD", "YES"},
+            {"CPL_VSIL_CURL_CHUNK_SIZE",
+                profile == RangeProfile::Optimized ? "131072" : "16384"},
+            {"CPL_VSIL_CURL_CACHE_SIZE", "16777216"},
             {"GDAL_HTTP_MAX_RETRY", "3"},
             {"GDAL_HTTP_RETRY_DELAY", "0.1"},
             {"GDAL_HTTP_RETRY_CODES", "429,500,502,503,504"},
@@ -554,10 +563,38 @@ namespace
         };
     }
 
-    void verifyRangeAccessConfig()
+    void verifyRangeProfiles()
     {
-        require(std::string(CPLGetConfigOption("GDAL_HTTP_MULTIRANGE", "")) == "YES",
-                "GDAL_HTTP_MULTIRANGE must be YES");
+        ScopedGdalConfig baseline(rangeAccessConfig(RangeProfile::Baseline));
+        require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
+                    "16384", "baseline chunk changed");
+        {
+            ScopedGdalConfig optimized(rangeAccessConfig(RangeProfile::Optimized));
+            require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
+                        "131072", "optimized chunk must be 128 KiB");
+            require(std::string(CPLGetConfigOption("GDAL_HTTP_MULTIRANGE", "")) ==
+                        "PARALLEL", "optimized multirange must be parallel");
+            require(std::string(CPLGetConfigOption("GDAL_HTTP_MULTIPLEX", "")) ==
+                        "YES", "HTTP/2 multiplexing must remain enabled");
+            require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_USE_HEAD", "")) ==
+                        "YES", "optimized profile must retain HEAD");
+        }
+        require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
+                    "16384", "nested profile did not restore baseline chunk");
+        require(std::string(CPLGetConfigOption("GDAL_HTTP_MULTIRANGE", "")) ==
+                    "YES", "nested profile did not restore baseline multirange");
+    }
+
+    void verifyRangeAccessConfig(RangeProfile profile)
+    {
+        require(std::string(CPLGetConfigOption("GDAL_HTTP_MULTIRANGE", "")) ==
+                    (profile == RangeProfile::Optimized ? "PARALLEL" : "YES"),
+                "GDAL_HTTP_MULTIRANGE does not match the selected profile");
+        require(std::string(CPLGetConfigOption("GDAL_HTTP_MULTIPLEX", "")) == "YES" &&
+                std::string(CPLGetConfigOption("CPL_VSIL_CURL_USE_HEAD", "")) == "YES" &&
+                std::string(CPLGetConfigOption("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", "")) ==
+                    ".tif,.tiff,.vrt",
+                "GDAL range transport safeguards changed");
         require(std::string(CPLGetConfigOption("GDAL_HTTP_MAX_RETRY", "")) == "3" &&
                 std::string(CPLGetConfigOption("GDAL_HTTP_RETRY_CODES", "")) ==
                     "429,500,502,503,504",
@@ -598,6 +635,13 @@ namespace
         {
             if (index) stream << ',';
             stream << proof.responseCodes[index];
+        }
+        stream << "],\n  \"successful_byte_intervals\": [";
+        for (std::size_t index = 0; index < proof.successfulByteIntervals.size(); ++index)
+        {
+            if (index) stream << ',';
+            stream << '[' << proof.successfulByteIntervals[index].first << ','
+                   << proof.successfulByteIntervals[index].second << ']';
         }
         stream << ']';
         if (proof.overviewFactor > 0)
@@ -992,8 +1036,11 @@ namespace
                     "ranged GET returned the complete source object");
             proof.successfulRangeBytes += bodyBytes;
             ++proof.successfulGetCount;
+            proof.successfulByteIntervals.emplace_back(start, end);
             ++successfulRanges[range];
         }
+        std::sort(proof.successfulByteIntervals.begin(),
+                  proof.successfulByteIntervals.end());
         require(headResponses == proof.actualHeadCount,
                 "HEAD request/response count mismatch (possible GET 200)");
         require(connectResponses == connectRequests,
@@ -1097,6 +1144,9 @@ namespace
                 proof.actualHttpBodyBytes == 10 &&
                 proof.conservativeBodyUpperBound == 27 && proof.sourceSize == 1000,
                 "proxy/retry/header parser regression fixture failed");
+        require(proof.successfulByteIntervals ==
+                    std::vector<std::pair<std::uint64_t, std::uint64_t>>({{10, 19}}),
+                "HTTP parser did not retain the successful byte interval");
 
         const auto isRejected = [&stats](const DebugCapture& candidate)
         {
@@ -1179,6 +1229,10 @@ namespace
                 multiplexedProof.actualHttpBodyBytes == 20 &&
                 multiplexedProof.conservativeBodyUpperBound == 37,
                 "out-of-order HTTP/2 multiplex retry regression fixture failed");
+        require(multiplexedProof.successfulByteIntervals ==
+                    std::vector<std::pair<std::uint64_t, std::uint64_t>>(
+                        {{10, 19}, {20, 29}}),
+                "successful byte intervals were not sorted");
 
         DebugCapture rangedGet200;
         rangedGet200.messages.assign(capture.messages.begin(), capture.messages.begin() + 7);
@@ -1830,8 +1884,8 @@ namespace
     {
         require(iterations == 1 || iterations == 5,
                 "live evidence accepts one smoke iteration or five measured iterations");
-        ScopedGdalConfig config(rangeAccessConfig());
-        verifyRangeAccessConfig();
+        ScopedGdalConfig config(rangeAccessConfig(RangeProfile::Optimized));
+        verifyRangeAccessConfig(RangeProfile::Optimized);
         const std::vector<LiveCase> cases = loadLiveCases(casesPath);
         int casesRun = 0;
         for (const LiveCase& item : cases)
@@ -1943,6 +1997,9 @@ namespace
 
 int runMain(int argc, char** argv)
 {
+    ScopedGdalConfig defaultConfig(rangeAccessConfig(RangeProfile::Optimized));
+    verifyRangeProfiles();
+    verifyRangeAccessConfig(RangeProfile::Optimized);
     verifyLatencyGateRegression();
     verifyHttpParserRegression();
     registerScienceRuntime();
@@ -2006,8 +2063,9 @@ int runMain(int argc, char** argv)
 
     ServerProcess server = startServer(fixture, ready, log);
     const int port = waitForPort(ready);
-    ScopedGdalConfig config(rangeAccessConfig());
-    verifyRangeAccessConfig();
+    ScopedGdalConfig config(rangeAccessConfig(RangeProfile::Optimized));
+    verifyRangeAccessConfig(RangeProfile::Optimized);
+    VSICurlClearCache();
     VSINetworkStatsReset();
     DebugCapture capture;
     ScopedGdalErrorCapture errorCapture(capture);
@@ -2028,6 +2086,19 @@ int runMain(int argc, char** argv)
     const std::string statsJson = requireNetworkStatsEvidence();
     writeRawTransportEvidence("local", capture, statsJson);
     const HttpProof proof = buildHttpProof(capture, statsJson);
+    require(!proof.successfulByteIntervals.empty() &&
+            proof.successfulByteIntervals.front() ==
+                std::make_pair<std::uint64_t, std::uint64_t>(0, 131071),
+            "optimized first data interval must be exactly bytes 0-131071");
+    for (std::size_t index = 1; index < proof.successfulByteIntervals.size(); ++index)
+    {
+        const auto& interval = proof.successfulByteIntervals[index];
+        require(interval.second > 131071,
+                "later successful interval is wholly inside optimized metadata chunk");
+    }
+    require(proof.successfulByteIntervals.size() ==
+                static_cast<std::size_t>(proof.successfulGetCount),
+            "successful interval evidence does not map one-to-one to HTTP 206 responses");
     server.stop();
     const LocalServerEvidence local = verifyLog(log, sourceSize);
     require(local.getCount == proof.actualGetCount &&
