@@ -2,10 +2,12 @@
 
 Date: 2026-07-12 (CST)
 
-Status: **STOP at the Task 5 measurement gate.** Offline correctness, bounded transfer, retry
-accounting, and the `<= 8 s` P95 target pass. Both live medians exceed the `<= 3 s` target. This
-report does not set the repository-wide decision; it records evidence that Task 6 must not
-interpret as a passing gate.
+Status: **STOP at the Task 5 formal optimized latency gate.** The baseline and optimized profiles
+ran as separate fresh processes. Offline correctness, bounded transfer, retry accounting, both
+`<= 8 s` P95 targets, and the Hong Kong `<= 3 s` median pass. The optimized NVIDIA HQ median is
+`3058.162792 ms`, which exceeds the hard limit by `58.162792 ms`. The plan therefore stopped before
+the full regression, policy-audit, signature, and protected science-off reruns. This is not G0
+readiness and must not be interpreted as permission to start G1.
 
 ## Reference setup
 
@@ -13,10 +15,9 @@ interpret as a passing gate.
 - OS: macOS 26.5.2 (25F84)
 - Compiler: AppleClang 21.0.0.21000101, Release
 - GDAL / PROJ / ZSTD: private static prefix, GDAL 3.13.1 / PROJ 9.8.1 / ZSTD 1.5.7
-- Replacement formal live run: 2026-07-12, immediately before 04:47 CST
-- Network: default route `en1`; macOS did not disclose the SSID. A post-run `networkQuality -c`
-  sample reported a proxied/loopback path, 507,227,520 bit/s download throughput, and 279.24 ms
-  base RTT. It is context only and was not used to normalize the live timings.
+- Formal separate-process A/B run: 2026-07-12, 19:15-19:16 CST
+- Network: public Source Cooperative fixtures through the active system route; timings were not
+  normalized against a separate throughput sample.
 
 ## Offline and TDD evidence
 
@@ -53,49 +54,91 @@ Fresh offline Task 5 CTest result: 3/3 passed. The science-off AEF index, depend
 build-contract regressions pass 3/3. The two pinned raw
 index rows and SHA-256 fingerprints validate without network access.
 
-## Formal live AlphaEarth evidence
+## Formal separate-process A/B AlphaEarth evidence
 
-The optional live test is registered only with `OSGSOL_SCIENCE_NETWORK_TESTS=ON`. Each iteration
-clears the VSICurl cache, opens one pinned COG, validates the 8192x8192x64 signed Int8 source and
-the pinned raw CRS authority/code. It derives all six affine coefficients from the pinned UTM
-bounds, transforms the pinned longitude/latitude from EPSG:4326 with traditional GIS axis order,
-inverts the affine transform to obtain the source pixel, and derives the window from that pixel.
-The densified raster footprint is transformed back to WGS84, clipped to the CRS area of use, and
-compared with the pinned index bbox to `1e-9` degrees. The test then selects the exact 4x source
-overview for A01/A16/A09 and normalizes pixels and masks to top-down order in memory. The offline
-spike owns the VRT flip proof; live timing makes no remote warped-VRT read.
+The optional live test is registered only with `OSGSOL_SCIENCE_NETWORK_TESTS=ON`. The committed
+fixture file SHA-256 is
+`6a67af9a1380250704b9032f8b4933965196ed2a119f07be4cb99dafe032806d`; its pinned source-index
+SHA-256 is `f738e7d274ad582e56e20a3a8b444c6f2a3ece5781f8f9855bb7ca3d9ed2942f` and the
+NVIDIA/Hong Kong raw-record fingerprints are respectively
+`03956d76d3bc0d67c4f61608a1771ffb036a7e3ece6df326a2b52e66d412a0f1` and
+`deded3c50b4a91db0fe3fe97691734c7fa5a802647c1571d28f75515587a59ff`. Fresh fixture validation
+accepted exactly those two raw rows before the A/B run.
 
-The per-iteration conservative body upper-bound budget is 16,777,216 bytes. Every final formal
-response was one metadata HEAD 200, proxy CONNECT 200 where applicable, or a matching single-range
-206. No GET 200, comma range, complete-object response, transient retry, partial response, or
-budget violation occurred.
+Each iteration clears the VSICurl cache, opens one pinned COG, validates the 8192x8192x64 signed
+Int8 source and pinned raw CRS, derives the affine transform and source window, verifies the
+densified WGS84 footprint, selects the exact 4x overview for A01/A16/A09, and validates orientation,
+mask, and signed dequantization. Baseline and optimized were separate executable processes because
+GDAL latches chunk/cache behavior. Both used `GDAL_HTTP_MULTIPLEX=YES`, consecutive-range merging,
+HEAD metadata, a 16,777,216-byte VSICurl cache and per-iteration transfer budget, and the bounded
+retry policy `429,500,502,503,504`, at most three retries. The only profile differences were:
 
-| Case | Iterations (ms) | Median | P95 | Successful / actual / declared / upper bytes each | GET / HEAD | Retries | Source size |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| NVIDIA HQ, fid 9790, 2025 | 4564.72, 4232.69, 4698.79, 3976.85, 3673.84 | 4232.69 ms | 4698.79 ms | 4,912,507 / 4,912,507 / 0 / 4,912,507 | 8 / 1 | 0 | 3,700,007,174 |
-| Hong Kong, fid 181593, 2025 | 4171.96, 3529.54, 3563.42, 3769.26, 3687.69 | 3687.69 ms | 4171.96 ms | 1,212,416 / 1,212,416 / 0 / 1,212,416 | 5 / 1 | 0 | 2,352,783,157 |
+| Profile | `GDAL_HTTP_MULTIRANGE` | `CPL_VSIL_CURL_CHUNK_SIZE` | RGB implementation |
+|---|---|---:|---|
+| Baseline | `YES` | 16,384 | three-band oracle reads |
+| Optimized | `PARALLEL` | 131,072 | one batched A01/A16/A09 read |
 
-NVIDIA transferred 24,562,535 actual body bytes across five iterations; Hong Kong transferred
-6,062,080. Both declared transient totals were zero, so the conservative totals are identical.
-NVIDIA used EPSG:32610, affine `[581920,10,0,4096000,0,10]`, raw pixel
-`(989.08025,4050.08957)`, and top-down window `(x=860,y=4012,size=256)` (raw y=3924). Hong Kong
-used EPSG:32650, affine `[172320,10,0,2457600,0,10]`, raw pixel
-`(3607.66802,1330.67090)`, and top-down window `(x=3476,y=6732,size=256)` (raw y=1204). Fresh raw
-curl/CPL logs, GDAL network-stat JSON, and parsed proofs for all ten iterations are under
-`build/science_g0/science-network-evidence/`.
+The summaries were atomically published with no temporary sibling left behind. Profile-prefixed
+curl/CPL logs, GDAL network statistics, and parsed proof JSON preserve every iteration.
 
-The 5x2 measurements recorded in commit `58f4932` are superseded: those windows were normalized
-from the WGS84 bbox instead of derived through the actual COG CRS and affine transform. Their
-timings are not used here.
+| Summary | SHA-256 | JSON status |
+|---|---|---|
+| `build/science_g0/science-network-evidence/baseline-summary.json` | `17ff3cd876e7995c5257fad1f2da7f27bf0ae7901d46716829f1440d16a321ed` | `FAIL` (not enforced) |
+| `build/science_g0/science-network-evidence/live-summary.json` | `e4eb9ea1a8d5795db6197110ba96f4851c127dbe06b6bfcae5d3e9ea9b466dfe` | `FAIL` (enforced) |
 
-Development runs also exposed intermittent source HTTP 500 responses. The parser neither erases
-nor counts their bodies as successful range bytes; it records retry code/count/body bytes and
-requires bounded recovery. Header-only transient lengths are reported as declared bytes and only
-enter the conservative upper bound. The replacement formal run required zero retries.
+### Latency and phase evidence
 
-Both P95 values pass `<= 8 s`. Both medians fail `<= 3 s`; therefore the Task 5 gate outcome is
-**STOP**. The current COGs are also 2.35-3.70 GB, materially larger than the historical 270 MB
-sample, so later planning must use these measured fixture sizes.
+| Profile / case | Iterations (ms) | Median | P95 | Median open / georef / read / close (ms) | Gate |
+|---|---|---:|---:|---:|---|
+| Baseline NVIDIA HQ | 5064.970583, 4411.434250, 3724.519916, 4127.744666, 4114.368875 | 4127.744666 | 5064.970583 | 1528.219458 / 1.219291 / 2601.443458 / 0.353291 | FAIL median |
+| Baseline Hong Kong | 4037.869125, 3746.480708, 3815.077292, 4474.028458, 3781.300459 | 3815.077292 | 4474.028458 | 1469.435417 / 1.258416 / 2349.340417 / 0.380708 | FAIL median |
+| Optimized NVIDIA HQ | 3213.307791, 3269.105875, 3058.162792, 2993.688625, 2889.297541 | **3058.162792** | 3269.105875 | 1738.541666 / 1.039500 / 1169.100834 / 0.172167 | **FAIL median by 58.162792 ms** |
+| Optimized Hong Kong | 2841.004208, 2660.813916, 2658.137375, 2693.983666, 2530.803292 | 2660.813916 | 2841.004208 | 1840.688458 / 1.286125 / 818.607916 / 0.324833 | PASS |
+
+The optimization reduced NVIDIA median/P95 by `1069.581874/1795.864708 ms` and Hong Kong by
+`1154.263376/1633.024250 ms`. In the remaining optimized latency, `open` is the dominant median
+phase for both cases: 1738.541666 ms for NVIDIA and 1840.688458 ms for Hong Kong.
+
+### Request and byte evidence
+
+All counts below are exact summary totals across five iterations; the parenthesized values are per
+iteration. Successful range bytes equal actual HTTP body bytes in every iteration. Declared
+transient bytes and retries are zero, so the conservative upper bounds equal the successful totals.
+
+| Profile / case | GET / HEAD / stats GET ops | Successful / actual / declared / conservative total bytes | Per-iteration bytes | Source size |
+|---|---:|---:|---:|---:|
+| Baseline NVIDIA HQ | 40 / 5 / 25 (8 / 1 / 5) | 24,562,535 / 24,562,535 / 0 / 24,562,535 | 4,912,507 | 3,700,007,174 |
+| Baseline Hong Kong | 25 / 5 / 25 (5 / 1 / 5) | 6,062,080 / 6,062,080 / 0 / 6,062,080 | 1,212,416 | 2,352,783,157 |
+| Optimized NVIDIA HQ | 35 / 5 / 10 (7 / 1 / 2) | 25,054,055 / 25,054,055 / 0 / 25,054,055 | 5,010,811 | 3,700,007,174 |
+| Optimized Hong Kong | 20 / 5 / 10 (4 / 1 / 2) | 6,320,460 / 6,320,460 / 0 / 6,320,460 | 1,264,092 | 2,352,783,157 |
+
+The exact successful inclusive byte-range sets were stable across all five iterations; only
+parallel completion order varied:
+
+- Baseline NVIDIA HQ: `0-16383`, `65536-81919`, `71982535-72822510`,
+  `73542206-74331519`, `96968877-97740801`, `98430589-99197436`,
+  `117442209-118296807`, `119129892-119986968`.
+- Optimized NVIDIA HQ: `0-131071`, `71982535-72822510`, `73542206-74331519`,
+  `96968877-97740801`, `98430589-99197436`, `117442209-118296807`,
+  `119129892-119986968`.
+- Baseline Hong Kong: `0-16383`, `65536-81919`, `46022656-46415871`,
+  `62193664-62570495`, `75218944-75628543`.
+- Optimized Hong Kong: `0-131071`, `46029923-46405871`, `62196464-62556994`,
+  `75229143-75625682`.
+
+Every actual GET was a successful matching single-range 206. The 200 codes were the metadata HEAD
+and proxy CONNECT where applicable; there was no GET 200, comma range, full-object response,
+partial response, transient retry, georeference/orientation/band/dequantization error, or byte-budget
+violation. NVIDIA used EPSG:32610, affine `[581920,10,0,4096000,0,10]`, raw pixel
+`(989.080249916486,4050.089574773959)`, and raw window `(x=860,y=3924,size=256)`. Hong Kong used
+EPSG:32650, affine `[172320,10,0,2457600,0,10]`, raw pixel
+`(3607.668022183540,1330.670897266608)`, and raw window `(x=3476,y=1204,size=256)`.
+
+The enforced optimized summary is `FAIL` solely because NVIDIA's median exceeds 3000 ms. Both P95
+values pass 8000 ms and Hong Kong passes both thresholds. Per the plan, no cache warming, fixture or
+iteration change, threshold relaxation, rerun, or additional optimization was attempted. The full
+G0 regression, exact two-root policy audit, dependency verifier, signature verification, and
+protected science-off selection were not rerun after this hard stop. `G0_DECISION=STOP`.
 
 ## Test-only probe closure
 
@@ -244,12 +287,12 @@ main-reachable science edge. Tier B passes by exact identity: the candidate non-
 the ratchet ceiling, with no new or removed identity. The 1,086 historical findings remain fully
 visible and are not reclassified as clean.
 
-Fresh profile-v2 verification passed the combined audit/manifest unit suites 57/57 in 2.73
-seconds, the private dependency builder contract, the release boundary/manifest contract, the
-pinned private prefix verifier, and deep strict app signature verification. The protected
-science-off selection passed 15/15 in 9.81 seconds. These isolation passes do not override the
-independent corrected
-median-latency hard gate.
+The last profile-v2 verification before this A/B task passed the combined audit/manifest unit
+suites 57/57 in 2.73 seconds, the private dependency builder contract, the release
+boundary/manifest contract, the pinned private prefix verifier, and deep strict app signature
+verification. The last protected science-off selection passed 15/15 in 9.81 seconds. The formal
+optimized latency failure stopped this task before those gates could be rerun, and the historical
+passes do not override the independent current median-latency hard gate.
 
 G0 remains `STOP`. Delta isolation is no longer a blocker; only uncached first-RGB median latency
 remains failed, and human product sign-off is still pending. G1 has not started.

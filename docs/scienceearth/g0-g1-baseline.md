@@ -111,17 +111,17 @@ Tier A has zero science findings. Tier B has zero new identities and zero remove
 
 | Gate | Acceptance limit | Measured result | Outcome |
 |---|---|---|---|
-| Existing behavior | Science-off targeted suite passes unchanged | Fresh protected selection passed 15/15 in 9.81 s | PASS |
-| Dependency build | Pinned private static prefix verifies | GDAL 3.13.1 / PROJ 9.8.1 / ZSTD 1.5.7 hashes, package metadata, and prefix passed | PASS |
-| Tier A absolute science isolation | No external, source/build, unresolved, or main-reachable science finding | 0 absolute science findings; 0 unresolved dependencies | PASS |
-| Tier B historical delta | Candidate non-science identities are a subset of the ratchet | 1,086 absolute historical identities; 0 new; 0 removed | PASS |
-| Added bundle size | `<= 40 MiB` target | 21,283,735 bytes (20.30 MiB); science closure 21,283,576 bytes | PASS |
-| AlphaEarth correctness and HTTP | Correct fixtures and bounded byte ranges | Prior G0 offline suite 3/3 passed; both formal live transfers stayed bounded | PASS |
-| Uncached first RGB latency | Median `<= 3 s`, P95 `<= 8 s` | NVIDIA 4.23269 s / 4.69879 s; Hong Kong 3.68769 s / 4.17196 s | **FAIL** |
+| Existing behavior | Science-off targeted suite passes unchanged | Not rerun after the formal optimized latency STOP; last protected selection passed 15/15 in 9.81 s | BLOCKED |
+| Dependency build | Pinned private static prefix verifies | Not rerun after STOP; last GDAL 3.13.1 / PROJ 9.8.1 / ZSTD 1.5.7 verification passed | BLOCKED |
+| Tier A absolute science isolation | No external, source/build, unresolved, or main-reachable science finding | Not rerun after STOP; last audit had 0 absolute science findings and 0 unresolved dependencies | BLOCKED |
+| Tier B historical delta | Candidate non-science identities are a subset of the ratchet | Not rerun after STOP; last audit had 1,086 historical identities, 0 new, 0 removed | BLOCKED |
+| Added bundle size | `<= 40 MiB` target | Not rerun after STOP; last candidate added 21,283,735 bytes (20.30 MiB) | BLOCKED |
+| AlphaEarth correctness and HTTP | Correct fixtures and bounded byte ranges | Fresh offline suite 3/3 passed; both A/B profiles preserved exact bounded ranges, byte budgets, and zero retries | PASS |
+| Uncached first RGB latency | Median `<= 3 s`, P95 `<= 8 s` | Optimized NVIDIA 3.058162792 s / 3.269105875 s; Hong Kong 2.660813916 s / 2.841004208 s | **FAIL** |
 
 G0_DECISION=STOP
-REASON=Delta isolation now passes Tier A and Tier B; only the independent corrected uncached AlphaEarth RGB median latency gate remains failed.
-RECORDED_BY=Codex automated Task 5 protected delta-isolation audit
-AUTOMATED_REVIEW=Independent normalization review findings implemented and verified with profile v2
+REASON=The formal separate-process optimized profile preserves correctness and bounded transfers, but the NVIDIA HQ uncached first-RGB median is 3058.162792 ms, exceeding the 3000 ms hard limit by 58.162792 ms.
+RECORDED_BY=Codex automated Task 5 formal separate-process A/B latency run
+AUTOMATED_REVIEW=Optimized hard gate failed; downstream full G0 gates were not rerun and readiness was not asserted
 HUMAN_PRODUCT_SIGN_OFF=PENDING
 RECORDED_DATE=2026-07-12
