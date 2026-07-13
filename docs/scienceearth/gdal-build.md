@@ -302,3 +302,44 @@ and all v3 public/formal evidence roots remain absent.
 G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V3=AUTHORIZED_NOT_RUN
 DESKTOP_PACKAGE=NOT_READY
+
+### V4 offline readiness after bounded coordinator retry
+
+On 2026-07-13, source base
+`4a1c1172e02ce13b5fd6452a97834dbd9f2001b3` was requalified locally without public
+AlphaEarth use, CMake reconfiguration, formal execution, or Desktop packaging. The exact private
+verification command was:
+
+```bash
+SCIENCE_DEPS_ROOT="$PWD/build/science-deps-prefetch" \
+  bash packaging/science_deps/build_science_deps.sh --verify
+```
+
+It exited 0 in 1.264 seconds after rechecking the three pinned archives, independent GDAL
+`#embed` capability, private static prefix, and manifest. The prefix remained 52,356 KiB
+(`du -sh`: 51 MiB), with 404 regular files and 52 symlinks. Its manifest SHA-256 remained
+`a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116`.
+
+The final bounded-retry patch and `GDAL_PREFETCH_PATCH_SHA256` pin both equal
+`5ce830f7853db1c6f53b833741261f55f382c0b8972161999a2d34b99c3ab15f`. The successful-retry
+replay trace and statistics fixture SHA-256 values are respectively
+`124564316b6a1cfc0dd89ada2c0d4d43ca503dfe5e5b122b3a50eff605f5dd46` and
+`ea88aae77d69537b90dbd5e6c7188d37ad31837b3500e614cb0f3500d48d42b6`.
+
+`osgdb_science_g0_probe` was rebuilt against that verified prefix without changing the formal
+profile. Its SHA-256 is
+`1184bb101c5f8a3fb0bbff26b0efaa1987f002306a949fc51c587e20fdb1a218`. Its direct load
+dependencies remain only the macOS system curl, SQLite, C++, and System libraries. The disposable
+probe passed the committed reference/ratchet audit, deep/strict signature verification,
+anchor-only export, immutable size gates, dependency closure, and forbidden-path scan recorded in
+`g0-measurements.md`.
+
+All Global Constraints, old formal summaries, v2 evidence, and 37 frozen v3 artifacts were
+rechecked read-only. The protected Desktop fingerprint and helper digest remained exact, the
+formal CTest still lists `--profile optimized`, and the three v4 roots plus both v4 summary files
+remain absent. This authorizes only a later one-shot v4 public requalification; it does not execute
+or prejudge it, authorize packaging, or start G1.
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V4=AUTHORIZED_NOT_RUN
+DESKTOP_PACKAGE=NOT_READY
