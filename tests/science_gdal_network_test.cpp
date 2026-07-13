@@ -248,6 +248,9 @@ namespace
 
     MetadataPrefetchProof buildMetadataPrefetchProof(
         const DebugCapture& capture, const HttpProof& httpProof);
+    HttpProof buildHttpProof(const DebugCapture& capture,
+                             const std::string& statsJson);
+    std::string requireNetworkStatsEvidence();
 
     void CPL_STDCALL captureGdalMessage(CPLErr errorClass, CPLErrorNum errorNumber,
                                         const char* message);
@@ -775,6 +778,13 @@ namespace
             {"success", true, true, "remove-failure", "2TLS", 2,
                 "detach", true, "path", "", 2, 0},
         };
+        const std::map<std::string, int> transientOnceStatuses = {
+            {"range-429-once", 429},
+            {"range-500-once", 500},
+            {"range-502-once", 502},
+            {"range-503-once", 503},
+            {"range-504-once", 504},
+        };
         const char* selectedMode =
             CPLGetConfigOption("OSGSOL_TEST_PREFETCH_CASE", nullptr);
         int executedCases = 0;
@@ -784,6 +794,8 @@ namespace
                 (prefetchCase.variant[0] ? "-" + std::string(prefetchCase.variant) : "");
             if (selectedMode && std::string(selectedMode) != caseName)
                 continue;
+            const auto transientOnce =
+                transientOnceStatuses.find(prefetchCase.mode);
             ++executedCases;
             const std::filesystem::path ready =
                 root / (std::string("http2-") + caseName + ".ready");
@@ -803,7 +815,7 @@ namespace
                 {"GDAL_HTTP_PROXY", ""},
                 {"GDAL_HTTPS_PROXY", ""},
                 {"GDAL_HTTP_MAX_RETRY", "2"},
-                {"GDAL_HTTP_RETRY_DELAY", "0.01"},
+                {"GDAL_HTTP_RETRY_DELAY", "0.1"},
                 {"OSGSOL_VSICURL_PREFETCH_HEAD_RANGE",
                     std::string(prefetchCase.activation) == "global" ? "YES" : ""},
             });
@@ -841,6 +853,12 @@ namespace
                 }
                 if (std::string(prefetchCase.activation) == "path")
                     VSIClearPathSpecificOptions(vsiUrl.c_str());
+            }
+            std::string coordinatorStatsJson;
+            if (transientOnce != transientOnceStatuses.end() ||
+                std::string(prefetchCase.mode) == "range-503-exhaust")
+            {
+                coordinatorStatsJson = requireNetworkStatsEvidence();
             }
             server.stop();
             const Http2Evidence evidence = verifyHttp2Log(log);
@@ -900,15 +918,6 @@ namespace
                 prefetchCase.requireSharedHttp2)
                 verifyTransport();
 
-            const std::map<std::string, int> transientOnceStatuses = {
-                {"range-429-once", 429},
-                {"range-500-once", 500},
-                {"range-502-once", 502},
-                {"range-503-once", 503},
-                {"range-504-once", 504},
-            };
-            const auto transientOnce =
-                transientOnceStatuses.find(prefetchCase.mode);
             if (transientOnce != transientOnceStatuses.end())
             {
                 require(headCount == 1 && ranges.size() == 2 &&
@@ -930,6 +939,38 @@ namespace
                         caseName +
                             " did not recover through one coordinator retry: " +
                             parallelDebugSummary(capture));
+
+                HttpProof runtimeProof =
+                    buildHttpProof(capture, coordinatorStatsJson);
+                require(runtimeProof.actualHeadCount == 1 &&
+                            runtimeProof.actualGetCount == 2 &&
+                            runtimeProof.successfulGetCount == 1 &&
+                            runtimeProof.statsGetOperationCount == 1 &&
+                            runtimeProof.coordinatorLogicalGetCount == 1 &&
+                            runtimeProof.coordinatorLogicalGetBytes == 131072 &&
+                            runtimeProof.successfulRangeBytes == 131072 &&
+                            runtimeProof.coordinatorTransientRetryCount == 1 &&
+                            runtimeProof.coordinatorTransientRetryBytes == 17 &&
+                            runtimeProof.actualHttpBodyBytes == 131089 &&
+                            runtimeProof.coordinatorTransientRetryCodes ==
+                                std::map<int, int>{{transientOnce->second, 1}},
+                        caseName +
+                            " runtime HTTP/stat proof did not reconcile");
+                runtimeProof.metadataPrefetch =
+                    buildMetadataPrefetchProof(capture, runtimeProof);
+                require(runtimeProof.metadataPrefetch.headRequestCount == 1 &&
+                            runtimeProof.metadataPrefetch.rangeRequestCount == 2 &&
+                            runtimeProof.metadataPrefetch.sharedConnection &&
+                            runtimeProof.metadataPrefetch.requestsOverlapped &&
+                            runtimeProof.metadataPrefetch.cachePublished &&
+                            runtimeProof.metadataPrefetch.coordinatorRetries.size() == 1 &&
+                            runtimeProof.metadataPrefetch.coordinatorRetries.front().code ==
+                                transientOnce->second &&
+                            runtimeProof.metadataPrefetch.coordinatorRetries.front().bytes == 17 &&
+                            runtimeProof.metadataPrefetch.coordinatorRetries.front().attempt == 1 &&
+                            runtimeProof.metadataPrefetch.coordinatorRetries.front().delayMs == 100,
+                        caseName +
+                            " runtime metadata retry proof did not reconcile");
             }
             if (std::string(prefetchCase.mode) == "range-503-exhaust")
             {
@@ -953,6 +994,24 @@ namespace
                             "ParallelHeadRange: published") == 0 && !opened,
                         "range-503-exhaust did not fail closed after two retries: " +
                             parallelDebugSummary(capture));
+                const HttpProof runtimeProof =
+                    buildHttpProof(capture, coordinatorStatsJson);
+                require(runtimeProof.actualHeadCount == 1 &&
+                            runtimeProof.actualGetCount == 3 &&
+                            runtimeProof.successfulGetCount == 0 &&
+                            runtimeProof.statsGetOperationCount == 1 &&
+                            runtimeProof.coordinatorLogicalGetCount == 1 &&
+                            runtimeProof.coordinatorLogicalGetBytes == 17 &&
+                            runtimeProof.coordinatorTransientRetryCount == 2 &&
+                            runtimeProof.coordinatorTransientRetryBytes == 34 &&
+                            runtimeProof.coordinatorTransientRetryCodes ==
+                                std::map<int, int>{{503, 2}} &&
+                            runtimeProof.coordinatorTransientFallbackCount == 1 &&
+                            runtimeProof.coordinatorTransientFallbackBytes == 17 &&
+                            runtimeProof.coordinatorTransientFallbackCodes ==
+                                std::map<int, int>{{503, 1}} &&
+                            runtimeProof.actualHttpBodyBytes == 51,
+                        "range-503-exhaust runtime retry/fallback proof did not reconcile");
             }
             if (std::string(prefetchCase.variant) == "range-404")
             {
@@ -2087,6 +2146,28 @@ namespace
         return true;
     }
 
+    std::pair<long long, long long> expectedCoordinatorRetryDelayEnvelopeMs(
+        int attempt)
+    {
+        // CPLHTTPGetNewRetryDelay applies a native factor in [2.0, 2.5] to
+        // the configured 100 ms initial delay after every failed attempt.
+        static constexpr std::array<std::pair<long long, long long>, 3> delays = {{
+            {100, 100},
+            {200, 250},
+            {400, 625},
+        }};
+        require(attempt >= 1 &&
+                    attempt <= static_cast<int>(delays.size()),
+                "coordinator retry attempt has no configured delay");
+        return delays[static_cast<std::size_t>(attempt - 1)];
+    }
+
+    bool isExpectedCoordinatorRetryDelay(int attempt, long long delayMs)
+    {
+        const auto envelope = expectedCoordinatorRetryDelayEnvelopeMs(attempt);
+        return delayMs >= envelope.first && delayMs <= envelope.second;
+    }
+
     HttpProof buildHttpProof(const DebugCapture& capture, const std::string& statsJson)
     {
         struct Request
@@ -2095,6 +2176,7 @@ namespace
             std::string uri;
             std::string range;
             std::size_t messageIndex = 0;
+            std::chrono::steady_clock::time_point sent;
         };
         struct Response
         {
@@ -2112,6 +2194,7 @@ namespace
         {
             CoordinatorRetryEvidence evidence;
             std::size_t messageIndex = 0;
+            std::chrono::steady_clock::time_point emitted;
         };
         std::vector<Request> requests;
         std::vector<Response> responses;
@@ -2122,6 +2205,8 @@ namespace
         bool responseOpen = false;
         int logicalGetOperations = 0;
         HttpProof proof;
+        const bool hasCompleteTimestamps =
+            capture.messages.size() == capture.timestamps.size();
 
         for (std::size_t messageIndex = 0;
              messageIndex < capture.messages.size(); ++messageIndex)
@@ -2143,6 +2228,8 @@ namespace
                 const auto range = headers.find("range");
                 if (range != headers.end()) request.range = range->second;
                 request.messageIndex = messageIndex;
+                if (hasCompleteTimestamps)
+                    request.sent = capture.timestamps[messageIndex];
                 requests.push_back(request);
             }
             else if (message.rfind(inputPrefix, 0) == 0)
@@ -2214,7 +2301,10 @@ namespace
             if (parseCoordinatorRetryEvidence(message, coordinatorRetry))
             {
                 coordinatorRetries.push_back(
-                    {coordinatorRetry, messageIndex});
+                    {coordinatorRetry, messageIndex,
+                     hasCompleteTimestamps
+                         ? capture.timestamps[messageIndex]
+                         : std::chrono::steady_clock::time_point()});
             }
             else
             {
@@ -2370,6 +2460,8 @@ namespace
         }
         require(coordinatorRetries.size() <= 3,
                 "coordinator Range exceeded the three-retry policy");
+        require(coordinatorRetries.empty() || hasCompleteTimestamps,
+                "coordinator retry proof is missing steady-clock timestamps");
         std::vector<bool> consumedTransientResponses(responses.size(), false);
         std::map<std::string, int> coordinatorRetriesByRange;
         for (std::size_t index = 0; index < coordinatorRetries.size(); ++index)
@@ -2384,8 +2476,15 @@ namespace
                     "coordinator retry attempt must be in 1..3");
             require(retry.attempt == static_cast<int>(index + 1),
                     "coordinator retry attempts are not contiguous");
-            require(retry.delayMs > 0,
-                    "coordinator retry delay must be positive");
+            const auto expectedDelayMs =
+                expectedCoordinatorRetryDelayEnvelopeMs(retry.attempt);
+            require(isExpectedCoordinatorRetryDelay(retry.attempt, retry.delayMs),
+                    "coordinator retry delay is outside the configured native "
+                    "schedule: "
+                    "attempt=" + std::to_string(retry.attempt) +
+                    " actual=" + std::to_string(retry.delayMs) +
+                    " expected=" + std::to_string(expectedDelayMs.first) +
+                    ".." + std::to_string(expectedDelayMs.second));
             require(retry.connectionId >= 0,
                     "coordinator retry connection must be nonnegative");
             require(retry.httpMajor == 2,
@@ -2403,6 +2502,10 @@ namespace
             require(failedRequest.messageIndex < timedRetry.messageIndex &&
                         timedRetry.messageIndex < nextRequest.messageIndex,
                     "coordinator retry event is outside its request chronology");
+            const auto earliestRetryRequest = timedRetry.emitted +
+                std::chrono::milliseconds(retry.delayMs);
+            require(nextRequest.sent >= earliestRetryRequest,
+                    "coordinator retry request preceded its declared delay");
 
             int matchingResponse = -1;
             for (std::size_t responseIndex = 0;
@@ -2482,8 +2585,8 @@ namespace
                 coordinatorRetriesByRange[request.first];
             const int coordinatorFallbackCount =
                 coordinatorFallbacksByRange[request.first];
-            require(successful > 0,
-                    "emitted GET Range had no final HTTP 206 response");
+            require(successful > 0 || coordinatorFallbackCount == 1,
+                    "emitted GET Range had neither HTTP 206 nor terminal fallback");
             require(request.second == successful + retries +
                         coordinatorRetryCount +
                         coordinatorFallbackCount,
@@ -2504,9 +2607,12 @@ namespace
             proof.coordinatorTransientFallbackBytes;
         proof.conservativeBodyUpperBound =
             proof.successfulRangeBytes + proof.declaredTransientBytes;
-        require(proof.actualGetCount > 0 && proof.successfulRangeBytes > 0 &&
-                proof.successfulRangeBytes < proof.sourceSize,
-                "HTTP proof is empty or equals the complete object");
+        require(proof.actualGetCount > 0 && proof.sourceSize > 0 &&
+                    ((proof.successfulRangeBytes > 0 &&
+                      proof.successfulRangeBytes < proof.sourceSize) ||
+                     (proof.successfulRangeBytes == 0 &&
+                      proof.coordinatorTransientFallbackCount == 1)),
+                "HTTP proof is empty, equals the complete object, or lacks a terminal fallback");
 
         picojson::value statsValue;
         const std::string statsError = picojson::parse(statsValue, statsJson);
@@ -2799,7 +2905,9 @@ namespace
             const CoordinatorRetryEvidence& retry =
                 coordinatorRetries[index].evidence;
             require(retry.attempt == static_cast<int>(index + 1) &&
-                        retry.delayMs > 0 && retry.httpMajor == 2 &&
+                        isExpectedCoordinatorRetryDelay(
+                            retry.attempt, retry.delayMs) &&
+                        retry.httpMajor == 2 &&
                         retry.connectionId >= 0 &&
                         retry.range == "bytes=0-131071",
                     "metadata prefetch coordinator retry evidence is invalid");
@@ -2863,13 +2971,14 @@ namespace
             const RequestEvidence& previousRequest = *rangeRequests[index];
             const RequestEvidence& retryRequest = *rangeRequests[index + 1];
             const TimedCoordinatorRetry& retry = coordinatorRetries[index];
-            require(retryRequest.sent > retry.emitted &&
-                        retryRequest.uri == rangeRequest->uri &&
+            const auto earliestRetryRequest = retry.emitted +
+                std::chrono::milliseconds(retry.evidence.delayMs);
+            require(retryRequest.sent >= earliestRetryRequest,
+                    "metadata prefetch retry request preceded its declared delay");
+            require(retryRequest.uri == rangeRequest->uri &&
                         retryRequest.httpVersion == 2 &&
-                        retryRequest.multiplexReuse &&
                         retryRequest.streamId > previousRequest.streamId,
-                    "metadata prefetch retry request did not follow its event "
-                    "on HTTP/2");
+                    "metadata prefetch retry request changed URI or HTTP/2 stream");
             require(retry.evidence.connectionId == headConnectionId &&
                         retry.evidence.connectionId == rangeConnectionId &&
                         retry.evidence.httpMajor == 2,
@@ -3790,6 +3899,11 @@ namespace
             "a zero coordinator retry delay");
         retryEventMutation(
             "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131071 status=500 bytes=17 attempt=1 delay-ms=101 "
+            "range-connection=0 range-http=2",
+            "a nonzero wrong coordinator retry delay");
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
             "range=bytes=0-131071 status=500 bytes=17 attempt=1 delay-ms=100 "
             "range-connection=8 range-http=2",
             "the wrong coordinator retry connection");
@@ -3811,6 +3925,19 @@ namespace
             missingSecondRequest, "CURL_INFO_HEADER_OUT: GET", 1));
         requireRejected(missingSecondRequest,
                         "a retry event without a second exact Range request");
+
+        DebugCapture earlySecondRequest;
+        earlySecondRequest.messages = replay.messages;
+        earlySecondRequest.timestamps = replay.timestamps;
+        const std::size_t retryEventIndex = messageIndex(
+            earlySecondRequest, "ParallelHeadRange: transient-retry");
+        const std::size_t secondRequestIndex = messageIndex(
+            earlySecondRequest, "CURL_INFO_HEADER_OUT: GET", 1);
+        earlySecondRequest.timestamps[secondRequestIndex] =
+            earlySecondRequest.timestamps[retryEventIndex] +
+            std::chrono::milliseconds(99);
+        requireRejected(earlySecondRequest,
+                        "a retry request before its declared delay");
 
         DebugCapture extraHead;
         extraHead.messages = replay.messages;
