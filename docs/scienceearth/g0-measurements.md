@@ -3785,5 +3785,513 @@ printf '%s\n' "$self_test" "$output" 'V5_AUTHORIZATION_FINAL_GATE=PASS'
 <!-- V5_AUTHORIZATION_FINAL_GATE_END -->
 
 G0_DECISION=STOP
-PUBLIC_REQUALIFICATION_V5=AUTHORIZED_NOT_RUN
+PUBLIC_REQUALIFICATION_V5=FAIL
+DESKTOP_PACKAGE=NOT_READY
+
+## Immediate multi-range retry v5 one-shot public decision
+
+The network-disabled preflight ran under a macOS sandbox that denied all network operations. It
+finished at `2026-07-14T02:47:46+0800` on clean, untagged authorization commit
+`a0527b3b72121f423c46206f397bb145f73e72f8`. The committed final authorization gate, all five
+mutation tests, private patch/prefix/archive bindings, protected Desktop tuple, and frozen v4
+control passed. The exact live binary SHA-256 was
+`4e6c4cf9cc4e89523691022ecfc6822df64cdae979f210f85ad838b839d4aa37`; formal CTest still
+listed one five-iteration, latency-enforced `prefetch` command targeting v4. The preflight
+wrapper/transcript hashes are `23926534ec1ab3aadc43f4e2ea647878a3c60b06a8c4674dec9097cc27334142`
+and `12b3447fdb3e498cab0cd4a6a923fae3b6ad2d5b3d64be20a15d14a9e3c199b9`.
+
+Exactly one v5 candidate executable process is recorded by the preserved transcript. It started
+at `2026-07-14T02:48:35+0800`, ended at `2026-07-14T02:48:43+0800`, and exited 1 after
+`ScienceHttpRanges failure: HEAD request/response count mismatch (possible GET 200)`. The
+wrapper/transcript hashes are `b472a4f23e9b35140d8ad88abc747a74adb005a6c70b51623a3e4a2c3a8d858a`
+and `0680b84a424b96d7f5c571746e9a3c198d2b2df031f118a7029c48df8b236014`. These hashes and
+the scoped filesystem establish the recorded one-shot ledger; they cannot prove the absolute
+absence of an omitted, externally recorded, overwritten, or otherwise unobserved process.
+
+The failed candidate was frozen without deletion or resampling. Its directory is mode `0500`;
+five directory artifacts and the sibling summary are mode `0400`. The complete six-entry
+manifest hashes to `d9be21f1bb3af331e0ed20e4ec6300311dd82b5575a92d985e40faaaee635eb4`.
+The exact artifact set is:
+
+| Artifact | SHA-256 |
+|---|---|
+| `prefetch-nvidia_hq-1-curl-cpl.log` | `af9be410203296e1ce3c1d07dbf6ab925d01383153cb51795f53c5436cba254b` |
+| `prefetch-nvidia_hq-1-network-stats.json` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` |
+| `prefetch-nvidia_hq-1-proof.json` | `47d6da3ca7cc3cb8caf5050d1e3d98d166214fe1098209b7a1d5f6729f35daf5` |
+| `prefetch-nvidia_hq-2-curl-cpl.log` | `ff843ae5dafde039698e929ebd0cccf5f8eb7d54296d0bd5e491c2730351babd` |
+| `prefetch-nvidia_hq-2-network-stats.json` | `21d10ea1b4eb5ebab1aa98fbc7f84763702dad87d152e0c483b8983565c46c8a` |
+| `candidate-summary.json` | `1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff` |
+
+The independent audit constructs all ten expected case/iteration stems before examining what is
+present. It found two raw logs, two network-stat files, one proof, and only one complete triplet:
+`prefetch-nvidia_hq-1`. That completed triplet reconciles exact request counts, body bytes,
+network statistics, immediate retry fields, successful intervals, CRS/geotransform/WGS84 bounds,
+overlap, HTTP/2 shared connection, publication, and zero coordinator terminal fallback. Its
+recorded wall latency was `3763.36 ms`. The second iteration has one
+`fallback=head-invalid`, two HEAD operations, two immediate retries, and no proof. Eight raw
+logs, eight stat files, and nine proofs are absent. The summary is fail-closed
+`status=ERROR`, `cases=[]`, `profile=prefetch`, with unchanged 3000/8000 ms limits.
+Neither case has five timings, so no candidate median or P95 can be computed. Complete ten-proof,
+zero-fallback, both-case latency, and aggregate reconciliation gates therefore fail independently
+of the process exit.
+
+Candidate PASS was not established, so the formal v5 path remains absent and non-symlink. No
+formal process, CMake promotion, Desktop packaging, G1, tag, push, or release is authorized by
+this decision. Frozen v4 remains 93 files with exact tree SHA-256
+`0a4ca8dc1dd0e1509a912c194e97c14194327890545d1e58e78ec913bc46cda0`, file mode `0400`,
+and root mode `0500`. The protected Desktop tuple remains
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18 /`
+`14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214 / 414 / 355`.
+
+The durable decision auditor below recomputes these substantive conclusions from the frozen
+raw/stats/proof artifacts, complete manifest, transcript and wrapper digests, source/fixture/CMake
+bindings, v4 control, formal absence/listing, and Desktop tuple. Its extracted source SHA-256 is
+`de6fbb21ba8c68b485440867449590b3fe996f9aa1040eacc50f2b7596dca943`.
+
+<!-- V5_DECISION_AUDITOR_BEGIN -->
+```python
+#!/usr/bin/env python3
+
+from collections import Counter
+from pathlib import Path
+import hashlib
+import importlib.util
+import json
+import math
+import os
+import re
+import stat
+import subprocess
+import sys
+
+
+sys.dont_write_bytecode = True
+
+
+ROOT = Path("/Users/USER/osgsol/.worktrees/v0.2-runtime-safety")
+AUTHORIZATION_HEAD = "a0527b3b72121f423c46206f397bb145f73e72f8"
+DECISION_DOCS = {
+    "docs/scienceearth/g0-measurements.md",
+    "docs/scienceearth/g0-g1-baseline.md",
+}
+CANDIDATE = ROOT / "build/science_g0_prefetch/requalification-evidence-v5/candidate"
+SUMMARY = ROOT / "build/science_g0_prefetch/requalification-evidence-v5/candidate-summary.json"
+FORMAL = ROOT / "build/science_g0_prefetch/formal-evidence-v5"
+BINARY = ROOT / "build/science_g0_prefetch/tests/osgVerse_Test_ScienceHttpRanges"
+EXPECTED_BINARY_SHA256 = "4e6c4cf9cc4e89523691022ecfc6822df64cdae979f210f85ad838b839d4aa37"
+EXPECTED_FIXTURE_SHA256 = "6a67af9a1380250704b9032f8b4933965196ed2a119f07be4cb99dafe032806d"
+EXPECTED_CMAKE_SHA256 = "f7c52749e4572076f80e0cc01bbeb2ac08a06f10a3654a659816a016470d5af8"
+
+SUPPORTING_HASHES = {
+    ".superpowers/sdd/task-4-v5-one-shot-preflight.sh":
+        "23926534ec1ab3aadc43f4e2ea647878a3c60b06a8c4674dec9097cc27334142",
+    ".superpowers/sdd/task-4-v5-one-shot-preflight.log":
+        "12b3447fdb3e498cab0cd4a6a923fae3b6ad2d5b3d64be20a15d14a9e3c199b9",
+    ".superpowers/sdd/task-4-v5-one-shot-candidate.sh":
+        "b472a4f23e9b35140d8ad88abc747a74adb005a6c70b51623a3e4a2c3a8d858a",
+    ".superpowers/sdd/task-4-v5-one-shot-candidate.log":
+        "0680b84a424b96d7f5c571746e9a3c198d2b2df031f118a7029c48df8b236014",
+    ".superpowers/sdd/task-4-v5-candidate-manifest.sha256":
+        "d9be21f1bb3af331e0ed20e4ec6300311dd82b5575a92d985e40faaaee635eb4",
+}
+
+EVIDENCE_BINDINGS = {
+    "prefetch-nvidia_hq-1-curl-cpl.log":
+        ("af9be410203296e1ce3c1d07dbf6ab925d01383153cb51795f53c5436cba254b", 37933),
+    "prefetch-nvidia_hq-1-network-stats.json":
+        ("0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe", 1571),
+    "prefetch-nvidia_hq-1-proof.json":
+        ("47d6da3ca7cc3cb8caf5050d1e3d98d166214fe1098209b7a1d5f6729f35daf5", 1963),
+    "prefetch-nvidia_hq-2-curl-cpl.log":
+        ("ff843ae5dafde039698e929ebd0cccf5f8eb7d54296d0bd5e491c2730351babd", 47144),
+    "prefetch-nvidia_hq-2-network-stats.json":
+        ("21d10ea1b4eb5ebab1aa98fbc7f84763702dad87d152e0c483b8983565c46c8a", 1769),
+}
+SUMMARY_BINDING = (
+    "1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff", 126)
+EXPECTED_V4_TREE_SHA256 = "0a4ca8dc1dd0e1509a912c194e97c14194327890545d1e58e78ec913bc46cda0"
+
+
+def require(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def require_file(path, expected_hash, expected_size=None, expected_mode=None):
+    require(path.is_file() and not path.is_symlink(), f"missing regular file: {path}")
+    require(sha256(path) == expected_hash, f"hash mismatch: {path}")
+    if expected_size is not None:
+        require(path.stat().st_size == expected_size, f"size mismatch: {path}")
+    if expected_mode is not None:
+        require(stat.S_IMODE(path.stat().st_mode) == expected_mode,
+                f"mode mismatch: {path}")
+
+
+def run_git(*arguments):
+    result = subprocess.run(["git", *arguments], cwd=ROOT, capture_output=True,
+                            check=False)
+    require(result.returncode == 0,
+            f"git {' '.join(arguments)} failed: {result.stderr.decode(errors='replace')}")
+    return result.stdout.decode().splitlines()
+
+
+def require_decision_scope(precommit):
+    require(not run_git("tag", "--points-at", "HEAD"), "decision HEAD has a tag")
+    require(not run_git("ls-files", "--others", "--exclude-standard"),
+            "unexpected untracked file")
+    if precommit:
+        require(run_git("rev-parse", "HEAD") == [AUTHORIZATION_HEAD],
+                "precommit authorization HEAD mismatch")
+        worktree = set(run_git("diff", "--name-only"))
+        index = set(run_git("diff", "--cached", "--name-only"))
+        require(worktree == DECISION_DOCS and not index,
+                f"precommit decision scope mismatch: {worktree}/{index}")
+    else:
+        require(not run_git("status", "--porcelain=v1", "--untracked-files=no"),
+                "tracked worktree/index is dirty")
+        require(run_git("rev-parse", "HEAD^") == [AUTHORIZATION_HEAD],
+                "decision parent mismatch")
+        committed = set(run_git("diff", "--name-only", f"{AUTHORIZATION_HEAD}..HEAD"))
+        require(committed == DECISION_DOCS,
+                f"committed decision scope mismatch: {committed}")
+        require(not run_git("diff", "--check", f"{AUTHORIZATION_HEAD}..HEAD"),
+                "decision diff-check failed")
+
+    for document in DECISION_DOCS:
+        tail = (ROOT / document).read_text().splitlines()[-3:]
+        require(tail == [
+            "G0_DECISION=STOP",
+            "PUBLIC_REQUALIFICATION_V5=FAIL",
+            "DESKTOP_PACKAGE=NOT_READY",
+        ], f"terminal state mismatch: {document}")
+
+
+def require_supporting_bindings():
+    for relative, digest in SUPPORTING_HASHES.items():
+        require_file(ROOT / relative, digest, expected_mode=0o400)
+    require_file(BINARY, EXPECTED_BINARY_SHA256)
+    require_file(ROOT / "tests/data/science/alphaearth_rgb_cases.json",
+                 EXPECTED_FIXTURE_SHA256)
+    require_file(ROOT / "tests/CMakeLists.txt", EXPECTED_CMAKE_SHA256)
+
+    preflight = (ROOT / ".superpowers/sdd/task-4-v5-one-shot-preflight.log").read_text(
+        errors="replace")
+    required_preflight = [
+        "NETWORK_POLICY=SANDBOX_DENY_NETWORK_AND_LIVE_EXECUTABLE_NOT_INVOKED",
+        f"HEAD={AUTHORIZATION_HEAD};CLEAN=YES;HEAD_TAGS=0",
+        "V5_FUTURE_PATHS=ABSENT_NON_SYMLINK_3/3",
+        "V5_AUTHORIZATION_FINAL_GATE=PASS",
+        f"LIVE_BINARY_SHA256={EXPECTED_BINARY_SHA256};SIZE=29169152",
+        "FORMAL_LISTING=1_TEST/5_ITERATIONS/PREFETCH/LATENCY_ENFORCED/FORMAL_V4",
+        "V4_FROZEN=FILES_93/FILE_MODE_0400/ROOT_MODE_0500/"
+        f"TREE_SHA256_{EXPECTED_V4_TREE_SHA256}",
+        "V5_ONE_SHOT_PREFLIGHT=PASS",
+    ]
+    require(all(item in preflight for item in required_preflight),
+            "preflight transcript semantic binding mismatch")
+
+    wrapper = (ROOT / ".superpowers/sdd/task-4-v5-one-shot-candidate.sh").read_text()
+    required_wrapper = [
+        '"$binary" --live-cases tests/data/science/alphaearth_rgb_cases.json',
+        '--iterations 5 --profile prefetch',
+        '--evidence-dir "$candidate" --summary-json "$summary" --enforce-latency',
+    ]
+    require(all(item in wrapper for item in required_wrapper),
+            "candidate wrapper command mismatch")
+
+    transcript = (ROOT / ".superpowers/sdd/task-4-v5-one-shot-candidate.log").read_text(
+        errors="replace")
+    require(transcript.count("CANDIDATE_PROCESS_STARTED=") == 1 and
+            transcript.count("CANDIDATE_PROCESS_FINISHED=") == 1 and
+            transcript.count("CANDIDATE_PROCESS_EXIT=1") == 1,
+            "candidate transcript process ledger mismatch")
+    require("CANDIDATE_PROCESS_STARTED=2026-07-14T02:48:35+0800" in transcript and
+            "CANDIDATE_PROCESS_FINISHED=2026-07-14T02:48:43+0800" in transcript,
+            "candidate timestamps mismatch")
+    require(transcript.count(
+        "ScienceHttpRanges failure: HEAD request/response count mismatch (possible GET 200)") == 1,
+        "candidate failure reason mismatch")
+    timing = re.findall(
+        r"ScienceGdalLive case=nvidia_hq fid=9790 year=2025 iteration=1 "
+        r"milliseconds=([0-9.]+)", transcript)
+    require(timing == ["3763.36"], f"completed timing mismatch: {timing}")
+    return transcript
+
+
+def require_frozen_complete_manifest():
+    require(CANDIDATE.is_dir() and not CANDIDATE.is_symlink(),
+            "candidate root missing or symlinked")
+    require(stat.S_IMODE(CANDIDATE.stat().st_mode) == 0o500,
+            "candidate root mode mismatch")
+    require_file(SUMMARY, *SUMMARY_BINDING, expected_mode=0o400)
+
+    actual = {path.name for path in CANDIDATE.iterdir()
+              if path.is_file() and not path.is_symlink()}
+    require(actual == set(EVIDENCE_BINDINGS),
+            f"candidate complete file set mismatch: {actual}")
+    for name, (digest, size) in EVIDENCE_BINDINGS.items():
+        require_file(CANDIDATE / name, digest, size, 0o400)
+
+    manifest_path = ROOT / ".superpowers/sdd/task-4-v5-candidate-manifest.sha256"
+    manifest_lines = [line for line in manifest_path.read_text().splitlines()
+                      if line and not line.startswith("#")]
+    require(len(manifest_lines) == 6, "candidate manifest entry count mismatch")
+    parsed = {}
+    for line in manifest_lines:
+        match = re.fullmatch(r"([0-9a-f]{64}) (0400) ([0-9]+) (.+)", line)
+        require(match is not None, f"malformed candidate manifest line: {line}")
+        digest, mode, size, relative = match.groups()
+        parsed[relative] = (digest, int(size), int(mode, 8))
+    expected = {
+        str((CANDIDATE / name).relative_to(ROOT)): (digest, size, 0o400)
+        for name, (digest, size) in EVIDENCE_BINDINGS.items()
+    }
+    expected[str(SUMMARY.relative_to(ROOT))] = (*SUMMARY_BINDING, 0o400)
+    require(parsed == expected, "candidate manifest does not bind complete set")
+
+
+def close(actual, expected, tolerance=1.0e-9):
+    return math.isclose(float(actual), float(expected), rel_tol=0.0,
+                        abs_tol=tolerance)
+
+
+def verify_only_complete_triplet():
+    fixture_document = json.loads(
+        (ROOT / "tests/data/science/alphaearth_rgb_cases.json").read_text())
+    fixtures = {case["name"]: case for case in fixture_document["cases"]}
+    require(set(fixtures) == {"nvidia_hq", "hong_kong"}, "fixture cases mismatch")
+    expected_stems = [f"prefetch-{name}-{iteration}"
+                      for name in ("nvidia_hq", "hong_kong")
+                      for iteration in range(1, 6)]
+    suffixes = {
+        "raw": "-curl-cpl.log",
+        "stats": "-network-stats.json",
+        "proof": "-proof.json",
+    }
+    present = {
+        kind: {stem for stem in expected_stems
+               if (CANDIDATE / f"{stem}{suffix}").is_file()}
+        for kind, suffix in suffixes.items()
+    }
+    require({kind: len(stems) for kind, stems in present.items()} ==
+            {"raw": 2, "stats": 2, "proof": 1},
+            f"partial artifact counts changed: {present}")
+    complete = set.intersection(*present.values())
+    require(complete == {"prefetch-nvidia_hq-1"},
+            f"complete triplet set mismatch: {complete}")
+    missing = {kind: 10 - len(stems) for kind, stems in present.items()}
+    require(missing == {"raw": 8, "stats": 8, "proof": 9},
+            f"expected-ten absence mismatch: {missing}")
+
+    stem = "prefetch-nvidia_hq-1"
+    raw = (CANDIDATE / f"{stem}-curl-cpl.log").read_text(errors="replace")
+    stats_data = json.loads((CANDIDATE / f"{stem}-network-stats.json").read_text())
+    proof = json.loads((CANDIDATE / f"{stem}-proof.json").read_text())
+    fixture = fixtures["nvidia_hq"]
+    meta = proof["metadata_prefetch"]
+
+    require(meta == {
+        "enabled": True,
+        "head_request_count": 1,
+        "range_request_count": 1,
+        "range_start": 0,
+        "range_end": 131071,
+        "head_http_version": 2,
+        "range_http_version": 2,
+        "shared_connection": True,
+        "requests_overlapped": True,
+        "cache_published": True,
+        "coordinator_retries": [],
+        "fallback_reason": "",
+    }, "completed triplet metadata-prefetch proof mismatch")
+    require(proof["coordinator_transient_retry_count"] == 0 and
+            proof["coordinator_transient_retry_bytes"] == 0 and
+            proof["coordinator_transient_retry_codes"] == {} and
+            proof["coordinator_transient_fallback_count"] == 0 and
+            proof["coordinator_transient_fallback_bytes"] == 0 and
+            proof["coordinator_transient_fallback_codes"] == {},
+            "completed triplet coordinator/fallback mismatch")
+    require(proof["actual_http_get_count"] ==
+            proof["successful_http_get_count"] + proof["transient_retry_count"] == 8,
+            "completed triplet GET reconciliation mismatch")
+    require(proof["transient_retry_count"] == 1 and
+            proof["transient_retry_codes"] == {"500": 1} and
+            proof["immediate_transient_retry_count"] == 1 and
+            proof["immediate_transient_retry_bytes"] == 17 and
+            proof["immediate_transient_retry_codes"] == {"500": 1},
+            "completed triplet immediate retry mismatch")
+    immediate = proof["immediate_retries"]
+    require(len(immediate) == 1 and immediate[0]["code"] == 500 and
+            immediate[0]["attempt"] == 1 and immediate[0]["delay_ms"] == 100 and
+            immediate[0]["bytes"] == 17 and immediate[0]["http_major"] == 2,
+            "completed triplet immediate retry fields mismatch")
+    require(proof["actual_http_head_count"] == proof["stats_head_count"] == 1 and
+            proof["stats_get_operation_count"] == stats_data["methods"]["GET"]["count"] == 2 and
+            stats_data["methods"]["HEAD"]["count"] == 1,
+            "completed triplet request/stats mismatch")
+    require(proof["actual_http_body_bytes"] ==
+            stats_data["methods"]["GET"]["downloaded_bytes"] ==
+            proof["successful_range_bytes"] == 5010811,
+            "completed triplet body-byte mismatch")
+    require(proof["declared_transient_bytes"] == 17 and
+            proof["conservative_body_upper_bound_bytes"] == 5010828 and
+            proof["transfer_budget_bytes"] == 16777216,
+            "completed triplet transfer bound mismatch")
+    intervals = proof["successful_byte_intervals"]
+    require(len(intervals) == proof["successful_http_get_count"] == 7 and
+            intervals[0] == [0, 131071] and
+            sum(end - start + 1 for start, end in intervals) == 5010811 and
+            all(0 <= start <= end < proof["source_size"] for start, end in intervals),
+            "completed triplet interval mismatch")
+    require(proof["source_crs"] == fixture["crs"] and
+            proof["selected_overview_factor"] == 4 and
+            proof["raw_window"]["size"] == 256 and
+            close(proof["geotransform"][0], fixture["utm_bbox"][0]) and
+            close(proof["geotransform"][3], fixture["utm_bbox"][1]) and
+            all(close(actual, expected, 1.0e-10)
+                for actual, expected in zip(proof["verified_wgs84_bbox"], fixture["bbox"])),
+            "completed triplet science correctness mismatch")
+    require(raw.count("ParallelHeadRange: started") == 1 and
+            raw.count("ParallelHeadRange: published") == 1 and
+            raw.count("ParallelHeadRange: file-property-published count=1") == 1 and
+            raw.count("VSICURL: ReadMultiRange: immediate-retry ") == 1 and
+            raw.count("ParallelHeadRange: transient-fallback ") == 0 and
+            raw.count("ParallelHeadRange: fallback=") == 0,
+            "completed triplet raw event mismatch")
+    transport = re.findall(
+        r"ParallelHeadRange: transport head-connection=(\d+) range-connection=(\d+) "
+        r"head-http=(\d+) range-http=(\d+)", raw)
+    require(len(transport) == 1 and transport[0][0] == transport[0][1] and
+            transport[0][2:] == ("2", "2"),
+            "completed triplet transport mismatch")
+
+    incomplete_raw = (CANDIDATE / "prefetch-nvidia_hq-2-curl-cpl.log").read_text(
+        errors="replace")
+    incomplete_stats = json.loads(
+        (CANDIDATE / "prefetch-nvidia_hq-2-network-stats.json").read_text())
+    require(incomplete_raw.count("ParallelHeadRange: started") == 1 and
+            incomplete_raw.count("ParallelHeadRange: fallback=head-invalid") == 1 and
+            incomplete_raw.count("VSICURL: ReadMultiRange: immediate-retry ") == 2,
+            "incomplete iteration failure events mismatch")
+    require(incomplete_stats["methods"]["HEAD"]["count"] == 2 and
+            incomplete_stats["methods"]["GET"]["count"] == 3 and
+            incomplete_stats["methods"]["GET"]["downloaded_bytes"] == 5141883,
+            "incomplete iteration stats mismatch")
+    require(not (CANDIDATE / "prefetch-nvidia_hq-2-proof.json").exists(),
+            "failed iteration unexpectedly has a proof")
+
+    summary = json.loads(SUMMARY.read_text())
+    require(summary == {
+        "cases": [],
+        "limits": {"median_ms": 3000, "p95_ms": 8000},
+        "profile": "prefetch",
+        "status": "ERROR",
+    }, "candidate fail-closed summary mismatch")
+    return missing
+
+
+def require_frozen_v4_and_downstream_absence():
+    v4_sets = [
+        ROOT / "build/science_g0_prefetch/requalification-evidence-v4/prefetch",
+        ROOT / "build/science_g0_prefetch/requalification-evidence-v4/prefetch-summary.json",
+        ROOT / "build/science_g0_prefetch/requalification-evidence-v4/control",
+        ROOT / "build/science_g0_prefetch/requalification-evidence-v4/control-summary.json",
+        ROOT / "build/science_g0_prefetch/formal-evidence-v4",
+    ]
+    roots = [v4_sets[0], v4_sets[2], v4_sets[4]]
+    for evidence_root in roots:
+        require(evidence_root.is_dir() and not evidence_root.is_symlink() and
+                stat.S_IMODE(evidence_root.stat().st_mode) == 0o500,
+                f"v4 root drift: {evidence_root}")
+    files = []
+    for item in v4_sets:
+        if item.is_file():
+            files.append(item)
+        else:
+            files.extend(path for path in item.rglob("*") if path.is_file())
+    require(len(files) == 93 and len({path.resolve() for path in files}) == 93,
+            "v4 complete file set mismatch")
+    tree = hashlib.sha256()
+    for path in sorted(files, key=lambda value: value.relative_to(ROOT).as_posix()):
+        require(not path.is_symlink() and stat.S_IMODE(path.stat().st_mode) == 0o400,
+                f"v4 file drift: {path}")
+        relative = path.relative_to(ROOT).as_posix().encode()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest().encode()
+        tree.update(relative + b"\0" + b"0400" + b"\0" + digest + b"\n")
+    require(tree.hexdigest() == EXPECTED_V4_TREE_SHA256, "v4 tree hash mismatch")
+
+    require(not FORMAL.exists() and not FORMAL.is_symlink(),
+            "formal v5 exists despite candidate failure")
+    listing = subprocess.run(
+        ["ctest", "--test-dir", "build/science_g0_prefetch", "-N", "-V",
+         "-R", "^osgVerse_Test_ScienceGdalLive$"],
+        cwd=ROOT, text=True, capture_output=True, check=False,
+        env={key: value for key, value in os.environ.items()
+             if key not in {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                            "http_proxy", "https_proxy", "all_proxy"}})
+    require(listing.returncode == 0 and listing.stdout.count("Test command:") == 1 and
+            "Total Tests: 1" in listing.stdout and
+            '"--iterations" "5"' in listing.stdout and
+            '"--profile" "prefetch"' in listing.stdout and
+            '"--enforce-latency"' in listing.stdout and
+            "/formal-evidence-v4" in listing.stdout and
+            "/formal-evidence-v5" not in listing.stdout,
+            "formal listing changed despite candidate failure")
+
+
+def require_desktop_tuple():
+    sys.path.insert(0, str(ROOT))
+    from tests.science_bundle_audit_tests import ScienceProbeBuilderTests, MANIFEST
+    desktop = Path("/Users/USER/Desktop/osgSol Earth.app")
+    require(desktop.is_dir() and not desktop.is_symlink(), "Desktop app missing")
+    entries = list(desktop.rglob("*"))
+    regular = [path for path in entries if path.is_file() and not path.is_symlink()]
+    actual = (
+        MANIFEST.bundle_fingerprint(desktop),
+        ScienceProbeBuilderTests().tree_digest(desktop),
+        len(entries), len(regular),
+    )
+    require(actual == (
+        "91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18",
+        "14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214",
+        414, 355,
+    ), f"Desktop protected tuple mismatch: {actual}")
+
+
+def main():
+    arguments = sys.argv[1:]
+    require(arguments in ([], ["--precommit"]), "usage: auditor [--precommit]")
+    require_decision_scope(arguments == ["--precommit"])
+    require_supporting_bindings()
+    require_frozen_complete_manifest()
+    missing = verify_only_complete_triplet()
+    require_frozen_v4_and_downstream_absence()
+    require_desktop_tuple()
+    require(not list(ROOT.rglob("__pycache__")), "__pycache__ directory found")
+
+    print(f"AUTHORIZATION_HEAD={AUTHORIZATION_HEAD};DECISION_SCOPE=2_DOCS")
+    print("ONE_SHOT_TRANSCRIPT=START_1/FINISH_1/EXIT_1;ABSOLUTE_NEGATIVE_HISTORY=NOT_PROVABLE")
+    print("CANDIDATE_FROZEN=FILES_6/0400/ROOT_0500/MANIFEST_PASS")
+    print("EXPECTED_10=RAW_2_MISSING_8/STATS_2_MISSING_8/PROOF_1_MISSING_9/COMPLETE_1")
+    print("COMPLETE_TRIPLET=REQUEST_BODY_STATS_SCIENCE_RETRY_PASS;ITERATION1_MS=3763.36")
+    print("INCOMPLETE_ITERATION=HEAD_INVALID_FALLBACK/HEAD_2/IMMEDIATE_RETRY_2/NO_PROOF")
+    print("CANDIDATE_SUMMARY=ERROR/CASES_0;LATENCY_AGGREGATES=UNAVAILABLE")
+    print("FORMAL_V5=ABSENT_NON_SYMLINK;FORMAL_PROCESS=NOT_AUTHORIZED")
+    print(f"V4_FROZEN=FILES_93/TREE_{EXPECTED_V4_TREE_SHA256}")
+    print("DESKTOP=91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18/14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214/414/355")
+    print("G0_DECISION=STOP;PUBLIC_REQUALIFICATION_V5=FAIL;DESKTOP_PACKAGE=NOT_READY")
+    print("V5_DECISION_AUDIT=PASS")
+
+
+if __name__ == "__main__":
+    main()
+```
+<!-- V5_DECISION_AUDITOR_END -->
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V5=FAIL
 DESKTOP_PACKAGE=NOT_READY

@@ -307,5 +307,36 @@ base-bound authorization is superseded by this renewed authorization. No public 
 process, Desktop update, G1, tag, push, or release occurred in this task.
 
 G0_DECISION=STOP
-PUBLIC_REQUALIFICATION_V5=AUTHORIZED_NOT_RUN
+PUBLIC_REQUALIFICATION_V5=FAIL
+DESKTOP_PACKAGE=NOT_READY
+
+## Immediate multi-range retry v5 one-shot decision
+
+The network-denied preflight passed on clean, untagged authorization commit
+`a0527b3b72121f423c46206f397bb145f73e72f8`. It re-bound the exact implementation, offline
+gate, private dependency isolation, frozen v4 control, protected Desktop tuple, live binary hash
+`4e6c4cf9cc4e89523691022ecfc6822df64cdae979f210f85ad838b839d4aa37`, and the still-v4
+formal CTest listing. The preflight transcript hashes to
+`12b3447fdb3e498cab0cd4a6a923fae3b6ad2d5b3d64be20a15d14a9e3c199b9`.
+
+The one authorized v5 candidate process started at `2026-07-14T02:48:35+0800`, exited 1 at
+`2026-07-14T02:48:43+0800`, and recorded `HEAD request/response count mismatch (possible GET
+200)`. Its transcript hashes to
+`0680b84a424b96d7f5c571746e9a3c198d2b2df031f118a7029c48df8b236014`. The frozen candidate
+contains six files: two raw logs, two network-stat files, one proof, and the fail-closed ERROR
+summary. Only NVIDIA iteration 1 has a complete triplet; NVIDIA iteration 2 records a
+`head-invalid` fallback and no proof; the remaining expected artifacts are absent. Therefore the
+ten-proof, zero-fallback, both-case correctness/reconciliation, and median/P95 requirements are
+not satisfied. The exact six-entry manifest hashes to
+`d9be21f1bb3af331e0ed20e4ec6300311dd82b5575a92d985e40faaaee635eb4`; evidence files are
+`0400` and the candidate root is `0500`.
+
+Candidate failure did not authorize formal promotion. Formal v5 remains absent and non-symlink,
+formal CTest remains pointed at frozen v4, the protected Desktop tuple remains unchanged, and no
+G1/package/tag/push/release is authorized. The committed auditor in the measurement record
+recomputes the substantive STOP. Its one-shot ledger cannot prove the absolute absence of an
+omitted, external, overwritten, or otherwise unobserved process.
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V5=FAIL
 DESKTOP_PACKAGE=NOT_READY
