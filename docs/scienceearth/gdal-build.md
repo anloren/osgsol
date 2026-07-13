@@ -27,7 +27,7 @@ compile test recognize AppleClang. The private build additionally verifies and a
 relocatable-resource patch (SHA-256
 `17741b49beeb10a4f6663e0e3197807e7a3daa84610d4c092ddc9c6e81b9fa79`) and the opt-in
 parallel HEAD/Range prototype patch (SHA-256
-`b156d680c99fb554a96252e34d84f717b86e7eb9766c25c79d3a69f42c225e85`). The latter remains
+`a5bd7acd3f31c40e8a631ffd8ca5a37a232812a495037e456077a59442c07567`). The latter remains
 path-specific and off by default; it is not part of the protected Desktop runtime.
 
 ## Rebuild commands

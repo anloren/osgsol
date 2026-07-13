@@ -146,6 +146,25 @@ assert_contains "$prefetch_patch" \
 assert_contains "$prefetch_patch" \
     'ReadMultiRange: handler-disabled=abandoned fail-closed=1' \
     "a later exact-path immediate request must fail closed after abandonment"
+handler_disabled_line=$(grep -n \
+    '^+.*ReadMultiRange: handler-disabled=abandoned fail-closed=1' \
+    "$prefetch_patch" | head -1 | cut -d: -f1 || true)
+handler_return_line=$(awk -v start="$handler_disabled_line" \
+    'NR > start && /^\+        return -1;$/ { print NR; exit }' \
+    "$prefetch_patch")
+readmulti_get_line=$(grep -n \
+    '^+    CURLM \*hMultiHandle = poFS->GetCurlMultiHandleFor(osURL);$' \
+    "$prefetch_patch" | head -1 | cut -d: -f1 || true)
+readmulti_setopt_line=$(grep -n \
+    '^+        curl_multi_setopt(hMultiHandle, CURLMOPT_PIPELINING,$' \
+    "$prefetch_patch" | head -1 | cut -d: -f1 || true)
+[[ -n $handler_disabled_line && -n $handler_return_line &&
+   -n $readmulti_get_line &&
+   -n $readmulti_setopt_line &&
+   $handler_disabled_line -lt $handler_return_line &&
+   $handler_return_line -lt $readmulti_get_line &&
+   $readmulti_get_line -lt $readmulti_setopt_line ]] ||
+    fail "fail-closed latch must precede ReadMultiRange multi acquisition"
 assert_contains "$prefetch_patch" 'file-property-publication-blocked' \
     "prefetch patch must block metadata publication after multi abandonment"
 assert_not_contains "$prefetch_patch" 'PREFETCH_TEST_' \

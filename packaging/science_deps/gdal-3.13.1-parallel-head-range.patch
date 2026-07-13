@@ -333,10 +333,7 @@
 +    return ParseExactContentRange(osHeaders, 0, 131071, 0, nTotal);
 +}
 +
-@@ -808,0 +1138,13 @@
-+    }
-+}
-+
+@@ -811,0 +1141,15 @@
 +static size_t ParallelHeadRangeHeaderWriteFunc(void *pBuffer, size_t nSize,
 +                                                size_t nCount,
 +                                                void *pUserData)
@@ -347,9 +344,11 @@
 +    {
 +        curl_easy_getinfo(psWriter->hCurlHandle, CURLINFO_CONN_ID,
 +                          &psWriter->nConnectionId);
-@@ -809,0 +1152,2 @@
++    }
 +    return VSICurlHandleWriteFunc(pBuffer, nSize, nCount,
 +                                  psWriter->psHeaderData);
++}
++
 @@ -1151,0 +1496,64 @@
 +
 +    const bool bColdFileProperty =
@@ -970,7 +969,10 @@
 @@ -1679 +2600 @@
 -                    curl_easy_cleanup(hCurlHandle);
 +                    CleanupCurlHandle(hCurlHandle);
-@@ -1758,0 +2680,185 @@
+@@ -1755,0 +2677,37 @@
++        }
++    }
++
 +    if (sParallelResult.bAttempted && !sParallelResult.bFallback)
 +    {
 +        sParallelResult.nHeadCode = response_code;
@@ -1005,7 +1007,7 @@
 +        {
 +            sParallelResult.bFallback = true;
 +            sParallelResult.osReason = "transport";
-+        }
+@@ -1756,0 +2715,132 @@
 +        else if (sParallelResult.nHeadRedirectCount != 0 ||
 +                 sParallelResult.nRangeRedirectCount != 0)
 +        {
@@ -1138,8 +1140,7 @@
 +            CPLDebug(poFS->GetDebugKey(), "ParallelHeadRange: fallback=%s",
 +                     sParallelResult.osReason.c_str());
 +        }
-+    }
-+
+@@ -1758,0 +2849,16 @@
 +    if (sParallelResult.bRetryBlocked)
 +    {
 +        sParallelResult.abyRangeBuffer.clear();
@@ -1164,7 +1165,23 @@
 -        poFS->SetCachedFileProp(m_pszURL, oFileProp);
 +    if (response_code != 0 && !sParallelResult.bRetryBlocked)
 +        PublishFileProperty();
-@@ -2738,2 +3844,17 @@
+@@ -2646,15 +3751,0 @@
+-    CURLM *hMultiHandle = poFS->GetCurlMultiHandleFor(osURL);
+-#ifdef CURLPIPE_MULTIPLEX
+-    // Enable HTTP/2 multiplexing (ignored if an older version of HTTP is
+-    // used)
+-    // Not that this does not enable HTTP/1.1 pipeling, which is not
+-    // recommended for example by Google Cloud Storage.
+-    // For HTTP/1.1, parallel connections work better since you can get
+-    // results out of order.
+-    if (CPLTestBool(CPLGetConfigOption("GDAL_HTTP_MULTIPLEX", "YES")))
+-    {
+-        curl_multi_setopt(hMultiHandle, CURLMOPT_PIPELINING,
+-                          CURLPIPE_MULTIPLEX);
+-    }
+-#endif
+-
+@@ -2738,2 +3829,17 @@
 -    // Retry loop: re-issue only failed requests that are retryable
 -    while (true)
 +    const char *pszImmediateOption = VSIGetPathSpecificOption(
@@ -1184,11 +1201,34 @@
 +        asMergedRequests.size() > 1;
 +    if (bImmediateRetryRequested &&
 +        poFS->IsParallelHeadRangeDisabled())
-@@ -2740,0 +3862,41 @@
+@@ -2741,7 +3847,56 @@
+-        const size_t nRequests = asMergedRequests.size();
+-        std::vector<CURL *> aHandles(nRequests, nullptr);
+-        std::vector<WriteFuncStruct> asWriteFuncData(nRequests);
+-        std::vector<WriteFuncStruct> asWriteFuncHeaderData(nRequests);
+-        std::vector<char *> apszRanges(nRequests, nullptr);
+-        std::vector<struct curl_slist *> aHeaders(nRequests, nullptr);
+-        std::vector<CurlErrBuffer> asCurlErrors(nRequests);
 +        CPLDebug(poFS->GetDebugKey(),
 +                 "ReadMultiRange: handler-disabled=abandoned fail-closed=1");
 +        return -1;
 +    }
++
++    CURLM *hMultiHandle = poFS->GetCurlMultiHandleFor(osURL);
++#ifdef CURLPIPE_MULTIPLEX
++    // Enable HTTP/2 multiplexing (ignored if an older version of HTTP is
++    // used)
++    // Not that this does not enable HTTP/1.1 pipeling, which is not
++    // recommended for example by Google Cloud Storage.
++    // For HTTP/1.1, parallel connections work better since you can get
++    // results out of order.
++    if (CPLTestBool(CPLGetConfigOption("GDAL_HTTP_MULTIPLEX", "YES")))
++    {
++        curl_multi_setopt(hMultiHandle, CURLMOPT_PIPELINING,
++                          CURLPIPE_MULTIPLEX);
++    }
++#endif
++
 +    const bool bUseImmediateRetry = bImmediateRetryRequested;
 +
 +    if (bUseImmediateRetry)
@@ -1225,14 +1265,8 @@
 +            {
 +            }
 +        };
-+
-@@ -2742,6 +3904,492 @@
--        std::vector<CURL *> aHandles(nRequests, nullptr);
--        std::vector<WriteFuncStruct> asWriteFuncData(nRequests);
--        std::vector<WriteFuncStruct> asWriteFuncHeaderData(nRequests);
--        std::vector<char *> apszRanges(nRequests, nullptr);
--        std::vector<struct curl_slist *> aHeaders(nRequests, nullptr);
--        std::vector<CurlErrBuffer> asCurlErrors(nRequests);
+@@ -2748,0 +3904,592 @@
++        const size_t nRequests = asMergedRequests.size();
 +        std::vector<std::unique_ptr<ImmediateRequest>> asRequests;
 +        asRequests.reserve(nRequests);
 +        for (size_t iReq = 0; iReq < nRequests; ++iReq)
@@ -1725,7 +1759,7 @@
 +                CPLSleep(static_cast<double>(nTimeoutMs) / 1000.0);
 +            }
 +        }
-@@ -2748,0 +4397,98 @@
++
 +        if (!bLoopError && nRet == 0 && nIncompleteRequests == 0)
 +        {
 +            for (auto &poRequest : asRequests)
@@ -1824,7 +1858,7 @@
 +            std::vector<struct curl_slist *> aHeaders(nRequests, nullptr);
 +            std::vector<CurlErrBuffer> asCurlErrors(nRequests);
 +
-@@ -2926,3 +4672,4 @@
+@@ -2926,3 +4673,4 @@
 -        if (!bRetry || nRet != 0)
 -            break;
 -        CPLSleep(dfMaxDelay);
@@ -1832,10 +1866,9 @@
 +                break;
 +            CPLSleep(dfMaxDelay);
 +        }
-@@ -4123,0 +5871,2 @@
-+/************************************************************************/
+@@ -4124,0 +5873,106 @@
 +/*                    AbandonCurlMultiHandle()                          */
-@@ -4124,0 +5874,104 @@
++/************************************************************************/
 +
 +bool VSICurlFilesystemHandlerBase::AbandonCurlMultiHandle(
 +    CURLM *hFailedMultiHandle)
@@ -1940,20 +1973,20 @@
 +}
 +
 +/************************************************************************/
-@@ -4329,0 +6183,2 @@
+@@ -4329,0 +6184,2 @@
 +    m_oParallelHeadRangeBlockedOperations.clear();
 +
-@@ -4342,0 +6198,2 @@
+@@ -4342,0 +6199,2 @@
 +    for (auto oIter = m_oParallelHeadRangeBlockedOperations.begin();
 +         oIter != m_oParallelHeadRangeBlockedOperations.end();)
-@@ -4343,0 +6201,6 @@
+@@ -4343,0 +6202,6 @@
 +        if (STARTS_WITH(oIter->first.first.c_str(), pszFilenamePrefix))
 +            oIter = m_oParallelHeadRangeBlockedOperations.erase(oIter);
 +        else
 +            ++oIter;
 +    }
 +    {
-@@ -4596,0 +6460,12 @@
+@@ -4596,0 +6461,12 @@
 +
 +    const char *pszOperationOption = VSIGetPathSpecificOption(
 +        pszFilename, "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", nullptr);
