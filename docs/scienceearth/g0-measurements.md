@@ -1756,21 +1756,21 @@ G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V4=AUTHORIZED_NOT_RUN
 DESKTOP_PACKAGE=NOT_READY
 
-## Bounded-retry v4 one-shot public and formal decision
+## Bounded-retry v4 recorded public and formal decision
 
-The immutable pre-network snapshot ran at `2026-07-13T20:28:20+0800` on clean commit `7a0abbc5212f88e191a0b2279c78d8cc84eb4422`. Both `HTTP_PROXY` and `HTTPS_PROXY` were credential-free loopback HTTP endpoint classes. The preserved authorization verifier and combined gate passed, all five v4 output paths were absent, and control/candidate/formal process counts were zero. Its transcript SHA-256 is `2bae6ec0237839cc14cdde0f90c8084b89b46336ecee20ebaf4598b7d6d2f22b`.
+The immutable pre-network snapshot ran at `2026-07-13T20:28:20+0800` on clean commit `7a0abbc5212f88e191a0b2279c78d8cc84eb4422`. Both `HTTP_PROXY` and `HTTPS_PROXY` were credential-free loopback HTTP endpoint classes. The preserved authorization verifier and combined gate passed, and all five v4 output paths were absent at that snapshot. That absence is a pre-public state observation, not a proof of later process counts. Its transcript SHA-256 is `2bae6ec0237839cc14cdde0f90c8084b89b46336ecee20ebaf4598b7d6d2f22b`.
 
 The snapshot re-bound the final patch and private-prefix manifest to `5ce830f7853db1c6f53b833741261f55f382c0b8972161999a2d34b99c3ab15f` and `a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116`. It rechecked all 10 Global Constraints, both rejected trees, all 61 v2 files, all 37 non-writable v3 files, the reference/ratchet/fixture identities, and the protected Desktop fingerprint/helper/count tuple `91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18 / 14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214 / 414 / 355`. The formal CTest still listed one optimized, five-iteration, latency-enforced command. `tests/CMakeLists.txt` then hashed to `b9eea24fabb9fa2fb1d79bf384320e5082bd0155aedfcc18fa2d2ab33411141a`.
 
-### Exactly-once process ledger
+### Recorded execution ledger
 
-| Process | Start / finish | Count | Exit | Complete artifacts | Result |
-|---|---|---:|---:|---:|---|
-| Optimized control | `2026-07-13T20:28:47+0800` / `2026-07-13T20:29:20+0800` | 1 | 0 | 10 raw / 10 stats / 10 proof | Diagnostic `FAIL` on both medians; non-enforced |
-| Prefetch candidate | `2026-07-13T20:30:05+0800` / `2026-07-13T20:30:33+0800` | 1 | 0 | 10 raw / 10 stats / 10 proof | Complete qualification `PASS` |
-| Promoted formal CTest | `2026-07-13T20:37:45+0800` / `2026-07-13T20:38:14+0800` | 1 | 8 | 10 raw / 10 stats / 10 proof | Formal `FAIL`: NVIDIA median `3207.465916 ms` |
+| Recorded stage | Start / finish | Preserved transcript SHA-256 | Exit marker | Frozen artifacts | Result |
+|---|---|---|---:|---:|---|
+| Optimized control | `2026-07-13T20:28:47+0800` / `2026-07-13T20:29:20+0800` | `b2ec9bf61a949a80b6a0fa6c87491ccff79837ab3a201aff445a07423f2f323b` | 0 | 10 raw / 10 stats / 10 proof | Diagnostic `FAIL` on both medians; non-enforced |
+| Prefetch candidate | `2026-07-13T20:30:05+0800` / `2026-07-13T20:30:33+0800` | `81b40fbb098716e59ceada54b7bf33079fa7fcdf8a866aeb1d1828aafe2f434c` | 0 | 10 raw / 10 stats / 10 proof | Complete qualification `PASS` |
+| Promoted formal CTest | `2026-07-13T20:37:45+0800` / `2026-07-13T20:38:14+0800` | `29b280119a919e1ae27a4adb18a24efa20c6254c91bf0d239f0b821edbbf0a00` | 8 | 10 raw / 10 stats / 10 proof | Formal `FAIL`: NVIDIA median `3207.465916 ms` |
 
-No control, candidate, or formal process was restarted, retried, resumed, or rerun. Every one of the 93 summary/raw/stats/proof artifacts is mode `0400`; the control, candidate, requalification-parent, and formal evidence directories are mode `0500`.
+This is a recorded execution ledger, not an independently derived process-count fact. The final scoped filesystem preserves one expected transcript and one 31-entry artifact set per stage, with unique expected timestamps and hashes, and contains no evidence of a rerun. The absolute absence of an omitted or overwritten rerun cannot be proven from final filesystem state. Every one of the 93 summary/raw/stats/proof artifacts is mode `0400`; the control, candidate, requalification-parent, and formal evidence directories are mode `0500`.
 
 ### Control per-iteration measurements
 
@@ -1816,7 +1816,7 @@ Times are `total / open / georeference / read / close` in milliseconds. Retry co
 | `nvidia_hq` | 2896.292875 / 3360.568375 | 41/35 | 5 / 10 | 0 / 6 | 25054055 / 25054055 / 102 / 25054157 | 200,206,500 | PASS |
 | `hong_kong` | 2313.934292 / 3459.563000 | 21/20 | 5 / 10 | 1 / 0 | 6320460 / 6320477 / 17 / 6320477 | 200,206,500 | PASS |
 
-The candidate has ten complete correctness proofs. All ten retain the exact first `bytes=0-131071` interval, HTTP/2 for HEAD and Range, a shared connection, initial overlap, publication, correct CRS/georeference/bounding box, exact request/retry/byte reconciliation, and a conservative transfer below `16 MiB`. NVIDIA used six ordinary HTTP 500 retries and no coordinator retry. Hong Kong iteration 1 used one bounded coordinator retry: HTTP/2 `500`, 17 bytes, attempt 1, 100 ms, followed by the exact Range on the same connection and successful publication. The set has zero terminal fallback. The independent qualification log SHA-256 is `d87ba2bd522c2d316865b7229db7c63665755f3c21f0912faab009dc13db306d`.
+The candidate has ten complete correctness proofs. All ten retain the exact first `bytes=0-131071` interval, HTTP/2 for HEAD and Range, a shared connection, initial overlap, publication, correct CRS/georeference/bounding box, exact request/retry/byte reconciliation, and a conservative transfer below `16 MiB`. NVIDIA used six ordinary HTTP 500 retries and no coordinator retry. Hong Kong iteration 1 used one bounded coordinator retry: HTTP/2 `500`, 17 bytes, attempt 1, 100 ms, followed by the exact Range on the same connection and successful publication. The set has zero terminal fallback. The committed post-hoc audit source below recomputes these gates from the frozen raw/stats/proof triplets and hard-coded bindings.
 
 Candidate PASS authorized the CMake-only promotion. Commit `bede4b09c93d2383e7467000538bae1c7b03dbcd` changes only the formal command to profile `prefetch`, keeps `--iterations 5 --enforce-latency`, and uses `build/science_g0_prefetch/formal-evidence-v4`. The promoted `tests/CMakeLists.txt` SHA-256 is `029bb3044c5dfcf2701cdbedd4cfe4ebe3488b8e23ef6caf9683fb23c10d4a0c`. The non-executing refreshed CTest listing transcript hashes to `5e8873e10bbe939d39451dc93da7e40ba25d39005c7284f979d867e8f78c14b9`.
 
@@ -1842,7 +1842,7 @@ Times are `total / open / georeference / read / close` in milliseconds. Retry co
 | `nvidia_hq` | 3207.465916 / 3376.432625 | 46/35 | 5 / 10 | 0 / 11 | 25054055 / 25054055 / 187 / 25054242 | 200,206,500 | FAIL |
 | `hong_kong` | 2474.804959 / 2829.896208 | 20/20 | 5 / 10 | 0 / 0 | 6320460 / 6320460 / 0 / 6320460 | 200,206 | PASS |
 
-The formal process completed all ten correctness/range/byte proofs with zero coordinator retries and zero terminal fallback. It nevertheless failed the immutable latency gate: NVIDIA median `3207.465916 ms` exceeds `3000 ms` by `207.465916 ms`; NVIDIA P95 `3376.432625 ms` passes `8000 ms`. Hong Kong median/P95 `2474.804959 / 2829.896208 ms` both pass. The formal CTest therefore exited 8, was not rerun, and every downstream gate was skipped. The formal proof validator hashes to `5c480cac8395fba806dafc120007b96dcfb6080726b30d830f721e0b16575287`.
+The formal artifact set contains all ten correctness/range/byte proofs with zero coordinator retries and zero terminal fallback. It nevertheless fails the immutable latency gate: NVIDIA median `3207.465916 ms` exceeds `3000 ms` by `207.465916 ms`; NVIDIA P95 `3376.432625 ms` passes `8000 ms`. Hong Kong median/P95 `2474.804959 / 2829.896208 ms` both pass. The preserved formal transcript carries exit marker 8. The recorded ledger reports no formal rerun and no downstream execution; that negative process history is not independently provable. The committed post-hoc audit below recomputes the formal result from frozen evidence.
 
 ### Control immutable artifact hashes
 
@@ -1910,24 +1910,988 @@ fe285502c8f3a0c8c9a8f21d543112d8435c7f980698062f7c709119bf98cf3c  .superpowers/s
 ### Conditional downstream and final protection
 
 ```text
-optimized_control_process_count=1
-prefetch_candidate_process_count=1
-formal_promotion_commit_count=1
-formal_ctest_process_count=1
-downstream_test_process_count=0
-science_off_core_process_count=0
-private_dependency_verifier_process_count=0
-full_python_suite_process_count=0
-selected_scienceearth_process_count=0
-disposable_probe_process_count=0
-canonical_bundle_audit_process_count=0
-signature_size_export_path_process_count=0
-memory_correctness_range_camera_cache_process_count=0
-clean_launch_process_count=0
-desktop_package_build_or_replace_count=0
+recorded_optimized_control_transcripts=1
+recorded_prefetch_candidate_transcripts=1
+recorded_formal_promotion_commits=1
+recorded_formal_ctest_transcripts=1
+reported_downstream_test_processes=0
+reported_science_off_core_processes=0
+reported_private_dependency_verifier_processes=0
+reported_full_python_suite_processes=0
+reported_selected_scienceearth_processes=0
+reported_disposable_probe_processes=0
+reported_canonical_bundle_audit_processes=0
+reported_signature_size_export_path_processes=0
+reported_memory_correctness_range_camera_cache_processes=0
+reported_clean_launch_processes=0
+reported_desktop_package_build_or_replace_processes=0
 ```
 
-The post-public protected verifier again matched the patch/prefix, every old/v2/v3 hash and complete set, all v3 non-writable modes, reference/ratchet/fixture, and the exact same protected Desktop tuple. It verified all 93 v4 artifacts from the three manifests, the promoted formal command, frozen file/root modes, and exact process counts. Its transcript SHA-256 is `cd7d76d414917d99437f725eb2744446e08f0de67f608d25950acc7660669b6d`. No Desktop, package, G1, frozen prior evidence, tag, remote, retry policy, fixture, iteration count, or threshold was changed.
+The zero downstream values are the reported execution ledger. The final scoped filesystem has no matching v4 downstream artifacts in the recorded namespace and the allowed tracked diff contains no downstream, Desktop, packaging, or G1 change. Those observations do not prove the absolute absence of omitted, overwritten, or externally recorded executions.
+
+The original candidate/formal/final helper scripts were ignored mutable files: their exact promotion-time bytes were not anchored in Git, so their logs are not treated as immutable oracles and cannot retroactively establish helper identity. The committed post-hoc source below instead rechecks the patch/prefix, every old/v2/v3 hard-coded or immutable-Git binding, all 93 v4 manifest entries and modes, candidate/formal substantive proofs, exact aggregates and retry fields, promotion CMake hash/order/input, formal transcript/manifest hashes, the protected Desktop tuple, allowed tracked scope, and final states. This post-hoc audit establishes the substantive STOP decision from immutable artifacts; it does not prove negative process history.
+
+### Committed post-hoc v4 decision audit
+
+The source is delimited by unique extraction markers. Its recorded source SHA-256 and deterministic offline transcript SHA-256 are populated after extraction from the exact staged document and rechecked from clean committed `HEAD`.
+
+```text
+SOURCE_SHA256=a323b698030b2168fca8a533d2ff043269cf1edcd16f99067ccf812b31829591
+TRANSCRIPT_SHA256=b56a4a65c2a4b400f7d7e9870ea76b328531b171ee37edd80084ac5563d1be93
+```
+
+The staged extraction command is:
+
+```sh
+git show :docs/scienceearth/g0-measurements.md |
+awk '/^<!-- V4_POSTHOC_DECISION_AUDIT_BEGIN -->$/{inside=1; next} /^<!-- V4_POSTHOC_DECISION_AUDIT_END -->$/{inside=0} inside && !/^```python$/ && !/^```$/' > "$audit"
+```
+
+The clean-`HEAD` extraction substitutes `git show HEAD:docs/scienceearth/g0-measurements.md`. The offline invocation removes all proxy variables and records the source identity before executing:
+
+```sh
+source_sha=$(shasum -a 256 "$audit" | awk '{print $1}')
+{ printf 'SOURCE_SHA256=%s\n' "$source_sha"; env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy PYTHONDONTWRITEBYTECODE=1 python3 "$audit"; } > .superpowers/sdd/task-3-v4-posthoc-audit.log
+```
+
+The exact deterministic output is:
+
+```text
+SOURCE_SHA256=a323b698030b2168fca8a533d2ff043269cf1edcd16f99067ccf812b31829591
+IMMUTABLE_OLD_V2_V3_PRIVATE_BINDINGS=PASS
+DESKTOP_PROTECTED_TUPLE=91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18/14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214/414/355
+V4_MANIFESTS=3/3;ENTRIES=31/31/31;RAW_STATS_PROOFS=10/10/10_EACH;FILES=0400;ROOTS=0500
+RECORDED_EXECUTION_LEDGER=CONTROL_1_TRANSCRIPT/CANDIDATE_1_TRANSCRIPT/FORMAL_1_TRANSCRIPT;UNIQUE_TIMESTAMPS_AND_HASHES=PASS
+NEGATIVE_PROCESS_HISTORY=NOT_PROVEN
+CANDIDATE=10/10;NVIDIA=2896.292875/3360.568375/PASS;HONG_KONG=2313.934292/3459.563000/PASS
+CANDIDATE_HONG_KONG_RETRY=ITERATION_1/HTTP2_500/17_BYTES/ATTEMPT_1/100_MS;TERMINAL_FALLBACKS=0
+FORMAL=10/10;NVIDIA=3207.465916/3376.432625/FAIL;HONG_KONG=2474.804959/2829.896208/PASS;TERMINAL_FALLBACKS=0
+PROMOTION_CMAKE=029bb3044c5dfcf2701cdbedd4cfe4ebe3488b8e23ef6caf9683fb23c10d4a0c;ORDER_AND_INPUT=PASS
+FORMAL_TRANSCRIPT=29b280119a919e1ae27a4adb18a24efa20c6254c91bf0d239f0b821edbbf0a00;FORMAL_MANIFEST=fe285502c8f3a0c8c9a8f21d543112d8435c7f980698062f7c709119bf98cf3c
+ALLOWED_TRACKED_SCOPE_AND_FINAL_STATES=PASS
+DOWNSTREAM_LEDGER_ZERO=REPORTED;SCOPED_ARTIFACTS_OBSERVED=0;NEGATIVE_EXECUTION_HISTORY=NOT_PROVEN
+DECISION=STOP/FAIL/NOT_READY
+POSTHOC_V4_DECISION_AUDIT=PASS
+```
+
+The output is preserved at `.superpowers/sdd/task-3-v4-posthoc-audit.log`; its SHA-256 is the recorded transcript hash above. The staged extraction and the clean-`HEAD` extraction must be byte-identical to the committed source hash.
+
+<!-- V4_POSTHOC_DECISION_AUDIT_BEGIN -->
+```python
+#!/usr/bin/env python3
+
+from collections import Counter
+from pathlib import Path
+import hashlib
+import importlib.util
+import json
+import math
+import re
+import stat
+import subprocess
+import sys
+
+
+ROOT = Path.cwd().resolve()
+AUTHORIZATION_BASE = "4a1c1172e02ce13b5fd6452a97834dbd9f2001b3"
+PRE_PUBLIC = "7a0abbc5212f88e191a0b2279c78d8cc84eb4422"
+PROMOTION = "bede4b09c93d2383e7467000538bae1c7b03dbcd"
+DECISION = "6dd7b8afe291ce4132f7d1887fac1c063ae3a229"
+DOC_RELATIVE = "docs/scienceearth/g0-measurements.md"
+BASELINE_RELATIVE = "docs/scienceearth/g0-g1-baseline.md"
+ALLOWED_TRACKED = {DOC_RELATIVE, BASELINE_RELATIVE}
+
+
+def require(condition, message):
+    if not condition:
+        raise SystemExit(message)
+
+
+def run_git(*args):
+    result = subprocess.run(
+        ["git", *args], cwd=ROOT, capture_output=True, check=False)
+    require(result.returncode == 0,
+            f"git {' '.join(args)} failed: {result.stderr.decode(errors='replace')}")
+    return result.stdout
+
+
+def sha256_bytes(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def file_sha256(path):
+    return sha256_bytes(path.read_bytes())
+
+
+def require_hash(relative, expected, mode=None):
+    path = ROOT / relative
+    require(path.is_file() and not path.is_symlink(), f"missing file: {relative}")
+    actual = file_sha256(path)
+    require(actual == expected,
+            f"hash mismatch: {relative}: {actual} != {expected}")
+    if mode is not None:
+        actual_mode = stat.S_IMODE(path.stat().st_mode)
+        require(actual_mode == mode,
+                f"mode mismatch: {relative}: {actual_mode:o} != {mode:o}")
+
+
+def tree_digest(relative):
+    root = ROOT / relative
+    require(root.is_dir() and not root.is_symlink(), f"missing tree: {relative}")
+    digest = hashlib.sha256()
+    entries = sorted(root.rglob("*"),
+                     key=lambda path: path.relative_to(root).as_posix())
+    regular = 0
+    for path in entries:
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        if path.is_file() and not path.is_symlink():
+            digest.update(path.read_bytes())
+            regular += 1
+    return digest.hexdigest(), len(entries), regular
+
+
+def exact_table_block(content, start_marker, end_marker, label):
+    require(content.count(start_marker) == 1,
+            f"{label} start-marker count mismatch")
+    require(content.count(end_marker) == 1,
+            f"{label} end-marker count mismatch")
+    start = content.index(start_marker)
+    end = content.index(end_marker)
+    require(start < end, f"{label} markers out of order")
+    return content[start:end]
+
+
+def table_rows(block):
+    pattern = re.compile(
+        r"^\| `(?P<stem>(?:optimized|prefetch)-[^`]+)` "
+        r"\| `(?P<raw>[0-9a-f]{64})` "
+        r"\| `(?P<stats>[0-9a-f]{64})` "
+        r"\| (?P<proof>`[0-9a-f]{64}`|absent;[^|]+) \|$", re.MULTILINE)
+    return list(pattern.finditer(block.decode("utf-8")))
+
+
+def verify_historical_evidence(version, table_block, expected_rows,
+                               expected_iteration_files, summaries,
+                               require_mode_0400):
+    root = ROOT / f"build/science_g0_prefetch/requalification-evidence-{version}"
+    rows = table_rows(table_block)
+    require(len(rows) == expected_rows,
+            f"{version} row count mismatch: {len(rows)}")
+    expected_paths = set()
+    slots = iteration_files = absent = 0
+    for match in rows:
+        stem = match["stem"]
+        subdir = "control" if stem.startswith("optimized-") else "prefetch"
+        for suffix, field in (("-curl-cpl.log", "raw"),
+                              ("-network-stats.json", "stats")):
+            path = root / subdir / f"{stem}{suffix}"
+            require(path.is_file() and not path.is_symlink(),
+                    f"missing file: {path}")
+            require(file_sha256(path) == match[field],
+                    f"{version} hash mismatch: {path}")
+            expected_paths.add(path)
+            slots += 1
+            iteration_files += 1
+        proof_path = root / subdir / f"{stem}-proof.json"
+        slots += 1
+        if match["proof"].startswith("`"):
+            require(proof_path.is_file() and not proof_path.is_symlink(),
+                    f"missing proof: {proof_path}")
+            require(file_sha256(proof_path) == match["proof"].strip("`"),
+                    f"{version} proof mismatch: {proof_path}")
+            expected_paths.add(proof_path)
+            iteration_files += 1
+        else:
+            require(not proof_path.exists(),
+                    f"expected absent proof exists: {proof_path}")
+            absent += 1
+    for name, expected in summaries.items():
+        path = root / name
+        require(path.is_file() and not path.is_symlink(),
+                f"missing summary: {path}")
+        require(file_sha256(path) == expected,
+                f"{version} summary mismatch: {path}")
+        expected_paths.add(path)
+    actual_paths = {
+        path for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+    require(actual_paths == expected_paths,
+            f"{version} complete-set mismatch")
+    require(iteration_files == expected_iteration_files,
+            f"{version} iteration-file count mismatch")
+    non_0400 = [
+        path for path in actual_paths
+        if stat.S_IMODE(path.stat().st_mode) != 0o400
+    ]
+    if require_mode_0400:
+        require(not non_0400, f"{version} frozen mode mismatch")
+    return (len(rows), slots, iteration_files, absent, len(summaries),
+            len(actual_paths), len(non_0400))
+
+
+def verify_manifest_set(label, evidence_relative, summary_relative,
+                        manifest_relative, transcript_relative,
+                        expected_summary_hash, expected_manifest_hash,
+                        expected_transcript_hash):
+    evidence = ROOT / evidence_relative
+    summary = ROOT / summary_relative
+    manifest = ROOT / manifest_relative
+    transcript = ROOT / transcript_relative
+    require(evidence.is_dir() and not evidence.is_symlink(),
+            f"{label} evidence root missing")
+    require(stat.S_IMODE(evidence.stat().st_mode) == 0o500,
+            f"{label} evidence root mode mismatch")
+    require_hash(summary_relative, expected_summary_hash, 0o400)
+    require_hash(manifest_relative, expected_manifest_hash, 0o400)
+    require_hash(transcript_relative, expected_transcript_hash, 0o400)
+    lines = manifest.read_text().splitlines()
+    require(len(lines) == 31, f"{label} manifest line count mismatch")
+    expected_paths = set()
+    for line in lines:
+        parts = line.split("  ", 1)
+        require(len(parts) == 2 and re.fullmatch(r"[0-9a-f]{64}", parts[0]),
+                f"{label} malformed manifest line")
+        digest, relative = parts
+        path = ROOT / relative
+        require(path.is_file() and not path.is_symlink(),
+                f"{label} missing artifact: {relative}")
+        require(file_sha256(path) == digest,
+                f"{label} artifact hash mismatch: {relative}")
+        require(stat.S_IMODE(path.stat().st_mode) == 0o400,
+                f"{label} artifact mode mismatch: {relative}")
+        expected_paths.add(path.resolve())
+    actual_paths = {
+        path.resolve() for path in evidence.iterdir()
+        if path.is_file() and not path.is_symlink()
+    }
+    if summary.parent.resolve() == evidence.resolve():
+        require(actual_paths == expected_paths,
+                f"{label} complete file set mismatch")
+    else:
+        require(actual_paths | {summary.resolve()} == expected_paths,
+                f"{label} complete file set mismatch")
+    suffix_counts = Counter()
+    for path in actual_paths:
+        if path.name.endswith("-curl-cpl.log"):
+            suffix_counts["raw"] += 1
+        elif path.name.endswith("-network-stats.json"):
+            suffix_counts["stats"] += 1
+        elif path.name.endswith("-proof.json"):
+            suffix_counts["proof"] += 1
+    require(suffix_counts == {"raw": 10, "stats": 10, "proof": 10},
+            f"{label} artifact kind counts mismatch: {suffix_counts}")
+    return transcript.read_text()
+
+
+def close(actual, expected, tolerance=1.0e-9):
+    return math.isclose(float(actual), float(expected), rel_tol=0.0,
+                        abs_tol=tolerance)
+
+
+def six(value):
+    return f"{float(value):.6f}"
+
+
+EXPECTED_AGGREGATES = {
+    "candidate": {
+        "status": "PASS",
+        "nvidia_hq": {
+            "latency": ("2896.292875", "3360.568375"),
+            "http": (41, 35, 5, 10, 0, 6),
+            "bytes": (25054055, 25054055, 102, 25054157),
+            "retry_codes": {"500": 6},
+            "coordinator_codes": {},
+            "response_codes": [200, 206, 500],
+            "status": "PASS",
+        },
+        "hong_kong": {
+            "latency": ("2313.934292", "3459.563000"),
+            "http": (21, 20, 5, 10, 1, 0),
+            "bytes": (6320460, 6320477, 17, 6320477),
+            "retry_codes": {},
+            "coordinator_codes": {"500": 1},
+            "response_codes": [200, 206, 500],
+            "status": "PASS",
+        },
+    },
+    "formal": {
+        "status": "FAIL",
+        "nvidia_hq": {
+            "latency": ("3207.465916", "3376.432625"),
+            "http": (46, 35, 5, 10, 0, 11),
+            "bytes": (25054055, 25054055, 187, 25054242),
+            "retry_codes": {"500": 11},
+            "coordinator_codes": {},
+            "response_codes": [200, 206, 500],
+            "status": "FAIL",
+        },
+        "hong_kong": {
+            "latency": ("2474.804959", "2829.896208"),
+            "http": (20, 20, 5, 10, 0, 0),
+            "bytes": (6320460, 6320460, 0, 6320460),
+            "retry_codes": {},
+            "coordinator_codes": {},
+            "response_codes": [200, 206],
+            "status": "PASS",
+        },
+    },
+}
+
+
+def verify_prefetch_proofs(label, evidence_relative, summary_relative, fixtures):
+    evidence = ROOT / evidence_relative
+    summary = json.loads((ROOT / summary_relative).read_text())
+    expected_set = EXPECTED_AGGREGATES[label]
+    require(summary["status"] == expected_set["status"],
+            f"{label} summary status mismatch")
+    require(summary["profile"] == "prefetch", f"{label} profile mismatch")
+    require(summary["limits"] == {"median_ms": 3000, "p95_ms": 8000},
+            f"{label} limits mismatch")
+    case_summaries = {case["name"]: case for case in summary["cases"]}
+    require(set(case_summaries) == set(fixtures) == {"nvidia_hq", "hong_kong"},
+            f"{label} case names mismatch")
+    proof_count = 0
+    total_fallbacks = 0
+    all_retries = {}
+    for name, fixture in fixtures.items():
+        case = case_summaries[name]
+        require(case["fid"] == fixture["fid"] and
+                case["year"] == fixture["year"],
+                f"{label}/{name}: source identity mismatch")
+        require(case["iteration_count"] == 5 and len(case["iterations"]) == 5,
+                f"{label}/{name}: iteration count mismatch")
+        totals = Counter()
+        ordinary_codes = Counter()
+        coordinator_codes = Counter()
+        response_codes = set()
+        timings = []
+        for iteration in range(1, 6):
+            stem = f"prefetch-{name}-{iteration}"
+            raw = (evidence / f"{stem}-curl-cpl.log").read_text()
+            stats_data = json.loads(
+                (evidence / f"{stem}-network-stats.json").read_text())
+            proof = json.loads((evidence / f"{stem}-proof.json").read_text())
+            meta = proof["metadata_prefetch"]
+            retries = meta["coordinator_retries"]
+            all_retries[(name, iteration)] = retries
+
+            require(meta["enabled"] is True, f"{label}/{stem}: disabled")
+            require(meta["head_request_count"] == 1,
+                    f"{label}/{stem}: HEAD request mismatch")
+            require(meta["range_request_count"] == 1 + len(retries),
+                    f"{label}/{stem}: Range request mismatch")
+            require((meta["range_start"], meta["range_end"]) == (0, 131071),
+                    f"{label}/{stem}: first Range mismatch")
+            require(meta["head_http_version"] == 2 and
+                    meta["range_http_version"] == 2,
+                    f"{label}/{stem}: HTTP/2 mismatch")
+            require(meta["shared_connection"] is True,
+                    f"{label}/{stem}: shared connection mismatch")
+            require(meta["requests_overlapped"] is True,
+                    f"{label}/{stem}: overlap mismatch")
+            require(meta["cache_published"] is True,
+                    f"{label}/{stem}: publication mismatch")
+            require(meta["fallback_reason"] == "",
+                    f"{label}/{stem}: terminal fallback reason")
+            require(len(retries) <= 3,
+                    f"{label}/{stem}: coordinator retry budget exceeded")
+
+            require(proof["coordinator_transient_retry_count"] == len(retries),
+                    f"{label}/{stem}: coordinator retry count mismatch")
+            require(proof["coordinator_transient_retry_bytes"] ==
+                    sum(item["bytes"] for item in retries),
+                    f"{label}/{stem}: coordinator retry byte mismatch")
+            retry_codes = Counter(str(item["code"]) for item in retries)
+            require(proof["coordinator_transient_retry_codes"] ==
+                    dict(retry_codes),
+                    f"{label}/{stem}: coordinator retry code mismatch")
+            for index, item in enumerate(retries, 1):
+                delay_min, delay_max = ((100, 125), (200, 250),
+                                        (400, 625))[index - 1]
+                require(item["range"] == "bytes=0-131071" and
+                        item["attempt"] == index and
+                        item["code"] in (408, 429, 500, 502, 503, 504) and
+                        delay_min <= item["delay_ms"] <= delay_max and
+                        item["http_major"] == 2,
+                        f"{label}/{stem}: coordinator retry fields mismatch")
+
+            require(proof["coordinator_transient_fallback_count"] == 0 and
+                    proof["coordinator_transient_fallback_bytes"] == 0 and
+                    proof["coordinator_transient_fallback_codes"] == {},
+                    f"{label}/{stem}: terminal fallback present")
+            require(proof["actual_http_get_count"] ==
+                    proof["successful_http_get_count"] +
+                    proof["transient_retry_count"] +
+                    proof["coordinator_transient_retry_count"],
+                    f"{label}/{stem}: GET reconciliation mismatch")
+            require(sum(proof["transient_retry_codes"].values()) ==
+                    proof["transient_retry_count"],
+                    f"{label}/{stem}: ordinary retry mismatch")
+            require(proof["actual_http_head_count"] ==
+                    proof["stats_head_count"] == 1,
+                    f"{label}/{stem}: HEAD reconciliation mismatch")
+            require(proof["stats_get_operation_count"] ==
+                    stats_data["methods"]["GET"]["count"] and
+                    proof["stats_head_count"] ==
+                    stats_data["methods"]["HEAD"]["count"],
+                    f"{label}/{stem}: stats count mismatch")
+            require(proof["actual_http_body_bytes"] ==
+                    stats_data["methods"]["GET"]["downloaded_bytes"] ==
+                    proof["successful_range_bytes"] +
+                    proof["coordinator_transient_retry_bytes"],
+                    f"{label}/{stem}: actual byte reconciliation mismatch")
+            require(proof["conservative_body_upper_bound_bytes"] ==
+                    proof["successful_range_bytes"] +
+                    proof["declared_transient_bytes"],
+                    f"{label}/{stem}: conservative byte mismatch")
+            require(proof["declared_transient_bytes"] >=
+                    proof["coordinator_transient_retry_bytes"],
+                    f"{label}/{stem}: declared transient byte mismatch")
+            require(proof["conservative_body_upper_bound_bytes"] <=
+                    proof["transfer_budget_bytes"] == 16777216,
+                    f"{label}/{stem}: transfer ceiling mismatch")
+
+            intervals = proof["successful_byte_intervals"]
+            require(len(intervals) == proof["successful_http_get_count"] and
+                    intervals[0] == [0, 131071],
+                    f"{label}/{stem}: interval shape mismatch")
+            require(sum(end - start + 1 for start, end in intervals) ==
+                    proof["successful_range_bytes"],
+                    f"{label}/{stem}: interval byte mismatch")
+            require(all(0 <= start <= end < proof["source_size"]
+                        for start, end in intervals),
+                    f"{label}/{stem}: interval bound mismatch")
+
+            require(proof["source_crs"] == fixture["crs"] and
+                    proof["selected_overview_factor"] == 4 and
+                    proof["raw_window"]["size"] == 256,
+                    f"{label}/{stem}: correctness identity mismatch")
+            require(close(proof["geotransform"][0], fixture["utm_bbox"][0]) and
+                    close(proof["geotransform"][3], fixture["utm_bbox"][1]),
+                    f"{label}/{stem}: geotransform mismatch")
+            require(all(close(actual, wanted, 1.0e-10)
+                        for actual, wanted in
+                        zip(proof["verified_wgs84_bbox"], fixture["bbox"])),
+                    f"{label}/{stem}: WGS84 bbox mismatch")
+
+            require(raw.count("ParallelHeadRange: transient-retry ") ==
+                    len(retries),
+                    f"{label}/{stem}: raw coordinator retry mismatch")
+            require(raw.count("ParallelHeadRange: transient-fallback ") == 0,
+                    f"{label}/{stem}: raw terminal fallback present")
+            require(raw.count("HTTP error code for ") ==
+                    proof["transient_retry_count"],
+                    f"{label}/{stem}: raw ordinary retry mismatch")
+            require(raw.count("[range: bytes=0-131071]") ==
+                    meta["range_request_count"],
+                    f"{label}/{stem}: raw exact Range count mismatch")
+            require(raw.count("ParallelHeadRange: published") == 1 and
+                    raw.count("ParallelHeadRange: file-property-published count=1") == 1,
+                    f"{label}/{stem}: raw publication mismatch")
+            transport = re.findall(
+                r"ParallelHeadRange: transport head-connection=(\d+) "
+                r"range-connection=(\d+) head-http=(\d+) range-http=(\d+)",
+                raw)
+            require(len(transport) == 1 and
+                    transport[0][0] == transport[0][1] and
+                    transport[0][2:] == ("2", "2"),
+                    f"{label}/{stem}: raw transport mismatch")
+            started = raw.index("ParallelHeadRange: started")
+            head_method = raw.index("[:method: HEAD]", started)
+            range_method = raw.index("[:method: GET]", started)
+            first_target_response = raw.index(
+                "CURL_INFO_HEADER_IN: HTTP/2 ", max(head_method, range_method))
+            require(head_method < first_target_response and
+                    range_method < first_target_response,
+                    f"{label}/{stem}: overlap chronology mismatch")
+
+            require(all(code in (200, 206, 408, 429, 500, 502, 503, 504)
+                        for code in proof["response_codes"]),
+                    f"{label}/{stem}: response code mismatch")
+            response_codes.update(proof["response_codes"])
+            summary_iteration = case["iterations"][iteration - 1]
+            require(summary_iteration["iteration"] == iteration,
+                    f"{label}/{stem}: summary order mismatch")
+            count_fields = {
+                "actual_get": "actual_http_get_count",
+                "successful_get": "successful_http_get_count",
+                "transient_retries": "transient_retry_count",
+                "coordinator_transient_retries":
+                    "coordinator_transient_retry_count",
+                "actual_head": "actual_http_head_count",
+                "stats_get_operations": "stats_get_operation_count",
+            }
+            for field, proof_field in count_fields.items():
+                require(summary_iteration["http_counts"][field] ==
+                        proof[proof_field],
+                        f"{label}/{stem}: summary count mismatch: {field}")
+            byte_fields = {
+                "successful_range": "successful_range_bytes",
+                "actual_http_body": "actual_http_body_bytes",
+                "declared_transient": "declared_transient_bytes",
+                "coordinator_transient_retry":
+                    "coordinator_transient_retry_bytes",
+                "conservative_body_upper_bound":
+                    "conservative_body_upper_bound_bytes",
+                "source_size": "source_size",
+            }
+            for field, proof_field in byte_fields.items():
+                require(summary_iteration["bytes"][field] == proof[proof_field],
+                        f"{label}/{stem}: summary byte mismatch: {field}")
+            require(summary_iteration["transient_retry_codes"] ==
+                    proof["transient_retry_codes"] and
+                    summary_iteration["coordinator_transient_retry_codes"] ==
+                    proof["coordinator_transient_retry_codes"] and
+                    summary_iteration["response_codes"] == proof["response_codes"],
+                    f"{label}/{stem}: summary code mismatch")
+
+            timings.append(summary_iteration["timing_ms"])
+            totals.update({
+                "actual_get": proof["actual_http_get_count"],
+                "successful_get": proof["successful_http_get_count"],
+                "actual_head": proof["actual_http_head_count"],
+                "stats_get_operations": proof["stats_get_operation_count"],
+                "coordinator_retries":
+                    proof["coordinator_transient_retry_count"],
+                "ordinary_retries": proof["transient_retry_count"],
+                "successful_range": proof["successful_range_bytes"],
+                "actual_http_body": proof["actual_http_body_bytes"],
+                "declared_transient": proof["declared_transient_bytes"],
+                "conservative": proof["conservative_body_upper_bound_bytes"],
+            })
+            ordinary_codes.update(proof["transient_retry_codes"])
+            coordinator_codes.update(proof["coordinator_transient_retry_codes"])
+            total_fallbacks += proof["coordinator_transient_fallback_count"]
+            proof_count += 1
+
+        expected = expected_set[name]
+        require((six(case["latency_ms"]["median"]),
+                 six(case["latency_ms"]["p95"])) == expected["latency"],
+                f"{label}/{name}: exact latency aggregate mismatch")
+        require(case["latency_ms"]["median"] == sorted(timings)[2] and
+                case["latency_ms"]["p95"] == sorted(timings)[4],
+                f"{label}/{name}: latency recomputation mismatch")
+        require((totals["actual_get"], totals["successful_get"],
+                 totals["actual_head"], totals["stats_get_operations"],
+                 totals["coordinator_retries"], totals["ordinary_retries"]) ==
+                expected["http"],
+                f"{label}/{name}: exact HTTP aggregate mismatch")
+        require((totals["successful_range"], totals["actual_http_body"],
+                 totals["declared_transient"], totals["conservative"]) ==
+                expected["bytes"],
+                f"{label}/{name}: exact byte aggregate mismatch")
+        require(case["http_counts"] == {
+                    "actual_get": expected["http"][0],
+                    "successful_get": expected["http"][1],
+                    "actual_head": expected["http"][2],
+                    "stats_get_operations": expected["http"][3],
+                    "coordinator_transient_retries": expected["http"][4],
+                    "transient_retries": expected["http"][5],
+                }, f"{label}/{name}: summary HTTP aggregate mismatch")
+        require(case["bytes"]["successful_range"] == expected["bytes"][0] and
+                case["bytes"]["actual_http_body"] == expected["bytes"][1] and
+                case["bytes"]["declared_transient"] == expected["bytes"][2] and
+                case["bytes"]["conservative_body_upper_bound"] ==
+                expected["bytes"][3],
+                f"{label}/{name}: summary byte aggregate mismatch")
+        require(case["transient_retry_codes"] ==
+                dict(ordinary_codes) == expected["retry_codes"] and
+                case["coordinator_transient_retry_codes"] ==
+                dict(coordinator_codes) == expected["coordinator_codes"],
+                f"{label}/{name}: exact retry-code aggregate mismatch")
+        require(case["response_codes"] == sorted(response_codes) ==
+                expected["response_codes"],
+                f"{label}/{name}: exact response aggregate mismatch")
+        latency_pass = (case["latency_ms"]["median"] <= 3000 and
+                        case["latency_ms"]["p95"] <= 8000)
+        require(case["status"] == expected["status"] ==
+                ("PASS" if latency_pass else "FAIL"),
+                f"{label}/{name}: latency status mismatch")
+
+    require(proof_count == 10 and total_fallbacks == 0,
+            f"{label}: proof/fallback total mismatch")
+    return all_retries
+
+
+# Validate the immutable Git anchors and the allowed additive tracked scope.
+require(run_git("cat-file", "-t", AUTHORIZATION_BASE) == b"commit\n",
+        "authorization base object mismatch")
+require(run_git("cat-file", "-t", PRE_PUBLIC) == b"commit\n",
+        "pre-public object mismatch")
+require(run_git("cat-file", "-t", PROMOTION) == b"commit\n",
+        "promotion object mismatch")
+require(run_git("cat-file", "-t", DECISION) == b"commit\n",
+        "decision object mismatch")
+subprocess.run(["git", "merge-base", "--is-ancestor", DECISION, "HEAD"],
+               cwd=ROOT, check=True)
+range_names = set(run_git("diff", "--name-only", f"{DECISION}..HEAD")
+                  .decode().splitlines())
+index_names = set(run_git("diff", "--cached", "--name-only")
+                  .decode().splitlines())
+worktree_names = set(run_git("diff", "--name-only").decode().splitlines())
+require(range_names <= ALLOWED_TRACKED and
+        index_names <= ALLOWED_TRACKED and
+        worktree_names <= ALLOWED_TRACKED,
+        "tracked changes exceed additive documentation scope")
+
+doc_bytes = (ROOT / DOC_RELATIVE).read_bytes()
+baseline_bytes = (ROOT / BASELINE_RELATIVE).read_bytes()
+base_doc_bytes = run_git("show", f"{AUTHORIZATION_BASE}:{DOC_RELATIVE}")
+V2_START = b"### V2 control artifact hashes\n"
+V2_END = b"\n### Prefetch candidate and hard stop\n"
+V3_START = b"### Frozen v3 artifact hashes\n"
+V3_END = b"\nThe hashed decision-gate transcript is"
+v2_block = exact_table_block(doc_bytes, V2_START, V2_END, "current v2")
+base_v2_block = exact_table_block(base_doc_bytes, V2_START, V2_END, "base v2")
+v3_block = exact_table_block(doc_bytes, V3_START, V3_END, "current v3")
+base_v3_block = exact_table_block(base_doc_bytes, V3_START, V3_END, "base v3")
+require(v2_block == base_v2_block and
+        sha256_bytes(v2_block) ==
+        "5a15d5a87a87d1976321aff7f2afde63d4a2eb19b1c6be824c6fdd4f7d8c0f8b",
+        "v2 immutable Git block mismatch")
+require(v3_block == base_v3_block and
+        sha256_bytes(v3_block) ==
+        "a9f3c6c2f929c01429809d684841213fcd72718f75f2274b666395c733a9e76a",
+        "v3 immutable Git block mismatch")
+
+global_constraints = [
+    ("build/science_g0_prefetch/diagnostic-evidence/control-summary.json",
+     "f793f1c3561e3f746ace2fca164637cd5d238fa81c39298b9a2e29ec2b781096"),
+    ("build/science_g0_prefetch/diagnostic-evidence/prefetch-summary.json",
+     "1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff"),
+    ("build/science_g0_prefetch/diagnostic-evidence/prefetch/"
+     "prefetch-nvidia_hq-1-curl-cpl.log",
+     "3312a78a073140ea1422ece0ffbc927ce853a4d7b8cec02f3033734a7e217a3a"),
+    ("build/science_g0_prefetch/diagnostic-evidence/prefetch/"
+     "prefetch-nvidia_hq-1-network-stats.json",
+     "0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe"),
+    ("build/science_g0/science-network-evidence/baseline-summary.json",
+     "17ff3cd876e7995c5257fad1f2da7f27bf0ae7901d46716829f1440d16a321ed"),
+    ("build/science_g0/science-network-evidence/live-summary.json",
+     "e4eb9ea1a8d5795db6197110ba96f4851c127dbe06b6bfcae5d3e9ea9b466dfe"),
+    ("build/science_g0_prefetch/requalification-evidence-v2/control-summary.json",
+     "0b59ba209faf574f1439f78f6fa53b16e81b20e05ae4b87ae2ef90c43de59fc0"),
+    ("build/science_g0_prefetch/requalification-evidence-v2/prefetch-summary.json",
+     "1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff"),
+    ("build/science_g0_prefetch/requalification-evidence-v2/prefetch/"
+     "prefetch-hong_kong-5-curl-cpl.log",
+     "f32cfdfd05f50a3de8f34b4f69e1e2cefe61d667e20936ddcf86f1fa8b1a429e"),
+    ("build/science_g0_prefetch/requalification-evidence-v2/prefetch/"
+     "prefetch-hong_kong-5-network-stats.json",
+     "f54110c20ab81230c5d3af708f2df4d9d8754e5957366875c162b0395d2c1974"),
+]
+for relative, expected in global_constraints:
+    require_hash(relative, expected)
+require(tree_digest("build/science_g0_prefetch/diagnostic-evidence/control") ==
+        ("d3eb2a1adb60aa4a911b14e47854a2fc7b7fe7b81424de17779ae7862b888133",
+         30, 30), "rejected control tree mismatch")
+require(tree_digest("build/science_g0_prefetch/diagnostic-evidence/prefetch") ==
+        ("054d7d76266febab932255db9658845717625d1ea348bef4021fd3330adffca0",
+         2, 2), "rejected candidate tree mismatch")
+
+v2 = verify_historical_evidence(
+    "v2", v2_block, 20, 59,
+    {"control-summary.json":
+     "0b59ba209faf574f1439f78f6fa53b16e81b20e05ae4b87ae2ef90c43de59fc0",
+     "prefetch-summary.json":
+     "1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff"},
+    False)
+v3 = verify_historical_evidence(
+    "v3", v3_block, 12, 35,
+    {"control-summary.json":
+     "47abb0bc91e4afba412d1150822b90110650f8e225b45b7fa52f4627889c405c",
+     "prefetch-summary.json":
+     "1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff"},
+    True)
+require(v2 == (20, 60, 59, 1, 2, 61, 61), "v2 totals mismatch")
+require(v3 == (12, 36, 35, 1, 2, 37, 0), "v3 totals mismatch")
+
+v3_scratch = [
+    (".superpowers/sdd/task-3-v3-preflight.log",
+     "d48994e70732786983b9c5d2f9c67bb2ca0c936d0b25e69c7acefd694fbe6aff"),
+    (".superpowers/sdd/task-3-v3-control.log",
+     "a1d8e36c152f71771e1ad80ae548e43e397456ce6ea47fe03e50e2cad9b2d142"),
+    (".superpowers/sdd/task-3-v3-candidate.log",
+     "c7f98c3e8428cb72092e6e49a1fff359232c4b4463607e18d52d55aac1b907d2"),
+    (".superpowers/sdd/task-3-v3-control-artifacts.sha256",
+     "c81a325b4aecd6b1a722c01789270c2568fc55cb7a1b201b7a6dd8c73e4b3849"),
+    (".superpowers/sdd/task-3-v3-candidate-artifacts.sha256",
+     "5845a9aac3a9b7e4b88e9323b16f20ff45f1e6f99ecc7a3997175b0f791458ff"),
+    (".superpowers/sdd/task-3-v3-decision-gate.log",
+     "0fd10896a891e20eb8e63a755fb68f4772e2cefc36b5b30f148165101001bafa"),
+    (".superpowers/sdd/task-3-v3-final-protected.log",
+     "cb5bc37da993e862b4cfbfae4e8777df586fd03e05a753693b972c518dc072a9"),
+]
+for relative, expected in v3_scratch:
+    require_hash(relative, expected)
+
+require_hash("packaging/science_deps/gdal-3.13.1-parallel-head-range.patch",
+             "5ce830f7853db1c6f53b833741261f55f382c0b8972161999a2d34b99c3ab15f")
+require_hash("build/science-deps-prefetch/prefix/science-deps-manifest.json",
+             "a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116")
+require_hash("packaging/scienceearth/g0_manifest.py",
+             "38dd891896fa9ce9768163ded36069c329cae98e516a836ec98fc004f50a62f2")
+require_hash("tests/science_bundle_audit_tests.py",
+             "76fe4c1970d4d22e1c3bdd7d77852af69563993b33bc702d5e1446d1d5bf81a0")
+
+manifest_path = ROOT / "packaging/scienceearth/g0_manifest.py"
+spec = importlib.util.spec_from_file_location("posthoc_v4_manifest", manifest_path)
+manifest_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(manifest_module)
+reference_path = ROOT / (
+    "packaging/scienceearth/baselines/v0.2.0-macos-arm64-reference.json")
+ratchet_path = ROOT / (
+    "packaging/scienceearth/baselines/current-macos-arm64-ratchet.json")
+reference = json.loads(reference_path.read_text())
+ratchet = json.loads(ratchet_path.read_text())
+require_hash(
+    "packaging/scienceearth/baselines/v0.2.0-macos-arm64-reference.json",
+    "afd80d8ad9419882793926d781affb970246358fbf74c514b950bf0eb924a5a6")
+require_hash(
+    "packaging/scienceearth/baselines/current-macos-arm64-ratchet.json",
+    "a732bacfec5b16b6e42ef4b4573827df6edfa73a5d8bf5b2c7b94d0d684c06cc")
+require(manifest_module.manifest_sha256(reference) ==
+        "145231333a233cd356d0aa3e908db922ad1fbbc244868903a60801b334ba5ada",
+        "reference canonical hash mismatch")
+require(manifest_module.manifest_sha256(ratchet) ==
+        "fd2d67424356637dd71beb4120647726836fb9a9b3cec03223bb83378fe960cb",
+        "ratchet canonical hash mismatch")
+require(reference["metadata"]["normalization_profile"]["source_roots_sha256"] ==
+        "646b5eb80be60524ca6aa8dad55921f2966cc40562b29489483f1184a04c1936",
+        "normalization descriptor mismatch")
+require(ratchet["reference_sha256"] ==
+        "145231333a233cd356d0aa3e908db922ad1fbbc244868903a60801b334ba5ada" and
+        ratchet["releases"][0]["parent_finding_ids_sha256"] ==
+        "5eeb1fc96226557050bffecfe5ab7cb11f32713fddb83c3147b1684ad675bd55",
+        "ratchet binding mismatch")
+
+fixture_relative = "tests/data/science/alphaearth_rgb_cases.json"
+require_hash(fixture_relative,
+             "6a67af9a1380250704b9032f8b4933965196ed2a119f07be4cb99dafe032806d")
+fixture_data = json.loads((ROOT / fixture_relative).read_text())
+require(fixture_data["source_index_sha256"] ==
+        "f738e7d274ad582e56e20a3a8b444c6f2a3ece5781f8f9855bb7ca3d9ed2942f",
+        "fixture source index mismatch")
+require({case["name"]: case["record_fingerprint"]
+         for case in fixture_data["cases"]} == {
+             "nvidia_hq":
+             "03956d76d3bc0d67c4f61608a1771ffb036a7e3ece6df326a2b52e66d412a0f1",
+             "hong_kong":
+             "deded3c50b4a91db0fe3fe97691734c7fa5a802647c1571d28f75515587a59ff",
+         }, "fixture record fingerprint mismatch")
+fixtures = {case["name"]: case for case in fixture_data["cases"]}
+
+sys.path.insert(0, str(ROOT))
+from tests.science_bundle_audit_tests import ScienceProbeBuilderTests, MANIFEST
+
+desktop = Path("/Users/USER/Desktop/osgSol Earth.app")
+require(desktop.is_dir() and not desktop.is_symlink(), "Desktop app missing")
+desktop_entries = list(desktop.rglob("*"))
+desktop_regular = [
+    path for path in desktop_entries if path.is_file() and not path.is_symlink()
+]
+desktop_fingerprint = MANIFEST.bundle_fingerprint(desktop)
+desktop_digest = ScienceProbeBuilderTests().tree_digest(desktop)
+require((desktop_fingerprint, desktop_digest, len(desktop_entries),
+         len(desktop_regular)) == (
+             "91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18",
+             "14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214",
+             414, 355), "Desktop protected tuple mismatch")
+
+# Verify the promotion from immutable Git objects and exact ordered CMake inputs.
+require(run_git("rev-parse", f"{PROMOTION}^").decode().strip() == PRE_PUBLIC,
+        "promotion parent mismatch")
+require(run_git("diff-tree", "--no-commit-id", "--name-only", "-r", PROMOTION)
+        .decode().splitlines() == ["tests/CMakeLists.txt"],
+        "promotion scope mismatch")
+base_cmake = run_git("show", f"{PRE_PUBLIC}:tests/CMakeLists.txt")
+promoted_cmake = run_git("show", f"{PROMOTION}:tests/CMakeLists.txt")
+require(sha256_bytes(base_cmake) ==
+        "b9eea24fabb9fa2fb1d79bf384320e5082bd0155aedfcc18fa2d2ab33411141a",
+        "pre-public CMake hash mismatch")
+require(sha256_bytes(promoted_cmake) ==
+        "029bb3044c5dfcf2701cdbedd4cfe4ebe3488b8e23ef6caf9683fb23c10d4a0c",
+        "promoted Git CMake hash mismatch")
+require_hash("tests/CMakeLists.txt",
+             "029bb3044c5dfcf2701cdbedd4cfe4ebe3488b8e23ef6caf9683fb23c10d4a0c")
+promotion_diff = run_git(
+    "diff", "--no-ext-diff", "--binary", PRE_PUBLIC, PROMOTION, "--",
+    "tests/CMakeLists.txt")
+require(sha256_bytes(promotion_diff) ==
+        "20802ca515fe1bd1addecd00cecc285fb612e0cc047604db59d34b1d8b56730b",
+        "promotion diff hash mismatch")
+
+def cmake_live_block(content):
+    start_marker = b"            ADD_TEST(NAME osgVerse_Test_ScienceGdalLive\n"
+    end_marker = b"            SET_TESTS_PROPERTIES(osgVerse_Test_ScienceGdalLive PROPERTIES\n"
+    require(content.count(start_marker) == 1 and content.count(end_marker) == 1,
+            "formal CMake block marker mismatch")
+    start = content.index(start_marker)
+    end = content.index(end_marker, start)
+    return content[start:end]
+
+
+base_block = (
+    b"            ADD_TEST(NAME osgVerse_Test_ScienceGdalLive\n"
+    b"                COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>\n"
+    b"                        --live-cases\n"
+    b"                        \"${CMAKE_CURRENT_SOURCE_DIR}/data/science/alphaearth_rgb_cases.json\"\n"
+    b"                        --iterations 5\n"
+    b"                        --profile optimized\n"
+    b"                        --evidence-dir\n"
+    b"                        \"${CMAKE_BINARY_DIR}/science-network-evidence\"\n"
+    b"                        --summary-json\n"
+    b"                        \"${CMAKE_BINARY_DIR}/science-network-evidence/live-summary.json\"\n"
+    b"                        --enforce-latency)\n")
+promoted_block = (
+    b"            ADD_TEST(NAME osgVerse_Test_ScienceGdalLive\n"
+    b"                COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>\n"
+    b"                        --live-cases\n"
+    b"                        \"${CMAKE_CURRENT_SOURCE_DIR}/data/science/alphaearth_rgb_cases.json\"\n"
+    b"                        --iterations 5\n"
+    b"                        --profile prefetch\n"
+    b"                        --evidence-dir\n"
+    b"                        \"${CMAKE_BINARY_DIR}/formal-evidence-v4\"\n"
+    b"                        --summary-json\n"
+    b"                        \"${CMAKE_BINARY_DIR}/formal-evidence-v4/live-summary.json\"\n"
+    b"                        --enforce-latency)\n")
+require(cmake_live_block(base_cmake) == base_block,
+        "pre-public formal CMake order/input mismatch")
+require(cmake_live_block(promoted_cmake) == promoted_block and
+        cmake_live_block((ROOT / "tests/CMakeLists.txt").read_bytes()) ==
+        promoted_block,
+        "promoted formal CMake order/input mismatch")
+
+# Verify all three frozen v4 sets, their transcript ledger, and exact timestamps.
+require(stat.S_IMODE((ROOT / "build/science_g0_prefetch/"
+                      "requalification-evidence-v4").stat().st_mode) == 0o500,
+        "v4 requalification parent mode mismatch")
+control_transcript = verify_manifest_set(
+    "control-v4",
+    "build/science_g0_prefetch/requalification-evidence-v4/control",
+    "build/science_g0_prefetch/requalification-evidence-v4/control-summary.json",
+    ".superpowers/sdd/task-3-v4-control-artifacts.sha256",
+    ".superpowers/sdd/task-3-v4-control.log",
+    "e19d0dceaf396c039497b52c79f5aff5877740c3bef3dca3fd17adf3fbdc4357",
+    "ce35d41589010eba54b3ccee7b486fb5bbb7dd988141752eba41375ebed393a3",
+    "b2ec9bf61a949a80b6a0fa6c87491ccff79837ab3a201aff445a07423f2f323b")
+candidate_transcript = verify_manifest_set(
+    "candidate-v4",
+    "build/science_g0_prefetch/requalification-evidence-v4/prefetch",
+    "build/science_g0_prefetch/requalification-evidence-v4/prefetch-summary.json",
+    ".superpowers/sdd/task-3-v4-candidate-artifacts.sha256",
+    ".superpowers/sdd/task-3-v4-candidate.log",
+    "ac37e643a7e34840a30cc7dd6f3c17c2464a632936f7366396f5f09cd5f521d4",
+    "81451c29000dab2bcaa262615eb8e9d72ad382adae3269892581423b2587b339",
+    "81b40fbb098716e59ceada54b7bf33079fa7fcdf8a866aeb1d1828aafe2f434c")
+formal_transcript = verify_manifest_set(
+    "formal-v4",
+    "build/science_g0_prefetch/formal-evidence-v4",
+    "build/science_g0_prefetch/formal-evidence-v4/live-summary.json",
+    ".superpowers/sdd/task-3-v4-formal-artifacts.sha256",
+    ".superpowers/sdd/task-3-v4-formal-ctest.log",
+    "e7664bb1ebe09dd8f53baf30c81810ff06a62be5b26cc2e267ade561534f4580",
+    "fe285502c8f3a0c8c9a8f21d543112d8435c7f980698062f7c709119bf98cf3c",
+    "29b280119a919e1ae27a4adb18a24efa20c6254c91bf0d239f0b821edbbf0a00")
+require_hash(".superpowers/sdd/task-3-v4-preflight.log",
+             "2bae6ec0237839cc14cdde0f90c8084b89b46336ecee20ebaf4598b7d6d2f22b",
+             0o400)
+require_hash(".superpowers/sdd/task-3-v4-formal-refresh.log",
+             "5e8873e10bbe939d39451dc93da7e40ba25d39005c7284f979d867e8f78c14b9",
+             0o400)
+preflight = (ROOT / ".superpowers/sdd/task-3-v4-preflight.log").read_text()
+require("HEAD=" + PRE_PUBLIC in preflight and
+        "TRACKED_WORKTREE_INDEX=CLEAN" in preflight and
+        "V4_ABSENT=5/5" in preflight and
+        "IMMEDIATE_PREFLIGHT=PASS" in preflight,
+        "preflight binding mismatch")
+
+ledger = [
+    (control_transcript, "v4_optimized_control",
+     "2026-07-13T20:28:47+0800", "2026-07-13T20:29:20+0800", "0",
+     "--iterations 5 --profile optimized"),
+    (candidate_transcript, "v4_prefetch_candidate",
+     "2026-07-13T20:30:05+0800", "2026-07-13T20:30:33+0800", "0",
+     "--iterations 5 --profile prefetch"),
+    (formal_transcript, "v4_formal_ctest",
+     "2026-07-13T20:37:45+0800", "2026-07-13T20:38:14+0800", "8",
+     "Test command:"),
+]
+for transcript, label, started, finished, exit_status, command_token in ledger:
+    require(transcript.count(f"PROCESS_LABEL={label}") == 1 and
+            transcript.count(f"PROCESS_STARTED={started}") == 1 and
+            transcript.count(f"PROCESS_FINISHED={finished}") == 1 and
+            transcript.count(f"PROCESS_EXIT_STATUS={exit_status}") == 1 and
+            transcript.count(command_token) == 1,
+            f"recorded transcript ledger mismatch: {label}")
+for token in ('"--iterations" "5"', '"--profile" "prefetch"',
+              "formal-evidence-v4", '"--enforce-latency"'):
+    require(token in formal_transcript,
+            f"formal transcript command missing token: {token}")
+
+candidate_retries = verify_prefetch_proofs(
+    "candidate",
+    "build/science_g0_prefetch/requalification-evidence-v4/prefetch",
+    "build/science_g0_prefetch/requalification-evidence-v4/prefetch-summary.json",
+    fixtures)
+formal_retries = verify_prefetch_proofs(
+    "formal", "build/science_g0_prefetch/formal-evidence-v4",
+    "build/science_g0_prefetch/formal-evidence-v4/live-summary.json",
+    fixtures)
+expected_hk_retry = [{
+    "range": "bytes=0-131071", "code": 500, "bytes": 17,
+    "attempt": 1, "delay_ms": 100, "connection_id": 0,
+    "http_major": 2,
+}]
+require(candidate_retries[("hong_kong", 1)] == expected_hk_retry,
+        "candidate Hong Kong retry record mismatch")
+require(all(retries == [] for key, retries in candidate_retries.items()
+            if key != ("hong_kong", 1)),
+        "unexpected candidate coordinator retry")
+require(all(retries == [] for retries in formal_retries.values()),
+        "unexpected formal coordinator retry")
+
+final_state = (
+    b"G0_DECISION=STOP\n"
+    b"PUBLIC_REQUALIFICATION_V4=FAIL\n"
+    b"DESKTOP_PACKAGE=NOT_READY")
+require(doc_bytes.rstrip().endswith(final_state),
+        "measurement final state mismatch")
+require(baseline_bytes.rstrip().endswith(final_state),
+        "baseline final state mismatch")
+
+# The following is an observation about the final scoped filesystem, not proof
+# of negative process history. It is deliberately not used to assert exact
+# process counts or the absolute absence of overwritten/omitted executions.
+downstream_globs = (
+    "task-3-v4-downstream*", "task-3-v4-science-off*",
+    "task-3-v4-private-dependency*", "task-3-v4-full-python*",
+    "task-3-v4-selected-scienceearth*", "task-3-v4-disposable-probe*",
+    "task-3-v4-canonical-bundle*", "task-3-v4-clean-launch*",
+)
+observed_downstream = []
+for pattern in downstream_globs:
+    observed_downstream.extend((ROOT / ".superpowers/sdd").glob(pattern))
+require(not observed_downstream,
+        f"scoped downstream artifact observed: {observed_downstream}")
+
+print("IMMUTABLE_OLD_V2_V3_PRIVATE_BINDINGS=PASS")
+print("DESKTOP_PROTECTED_TUPLE=91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18/14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214/414/355")
+print("V4_MANIFESTS=3/3;ENTRIES=31/31/31;RAW_STATS_PROOFS=10/10/10_EACH;FILES=0400;ROOTS=0500")
+print("RECORDED_EXECUTION_LEDGER=CONTROL_1_TRANSCRIPT/CANDIDATE_1_TRANSCRIPT/FORMAL_1_TRANSCRIPT;UNIQUE_TIMESTAMPS_AND_HASHES=PASS")
+print("NEGATIVE_PROCESS_HISTORY=NOT_PROVEN")
+print("CANDIDATE=10/10;NVIDIA=2896.292875/3360.568375/PASS;HONG_KONG=2313.934292/3459.563000/PASS")
+print("CANDIDATE_HONG_KONG_RETRY=ITERATION_1/HTTP2_500/17_BYTES/ATTEMPT_1/100_MS;TERMINAL_FALLBACKS=0")
+print("FORMAL=10/10;NVIDIA=3207.465916/3376.432625/FAIL;HONG_KONG=2474.804959/2829.896208/PASS;TERMINAL_FALLBACKS=0")
+print("PROMOTION_CMAKE=029bb3044c5dfcf2701cdbedd4cfe4ebe3488b8e23ef6caf9683fb23c10d4a0c;ORDER_AND_INPUT=PASS")
+print("FORMAL_TRANSCRIPT=29b280119a919e1ae27a4adb18a24efa20c6254c91bf0d239f0b821edbbf0a00;FORMAL_MANIFEST=fe285502c8f3a0c8c9a8f21d543112d8435c7f980698062f7c709119bf98cf3c")
+print("ALLOWED_TRACKED_SCOPE_AND_FINAL_STATES=PASS")
+print("DOWNSTREAM_LEDGER_ZERO=REPORTED;SCOPED_ARTIFACTS_OBSERVED=0;NEGATIVE_EXECUTION_HISTORY=NOT_PROVEN")
+print("DECISION=STOP/FAIL/NOT_READY")
+print("POSTHOC_V4_DECISION_AUDIT=PASS")
+```
+<!-- V4_POSTHOC_DECISION_AUDIT_END -->
 
 The candidate PASS is not a G0 GO because the separately committed formal gate failed. This immutable v4 evidence set is exhausted and must not be rerun.
 
