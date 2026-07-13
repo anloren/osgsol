@@ -376,6 +376,37 @@ namespace
         std::vector<PreviousValue> _previous;
     };
 
+    class ScopedEnvironmentVariable
+    {
+    public:
+        ScopedEnvironmentVariable(const char* name, const char* value)
+            : _name(name)
+        {
+            const char* previous = std::getenv(name);
+            _present = previous != nullptr;
+            if (_present) _value = previous;
+            if (setenv(name, value, 1) != 0)
+                throw std::runtime_error("failed to set test environment");
+        }
+
+        ~ScopedEnvironmentVariable()
+        {
+            if (_present)
+                setenv(_name.c_str(), _value.c_str(), 1);
+            else
+                unsetenv(_name.c_str());
+        }
+
+        ScopedEnvironmentVariable(const ScopedEnvironmentVariable&) = delete;
+        ScopedEnvironmentVariable& operator=(
+            const ScopedEnvironmentVariable&) = delete;
+
+    private:
+        std::string _name;
+        std::string _value;
+        bool _present = false;
+    };
+
     class ScopedPathSpecificOption
     {
     public:
@@ -936,6 +967,152 @@ namespace
         const std::filesystem::path key = root / "http2-key.pem";
         createSelfSignedCertificate(certificate, key);
 
+        const char* selectedMode =
+            CPLGetConfigOption("OSGSOL_TEST_PREFETCH_CASE", nullptr);
+        if (selectedMode &&
+            std::string(selectedMode) == "blocked-operation-capacity")
+        {
+            const std::filesystem::path ready =
+                root / "http2-blocked-operation-capacity.ready";
+            const std::filesystem::path log =
+                root / "http2-blocked-operation-capacity.jsonl";
+            ServerProcess server = startHttp2Server(
+                fixture, ready, log, certificate, key,
+                "range-500-twice", "h2");
+            const int port = waitForPort(ready);
+            const std::string baseUrl =
+                "/vsicurl/https://127.0.0.1:" + std::to_string(port) +
+                "/capacity-block/alphaearth-range-fixture.tif";
+            const std::string afterClearUrl =
+                "/vsicurl/https://127.0.0.1:" + std::to_string(port) +
+                "/capacity-block/after-clear/alphaearth-range-fixture.tif";
+            const std::string expiryUrl =
+                "/vsicurl/https://127.0.0.1:" + std::to_string(port) +
+                "/capacity-block/expiry/alphaearth-range-fixture.tif";
+
+            ScopedGdalConfig config({
+                {"GDAL_HTTP_UNSAFESSL", "YES"},
+                {"GDAL_HTTP_VERSION", "2TLS"},
+                {"GDAL_HTTP_PROXY", ""},
+                {"GDAL_HTTPS_PROXY", ""},
+                {"GDAL_HTTP_MAX_RETRY", "2"},
+                {"GDAL_HTTP_RETRY_DELAY", "0.01"},
+            });
+            VSICurlClearCache();
+            DebugCapture capture;
+            ScopedGdalErrorCapture errorCapture(capture);
+
+            const auto markBlocked = [&](const std::string& url,
+                                         const std::string& token)
+            {
+                VSISetPathSpecificOption(url.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
+                VSISetPathSpecificOption(url.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", token.c_str());
+                setenv("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE",
+                       std::to_string(TEST_CONNECTION_ID_SENTINEL).c_str(), 1);
+                GDALDataset* dataset = static_cast<GDALDataset*>(GDALOpenEx(
+                    url.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
+                    nullptr, nullptr, nullptr));
+                require(dataset == nullptr,
+                        "capacity setup unexpectedly opened a blocked dataset");
+                require(std::getenv("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE") == nullptr,
+                        "capacity setup did not consume the connection-id fault");
+            };
+            const auto probeBlocked = [&](const std::string& url,
+                                          const std::string& token,
+                                          const std::string& label)
+            {
+                VSISetPathSpecificOption(url.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
+                VSISetPathSpecificOption(url.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", token.c_str());
+                const auto logSize = std::filesystem::file_size(log);
+                const int rejected = countDebug(
+                    capture, "ParallelHeadRange: blocked-operation-rejected");
+                VSILFILE* blocked = VSIFOpenL(url.c_str(), "rb");
+                require(blocked == nullptr, label + " unexpectedly opened");
+                require(countDebug(capture,
+                            "ParallelHeadRange: blocked-operation-rejected") ==
+                            rejected + 1,
+                        label + " was not rejected by the actual GDAL handler");
+                require(std::filesystem::file_size(log) == logSize,
+                        label + " reached the local HTTP/2 server");
+            };
+
+            std::vector<std::string> tokens;
+            tokens.reserve(257);
+            for (int index = 0; index < 257; ++index)
+            {
+                tokens.push_back("capacity-token-" + std::to_string(index + 1));
+                markBlocked(baseUrl, tokens.back());
+            }
+            probeBlocked(baseUrl, tokens.front(), "first live capacity token");
+            probeBlocked(baseUrl, tokens.back(), "257th overflow token");
+
+            VSICurlPartialClearCache(baseUrl.c_str());
+            probeBlocked(baseUrl, "capacity-token-after-partial-clear",
+                         "handler overflow after PartialClearCache");
+
+            VSICurlClearCache();
+            const int rejectedAfterClear = countDebug(
+                capture, "ParallelHeadRange: blocked-operation-rejected");
+            const auto logSizeBeforeClearProbe =
+                std::filesystem::file_size(log);
+            VSISetPathSpecificOption(afterClearUrl.c_str(),
+                "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
+            VSISetPathSpecificOption(afterClearUrl.c_str(),
+                "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", "after-clear-token");
+            VSILFILE* afterClear = VSIFOpenL(afterClearUrl.c_str(), "rb");
+            require(afterClear == nullptr,
+                    "always-500 after-clear probe unexpectedly opened");
+            require(countDebug(capture,
+                        "ParallelHeadRange: blocked-operation-rejected") ==
+                        rejectedAfterClear,
+                    "ClearCache did not clear handler overflow");
+            require(std::filesystem::file_size(log) > logSizeBeforeClearProbe,
+                    "ClearCache probe did not reach the local HTTP/2 server");
+
+            VSICurlClearCache();
+            for (int index = 0; index < 257; ++index)
+            {
+                markBlocked(expiryUrl,
+                            "expiry-token-" + std::to_string(index + 1));
+            }
+            probeBlocked(expiryUrl, "expiry-token-1",
+                         "live overflow expiry token");
+            const int rejectedBeforeExpiryProbe = countDebug(
+                capture, "ParallelHeadRange: blocked-operation-rejected");
+            const auto logSizeBeforeExpiryProbe =
+                std::filesystem::file_size(log);
+            {
+                ScopedEnvironmentVariable clockOffset(
+                    "OSGSOL_TEST_STEADY_CLOCK_OFFSET_MS", "301000");
+                VSISetPathSpecificOption(expiryUrl.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", "expiry-token-3");
+                VSILFILE* afterExpiry = VSIFOpenL(expiryUrl.c_str(), "rb");
+                require(afterExpiry == nullptr,
+                        "always-500 post-expiry probe unexpectedly opened");
+            }
+            require(countDebug(capture,
+                        "ParallelHeadRange: blocked-operation-rejected") ==
+                        rejectedBeforeExpiryProbe,
+                    "bounded handler overflow did not expire safely");
+            require(std::filesystem::file_size(log) > logSizeBeforeExpiryProbe,
+                    "expired overflow probe did not reach local HTTP/2");
+
+            VSIClearPathSpecificOptions(baseUrl.c_str());
+            VSIClearPathSpecificOptions(afterClearUrl.c_str());
+            VSIClearPathSpecificOptions(expiryUrl.c_str());
+            server.stop();
+            const Http2Evidence evidence = verifyHttp2Log(log);
+            require(!evidence.streams.empty(),
+                    "capacity regression emitted no local HTTP/2 evidence");
+            std::cout << "ScienceHttp2Prefetch: mode=blocked-operation-capacity"
+                      << " tokens=257 overflow=bounded" << std::endl;
+            return;
+        }
+
         std::int8_t expectedByteZero = 0;
         {
             GDALDataset* local = static_cast<GDALDataset*>(GDALOpenEx(
@@ -1044,8 +1221,6 @@ namespace
             {"range-503-once", 503},
             {"range-504-once", 504},
         };
-        const char* selectedMode =
-            CPLGetConfigOption("OSGSOL_TEST_PREFETCH_CASE", nullptr);
         int executedCases = 0;
         for (const PrefetchCase& prefetchCase : cases)
         {

@@ -1866,7 +1866,7 @@
 +                break;
 +            CPLSleep(dfMaxDelay);
 +        }
-@@ -4124,0 +5873,106 @@
+@@ -4124,0 +5873,122 @@
 +/*                    AbandonCurlMultiHandle()                          */
 +/************************************************************************/
 +
@@ -1905,6 +1905,14 @@
 +        else
 +            ++oIter;
 +    }
++    if (m_oParallelHeadRangeBlockedOverflowExpiry !=
++            std::chrono::steady_clock::time_point{} &&
++        m_oParallelHeadRangeBlockedOverflowExpiry <= oNow)
++    {
++        m_oParallelHeadRangeBlockedOverflowExpiry = {};
++        CPLDebug(GetDebugKey(),
++                 "ParallelHeadRange: blocked-operation-overflow-expired");
++    }
 +}
 +
 +/************************************************************************/
@@ -1920,31 +1928,30 @@
 +
 +    CPLMutexHolder oHolder(&hMutex);
 +    SweepParallelHeadRangeBlocked();
++    const auto oNow = std::chrono::steady_clock::now();
 +    const auto oKey = std::make_pair(osFilename, osOperationId);
-+    const bool bExistingOperation =
-+        m_oParallelHeadRangeBlockedOperations.find(oKey) !=
-+        m_oParallelHeadRangeBlockedOperations.end();
-+    while (!bExistingOperation &&
-+           m_oParallelHeadRangeBlockedOperations.size() >=
-+               knMAX_BLOCKED_OPERATIONS)
++    auto oExistingOperation =
++        m_oParallelHeadRangeBlockedOperations.find(oKey);
++    if (oExistingOperation != m_oParallelHeadRangeBlockedOperations.end())
 +    {
-+        const auto oOldest = std::min_element(
-+            m_oParallelHeadRangeBlockedOperations.begin(),
-+            m_oParallelHeadRangeBlockedOperations.end(),
-+            [](const auto &oLeft, const auto &oRight)
-+            {
-+                return oLeft.second < oRight.second;
-+            });
-+        if (oOldest == m_oParallelHeadRangeBlockedOperations.end())
-+            break;
-+        m_oParallelHeadRangeBlockedOperations.erase(oOldest);
++        oExistingOperation->second = oNow + BLOCKED_OPERATION_EXPIRY;
 +        CPLDebug(GetDebugKey(),
-+                 "ParallelHeadRange: blocked-operation-evicted=capacity");
++                 "ParallelHeadRange: blocked-operation-marked");
++        return;
++    }
++    if (m_oParallelHeadRangeBlockedOperations.size() >=
++        knMAX_BLOCKED_OPERATIONS)
++    {
++        m_oParallelHeadRangeBlockedOverflowExpiry =
++            oNow + BLOCKED_OPERATION_EXPIRY;
++        CPLDebug(GetDebugKey(),
++                 "ParallelHeadRange: blocked-operation-overflow-marked");
++        return;
 +    }
 +    m_oParallelHeadRangeBlockedOperations[oKey] =
-+        std::chrono::steady_clock::now() + BLOCKED_OPERATION_EXPIRY;
++        oNow + BLOCKED_OPERATION_EXPIRY;
 +    CPLDebug(GetDebugKey(),
-+             "ParallelHeadRange: blocked-operation-marked expiry-ms=300000");
++             "ParallelHeadRange: blocked-operation-marked");
 +}
 +
 +/************************************************************************/
@@ -1960,33 +1967,43 @@
 +    if (osOperationId.empty())
 +        return false;
 +
++    if (m_oParallelHeadRangeBlockedOverflowExpiry !=
++        std::chrono::steady_clock::time_point{})
++    {
++        CPLDebug(GetDebugKey(),
++                 "ParallelHeadRange: blocked-operation-rejected "
++                 "scope=overflow");
++        return true;
++    }
++
 +    const auto oKey = std::make_pair(osFilename, osOperationId);
 +    auto oIter = m_oParallelHeadRangeBlockedOperations.find(oKey);
 +    if (oIter == m_oParallelHeadRangeBlockedOperations.end())
 +        return false;
 +
-+    oIter->second =
-+        std::chrono::steady_clock::now() + BLOCKED_OPERATION_EXPIRY;
++    oIter->second = std::chrono::steady_clock::now() +
++                    BLOCKED_OPERATION_EXPIRY;
 +    CPLDebug(GetDebugKey(),
 +             "ParallelHeadRange: blocked-operation-rejected");
 +    return true;
 +}
 +
 +/************************************************************************/
-@@ -4329,0 +6184,2 @@
+@@ -4329,0 +6200,3 @@
 +    m_oParallelHeadRangeBlockedOperations.clear();
++    m_oParallelHeadRangeBlockedOverflowExpiry = {};
 +
-@@ -4342,0 +6199,2 @@
+@@ -4342,0 +6216,2 @@
 +    for (auto oIter = m_oParallelHeadRangeBlockedOperations.begin();
 +         oIter != m_oParallelHeadRangeBlockedOperations.end();)
-@@ -4343,0 +6202,6 @@
+@@ -4343,0 +6219,6 @@
 +        if (STARTS_WITH(oIter->first.first.c_str(), pszFilenamePrefix))
 +            oIter = m_oParallelHeadRangeBlockedOperations.erase(oIter);
 +        else
 +            ++oIter;
 +    }
 +    {
-@@ -4596,0 +6461,12 @@
+@@ -4596,0 +6478,12 @@
 +
 +    const char *pszOperationOption = VSIGetPathSpecificOption(
 +        pszFilename, "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", nullptr);
@@ -2003,16 +2020,18 @@
 +++ b/port/cpl_vsil_curl_class.h
 @@ -31,0 +32 @@
 +#include <chrono>
-@@ -217,0 +219,8 @@
+@@ -217,0 +219,10 @@
 +    std::atomic<bool> m_bParallelHeadRangeDisabled{false};
 +    static constexpr std::size_t knMAX_BLOCKED_OPERATIONS = 256;
 +    std::map<std::pair<std::string, std::string>,
 +             std::chrono::steady_clock::time_point>
 +        m_oParallelHeadRangeBlockedOperations{};
++    std::chrono::steady_clock::time_point
++        m_oParallelHeadRangeBlockedOverflowExpiry{};
 +
 +    void SweepParallelHeadRangeBlocked();
 +
-@@ -310,0 +320,6 @@
+@@ -310,0 +322,6 @@
 +    bool AbandonCurlMultiHandle(CURLM *hFailedMultiHandle);
 +    bool IsParallelHeadRangeDisabled();
 +    void MarkParallelHeadRangeBlocked(const std::string &osFilename,

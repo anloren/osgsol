@@ -2,9 +2,11 @@
 
 #include <cstdarg>
 #include <cstdlib>
+#include <dlfcn.h>
 #include <map>
 #include <mutex>
 #include <string>
+#include <time.h>
 
 namespace
 {
@@ -54,6 +56,32 @@ std::map<CURL*, CURLM*>& attachedHandles()
 {
     static std::map<CURL*, CURLM*> handles;
     return handles;
+}
+
+void applySteadyClockOffset(clockid_t clockId, timespec* value)
+{
+    bool isSteadyClock = clockId == CLOCK_MONOTONIC;
+#ifdef CLOCK_MONOTONIC_RAW
+    isSteadyClock = isSteadyClock || clockId == CLOCK_MONOTONIC_RAW;
+#endif
+#ifdef CLOCK_UPTIME_RAW
+    isSteadyClock = isSteadyClock || clockId == CLOCK_UPTIME_RAW;
+#endif
+    if (value == nullptr || !isSteadyClock) return;
+    const char* text = std::getenv("OSGSOL_TEST_STEADY_CLOCK_OFFSET_MS");
+    if (text == nullptr || *text == '\0') return;
+    char* end = nullptr;
+    const long long milliseconds = std::strtoll(text, &end, 10);
+    if (end == text || *end != '\0' || milliseconds <= 0 ||
+        milliseconds > 600000)
+        return;
+    value->tv_sec += static_cast<time_t>(milliseconds / 1000);
+    value->tv_nsec += static_cast<long>((milliseconds % 1000) * 1000000);
+    if (value->tv_nsec >= 1000000000L)
+    {
+        ++value->tv_sec;
+        value->tv_nsec -= 1000000000L;
+    }
 }
 
 bool shouldReplaceDoneResult(long responseCode)
@@ -235,6 +263,13 @@ extern "C" CURLcode osgSolTestCurlEasyGetinfo(CURL* easyHandle,
     return forwardGetInfo(&curl_easy_getinfo, easyHandle, info, output);
 }
 
+extern "C" int osgSolTestClockGettime(clockid_t clockId, timespec* value)
+{
+    const int result = clock_gettime(clockId, value);
+    if (result == 0) applySteadyClockOffset(clockId, value);
+    return result;
+}
+
 __attribute__((used)) static const struct
 {
     const void* replacement;
@@ -280,9 +315,16 @@ __attribute__((used)) static const struct
     reinterpret_cast<const void*>(&curl_easy_getinfo)
 };
 
-#elif defined(__linux__)
+__attribute__((used)) static const struct
+{
+    const void* replacement;
+    const void* replacee;
+} g_clockGettimeInterpose __attribute__((section("__DATA,__interpose"))) = {
+    reinterpret_cast<const void*>(&osgSolTestClockGettime),
+    reinterpret_cast<const void*>(&clock_gettime)
+};
 
-#include <dlfcn.h>
+#elif defined(__linux__)
 
 extern "C" CURLMcode curl_multi_add_handle(
     CURLM* multiHandle, CURL* easyHandle)
@@ -333,6 +375,17 @@ extern "C" CURLcode curl_easy_getinfo(CURL* easyHandle, CURLINFO info, ...)
     void* output = va_arg(arguments, void*);
     va_end(arguments);
     return forwardGetInfo(realGetInfo, easyHandle, info, output);
+}
+
+extern "C" int clock_gettime(clockid_t clockId, timespec* value)
+{
+    using ClockGettimeFunction = int (*)(clockid_t, timespec*);
+    static const auto realClockGettime =
+        reinterpret_cast<ClockGettimeFunction>(
+            dlsym(RTLD_NEXT, "clock_gettime"));
+    const int result = realClockGettime(clockId, value);
+    if (result == 0) applySteadyClockOffset(clockId, value);
+    return result;
 }
 
 #endif

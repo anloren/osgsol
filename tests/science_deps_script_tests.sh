@@ -283,6 +283,12 @@ assert_contains "$prefetch_patch" 'oIter->second <= oNow' \
     "blocked operation expiry must include the exact deadline"
 assert_contains "$prefetch_patch" 'knMAX_BLOCKED_OPERATIONS = 256' \
     "blocked operation map must have a fixed capacity"
+assert_not_contains "$prefetch_patch" 'blocked-operation-evicted=capacity' \
+    "blocked operation capacity must never evict a live fail-closed token"
+assert_contains "$prefetch_patch" 'blocked-operation-overflow-marked' \
+    "full blocked operation state must activate bounded handler overflow"
+assert_contains "$prefetch_patch" 'scope=overflow' \
+    "handler overflow must reject path-token operations before network setup"
 assert_contains "$prefetch_patch" 'blocked-operation-rejected' \
     "same-token blocked opens must expose rejection evidence"
 assert_not_contains "$prefetch_patch" 'blocked-operation-cleared=' \
@@ -298,6 +304,22 @@ assert_contains "$prefetch_patch" \
 assert_contains "$prefetch_patch" \
     'm_oParallelHeadRangeBlockedOperations\.clear\(\)' \
     "ClearCache must clear every handler-wide blocked operation"
+assert_contains "$prefetch_patch" \
+    'm_oParallelHeadRangeBlockedOverflowExpiry = \{\}' \
+    "ClearCache and expiry sweep must clear bounded handler overflow"
+[[ $(grep -Ec '^\+[[:space:]]+m_oParallelHeadRangeBlockedOverflowExpiry = \{\};$' \
+        "$prefetch_patch") -eq 2 ]] ||
+    fail "PartialClearCache must not clear handler-wide blocked overflow"
+assert_contains "$network_test" 'tokens\.reserve\(257\)' \
+    "capacity regression must drive 257 real operation tokens"
+assert_contains "$network_test" 'VSICurlPartialClearCache\(baseUrl\.c_str\(\)\)' \
+    "capacity regression must preserve overflow across PartialClearCache"
+assert_contains "$tests_cmake" \
+    'osgVerse_Test_ScienceHttpRangesBlockedOperationCapacity' \
+    "capacity regression must be registered as an independent CTest"
+assert_contains "$tests_cmake" \
+    'OSGSOL_TEST_PREFETCH_CASE=blocked-operation-capacity' \
+    "capacity CTest must select the actual 257-token handler regression"
 assert_contains "$network_test" \
     'std::map<std::string, std::weak_ptr<std::recursive_mutex>> leases' \
     "path-option leases must use a process-wide exact-path registry"

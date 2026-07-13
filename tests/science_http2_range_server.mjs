@@ -525,6 +525,13 @@ server.on('stream', (stream, headers) =>
         return;
     }
 
+    if (path.includes('capacity-block'))
+    {
+        sendRangeBody(stream, context, 500,
+            { 'content-length': '17' }, Buffer.from('transient-error!\n'));
+        return;
+    }
+
     if (path.includes('redirect-source'))
     {
         sendRangeBody(stream, context, 302, {

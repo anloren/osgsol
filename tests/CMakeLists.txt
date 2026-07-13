@@ -346,6 +346,29 @@ IF(BUILD_TESTING)
                 APPEND PROPERTY ENVIRONMENT
                 "LD_PRELOAD=$<TARGET_FILE:osgSol_Test_CurlRemoveFault>")
         ENDIF()
+        ADD_TEST(NAME osgVerse_Test_ScienceHttpRangesBlockedOperationCapacity
+                 COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>)
+        SET(_OSGSOL_BLOCKED_OPERATION_CAPACITY_ENV
+            "OSGSOL_TEST_PREFETCH_CASE=blocked-operation-capacity")
+        LIST(APPEND _OSGSOL_BLOCKED_OPERATION_CAPACITY_ENV
+            "OSGSOL_TEST_MULTIRANGE_CASE=global-only")
+        SET_TESTS_PROPERTIES(
+            osgVerse_Test_ScienceHttpRangesBlockedOperationCapacity PROPERTIES
+            LABELS "offline;scienceearth;network-local"
+            TIMEOUT 180
+            ENVIRONMENT "${_OSGSOL_BLOCKED_OPERATION_CAPACITY_ENV}")
+        UNSET(_OSGSOL_BLOCKED_OPERATION_CAPACITY_ENV)
+        IF(APPLE)
+            SET_PROPERTY(
+                TEST osgVerse_Test_ScienceHttpRangesBlockedOperationCapacity
+                APPEND PROPERTY ENVIRONMENT
+                "DYLD_INSERT_LIBRARIES=$<TARGET_FILE:osgSol_Test_CurlRemoveFault>")
+        ELSEIF(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            SET_PROPERTY(
+                TEST osgVerse_Test_ScienceHttpRangesBlockedOperationCapacity
+                APPEND PROPERTY ENVIRONMENT
+                "LD_PRELOAD=$<TARGET_FILE:osgSol_Test_CurlRemoveFault>")
+        ENDIF()
         ADD_TEST(NAME osgSol_Test_ScienceHttpRangeServer
             COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
                     "${OSGSOL_PYTHON3_EXECUTABLE}" -m unittest
