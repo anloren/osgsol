@@ -13,7 +13,7 @@ const TRANSIENT_ONCE_MODES = new Map([
 const MODES = new Set([
     'success', 'range-200', 'range-200-body', 'short-range',
     'size-mismatch', 'range-503', 'range-503-exhaust',
-    'multirange-500-overlap',
+    'range-500-twice', 'multirange-500-overlap', 'multirange-success',
     ...TRANSIENT_ONCE_MODES.keys(),
 ]);
 const EXPECTED_RANGE = 'bytes=0-131071';
@@ -288,6 +288,12 @@ server.on('request', (request, response) =>
             Buffer.from('transient-error!\n'));
         return;
     }
+    if (options.mode === 'range-500-twice' && getCount <= 2)
+    {
+        send(500, { 'content-length': '17' },
+            Buffer.from('transient-error!\n'));
+        return;
+    }
     send(206, {
         'content-length': String(PREFETCH_BYTES),
         'content-range': `bytes 0-${PREFETCH_BYTES - 1}/${fixture.length}`,
@@ -416,7 +422,8 @@ server.on('stream', (stream, headers) =>
         reject(stream, context, 'comma Range rejected');
         return;
     }
-    if (options.mode === 'multirange-500-overlap')
+    if (options.mode === 'multirange-500-overlap' ||
+        options.mode === 'multirange-success')
     {
         const interval = MULTIRANGE_INTERVALS.get(range);
         if (!interval)
@@ -426,7 +433,9 @@ server.on('stream', (stream, headers) =>
         }
         const attempt = (rangeAttempts.get(range) ?? 0) + 1;
         rangeAttempts.set(range, attempt);
-        const maximumAttempts = interval.transientOnce ? 2 : 1;
+        const transientOnce = options.mode === 'multirange-500-overlap' &&
+            interval.transientOnce;
+        const maximumAttempts = transientOnce ? 2 : 1;
         if (attempt > maximumAttempts)
         {
             reject(stream, context,
@@ -435,18 +444,53 @@ server.on('stream', (stream, headers) =>
         }
         const respond = () =>
         {
-            if (interval.transientOnce && attempt === 1)
+            if (transientOnce && attempt === 1)
             {
                 sendBody(stream, context, 500, { 'content-length': '17' },
                     Buffer.from('transient-error!\n'));
                 return;
             }
             const body = fixture.subarray(interval.start, interval.end + 1);
-            const send = () => sendBody(stream, context, 206, {
+            const responseHeaders = {
                 'content-length': String(body.length),
                 'content-range':
                     `bytes ${interval.start}-${interval.end}/${fixture.length}`,
-            }, body);
+            };
+            const mutateContentRange = interval.start === 262144;
+            if (mutateContentRange &&
+                path.includes('multirange-content-range-missing'))
+            {
+                delete responseHeaders['content-range'];
+            }
+            else if (mutateContentRange &&
+                path.includes('multirange-content-range-malformed'))
+            {
+                responseHeaders['content-range'] = 'bytes malformed';
+            }
+            else if (mutateContentRange &&
+                path.includes('multirange-content-range-spoof'))
+            {
+                delete responseHeaders['content-range'];
+                responseHeaders['x-spoof'] =
+                    `content-range: bytes ${interval.start}-${interval.end}/${fixture.length}`;
+            }
+            else if (mutateContentRange &&
+                path.includes('multirange-content-range-wrong-range'))
+            {
+                responseHeaders['content-range'] =
+                    `bytes ${interval.start + 1}-${interval.end + 1}/${fixture.length}`;
+            }
+            if (mutateContentRange &&
+                path.includes('multirange-content-range-duplicate'))
+            {
+                stream.additionalHeaders({
+                    ':status': 103,
+                    'content-range':
+                        `bytes ${interval.start}-${interval.end}/${fixture.length}`,
+                });
+            }
+            const send = () => sendBody(
+                stream, context, 206, responseHeaders, body);
             if (interval.delayMs > 0)
                 setTimeout(send, interval.delayMs);
             else
@@ -498,6 +542,12 @@ server.on('stream', (stream, headers) =>
     if (transientStatus !== undefined && getCount === 1)
     {
         sendRangeBody(stream, context, transientStatus,
+            { 'content-length': '17' }, Buffer.from('transient-error!\n'));
+        return;
+    }
+    if (options.mode === 'range-500-twice' && getCount <= 2)
+    {
+        sendRangeBody(stream, context, 500,
             { 'content-length': '17' }, Buffer.from('transient-error!\n'));
         return;
     }

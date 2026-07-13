@@ -1,22 +1,16 @@
---- a/port/cpl_vsil_curl_class.h
-+++ b/port/cpl_vsil_curl_class.h
-@@ -310,0 +311,4 @@
-+    bool AbandonCurlMultiHandle(CURLM *hFailedMultiHandle);
-+    bool IsParallelHeadRangeDisabled();
-+    void MarkParallelHeadRangeBlocked(const std::string &osFilename);
-+    bool ConsumeParallelHeadRangeBlocked(const std::string &osFilename);
 --- a/port/cpl_vsil_curl.cpp
 +++ b/port/cpl_vsil_curl.cpp
-@@ -18,0 +19,4 @@
+@@ -18,0 +19,5 @@
 +#include <cctype>
++#include <charconv>
 +#include <chrono>
 +#include <cmath>
 +#include <cstdlib>
-@@ -494,0 +499,3 @@
+@@ -494,0 +500,247 @@
 +{
 +
 +struct ParallelHeadRangeResult
-@@ -495,0 +503,230 @@
++{
 +    bool bAttempted = false;
 +    bool bHeadDone = false;
 +    bool bRangeDone = false;
@@ -179,6 +173,50 @@
 +    }
 +}
 +
++struct ValidatedRetryDelay
++{
++    long long nMilliseconds = 0;
++    std::chrono::steady_clock::duration oDuration{};
++    std::chrono::steady_clock::time_point oDue{};
++};
++
++static bool GetValidatedRetryDelay(
++    double dfDelay, std::chrono::steady_clock::time_point oNow,
++    ValidatedRetryDelay &sValidated)
++{
++    if (!std::isfinite(dfDelay) || dfDelay < 0)
++        return false;
++    const long double dfMilliseconds =
++        static_cast<long double>(dfDelay) * 1000.0L;
++    const long double dfSafeIntegerMaximum = std::nextafter(
++        static_cast<long double>(std::numeric_limits<long long>::max()),
++        0.0L);
++    if (!std::isfinite(dfMilliseconds) ||
++        dfMilliseconds > dfSafeIntegerMaximum)
++    {
++        return false;
++    }
++    const auto oRemaining =
++        std::chrono::steady_clock::time_point::max() - oNow;
++    if (static_cast<long double>(dfDelay) >
++        std::chrono::duration<long double>(oRemaining).count())
++    {
++        return false;
++    }
++    const auto oDuration = std::chrono::duration_cast<
++        std::chrono::steady_clock::duration>(
++            std::chrono::duration<double>(dfDelay));
++    if (oDuration < std::chrono::steady_clock::duration::zero() ||
++        oDuration > oRemaining)
++    {
++        return false;
++    }
++    sValidated.nMilliseconds = std::llround(dfMilliseconds);
++    sValidated.oDuration = oDuration;
++    sValidated.oDue = oNow + oDuration;
++    return true;
++}
++
 +static size_t ParallelHeadRangeWriteFunc(void *pBuffer, size_t nSize,
 +                                         size_t nCount, void *pUserData)
 +{
@@ -212,9 +250,11 @@
 +    return nBytes;
 +}
 +
-+static bool ParseParallelContentRange(const std::string &osHeaders,
-+                                      GUIntBig &nTotal)
-+{
++static bool ParseExactContentRange(const std::string &osHeaders,
++                                   GUIntBig nExpectedStart,
++                                   GUIntBig nExpectedEnd,
++                                   GUIntBig nKnownTotal, GUIntBig &nTotal)
+@@ -495,0 +748,36 @@
 +    std::string osValue{};
 +    size_t nLineOffset = 0;
 +    int nContentRangeCount = 0;
@@ -241,20 +281,45 @@
 +    }
 +    if (nContentRangeCount != 1)
 +        return false;
-+    while (!osValue.empty() && isspace(static_cast<unsigned char>(osValue.front())))
++    while (!osValue.empty() &&
++           (osValue.front() == ' ' || osValue.front() == '\t'))
 +        osValue.erase(osValue.begin());
-+    while (!osValue.empty() && isspace(static_cast<unsigned char>(osValue.back())))
-+        osValue.pop_back();
++    if (osValue.empty() ||
++        isspace(static_cast<unsigned char>(osValue.back())))
++    {
++        return false;
++    }
 +    std::transform(osValue.begin(), osValue.end(), osValue.begin(),
 +                   [](unsigned char ch) { return static_cast<char>(tolower(ch)); });
-@@ -496,0 +734,14 @@
-+    unsigned long long nStart = 0;
-+    unsigned long long nEnd = 0;
+@@ -496,0 +785,41 @@
++    unsigned long long nParsedStart = 0;
++    unsigned long long nParsedEnd = 0;
 +    unsigned long long nParsedTotal = 0;
-+    char chTrailing = '\0';
-+    if (sscanf(osValue.c_str(), "bytes %llu-%llu/%llu%c", &nStart, &nEnd,
-+               &nParsedTotal, &chTrailing) != 3 ||
-+        nStart != 0 || nEnd != 131071 || nParsedTotal <= nEnd)
++    if (!STARTS_WITH(osValue.c_str(), "bytes "))
++        return false;
++    const char *pszCursor = osValue.data() + strlen("bytes ");
++    const char *const pszEnd = osValue.data() + osValue.size();
++    auto oParsed =
++        std::from_chars(pszCursor, pszEnd, nParsedStart, 10);
++    if (oParsed.ec != std::errc() || oParsed.ptr == pszCursor ||
++        oParsed.ptr == pszEnd || *oParsed.ptr != '-')
++    {
++        return false;
++    }
++    pszCursor = oParsed.ptr + 1;
++    oParsed = std::from_chars(pszCursor, pszEnd, nParsedEnd, 10);
++    if (oParsed.ec != std::errc() || oParsed.ptr == pszCursor ||
++        oParsed.ptr == pszEnd || *oParsed.ptr != '/')
++    {
++        return false;
++    }
++    pszCursor = oParsed.ptr + 1;
++    oParsed = std::from_chars(pszCursor, pszEnd, nParsedTotal, 10);
++    if (oParsed.ec != std::errc() || oParsed.ptr == pszCursor ||
++        oParsed.ptr != pszEnd || nParsedStart != nExpectedStart ||
++        nParsedEnd != nExpectedEnd ||
++        nParsedTotal <= nParsedEnd ||
++        (nKnownTotal > 0 && nParsedTotal != nKnownTotal))
 +    {
 +        return false;
 +    }
@@ -262,7 +327,16 @@
 +    return true;
 +}
 +
-@@ -811,0 +1063,15 @@
++static bool ParseParallelContentRange(const std::string &osHeaders,
++                                      GUIntBig &nTotal)
++{
++    return ParseExactContentRange(osHeaders, 0, 131071, 0, nTotal);
++}
++
+@@ -808,0 +1138,13 @@
++    }
++}
++
 +static size_t ParallelHeadRangeHeaderWriteFunc(void *pBuffer, size_t nSize,
 +                                                size_t nCount,
 +                                                void *pUserData)
@@ -273,13 +347,10 @@
 +    {
 +        curl_easy_getinfo(psWriter->hCurlHandle, CURLINFO_CONN_ID,
 +                          &psWriter->nConnectionId);
-+    }
+@@ -809,0 +1152,2 @@
 +    return VSICurlHandleWriteFunc(pBuffer, nSize, nCount,
 +                                  psWriter->psHeaderData);
-+}
-+
-@@ -1151,0 +1418,64 @@
-+
+@@ -1152,0 +1497,64 @@
 +    const bool bColdFileProperty =
 +        !oFileProp.bHasComputedFileSize && oFileProp.eExists == EXIST_UNKNOWN;
 +    ParallelHeadRangeResult sParallelResult;
@@ -343,18 +414,19 @@
 +                     sParallelResult.nFilePropertyPublishCount);
 +        }
 +    };
-@@ -1164 +1493,0 @@
++
+@@ -1164 +1571,0 @@
 -    int nTryCount = 0;
-@@ -1200,0 +1530,2 @@
+@@ -1200,0 +1608,2 @@
 +    ParallelHeadRangeHeaderWriter sHeadHeaderWriter{
 +        hCurlHandle, &sWriteFuncHeaderData, -1};
-@@ -1249 +1580 @@
+@@ -1249 +1658 @@
 -                               &sWriteFuncHeaderData);
 +                               &sHeadHeaderWriter);
-@@ -1251 +1582 @@
+@@ -1251 +1660 @@
 -                               VSICurlHandleWriteFunc);
 +                               ParallelHeadRangeHeaderWriteFunc);
-@@ -1268 +1599,89 @@
+@@ -1268 +1677,100 @@
 -    VSICURLMultiPerform(hCurlMultiHandle, hCurlHandle, &m_bInterrupt);
 +    const char *pszPrefetchOption = VSIGetPathSpecificOption(
 +        m_osFilename.c_str(), "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", nullptr);
@@ -363,15 +435,26 @@
 +    const bool bHasPathSpecificPrefetch =
 +        pszPrefetchOption != nullptr && CPLTestBool(pszPrefetchOption) &&
 +        pszPrefetchOption != pszGlobalPrefetchOption;
++    const char *pszOperationOption = VSIGetPathSpecificOption(
++        m_osFilename.c_str(), "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
++        nullptr);
++    const char *pszGlobalOperationOption = CPLGetConfigOption(
++        "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", nullptr);
++    const bool bHasPathSpecificOperation =
++        pszOperationOption != nullptr && pszOperationOption[0] != '\0' &&
++        pszOperationOption != pszGlobalOperationOption;
++    const std::string osPrefetchOperationId =
++        bHasPathSpecificOperation ? pszOperationOption : "";
 +    const bool bOrdinaryHTTP =
 +        STARTS_WITH(m_osFilename.c_str(), "/vsicurl/http://") ||
 +        STARTS_WITH(m_osFilename.c_str(), "/vsicurl/https://");
 +    const bool bColdRegion = poFS->GetRegion(m_pszURL, 0) == nullptr;
 +    const bool bAttemptParallel =
 +        !sParallelResult.bAttempted && bOrdinaryHTTP && osVerb == "HEAD" &&
-+        m_bUseHead && bHasPathSpecificPrefetch && bColdFileProperty &&
-+        bColdRegion && !bGetHeaders && nTryCount == 1 && !bRetryWithGet &&
-+        !bS3LikeRedirect && knDOWNLOAD_CHUNK_SIZE == 131072 &&
++        m_bUseHead && bHasPathSpecificPrefetch && bHasPathSpecificOperation &&
++        bColdFileProperty && bColdRegion && !bGetHeaders && nTryCount == 1 &&
++        !bRetryWithGet && !bS3LikeRedirect &&
++        knDOWNLOAD_CHUNK_SIZE == 131072 &&
 +        !poFS->IsParallelHeadRangeDisabled();
 +
 +    if (bAttemptParallel)
@@ -445,7 +528,7 @@
 +            }
 +            return eRemove;
 +        };
-@@ -1269,0 +1689,380 @@
+@@ -1269,0 +1778,393 @@
 +        const CURLMcode eHeadAdd =
 +            curl_multi_add_handle(hCurlMultiHandle, hCurlHandle);
 +        const CURLMcode eRangeAdd = eHeadAdd == CURLM_OK
@@ -524,7 +607,6 @@
 +            CaptureRangeTransport();
 +            while (!sParallelResult.bFallback &&
 +                   sParallelResult.bRangeDone &&
-+                   sParallelResult.eRangeCurlCode == CURLE_OK &&
 +                   IsParallelHeadRangeTransientStatus(
 +                       sParallelResult.nRangeCode))
 +            {
@@ -548,7 +630,9 @@
 +                            : 0;
 +                    CPLDebug(
 +                        poFS->GetDebugKey(),
-+                        "ParallelHeadRange: transient-retry-blocked range=bytes=0-131071 status=%ld reason=%s range-connection=" CPL_FRMT_GIB " range-http=%d",
++                        "ParallelHeadRange: transient-retry-blocked "
++                        "range=bytes=0-131071 status=%ld reason=%s "
++                        "range-connection=" CPL_FRMT_GIB " range-http=%d",
 +                        sParallelResult.nRangeCode, pszReason,
 +                        static_cast<GIntBig>(
 +                            sParallelResult.nRangeConnectionId),
@@ -568,13 +652,30 @@
 +                if (!bCanRetry)
 +                    break;
 +
++                const double dfRetryDelay =
++                    oRangeRetryContext.GetCurrentDelay();
++                ValidatedRetryDelay sValidatedRetryDelay;
++                if (!GetValidatedRetryDelay(
++                        dfRetryDelay, std::chrono::steady_clock::now(),
++                        sValidatedRetryDelay))
++                {
++                    CPLDebug(poFS->GetDebugKey(),
++                             "ParallelHeadRange: retry-delay-rejected");
++                    sParallelResult.bRetryBlocked = true;
++                    sParallelResult.bFallback = true;
++                    sParallelResult.osReason = "retry-delay";
++                    sRangeWriter.abyBuffer.clear();
++                    sRangeWriter.nAttemptedSize = 0;
++                    sRangeWriter.bOverflow = false;
++                    sParallelResult.abyRangeBuffer.clear();
++                    break;
++                }
++
 +                ++sParallelResult.nRangeTransientRetryCount;
 +                sParallelResult.nRangeTransientRetryBytes +=
 +                    sRangeWriter.abyBuffer.size();
-+                const double dfRetryDelay =
-+                    oRangeRetryContext.GetCurrentDelay();
 +                const long long nRetryDelayMs =
-+                    llround(dfRetryDelay * 1000.0);
++                    sValidatedRetryDelay.nMilliseconds;
 +                const int nRangeHTTPMajor =
 +                    sParallelResult.nRangeHTTPVersion ==
 +                            CURL_HTTP_VERSION_2_0
@@ -612,7 +713,9 @@
 +                    break;
 +                }
 +                bRangeAttached = false;
-+                CPLSleep(dfRetryDelay);
++                CPLSleep(std::chrono::duration<double>(
++                             sValidatedRetryDelay.oDuration)
++                             .count());
 +
 +                sRangeWriter = ParallelHeadRangeWriter();
 +                sRangeWriter.hCurlHandle = hRangeHandle;
@@ -663,13 +766,6 @@
 +                    }
 +                }
 +                CaptureRangeTransport();
-+                if (!sParallelResult.bRangeDone ||
-+                    sParallelResult.eRangeCurlCode != CURLE_OK)
-+                {
-+                    sParallelResult.bFallback = true;
-+                    sParallelResult.osReason = "transport";
-+                    break;
-+                }
 +            }
 +
 +            CaptureHeadTransport();
@@ -826,7 +922,7 @@
 +        return GetFileSizeOrHeaders(bSetError, bGetHeaders);
 +    }
 +
-@@ -1318,0 +2118,20 @@
+@@ -1318,0 +2220,20 @@
 +        if (sParallelResult.bRetryBlocked && nTryCount == 1 &&
 +            response_code == 200 &&
 +            sParallelResult.osReason == "head-protocol")
@@ -847,34 +943,37 @@
 +            CPLDebug(poFS->GetDebugKey(),
 +                     "ParallelHeadRange: fallback=head-invalid");
 +        }
-@@ -1367 +2186 @@
+@@ -1367 +2288 @@
 -                poFS->SetCachedFileProp(m_pszURL, oFileProp);
 +                PublishFileProperty();
-@@ -1394 +2213 @@
+@@ -1394 +2315 @@
 -                    curl_easy_cleanup(hCurlHandle);
 +                    CleanupCurlHandle(hCurlHandle);
-@@ -1412 +2231 @@
+@@ -1412 +2333 @@
 -                curl_easy_cleanup(hCurlHandle);
 +                CleanupCurlHandle(hCurlHandle);
-@@ -1437 +2256 @@
+@@ -1437 +2358 @@
 -                poFS->SetCachedFileProp(m_pszURL, oFileProp);
 +                PublishFileProperty();
-@@ -1505 +2324 @@
+@@ -1505 +2426 @@
 -                                curl_easy_cleanup(hCurlHandle);
 +                                CleanupCurlHandle(hCurlHandle);
-@@ -1516 +2335 @@
+@@ -1516 +2437 @@
 -                        curl_easy_cleanup(hCurlHandle);
 +                        CleanupCurlHandle(hCurlHandle);
-@@ -1643 +2462 @@
+@@ -1643 +2564 @@
 -            curl_easy_cleanup(hCurlHandle);
 +            CleanupCurlHandle(hCurlHandle);
-@@ -1666 +2485 @@
+@@ -1666 +2587 @@
 -                curl_easy_cleanup(hCurlHandle);
 +                CleanupCurlHandle(hCurlHandle);
-@@ -1679 +2498 @@
+@@ -1679 +2600 @@
 -                    curl_easy_cleanup(hCurlHandle);
 +                    CleanupCurlHandle(hCurlHandle);
-@@ -1758,0 +2578,183 @@
+@@ -1755,0 +2677,26 @@
++        }
++    }
++
 +    if (sParallelResult.bAttempted && !sParallelResult.bFallback)
 +    {
 +        sParallelResult.nHeadCode = response_code;
@@ -898,7 +997,7 @@
 +        {
 +            bReject = true;
 +            sParallelResult.osReason = "body-overflow";
-+        }
+@@ -1756,0 +2704,159 @@
 +        else if (!sParallelResult.bHeadDone || !sParallelResult.bRangeDone)
 +        {
 +            sParallelResult.bFallback = true;
@@ -939,7 +1038,8 @@
 +                        sParallelResult.nRangeCode))
 +                {
 +                    CPLDebug(poFS->GetDebugKey(),
-+                             "ParallelHeadRange: transient-fallback range=bytes=0-131071 status=%ld bytes=%zu",
++                             "ParallelHeadRange: transient-fallback "
++                             "range=bytes=0-131071 status=%ld bytes=%zu",
 +                             sParallelResult.nRangeCode,
 +                             sParallelResult.nRangeSize);
 +                }
@@ -1047,7 +1147,8 @@
 +    {
 +        sParallelResult.abyRangeBuffer.clear();
 +        poFS->InvalidateCachedData(m_pszURL);
-+        poFS->MarkParallelHeadRangeBlocked(m_osFilename);
++        poFS->MarkParallelHeadRangeBlocked(m_osFilename,
++                                           osPrefetchOperationId);
 +        oFileProp = FileProp();
 +        oFileProp.bHasComputedFileSize = true;
 +        oFileProp.eExists = EXIST_NO;
@@ -1056,17 +1157,15 @@
 +                 sParallelResult.osReason.c_str());
 +        CPLDebug(poFS->GetDebugKey(), "ParallelHeadRange: fallback=%s",
 +                 sParallelResult.osReason.c_str());
-+    }
-+
-@@ -1761 +2763 @@
+@@ -1761 +2867 @@
 -    curl_easy_cleanup(hCurlHandle);
 +    CleanupCurlHandle(hCurlHandle);
-@@ -1767,2 +2769,2 @@
+@@ -1767,2 +2873,2 @@
 -    if (response_code != 0)
 -        poFS->SetCachedFileProp(m_pszURL, oFileProp);
 +    if (response_code != 0 && !sParallelResult.bRetryBlocked)
 +        PublishFileProperty();
-@@ -2738,2 +3740,17 @@
+@@ -2738,2 +3844,17 @@
 -    // Retry loop: re-issue only failed requests that are retryable
 -    while (true)
 +    const char *pszImmediateOption = VSIGetPathSpecificOption(
@@ -1086,7 +1185,7 @@
 +        asMergedRequests.size() > 1;
 +
 +    if (bUseImmediateRetry)
-@@ -2740,0 +3758,31 @@
+@@ -2740,0 +3862,33 @@
 +        struct ImmediateRequest
 +        {
 +            size_t iRequest = 0;
@@ -1102,6 +1201,8 @@
 +            bool bDone = false;
 +            bool bPendingRetry = false;
 +            bool bCleaned = false;
++            bool bDetachExhausted = false;
++            bool bOwnershipRetained = false;
 +            CURLcode eResult = CURLE_FAILED_INIT;
 +            long nResponseCode = 0;
 +            long nHTTPVersion = 0;
@@ -1118,18 +1219,21 @@
 +            }
 +        };
 +
-@@ -2742,6 +3790,147 @@
+@@ -2742,6 +3896,7 @@
 -        std::vector<CURL *> aHandles(nRequests, nullptr);
 -        std::vector<WriteFuncStruct> asWriteFuncData(nRequests);
 -        std::vector<WriteFuncStruct> asWriteFuncHeaderData(nRequests);
 -        std::vector<char *> apszRanges(nRequests, nullptr);
 -        std::vector<struct curl_slist *> aHeaders(nRequests, nullptr);
 -        std::vector<CurlErrBuffer> asCurlErrors(nRequests);
-+        std::vector<ImmediateRequest> asRequests;
++        std::vector<std::unique_ptr<ImmediateRequest>> asRequests;
 +        asRequests.reserve(nRequests);
 +        for (size_t iReq = 0; iReq < nRequests; ++iReq)
-+            asRequests.emplace_back(iReq, m_oRetryParameters);
-+
++        {
++            asRequests.emplace_back(
++                std::make_unique<ImmediateRequest>(iReq, m_oRetryParameters));
++        }
+@@ -2748,0 +3904,583 @@
 +        const auto ResetAttempt = [&](ImmediateRequest &sRequest)
 +        {
 +            CPLFree(sRequest.sWriteFuncData.pBuffer);
@@ -1159,8 +1263,44 @@
 +        size_t nIncompleteRequests = nRequests;
 +        int nAttachedHandles = 0;
 +        bool bLoopError = false;
-+        for (ImmediateRequest &sRequest : asRequests)
++        bool bPersistentAttachment = false;
++        const auto DetachImmediateRequest =
++            [&](ImmediateRequest &sRequest)
 +        {
++            if (!sRequest.bAttached)
++                return true;
++            if (sRequest.bDetachExhausted)
++                return false;
++            for (int nAttempt = 1; nAttempt <= 2; ++nAttempt)
++            {
++                const CURLMcode eRemove = curl_multi_remove_handle(
++                    hMultiHandle, sRequest.hCurlHandle);
++                if (eRemove == CURLM_OK)
++                {
++                    sRequest.bAttached = false;
++                    --nAttachedHandles;
++                    if (nAttempt == 2)
++                    {
++                        CPLDebug(poFS->GetDebugKey(),
++                                 "ReadMultiRange: detach-retry-success "
++                                 "range=bytes=%s",
++                                 sRequest.osRange.c_str());
++                    }
++                    return true;
++                }
++                CPLDebug(poFS->GetDebugKey(),
++                         "ReadMultiRange: detach-failure range=bytes=%s "
++                         "attempt=%d code=%d",
++                         sRequest.osRange.c_str(), nAttempt,
++                         static_cast<int>(eRemove));
++            }
++            sRequest.bDetachExhausted = true;
++            bPersistentAttachment = true;
++            return false;
++        };
++        for (auto &poRequest : asRequests)
++        {
++            ImmediateRequest &sRequest = *poRequest;
 +            const auto &sMerged =
 +                asMergedRequests[sRequest.iRequest];
 +            sRequest.osRange = CPLSPrintf(
@@ -1231,8 +1371,9 @@
 +        const auto FindRequest = [&](CURL *hCurlHandle)
 +            -> ImmediateRequest *
 +        {
-+            for (ImmediateRequest &sRequest : asRequests)
++            for (auto &poRequest : asRequests)
 +            {
++                ImmediateRequest &sRequest = *poRequest;
 +                if (sRequest.hCurlHandle == hCurlHandle)
 +                    return &sRequest;
 +            }
@@ -1272,12 +1413,13 @@
 +                CPLHTTPRestoreSigPipeHandler(pOldHandler);
 +            }
 +        } oSigPipeGuard{CPLHTTPIgnoreSigPipe()};
-@@ -2748,0 +3938,335 @@
++
 +        while (!bLoopError && nIncompleteRequests > 0)
 +        {
 +            const auto oNow = std::chrono::steady_clock::now();
-+            for (ImmediateRequest &sRequest : asRequests)
++            for (auto &poRequest : asRequests)
 +            {
++                ImmediateRequest &sRequest = *poRequest;
 +                if (!sRequest.bPendingRetry ||
 +                    sRequest.oRetryDue > oNow)
 +                {
@@ -1337,22 +1479,17 @@
 +                }
 +                ImmediateRequest &sRequest = *psRequest;
 +                sRequest.eResult = psMessage->data.result;
-+                const CURLMcode eRemove =
-+                    curl_multi_remove_handle(hMultiHandle,
-+                                             sRequest.hCurlHandle);
-+                if (eRemove != CURLM_OK)
++                if (!DetachImmediateRequest(sRequest))
 +                {
 +                    CPLError(
 +                        CE_Failure, CPLE_AppDefined,
-+                        "curl_multi_remove_handle() failed for range %s: %d",
-+                        sRequest.osRange.c_str(),
-+                        static_cast<int>(eRemove));
++                        "curl_multi_remove_handle() remained attached for "
++                        "range %s",
++                        sRequest.osRange.c_str());
 +                    bLoopError = true;
 +                    nRet = -1;
 +                    break;
 +                }
-+                sRequest.bAttached = false;
-+                --nAttachedHandles;
 +
 +                const CURLcode eCodeInfo = curl_easy_getinfo(
 +                    sRequest.hCurlHandle, CURLINFO_HTTP_CODE,
@@ -1383,19 +1520,46 @@
 +                    break;
 +                }
 +
++                std::string osResponseHeaders;
++                if (sRequest.sWriteFuncHeaderData.pBuffer != nullptr)
++                {
++                    osResponseHeaders.assign(
++                        sRequest.sWriteFuncHeaderData.pBuffer,
++                        sRequest.sWriteFuncHeaderData.nSize);
++                }
++                const auto &sMerged =
++                    asMergedRequests[sRequest.iRequest];
++                const GUIntBig nKnownTotal =
++                    oFileProp.bHasComputedFileSize && oFileProp.fileSize > 0
++                    ? static_cast<GUIntBig>(oFileProp.fileSize)
++                    : 0;
++                GUIntBig nParsedTotal = 0;
++                const bool bExactContentRange =
++                    sRequest.nResponseCode == 206 && ParseExactContentRange(
++                        osResponseHeaders,
++                        static_cast<GUIntBig>(sMerged.nStartOffset),
++                        static_cast<GUIntBig>(sMerged.nStartOffset) +
++                            sMerged.nSize - 1,
++                        nKnownTotal, nParsedTotal);
 +                const bool bExactSuccess =
-+                    sRequest.eResult == CURLE_OK &&
-+                    (sRequest.nResponseCode == 206 ||
-+                     sRequest.nResponseCode == 225) &&
-+                    sRequest.sWriteFuncHeaderData.nEndOffset + 1 ==
-+                        sRequest.sWriteFuncHeaderData.nStartOffset +
-+                            sRequest.sWriteFuncData.nSize;
++                    sRequest.eResult == CURLE_OK && bExactContentRange &&
++                    sRequest.sWriteFuncData.nSize == sMerged.nSize;
 +                if (bExactSuccess)
 +                {
 +                    nTotalDownloaded += sRequest.sWriteFuncData.nSize;
 +                    sRequest.bDone = true;
 +                    --nIncompleteRequests;
 +                    continue;
++                }
++                if (sRequest.eResult == CURLE_OK &&
++                    sRequest.nResponseCode == 206 &&
++                    (!bExactContentRange ||
++                     sRequest.sWriteFuncData.nSize != sMerged.nSize))
++                {
++                    CPLDebug(poFS->GetDebugKey(),
++                             "ReadMultiRange: strict-content-range-rejected "
++                             "range=bytes=%s",
++                             sRequest.osRange.c_str());
 +                }
 +
 +                if (m_bInterrupt ||
@@ -1433,8 +1597,20 @@
 +                {
 +                    const double dfDelay =
 +                        sRequest.oRetryContext.GetCurrentDelay();
++                    ValidatedRetryDelay sValidatedRetryDelay;
++                    if (!GetValidatedRetryDelay(
++                            dfDelay, std::chrono::steady_clock::now(),
++                            sValidatedRetryDelay))
++                    {
++                        CPLError(CE_Failure, CPLE_AppDefined,
++                                 "Invalid retry delay for range %s",
++                                 sRequest.osRange.c_str());
++                        bLoopError = true;
++                        nRet = -1;
++                        break;
++                    }
 +                    const long long nDelayMs =
-+                        llround(dfDelay * 1000.0);
++                        sValidatedRetryDelay.nMilliseconds;
 +                    ++sRequest.nAttempt;
 +                    CPLError(
 +                        CE_Warning, CPLE_AppDefined,
@@ -1442,14 +1618,12 @@
 +                        "Retrying again in %.1f secs",
 +                        osURL.c_str(), sRequest.osRange.c_str(),
 +                        static_cast<int>(sRequest.nResponseCode), dfDelay);
-+                    sRequest.oRetryDue =
-+                        std::chrono::steady_clock::now() +
-+                        std::chrono::duration_cast<
-+                            std::chrono::steady_clock::duration>(
-+                                std::chrono::duration<double>(dfDelay));
++                    sRequest.oRetryDue = sValidatedRetryDelay.oDue;
 +                    CPLDebug(
 +                        poFS->GetDebugKey(),
-+                        "ReadMultiRange: immediate-retry range=bytes=%s status=%ld bytes=%zu attempt=%d delay-ms=%lld connection=" CPL_FRMT_GIB " http=2",
++                        "ReadMultiRange: immediate-retry range=bytes=%s "
++                        "status=%ld bytes=%zu attempt=%d delay-ms=%lld "
++                        "connection=" CPL_FRMT_GIB " http=2",
 +                        sRequest.osRange.c_str(),
 +                        sRequest.nResponseCode,
 +                        sRequest.sWriteFuncData.nSize,
@@ -1478,8 +1652,9 @@
 +                nRet = -1;
 +                break;
 +            }
-+            for (const ImmediateRequest &sRequest : asRequests)
++            for (const auto &poRequest : asRequests)
 +            {
++                const ImmediateRequest &sRequest = *poRequest;
 +                if (sRequest.sWriteFuncData.bInterrupted)
 +                {
 +                    bInterrupted = true;
@@ -1493,8 +1668,9 @@
 +
 +            bool bHasPendingRetry = false;
 +            auto oEarliestDue = std::chrono::steady_clock::time_point::max();
-+            for (const ImmediateRequest &sRequest : asRequests)
++            for (const auto &poRequest : asRequests)
 +            {
++                const ImmediateRequest &sRequest = *poRequest;
 +                if (sRequest.bPendingRetry)
 +                {
 +                    bHasPendingRetry = true;
@@ -1545,8 +1721,9 @@
 +
 +        if (!bLoopError && nRet == 0 && nIncompleteRequests == 0)
 +        {
-+            for (ImmediateRequest &sRequest : asRequests)
++            for (auto &poRequest : asRequests)
 +            {
++                ImmediateRequest &sRequest = *poRequest;
 +                if (!sRequest.bDone)
 +                {
 +                    nRet = -1;
@@ -1558,27 +1735,59 @@
 +            }
 +        }
 +
-+        for (ImmediateRequest &sRequest : asRequests)
++        for (auto &poRequest : asRequests)
 +        {
++            ImmediateRequest &sRequest = *poRequest;
 +            if (sRequest.bAttached)
 +            {
-+                const CURLMcode eRemove =
-+                    curl_multi_remove_handle(hMultiHandle,
-+                                             sRequest.hCurlHandle);
-+                if (eRemove != CURLM_OK)
++                if (!DetachImmediateRequest(sRequest))
 +                {
 +                    CPLError(
 +                        CE_Failure, CPLE_AppDefined,
-+                        "curl_multi_remove_handle() cleanup failed for range %s: %d",
-+                        sRequest.osRange.c_str(),
-+                        static_cast<int>(eRemove));
++                        "curl_multi_remove_handle() cleanup remained attached "
++                        "for range %s",
++                        sRequest.osRange.c_str());
 +                    nRet = -1;
 +                }
-+                else
-+                {
-+                    sRequest.bAttached = false;
-+                }
 +            }
++        }
++        if (bPersistentAttachment)
++        {
++            if (!poFS->AbandonCurlMultiHandle(hMultiHandle))
++            {
++                CPLError(CE_Fatal, CPLE_AppDefined,
++                         "Cannot abandon libcurl multi ownership after "
++                         "immediate multi-range detach failure");
++                std::abort();
++            }
++            hMultiHandle = poFS->GetCurlMultiHandleFor(osURL);
++            int nRetainedAttached = 0;
++            for (auto &poRequest : asRequests)
++            {
++                ImmediateRequest &sRequest = *poRequest;
++                if (!sRequest.bAttached)
++                    continue;
++                sRequest.bOwnershipRetained = true;
++                ++nRetainedAttached;
++                CPLDebug(poFS->GetDebugKey(),
++                         "ReadMultiRange: ownership-retained "
++                         "range=bytes=%s attached=1",
++                         sRequest.osRange.c_str());
++            }
++            CPLDebug(poFS->GetDebugKey(),
++                     "ReadMultiRange: multi-abandoned=success "
++                     "retained-attached=%d",
++                     nRetainedAttached);
++        }
++        for (auto &poRequest : asRequests)
++        {
++            ImmediateRequest &sRequest = *poRequest;
++            if (sRequest.bOwnershipRetained)
++            {
++                poRequest.release();
++                continue;
++            }
++            CPLAssert(!sRequest.bAttached);
 +            if (sRequest.hCurlHandle != nullptr)
 +            {
 +                CPLAssert(!sRequest.bCleaned);
@@ -1608,7 +1817,7 @@
 +            std::vector<struct curl_slist *> aHeaders(nRequests, nullptr);
 +            std::vector<CurlErrBuffer> asCurlErrors(nRequests);
 +
-@@ -2926,3 +4450,4 @@
+@@ -2926,3 +4664,4 @@
 -        if (!bRetry || nRet != 0)
 -            break;
 -        CPLSleep(dfMaxDelay);
@@ -1616,13 +1825,44 @@
 +                break;
 +            CPLSleep(dfMaxDelay);
 +        }
-@@ -4003,0 +5529,3 @@
+@@ -4002,0 +5742,7 @@
++    struct BlockedOperation
++    {
++        std::string osOperationId{};
++        std::chrono::steady_clock::time_point oExpiry{};
++    };
++
++    static constexpr size_t knMAX_BLOCKED_OPERATIONS = 256;
+@@ -4003,0 +5750,3 @@
 +    bool bParallelHeadRangeDisabled = false;
-+    std::map<std::string, std::chrono::steady_clock::time_point>
++    std::map<std::string, BlockedOperation>
 +        oParallelHeadRangeBlockedPaths{};
-@@ -4071,0 +5600 @@
+@@ -4012,0 +5762,19 @@
++static void SweepParallelHeadRangeBlocked(
++    CachedConnection &oConnection, const std::string *posActivePath = nullptr)
++{
++    const auto oNow = std::chrono::steady_clock::now();
++    for (auto oIter = oConnection.oParallelHeadRangeBlockedPaths.begin();
++         oIter != oConnection.oParallelHeadRangeBlockedPaths.end();)
++    {
++        if ((!posActivePath || oIter->first != *posActivePath) &&
++            oIter->second.oExpiry <= oNow)
++        {
++            oIter = oConnection.oParallelHeadRangeBlockedPaths.erase(oIter);
++        }
++        else
++        {
++            ++oIter;
++        }
++    }
++}
++
+@@ -4071,0 +5840 @@
 +    oParallelHeadRangeBlockedPaths.clear();
-@@ -4124,0 +5654,59 @@
+@@ -4121,0 +5891,61 @@
++}
++
++/************************************************************************/
 +/*                    AbandonCurlMultiHandle()                          */
 +/************************************************************************/
 +
@@ -1651,38 +1891,91 @@
 +/************************************************************************/
 +
 +void VSICurlFilesystemHandlerBase::MarkParallelHeadRangeBlocked(
-+    const std::string &osFilename)
++    const std::string &osFilename, const std::string &osOperationId)
 +{
-+    constexpr std::chrono::seconds BLOCKED_PROBE_EXPIRY{5};
-+    GetConnectionCache()[this].oParallelHeadRangeBlockedPaths[osFilename] =
-+        std::chrono::steady_clock::now() + BLOCKED_PROBE_EXPIRY;
++    constexpr std::chrono::minutes BLOCKED_OPERATION_EXPIRY{5};
++    auto &oConnection = GetConnectionCache()[this];
++    SweepParallelHeadRangeBlocked(oConnection);
++    const bool bExistingPath =
++        oConnection.oParallelHeadRangeBlockedPaths.find(osFilename) !=
++        oConnection.oParallelHeadRangeBlockedPaths.end();
++    while (!bExistingPath &&
++           oConnection.oParallelHeadRangeBlockedPaths.size() >=
++           CachedConnection::knMAX_BLOCKED_OPERATIONS)
++    {
++        const auto oOldest = std::min_element(
++            oConnection.oParallelHeadRangeBlockedPaths.begin(),
++            oConnection.oParallelHeadRangeBlockedPaths.end(),
++            [](const auto &oLeft, const auto &oRight)
++            {
++                return oLeft.second.oExpiry < oRight.second.oExpiry;
++            });
++        if (oOldest == oConnection.oParallelHeadRangeBlockedPaths.end())
++            break;
++        oConnection.oParallelHeadRangeBlockedPaths.erase(oOldest);
++        CPLDebug(GetDebugKey(),
++                 "ParallelHeadRange: blocked-operation-evicted=capacity");
++    }
++    oConnection.oParallelHeadRangeBlockedPaths[osFilename] = {
++        osOperationId,
++        std::chrono::steady_clock::now() + BLOCKED_OPERATION_EXPIRY};
 +    CPLDebug(GetDebugKey(),
-+             "ParallelHeadRange: blocked-probe-marked expiry-ms=5000");
-+}
-+
-+/************************************************************************/
-+/*                ConsumeParallelHeadRangeBlocked()                     */
++             "ParallelHeadRange: blocked-operation-marked expiry-ms=300000");
+@@ -4124,0 +5955,44 @@
++/*                 CheckParallelHeadRangeBlocked()                      */
 +/************************************************************************/
 +
-+bool VSICurlFilesystemHandlerBase::ConsumeParallelHeadRangeBlocked(
-+    const std::string &osFilename)
++bool VSICurlFilesystemHandlerBase::CheckParallelHeadRangeBlocked(
++    const std::string &osFilename, const std::string &osOperationId)
 +{
-+    auto &oBlocked =
-+        GetConnectionCache()[this].oParallelHeadRangeBlockedPaths;
-+    const auto oIter = oBlocked.find(osFilename);
++    constexpr std::chrono::minutes BLOCKED_OPERATION_EXPIRY{5};
++    auto &oConnection = GetConnectionCache()[this];
++    auto &oBlocked = oConnection.oParallelHeadRangeBlockedPaths;
++    auto oIter = oBlocked.find(osFilename);
 +    if (oIter == oBlocked.end())
++    {
++        SweepParallelHeadRangeBlocked(oConnection);
 +        return false;
-+    const bool bValid =
-+        oIter->second >= std::chrono::steady_clock::now();
++    }
++    const auto oNow = std::chrono::steady_clock::now();
++    if (oIter->second.oExpiry <= oNow)
++    {
++        oBlocked.erase(oIter);
++        CPLDebug(GetDebugKey(),
++                 "ParallelHeadRange: blocked-operation-expired");
++        SweepParallelHeadRangeBlocked(oConnection);
++        return false;
++    }
++    if (!osOperationId.empty() &&
++        oIter->second.osOperationId == osOperationId)
++    {
++        oIter->second.oExpiry = oNow + BLOCKED_OPERATION_EXPIRY;
++        SweepParallelHeadRangeBlocked(oConnection, &osFilename);
++        CPLDebug(GetDebugKey(),
++                 "ParallelHeadRange: blocked-operation-rejected");
++        return true;
++    }
++    const char *pszReason = osOperationId.empty()
++        ? "token-absent"
++        : "token-changed";
 +    oBlocked.erase(oIter);
 +    CPLDebug(GetDebugKey(),
-+             "ParallelHeadRange: blocked-probe-%s",
-+             bValid ? "consumed" : "expired");
-+    return bValid;
++             "ParallelHeadRange: blocked-operation-cleared=%s", pszReason);
++    SweepParallelHeadRangeBlocked(oConnection);
++    return false;
 +}
 +
 +/************************************************************************/
-@@ -4597,0 +6186,3 @@
-+    if (ConsumeParallelHeadRangeBlocked(pszFilename))
-+        return nullptr;
+@@ -4596,0 +6471,12 @@
 +
++    const char *pszOperationOption = VSIGetPathSpecificOption(
++        pszFilename, "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", nullptr);
++    const char *pszGlobalOperationOption = CPLGetConfigOption(
++        "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", nullptr);
++    const std::string osOperationId =
++        pszOperationOption != nullptr &&
++            pszOperationOption != pszGlobalOperationOption
++        ? pszOperationOption
++        : "";
++    if (CheckParallelHeadRangeBlocked(pszFilename, osOperationId))
++        return nullptr;

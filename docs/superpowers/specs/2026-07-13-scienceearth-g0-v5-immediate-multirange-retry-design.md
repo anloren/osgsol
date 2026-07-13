@@ -84,6 +84,16 @@ ParallelHeadRange: transient-retry-blocked range=bytes=0-131071 status=<CODE> re
 The same Range transport prerequisites are rechecked after every failed retry attempt. A later
 valid 206 cannot retroactively legitimize an invalid earlier attempt.
 
+The fail-closed marker is operation-scoped. Metadata prefetch activates only when the exact path
+also owns a nonempty, unique `OSGSOL_VSICURL_PREFETCH_OPERATION_ID`. A failed coordinator records
+path, token, and bounded expiry; every later open with that token is rejected without network I/O.
+An absent, changed, or expired token clears the stale record and permits an independent operation.
+The map actively sweeps expired paths and is capped at 256 entries.
+
+Retry delays are validated after `CanRetry()` and before integer or chrono conversion. NaN,
+infinity, negative, integer-unrepresentable, or steady-clock-unrepresentable delays fail closed,
+mark the current operation blocked, and cannot schedule a retry or publish metadata.
+
 ## Chosen latency mechanism
 
 ### Exact-path activation
@@ -100,7 +110,8 @@ same name does not activate the feature. Baseline, optimized, ordinary osgVerse/
 terrain, 3D Tiles, photo, media, and unrelated `/vsicurl/` objects retain upstream behavior.
 
 The existing metadata option remains separate:
-`OSGSOL_VSICURL_PREFETCH_HEAD_RANGE=YES`. Neither option silently enables the other.
+`OSGSOL_VSICURL_PREFETCH_HEAD_RANGE=YES`. It requires the operation token above for the same exact
+path and dataset lifetime. Neither optimization option silently enables the other.
 
 ### Per-handle scheduling
 
@@ -110,8 +121,9 @@ Only the exact-path branch of `VSICurlHandle::ReadMultiRange()` changes. Its beh
    multi handle as the current path.
 2. Add every initial Range and drive the multi with `curl_multi_perform()`.
 3. Drain `curl_multi_info_read()` whenever a handle completes; do not wait for unrelated siblings.
-4. A complete 206/225 response with the exact expected byte count is distributed to its caller
-   buffers and finalized immediately.
+4. Ordinary HTTP success is only an exact 206 with one strict, no-trailing `Content-Range` whose
+   start/end equal the requested interval, total exceeds the end, and known file total matches.
+   HTTP 225, missing/malformed/duplicate/spoofed/wrong-range headers, and short bodies fail closed.
 5. An exact transient status is passed to that request's existing `CPLHTTPRetryContext`. If its
    budget is available, detach that easy handle, record its independent due time, reset only its
    per-attempt body/header/error buffers, and leave all sibling handles attached.
@@ -119,8 +131,10 @@ Only the exact-path branch of `VSICurlHandle::ReadMultiRange()` changes. Its beh
    easy handle is re-added to the same multi handle with the identical Range and headers.
 7. If no sibling is active, a bounded sleep until the earliest due time is allowed; it cannot delay
    useful in-flight work.
-8. Permanent errors, exhausted retries, interruption, add/remove failures, and malformed/short
-   success responses fail closed and clean up every owned handle exactly once.
+8. Permanent errors, exhausted retries, interruption, and malformed/short success responses fail
+   closed. A completed easy handle gets at most two detach attempts. Persistent failure abandons
+   the cached multi and intentionally retains every still-attached easy handle plus its callback,
+   header, range, and buffer state; only detached requests are cleaned normally.
 
 The path-specific immediate branch accepts retries only for
 `429/500/502/503/504`, remains bounded by `GDAL_HTTP_MAX_RETRY=3`, and uses the existing

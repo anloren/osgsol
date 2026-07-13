@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <charconv>
 #include <chrono>
@@ -272,6 +273,9 @@ namespace
         int expectedFilePropertyPublications = 1;
         const char* blockedReason = "";
         const char* getInfoFault = "";
+        int transportFaultOrdinal = 0;
+        bool verifyOperationScope = false;
+        const char* retryDelay = "0.1";
     };
 
     struct DebugCapture
@@ -367,6 +371,13 @@ namespace
         std::string _path;
         std::string _key;
     };
+
+    std::string nextPrefetchOperationId()
+    {
+        static std::atomic<std::uint64_t> sequence{0};
+        return "science-prefetch-operation-" +
+            std::to_string(++sequence);
+    }
 
     const picojson::value& field(const picojson::object& object,
                                  const std::string& name);
@@ -782,6 +793,8 @@ namespace
 
         const PrefetchCase cases[] = {
             {"success", true, false},
+            {"success", true, false, "missing-operation-token", "2TLS", 1,
+                "", false, "path-no-token", "", 1, 0},
             {"range-503", true, false, "", "2TLS", 2},
             {"range-429-once", true, false, "", "2TLS", 2,
                 "", true, "path", "", 1},
@@ -805,6 +818,21 @@ namespace
             {"range-500-once", false, true, "redirect-invalid", "2TLS", 1,
                 "range-redirect", true, "path", "", 1, -1,
                 "range-redirect", "redirect"},
+            {"range-500-once", false, true, "transport-initial", "2TLS", 1,
+                "range-transport", true, "path", "", 1, -1,
+                "range-transport", "", 1},
+            {"range-500-twice", false, true, "transport-retry", "2TLS", 2,
+                "range-transport", true, "path", "", 1, -1,
+                "range-transport", "", 2},
+            {"range-500-once", false, true, "head-503-operation-scope",
+                "2TLS", 2, "head-invalid", true, "path", "", 3, 1,
+                "head-invalid", "", 0, true},
+            {"range-500-once", false, true, "invalid-delay-nan",
+                "2TLS", 1, "retry-delay", true, "path", "", 1, 0,
+                "", "", 0, false, "nan"},
+            {"range-500-once", false, true, "invalid-delay-huge",
+                "2TLS", 1, "retry-delay", true, "path", "", 1, 0,
+                "", "", 0, false, "1e300"},
             {"range-503-exhaust", false, false, "", "2TLS", 3,
                 "", true, "path", "", 1},
             {"success", false, false, "range-404", "2TLS", 1,
@@ -886,7 +914,7 @@ namespace
                 {"GDAL_HTTP_PROXY", ""},
                 {"GDAL_HTTPS_PROXY", ""},
                 {"GDAL_HTTP_MAX_RETRY", "2"},
-                {"GDAL_HTTP_RETRY_DELAY", "0.1"},
+                {"GDAL_HTTP_RETRY_DELAY", prefetchCase.retryDelay},
                 {"OSGSOL_VSICURL_PREFETCH_HEAD_RANGE",
                     std::string(prefetchCase.activation) == "global" ? "YES" : ""},
             });
@@ -894,12 +922,20 @@ namespace
             VSINetworkStatsReset();
             DebugCapture capture;
             bool opened = false;
+            const std::string operationId = nextPrefetchOperationId();
             {
                 ScopedGdalErrorCapture errorCapture(capture);
-                if (std::string(prefetchCase.activation) == "path")
+                if (std::string(prefetchCase.activation) == "path" ||
+                    std::string(prefetchCase.activation) == "path-no-token")
                 {
                     VSISetPathSpecificOption(vsiUrl.c_str(),
                         "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
+                    if (std::string(prefetchCase.activation) == "path")
+                    {
+                        VSISetPathSpecificOption(vsiUrl.c_str(),
+                            "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
+                            operationId.c_str());
+                    }
                     if (std::string(prefetchCase.variant) == "remove-retry")
                     {
                         setenv("OSGSOL_TEST_FAIL_NEXT_CURL_REMOVE", "1", 1);
@@ -917,6 +953,12 @@ namespace
                     if (std::string(prefetchCase.getInfoFault) == "redirect")
                     {
                         setenv("OSGSOL_TEST_CURLINFO_REDIRECT_COUNT_ONCE", "1", 1);
+                    }
+                    if (prefetchCase.transportFaultOrdinal > 0)
+                    {
+                        setenv("OSGSOL_TEST_CURLMSG_TRANSPORT_ON_500",
+                            std::to_string(
+                                prefetchCase.transportFaultOrdinal).c_str(), 1);
                     }
                 }
                 GDALDataset* dataset = static_cast<GDALDataset*>(GDALOpenEx(
@@ -943,7 +985,37 @@ namespace
                     require(std::getenv(faultName) == nullptr,
                             caseName + " did not consume its one-shot curl fault");
                 }
-                if (std::string(prefetchCase.activation) == "path")
+                if (prefetchCase.transportFaultOrdinal > 0)
+                {
+                    require(std::getenv(
+                                "OSGSOL_TEST_CURLMSG_TRANSPORT_ON_500") ==
+                                nullptr,
+                            caseName +
+                                " did not consume its exact 500 transport fault");
+                }
+                if (prefetchCase.verifyOperationScope)
+                {
+                    for (int probe = 0; probe < 2; ++probe)
+                    {
+                        VSILFILE* blocked = VSIFOpenL(vsiUrl.c_str(), "rb");
+                        require(blocked == nullptr,
+                            caseName + " same-token probe " +
+                                std::to_string(probe + 2) +
+                                " escaped the blocked operation");
+                    }
+                    const std::string replacementOperationId =
+                        nextPrefetchOperationId();
+                    VSISetPathSpecificOption(vsiUrl.c_str(),
+                        "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
+                        replacementOperationId.c_str());
+                    VSILFILE* recovered = VSIFOpenL(vsiUrl.c_str(), "rb");
+                    require(recovered != nullptr,
+                        caseName + " new-token independent open stayed blocked");
+                    require(VSIFCloseL(recovered) == 0,
+                        caseName + " new-token independent open did not close");
+                }
+                if (std::string(prefetchCase.activation) == "path" ||
+                    std::string(prefetchCase.activation) == "path-no-token")
                     VSIClearPathSpecificOptions(vsiUrl.c_str());
             }
             std::string coordinatorStatsJson;
@@ -1003,6 +1075,8 @@ namespace
                         parallelDebugSummary(capture));
             const bool expectedStarted =
                 std::string(prefetchCase.activation) == "path";
+            const bool invalidRetryDelay =
+                std::string(prefetchCase.variant).find("invalid-delay-") == 0;
             require(containsDebug(capture, "ParallelHeadRange: started") ==
                         expectedStarted,
                     caseName + " coordinator activation changed");
@@ -1011,7 +1085,7 @@ namespace
                 verifyTransport();
 
             if (transientOnce != transientOnceStatuses.end() &&
-                prefetchCase.blockedReason[0] == '\0')
+                prefetchCase.blockedReason[0] == '\0' && !invalidRetryDelay)
             {
                 require(headCount == 1 && ranges.size() == 2 &&
                             ranges[0]->range == "bytes=0-131071" &&
@@ -1067,18 +1141,28 @@ namespace
             }
             if (prefetchCase.blockedReason[0])
             {
-                require(rangeCount == 1 && ranges.size() == 1 &&
+                const int expectedBlockedRangeCount =
+                    prefetchCase.verifyOperationScope ? 2 :
+                    prefetchCase.exactRangeCount;
+                const int expectedFailedRangeCount =
+                    prefetchCase.transportFaultOrdinal == 2 ? 2 : 1;
+                require(rangeCount == expectedBlockedRangeCount &&
+                            ranges.size() ==
+                                static_cast<std::size_t>(
+                                    expectedBlockedRangeCount) &&
                             std::count_if(ranges.begin(), ranges.end(),
                             [](const Http2StreamEvidence* range)
                             {
                                 return range->status == 500 &&
                                     range->range == "bytes=0-131071";
-                            }) == 1,
-                        caseName + " emitted more than one total invalid Range");
+                            }) == expectedFailedRangeCount,
+                        caseName + " emitted an unexpected blocked Range set");
                 require(countDebug(capture,
-                            "ParallelHeadRange: transient-retry range=") == 0 &&
-                            countDebug(capture,
-                            "ParallelHeadRange: published") == 0,
+                            "ParallelHeadRange: transient-retry range=") ==
+                            (prefetchCase.transportFaultOrdinal == 2 ? 1 : 0) &&
+                        countDebug(capture,
+                            "ParallelHeadRange: published") ==
+                            (prefetchCase.verifyOperationScope ? 1 : 0),
                         caseName + " retried or published an invalid Range: " +
                             parallelDebugSummary(capture));
                 std::vector<CoordinatorRetryBlockedEvidence> blocked;
@@ -1112,13 +1196,24 @@ namespace
                                     ? 1 : 2),
                         caseName + " omitted its exact fail-closed retry event");
                 require(countDebug(capture,
-                            "ParallelHeadRange: blocked-probe-marked") == 1 &&
+                            "ParallelHeadRange: blocked-operation-marked") == 1 &&
                             countDebug(capture,
-                            "ParallelHeadRange: blocked-probe-consumed") == 1 &&
+                            "ParallelHeadRange: blocked-operation-expired") == 0 &&
                             countDebug(capture,
-                            "ParallelHeadRange: blocked-probe-expired") == 0,
-                        caseName +
-                            " did not consume its bounded fail-closed probe once");
+                            "ParallelHeadRange: blocked-probe-consumed") == 0,
+                        caseName + " did not retain operation-scoped blocking");
+                if (prefetchCase.verifyOperationScope)
+                {
+                    require(countDebug(capture,
+                                "ParallelHeadRange: blocked-operation-rejected") >=
+                                3 &&
+                                countDebug(capture,
+                                "ParallelHeadRange: blocked-operation-cleared=") ==
+                                1,
+                            caseName +
+                                " did not block every same-token probe then "
+                                "clear on token replacement");
+                }
             }
             if (std::string(prefetchCase.mode) == "range-503-exhaust")
             {
@@ -1172,18 +1267,38 @@ namespace
                             "ParallelHeadRange: rejected=status-404") == 1,
                         "range-404 was retried as a coordinator transient");
             }
+            if (invalidRetryDelay)
+            {
+                require(!opened && rangeCount == 1 &&
+                            countDebug(capture,
+                                "ParallelHeadRange: retry-delay-rejected") == 1 &&
+                            countDebug(capture,
+                                "ParallelHeadRange: transient-retry range=") == 0 &&
+                            countDebug(capture,
+                                "ParallelHeadRange: blocked-operation-marked") == 1 &&
+                            countDebug(capture,
+                                "ParallelHeadRange: blocked-operation-rejected") >= 1 &&
+                            countDebug(capture,
+                                "ParallelHeadRange: published") == 0 &&
+                            countDebug(capture,
+                                "ParallelHeadRange: file-property-published") == 0,
+                        caseName +
+                            " did not fail closed on an invalid retry delay: " +
+                            parallelDebugSummary(capture));
+            }
 
             const bool published =
                 containsDebug(capture, "ParallelHeadRange: published");
             const bool fallback =
                 containsDebug(capture, "ParallelHeadRange: fallback=");
             const bool expectedPublication =
+                prefetchCase.verifyOperationScope ||
                 (std::string(prefetchCase.mode) == "success" &&
                  (prefetchCase.variant[0] == '\0' ||
                   prefetchCase.completionOrder[0] != '\0')) ||
                 std::string(prefetchCase.mode) == "range-503" ||
                 (transientOnce != transientOnceStatuses.end() &&
-                 prefetchCase.blockedReason[0] == '\0');
+                 prefetchCase.blockedReason[0] == '\0' && !invalidRetryDelay);
             require(countDebug(capture, "ParallelHeadRange: published") ==
                         (expectedPublication ? 1 : 0),
                     std::string(prefetchCase.mode) +
@@ -1216,27 +1331,30 @@ namespace
                 std::string(prefetchCase.variant) == "remove-failure";
             const bool removeRetry =
                 std::string(prefetchCase.variant) == "remove-retry";
+            const int expectedCoordinatorAttempts = expectedStarted
+                ? (prefetchCase.verifyOperationScope ? 2 : 1)
+                : 0;
             require(countDebug(capture,
                         "ParallelHeadRange: detach-success=head") ==
-                        (expectedStarted ? 1 : 0) &&
+                        expectedCoordinatorAttempts &&
                     countDebug(capture,
                         "ParallelHeadRange: detach-success=range") ==
-                        (expectedStarted && !removeFailure && !removeRetry
-                             ? 1 : 0),
+                        (!removeFailure && !removeRetry
+                             ? expectedCoordinatorAttempts : 0),
                     caseName + " detach results changed");
             require(countDebug(capture,
                         "ParallelHeadRange: cleanup-call=head") ==
-                        (expectedStarted ? 1 : 0) &&
+                        expectedCoordinatorAttempts &&
                     countDebug(capture,
                         "ParallelHeadRange: cleanup-call=range") ==
-                        (expectedStarted ? 1 : 0),
+                        expectedCoordinatorAttempts,
                     caseName + " cleanup call counts changed");
             require(countDebug(capture,
                         "ParallelHeadRange: cleanup-success=head") ==
-                        (expectedStarted ? 1 : 0) &&
+                        expectedCoordinatorAttempts &&
                     countDebug(capture,
                         "ParallelHeadRange: cleanup-success=range") ==
-                        (expectedStarted && !removeFailure ? 1 : 0),
+                        (!removeFailure ? expectedCoordinatorAttempts : 0),
                     caseName + " cleanup success counts changed");
             if (removeFailure)
             {
@@ -1306,7 +1424,8 @@ namespace
                             " retried an invalid integrity response");
             }
             if (!prefetchCase.opens && !prefetchCase.fallback &&
-                std::string(prefetchCase.mode) != "range-200-body")
+                std::string(prefetchCase.mode) != "range-200-body" &&
+                !prefetchCase.verifyOperationScope)
             {
                 require(!published, std::string(prefetchCase.mode) +
                             " published invalid prefetch bytes");
@@ -1374,10 +1493,20 @@ namespace
         {
             const char* name;
             bool pathSpecific;
+            const char* serverMode = "multirange-500-overlap";
+            bool expectsSuccess = true;
+            int removeFaultCount = 0;
         };
         const ActivationCase cases[] = {
             {"path", true},
             {"global-only", false},
+            {"remove-transient", true, "multirange-500-overlap", true, 1},
+            {"remove-persistent", true, "multirange-500-overlap", false, 2},
+            {"content-range-missing", true, "multirange-success", false},
+            {"content-range-malformed", true, "multirange-success", false},
+            {"content-range-duplicate", true, "multirange-success", false},
+            {"content-range-spoof", true, "multirange-success", false},
+            {"content-range-wrong-range", true, "multirange-success", false},
         };
         const char* selectedActivation =
             CPLGetConfigOption("OSGSOL_TEST_MULTIRANGE_CASE", nullptr);
@@ -1396,7 +1525,7 @@ namespace
                 root / (std::string("multirange-") + activation.name + ".jsonl");
             ServerProcess server = startHttp2Server(
                 fixture, ready, log, certificate, key,
-                "multirange-500-overlap", "h2");
+                activation.serverMode, "h2");
             const int port = waitForPort(ready);
             const std::string vsiUrl = "/vsicurl/https://127.0.0.1:" +
                 std::to_string(port) + "/multirange-" + activation.name +
@@ -1429,6 +1558,7 @@ namespace
                 actual[index].resize(SIZES[index]);
                 buffers[index] = actual[index].data();
             }
+            int readResult = -1;
             {
                 ScopedGdalErrorCapture errorCapture(capture);
                 std::unique_ptr<ScopedPathSpecificOption> pathOption;
@@ -1444,15 +1574,52 @@ namespace
                 }
                 VSILFILE* file = VSIFOpenL(vsiUrl.c_str(), "rb");
                 require(file != nullptr, "failed to open the HTTP/2 multi-range fixture");
-                const int result = VSIFReadMultiRangeL(
+                if (activation.removeFaultCount > 0)
+                {
+                    unsetenv("OSGSOL_TEST_CLEANUP_WHILE_ATTACHED");
+                    setenv("OSGSOL_TEST_FAIL_NEXT_CURL_REMOVE",
+                        std::to_string(activation.removeFaultCount).c_str(), 1);
+                }
+                readResult = VSIFReadMultiRangeL(
                     static_cast<int>(buffers.size()), buffers.data(),
                     OFFSETS.data(), SIZES.data(), file);
                 require(VSIFCloseL(file) == 0,
                         "failed to close the HTTP/2 multi-range fixture");
-                require(result == 0,
-                        "VSIFReadMultiRangeL failed the overlap fixture");
-                require(actual == expected,
-                        "VSIFReadMultiRangeL returned incorrect interval bytes");
+                require((readResult == 0) == activation.expectsSuccess,
+                        std::string(activation.name) +
+                            " VSIFReadMultiRangeL result changed");
+                if (activation.expectsSuccess)
+                {
+                    require(actual == expected,
+                            "VSIFReadMultiRangeL returned incorrect interval bytes");
+                }
+                else
+                {
+                    require(std::all_of(actual.begin(), actual.end(),
+                                [](const std::vector<unsigned char>& interval)
+                                {
+                                    return std::all_of(interval.begin(),
+                                        interval.end(),
+                                        [](unsigned char value)
+                                        {
+                                            return value == 0;
+                                        });
+                                }),
+                            std::string(activation.name) +
+                                " exposed partial caller output");
+                }
+                if (activation.removeFaultCount > 0)
+                {
+                    require(std::getenv("OSGSOL_TEST_FAIL_NEXT_CURL_REMOVE") ==
+                                nullptr,
+                            std::string(activation.name) +
+                                " did not consume its bounded remove fault");
+                    require(std::getenv(
+                                "OSGSOL_TEST_CLEANUP_WHILE_ATTACHED") ==
+                                nullptr,
+                            std::string(activation.name) +
+                                " cleaned an easy handle while still attached");
+                }
                 pathOption.reset();
                 if (activation.pathSpecific)
                 {
@@ -1465,9 +1632,52 @@ namespace
             }
             const std::string statsJson = requireNetworkStatsEvidence();
             server.stop();
-            const Http2Evidence evidence = verifyHttp2Log(log);
-            const HttpProof proof = buildHttpProof(capture, statsJson);
+            if (std::string(activation.name) == "remove-persistent")
+            {
+                require(countDebug(capture,
+                            "ReadMultiRange: detach-failure range=") == 2 &&
+                            countDebug(capture,
+                            "ReadMultiRange: multi-abandoned=success") == 1 &&
+                            countDebug(capture,
+                            "ReadMultiRange: ownership-retained range=") >= 1,
+                        "persistent immediate remove failure did not isolate "
+                        "the old multi ownership");
+                continue;
+            }
 
+            const Http2Evidence evidence = verifyHttp2Log(log);
+            if (std::string(activation.serverMode) == "multirange-success")
+            {
+                const int actualHeadCount = static_cast<int>(std::count_if(
+                    evidence.streams.begin(), evidence.streams.end(),
+                    [](const Http2StreamEvidence &stream)
+                    {
+                        return stream.method == "HEAD";
+                    }));
+                const int actualGetCount = static_cast<int>(std::count_if(
+                    evidence.streams.begin(), evidence.streams.end(),
+                    [](const Http2StreamEvidence &stream)
+                    {
+                        return stream.method == "GET";
+                    }));
+                const int successfulGetCount = static_cast<int>(std::count_if(
+                    evidence.streams.begin(), evidence.streams.end(),
+                    [](const Http2StreamEvidence &stream)
+                    {
+                        return stream.method == "GET" && stream.status == 206;
+                    }));
+                require(actualHeadCount == 1 && actualGetCount == 3 &&
+                            successfulGetCount == 3 &&
+                            countDebug(capture,
+                                "ReadMultiRange: immediate-retry ") == 0 &&
+                            countDebug(capture,
+                                "ReadMultiRange: strict-content-range-rejected ") ==
+                                1,
+                        std::string(activation.name) +
+                            " did not fail closed on strict Content-Range");
+                continue;
+            }
+            const HttpProof proof = buildHttpProof(capture, statsJson);
             std::map<std::string, std::vector<const Http2StreamEvidence*>> ranges;
             int headCount = 0;
             for (const Http2StreamEvidence& stream : evidence.streams)
@@ -1538,6 +1748,18 @@ namespace
                             retrySecond->start < slow->end,
                         "path immediate retry events are absent or either "
                         "retry remained behind the slow sibling");
+                if (std::string(activation.name) == "remove-transient")
+                {
+                    require(countDebug(capture,
+                                "ReadMultiRange: detach-failure range=") == 1 &&
+                                countDebug(capture,
+                                "ReadMultiRange: detach-retry-success range=") ==
+                                1 &&
+                                countDebug(capture,
+                                "ReadMultiRange: multi-abandoned=success") == 0,
+                            "transient immediate remove failure did not "
+                            "recover through its bounded second detach");
+                }
             }
             else
             {
@@ -1807,6 +2029,9 @@ namespace
         require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                     "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
                 "baseline profile leaked the immediate multi-range option");
+        require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", "")).empty(),
+                "baseline profile leaked the prefetch operation token");
         {
             ScopedGdalConfig optimized(rangeAccessConfig(RangeProfile::Optimized));
             require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
@@ -1823,6 +2048,9 @@ namespace
             require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                         "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
                     "optimized profile leaked the immediate multi-range option");
+            require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                        "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", "")).empty(),
+                    "optimized profile leaked the prefetch operation token");
         }
         {
             ScopedGdalConfig prefetch(rangeAccessConfig(RangeProfile::Prefetch));
@@ -1842,12 +2070,20 @@ namespace
                     "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
                 ScopedPathSpecificOption immediateActivation(activationPath,
                     "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "YES");
+                const std::string operationId = nextPrefetchOperationId();
+                ScopedPathSpecificOption operation(activationPath,
+                    "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
+                    operationId.c_str());
                 require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                             "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")) == "YES",
                         "prefetch path option did not activate");
                 require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                             "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")) == "YES",
                         "immediate multi-range path option did not activate");
+                require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                            "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", "")) ==
+                            operationId,
+                        "prefetch operation token did not activate");
             }
             require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                         "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
@@ -1855,6 +2091,9 @@ namespace
             require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                         "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
                     "immediate path option survived RAII cleanup");
+            require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                        "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", "")).empty(),
+                    "prefetch operation token survived RAII cleanup");
         }
         require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
                     "16384", "nested profile did not restore baseline chunk");
@@ -5260,14 +5499,22 @@ namespace
         require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
                     "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
                 "immediate multi-range path option leaked between live iterations");
+        require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", "")).empty(),
+                "prefetch operation token leaked between live iterations");
         std::unique_ptr<ScopedPathSpecificOption> prefetchActivation;
         std::unique_ptr<ScopedPathSpecificOption> immediateActivation;
+        std::unique_ptr<ScopedPathSpecificOption> operationActivation;
         if (profile == RangeProfile::Prefetch)
         {
+            const std::string operationId = nextPrefetchOperationId();
             prefetchActivation = std::make_unique<ScopedPathSpecificOption>(
                 vsiUrl, "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
             immediateActivation = std::make_unique<ScopedPathSpecificOption>(
                 vsiUrl, "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "YES");
+            operationActivation = std::make_unique<ScopedPathSpecificOption>(
+                vsiUrl, "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
+                operationId.c_str());
         }
         DatasetPtr raw(static_cast<GDALDataset*>(GDALOpenEx(
             vsiUrl.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
@@ -5302,6 +5549,7 @@ namespace
                             [](std::int8_t value) { return value != 0; }),
                 item.name + " RGB window is empty after HTTP retries");
         raw.reset();
+        operationActivation.reset();
         immediateActivation.reset();
         prefetchActivation.reset();
         require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
@@ -5310,6 +5558,9 @@ namespace
         require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
                     "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
                 "immediate multi-range path option survived dataset close");
+        require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
+                    "OSGSOL_VSICURL_PREFETCH_OPERATION_ID", "")).empty(),
+                "prefetch operation token survived dataset close");
         const auto finished = std::chrono::steady_clock::now();
 
         PhaseTimings phases;

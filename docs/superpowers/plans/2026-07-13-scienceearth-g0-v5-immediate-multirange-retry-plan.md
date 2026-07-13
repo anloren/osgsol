@@ -37,6 +37,14 @@ macOS Mach-O/codesign packaging.
   before `CanRetry()` is called. Invalid transport means zero retry and zero cache publication.
 - Immediate ordinary retry is enabled only by path-specific
   `OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY=YES`. A global value alone must not activate it.
+- Metadata prefetch additionally requires a unique path-specific
+  `OSGSOL_VSICURL_PREFETCH_OPERATION_ID` for the dataset-open lifetime. Same-token blocked probes
+  perform zero network I/O; a new token represents an independent operation.
+- Ordinary immediate success is only HTTP 206 with one exact strict `Content-Range` and exact body
+  length. HTTP 225 and missing, malformed, duplicate, spoofed, or wrong-range headers fail closed.
+- Retry delay conversion must reject non-finite, negative, integer-unrepresentable, and
+  steady-clock-unrepresentable values before scheduling. Easy-handle removal is bounded to two
+  attempts; persistent attachment abandons the old multi and retains referenced callback state.
 - Baseline/optimized profiles and all unrelated application features retain upstream GDAL
   `ReadMultiRange()` behavior. The prefetch profile installs both path options only for its exact
   dataset lifetime.
@@ -256,13 +264,15 @@ Initial handles are added together. The event loop must:
 1. call `curl_multi_perform()`;
 2. drain all `CURLMSG_DONE` records;
 3. remove each completed handle immediately;
-4. validate exact success or classify an exact transient;
+4. validate exact HTTP 206, body length, and strict `Content-Range`, or classify an exact
+   transient;
 5. schedule eligible retries independently;
 6. reset only that handle's writers/error buffer before re-add;
 7. re-add the same easy handle and identical Range at its due time;
 8. poll no longer than the earliest due time while siblings remain active;
 9. use a bounded sleep only when no handle is active;
-10. clean every owned handle/header/buffer once on every exit.
+10. clean every detached handle/header/buffer once; after two failed detach attempts, abandon the
+    old multi and retain every still-attached handle and callback-owned state.
 
 An immediate attempt is eligible only when its failed transfer is `CURLE_OK`, redirect-free
 HTTP/2, exact transient status, and native retry budget remains. Permanent failure, exhausted

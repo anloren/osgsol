@@ -110,7 +110,7 @@ assert_contains "$prefetch_patch" 'CURLINFO_REDIRECT_COUNT' \
     "prefetch coordinator must discard redirected prefetches"
 assert_contains "$prefetch_patch" 'writer-overflow' \
     "prefetch patch must distinguish a capped-writer abort"
-assert_contains "$prefetch_patch" 'nParsedTotal <= nEnd' \
+assert_contains "$prefetch_patch" 'nParsedTotal <= nParsedEnd' \
     "Content-Range total must extend beyond the returned interval"
 assert_contains "$prefetch_patch" 'cleanup-success=%s' \
     "prefetch patch must expose successful role-aware cleanup proof"
@@ -184,8 +184,74 @@ assert_contains "$prefetch_patch" \
     'curl_multi_add_handle\(hMultiHandle, sRequest\.hCurlHandle\)' \
     "immediate retry must re-add the same easy handle to the same multi"
 assert_contains "$prefetch_patch" \
-    'ReadMultiRange: immediate-retry range=bytes=%s status=%ld bytes=%zu attempt=%d delay-ms=%lld connection=' \
-    "immediate retry event must expose the exact proof fields"
+    'ReadMultiRange: immediate-retry range=bytes=%s ' \
+    "immediate retry event must expose the exact range field"
+assert_contains "$prefetch_patch" \
+    'status=%ld bytes=%zu attempt=%d delay-ms=%lld ' \
+    "immediate retry event must expose status, bytes, attempt, and delay"
+assert_contains "$prefetch_patch" '"connection=" CPL_FRMT_GIB " http=2"' \
+    "immediate retry event must expose connection and HTTP version"
+assert_contains "$prefetch_patch" 'ParseExactContentRange' \
+    "immediate HTTP success must use the strict shared Content-Range parser"
+assert_contains "$prefetch_patch" \
+    'sRequest\.nResponseCode == 206.*ParseExactContentRange' \
+    "immediate ordinary HTTP success must require 206 plus strict Content-Range"
+assert_contains "$prefetch_patch" 'nParsedStart != nExpectedStart' \
+    "strict Content-Range must match the requested start"
+assert_contains "$prefetch_patch" 'nParsedEnd != nExpectedEnd' \
+    "strict Content-Range must match the requested end"
+assert_contains "$prefetch_patch" 'nKnownTotal > 0.*nParsedTotal != nKnownTotal' \
+    "strict Content-Range must match a known file size"
+assert_contains "$prefetch_patch" \
+    'ReadMultiRange: strict-content-range-rejected ' \
+    "immediate malformed success must expose a strict rejection token"
+assert_contains "$prefetch_patch" '"range=bytes=%s"' \
+    "immediate malformed success must identify the rejected byte range"
+assert_contains "$prefetch_patch" 'DetachImmediateRequest' \
+    "immediate detach must use one bounded ownership helper"
+assert_contains "$prefetch_patch" \
+    'ReadMultiRange: detach-failure range=bytes=%s ' \
+    "immediate detach failures must identify the affected range"
+assert_contains "$prefetch_patch" '"attempt=%d code=%d"' \
+    "immediate detach failures must expose the bounded attempt and code"
+assert_contains "$prefetch_patch" \
+    'ReadMultiRange: multi-abandoned=success ' \
+    "persistent immediate detach failure must quarantine the old multi"
+assert_contains "$prefetch_patch" '"retained-attached=%d"' \
+    "multi abandonment must count retained attached requests"
+assert_contains "$prefetch_patch" \
+    'ReadMultiRange: ownership-retained ' \
+    "attached immediate callback state must remain alive after abandonment"
+assert_contains "$prefetch_patch" '"range=bytes=%s attached=1"' \
+    "retained ownership evidence must identify an attached request"
+assert_contains "$prefetch_patch" 'GetValidatedRetryDelay' \
+    "retry delay must be validated before integer or chrono conversion"
+retry_delay_helper=$(sed -n \
+    '/^+static bool GetValidatedRetryDelay/,/^+}/p' "$prefetch_patch")
+for token in isfinite 'dfDelay < 0' 'numeric_limits<long long>::max' \
+             'steady_clock::time_point::max' duration_cast; do
+    grep -Fq -- "$token" <<<"$retry_delay_helper" ||
+        fail "validated retry delay helper is missing $token"
+done
+assert_contains "$prefetch_patch" 'OSGSOL_VSICURL_PREFETCH_OPERATION_ID' \
+    "prefetch activation must require an exact operation token"
+assert_contains "$prefetch_patch" \
+    'pszOperationOption != pszGlobalOperationOption' \
+    "global operation tokens must not activate metadata prefetch"
+assert_contains "$prefetch_patch" 'CheckParallelHeadRangeBlocked' \
+    "Open must preserve operation-scoped blocking"
+assert_not_contains "$prefetch_patch" 'ConsumeParallelHeadRangeBlocked' \
+    "operation-scoped blocking must not use consume-once semantics"
+assert_contains "$prefetch_patch" 'SweepParallelHeadRangeBlocked' \
+    "blocked operation map must actively sweep expired distinct paths"
+assert_contains "$prefetch_patch" 'oIter->second\.oExpiry <= oNow' \
+    "blocked operation expiry must include the exact deadline"
+assert_contains "$prefetch_patch" 'knMAX_BLOCKED_OPERATIONS = 256' \
+    "blocked operation map must have a fixed capacity"
+assert_contains "$prefetch_patch" 'blocked-operation-rejected' \
+    "same-token blocked opens must expose rejection evidence"
+assert_contains "$prefetch_patch" 'blocked-operation-cleared=' \
+    "absent or changed operation tokens must clear stale blocks"
 assert_contains "$prefetch_patch" 'GetParallelHeadRangeRetryEligibility' \
     "coordinator retry must use an explicit HEAD/Range eligibility helper"
 eligibility_helper=$(sed -n \
@@ -208,9 +274,15 @@ coordinator_can_retry_line=$(grep -n 'oRangeRetryContext.CanRetry' \
 [[ -n $eligibility_line && -n $coordinator_can_retry_line &&
       $eligibility_line -lt $coordinator_can_retry_line ]] ||
     fail "HEAD and failed Range transport must be validated before coordinator CanRetry"
+assert_not_contains "$prefetch_patch" \
+    'sParallelResult\.eRangeCurlCode == CURLE_OK &&' \
+    "coordinator transient dispatch must not hide Range transport failures"
 assert_contains "$prefetch_patch" \
-    'ParallelHeadRange: transient-retry-blocked range=bytes=0-131071 status=%ld reason=%s range-connection=' \
+    'ParallelHeadRange: transient-retry-blocked ' \
     "prefetch patch must emit the exact fail-closed blocked event"
+assert_contains "$prefetch_patch" \
+    'range=bytes=0-131071 status=%ld reason=%s ' \
+    "blocked event must expose the exact range, status, and reason"
 assert_not_contains "$prefetch_patch" 'OSGSOL_TEST_|PREFETCH_TEST_' \
     "production patch must not contain test-only transport fault controls"
 assert_contains "$prefetch_patch" \
@@ -223,8 +295,11 @@ assert_contains "$prefetch_patch" \
     'range-connection=' \
     "prefetch patch must emit coordinator retry connection evidence"
 assert_contains "$prefetch_patch" \
-    'ParallelHeadRange: transient-fallback range=bytes=0-131071 status=%ld bytes=%zu' \
-    "prefetch patch must retain the exact terminal fallback contract"
+    'ParallelHeadRange: transient-fallback ' \
+    "prefetch patch must retain the exact terminal fallback event"
+assert_contains "$prefetch_patch" \
+    'range=bytes=0-131071 status=%ld bytes=%zu' \
+    "terminal fallback must expose the exact range, status, and bytes"
 assert_contains "$prefetch_patch" \
     'ParallelHeadRange: transport head-connection=' \
     "prefetch patch must expose the role-labelled transport prefix"
