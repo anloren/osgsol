@@ -280,16 +280,19 @@ G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V4=FAIL
 DESKTOP_PACKAGE=NOT_READY
 
-## Immediate multi-range retry v5 offline authorization
+## Immediate multi-range retry v5 renewed offline authorization
 
 The frozen v4 STOP remains the control. Exact v5 implementation base
-`b3bdb4ea76530e9cc65180b4df97967da87c16a5` passed the complete non-public gate on
+`38203e62ae02e8992cb7214cfdab8634b3c3f5ba` passed the complete non-public gate on
 2026-07-14: Python 66/66, refreshed science-off core 20/20 including `ScienceBuildContract`,
-selected science 8/8 including `ScienceHttpRangesCoordinatorAbandonment`, private builder
-contract, and private-prefix verification, with zero skips/failures.
+selected science 9/9 including `ScienceHttpRangesCoordinatorAbandonment` and
+`ScienceHttpRangesBlockedOperationCapacity`, private builder contract, and private-prefix
+verification, with zero skips/failures. The renewed patch/pin is
+`0e67079267a4adfc316f20c88ba22cf078e5d653d2f35c2e3b54fff7efd0de1e`; its 256-entry capacity
+fails closed on overflow without evicting a live blocked-operation record.
 
 The disposable probe passed the canonical audit with Tier A `0`, Tier B new/removed `0/0`, zero
-unresolved dependencies, delta `21,321,367` bytes, and science closure `21,321,208` bytes. Its
+unresolved dependencies, delta `21,304,855` bytes, and science closure `21,304,696` bytes. Its
 single export, strict/deep signature, direct system dependencies, and forbidden-path scan passed.
 The fixed Desktop app was not rebuilt or replaced and retained fingerprint/helper/counts
 `91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18 /`
@@ -298,9 +301,10 @@ The fixed Desktop app was not rebuilt or replaced and retained fingerprint/helpe
 The committed v5 verifier binds the implementation parent, exact three-document authorization
 scope, patch/prefix/archive provenance, offline result logs and dynamic totals, every historical
 evidence tree and mode, the corrected v4 post-hoc source/base-wrapper/transcript, exact-five retry
-codes, protected source diff, formal `prefetch`/v4 path, and the absent/non-symlink v5 candidate,
-summary, and formal paths. No public candidate/formal process, Desktop update, G1, tag, push, or
-release occurred in this task.
+codes, the 256-entry/no-live-eviction capacity contract, protected source diff, formal
+`prefetch`/v4 path, and the absent/non-symlink v5 candidate, summary, and formal paths. The earlier
+base-bound authorization is superseded by this renewed authorization. No public candidate/formal
+process, Desktop update, G1, tag, push, or release occurred in this task.
 
 G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V5=AUTHORIZED_NOT_RUN

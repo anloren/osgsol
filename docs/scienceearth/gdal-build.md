@@ -375,12 +375,12 @@ prefix verifier passed, the focused GDAL/local-HTTP CTest passed 4/4, and the se
 offline matrix passed 8/8. No public AlphaEarth request, formal evidence run, Desktop packaging,
 G1 implementation, tag, or push occurred.
 
-### V5 complete offline requalification authorization
+### V5 renewed offline requalification authorization
 
 On 2026-07-14, exact implementation base
-`b3bdb4ea76530e9cc65180b4df97967da87c16a5` was requalified without public AlphaEarth access.
+`38203e62ae02e8992cb7214cfdab8634b3c3f5ba` was requalified without public AlphaEarth access.
 The final private patch and configured pin both equal
-`a5bd7acd3f31c40e8a631ffd8ca5a37a232812a495037e456077a59442c07567`.
+`0e67079267a4adfc316f20c88ba22cf078e5d653d2f35c2e3b54fff7efd0de1e`.
 All three downloaded archives matched their pinned SHA-256 values, the standalone verifier
 passed, and the private-prefix manifest remained
 `a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116`.
@@ -388,13 +388,16 @@ passed, and the private-prefix manifest remained
 After refreshing only the existing science-off build tree with
 `OSGSOL_BUILD_SCIENCE=OFF`, the complete core CTest passed 20/20, including the science-off
 `ScienceBuildContract`. The two Python suites passed 66/66, the private builder contract passed,
-and the selected science tree passed 8/8 including `ScienceHttpRangesCoordinatorAbandonment`.
-There were zero skips and zero failures.
+and the selected science tree passed 9/9, including
+`ScienceHttpRangesCoordinatorAbandonment` and
+`ScienceHttpRangesBlockedOperationCapacity`. There were zero skips and
+zero failures. The patch contract is fixed at 256 remembered blocked operations: when all slots
+are live, overflow fails closed for the expiry window and no live entry is evicted.
 
 The disposable probe plugin hashes to
-`221134b50179b547a698c5841a4aec2f927222ba45a690ba14da3124cf2f2728`. The canonical audit
-passed with Tier A `0`, Tier B new/removed `0/0`, no unresolved dependency, a 21,321,367-byte
-bundle delta, and a 21,321,208-byte science closure. Deep/strict codesign, anchor-only export,
+`90c4816ee4cdc3d503b2f5f0a72738870e553714c2d1128433f2984cb9d06fc7`. The canonical audit
+passed with Tier A `0`, Tier B new/removed `0/0`, no unresolved dependency, a 21,304,855-byte
+bundle delta, and a 21,304,696-byte science closure. Deep/strict codesign, anchor-only export,
 system-only direct dependencies, and the worktree/private-prefix path scan all passed. The
 protected Desktop tuple remained
 `91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18 /`
@@ -404,7 +407,8 @@ The base-bound executable verifier and its mutation self-tests are preserved in
 `g0-measurements.md`. It rechecks all old, diagnostic, v2, v3, and frozen v4 evidence hashes,
 complete sets, and modes; the corrected v4 post-hoc source/base-wrapper/transcript; the formal
 five-iteration `prefetch` command still targeting frozen `formal-evidence-v4`; exact-five retry
-codes; protected source scope; and the absence/non-symlink state of all three future v5 paths.
+codes; the 256-entry/no-live-eviction capacity contract; protected source scope; and the
+absence/non-symlink state of all three future v5 paths.
 This authorizes only the separately controlled one-shot v5 candidate. It does not execute it,
 authorize formal promotion, package Desktop, start G1, tag, push, or release.
 

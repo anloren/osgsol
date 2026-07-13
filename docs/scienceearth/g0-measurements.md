@@ -2958,10 +2958,11 @@ G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V4=FAIL
 DESKTOP_PACKAGE=NOT_READY
 
-## Immediate multi-range retry v5 offline authorization
+## Immediate multi-range retry v5 renewed offline authorization
 
 On 2026-07-14, exact implementation base
-`b3bdb4ea76530e9cc65180b4df97967da87c16a5` completed the entire non-public gate. No public
+`38203e62ae02e8992cb7214cfdab8634b3c3f5ba` completed the entire renewed non-public gate. The
+earlier authorization at `b3bdb4ea76530e9cc65180b4df97967da87c16a5` is superseded. No public
 AlphaEarth candidate/formal request was made; no v5 evidence path was created; and frozen v4
 artifacts were not edited, chmodded, deleted, or rerun. The fixed Desktop app was not packaged or
 replaced, and G1, tag, push, and release were not started.
@@ -2970,11 +2971,11 @@ replaced, and G1, tag, push, and release were not started.
 
 | V5 offline gate | Exit | Fresh result | Timing |
 |---|---:|---:|---:|
-| Manifest and bundle-audit Python suites | 0 | 66/66, zero skip/failure | 5.041 s internal; 5.13 s wall |
-| Private dependency builder contract | 0 | PASS | 1.47 s wall |
-| Refreshed `build/osgsol_core` full CTest | 0 | 20/20, including science-off `ScienceBuildContract` | 15.52 s CTest real |
-| Selected `build/science_g0_prefetch` CTest | 0 | 8/8, including `ScienceHttpRangesCoordinatorAbandonment` | 21.98 s CTest real |
-| Standalone private-prefix verifier | 0 | three archives and private manifest PASS | 1.36 s wall |
+| Manifest and bundle-audit Python suites | 0 | 66/66, zero skip/failure | 5.432 s internal; 5.52 s wall |
+| Private dependency builder contract | 0 | PASS | 1.55 s wall |
+| Refreshed `build/osgsol_core` full CTest | 0 | 20/20, including science-off `ScienceBuildContract` | 15.44 s CTest real |
+| Selected `build/science_g0_prefetch` CTest | 0 | 9/9, including coordinator abandonment and blocked-operation capacity | 24.90 s CTest real |
+| Standalone private-prefix verifier | 0 | three archives and private manifest PASS | 1.41 s wall |
 
 The science-off build tree was reconfigured in place with `OSGSOL_BUILD_SCIENCE=OFF` before its
 contract target and full CTest ran. Every explicit Python invocation and every CTest/script that
@@ -2982,16 +2983,16 @@ could call Python used `PYTHONDONTWRITEBYTECODE=1`; the final tree contained zer
 directories.
 
 The disposable plugin/app build and canonical audit exited 0. The plugin SHA-256 is
-`221134b50179b547a698c5841a4aec2f927222ba45a690ba14da3124cf2f2728`; audit JSON/text hashes
-are `6ad62512867b139601992bc06a4660a37fe69e4c6563e3f1301b9e0397a2438b` and
-`cc00b53b5210ba7d0549db202dffcd4de0577d2ce925b4e3e01bffc85d86055f`.
+`90c4816ee4cdc3d503b2f5f0a72738870e553714c2d1128433f2984cb9d06fc7`; audit JSON/text hashes
+are `4cac090e6a68e7373fe7a9afcb93cb7c4a9815617aab23b99992682b5500fd70` and
+`c46b9bf6df7c1ed04a702f9f5e675d35520454be9b1d3bc37ffa2bb2f480ff02`.
 
 | V5 isolation measurement | Fresh result |
 |---|---:|
 | Mach-O graph nodes | 128 |
-| Protected baseline / disposable probe | 542,594,200 / 563,915,567 bytes |
-| Added size | 21,321,367 bytes, below 40 MiB |
-| Science-only closure | 21,321,208 bytes, below 60 MiB |
+| Protected baseline / disposable probe | 542,594,200 / 563,899,055 bytes |
+| Added size | 21,304,855 bytes, below 40 MiB |
+| Science-only closure | 21,304,696 bytes, below 60 MiB |
 | Tier A absolute science findings | 0 |
 | Tier B new / removed identities | 0 / 0 |
 | Unresolved dependencies / violations | 0 / 0 |
@@ -3005,7 +3006,7 @@ the main app.
 ### Provenance, protected evidence, and Desktop
 
 The private patch and configured pin both equal
-`a5bd7acd3f31c40e8a631ffd8ca5a37a232812a495037e456077a59442c07567`; the exact downloads
+`0e67079267a4adfc316f20c88ba22cf078e5d653d2f35c2e3b54fff7efd0de1e`; the exact downloads
 match GDAL `e04e9813...c675`, PROJ `af5b731c...1960`, and ZSTD `eb33e51f...6fa3`. The private
 prefix manifest remains
 `a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116`.
@@ -3034,9 +3035,9 @@ range/index/worktree to these three authorization documents, zero unexpected unt
 patch/prefix/archive hashes, dynamic offline results, protected evidence, Desktop tuple, formal
 profile/path, protected diff, exact retry codes, and future-v5 absence. Its self-test uses a
 temporary synthetic tree and proves rejection of hash drift, a regular future artifact, a
-dangling future symlink, a dirty protected path, and broader HTTP 408 retry policy. Its extracted
-source SHA-256 is
-`57e4ae9e1e71ae9a8a4b8bfa5fe66e5700d7dc16980bf52e22572613581c82eb`.
+dangling future symlink, a dirty protected path, broader HTTP 408 retry policy, and capacity logic
+that would evict a live blocked-operation record. It also checks the exact 256-entry fail-closed
+capacity contract. Its extracted source SHA-256 is recorded after the source block below.
 
 <!-- V5_AUTHORIZATION_VERIFIER_BEGIN -->
 ```python
@@ -3064,12 +3065,12 @@ ALLOWED_AUTHORIZATION_FILES = {
     "docs/scienceearth/gdal-build.md",
 }
 ROOT = Path("/Users/USER/osgsol/.worktrees/v0.2-runtime-safety")
-IMPLEMENTATION_BASE = "b3bdb4ea76530e9cc65180b4df97967da87c16a5"
+IMPLEMENTATION_BASE = "38203e62ae02e8992cb7214cfdab8634b3c3f5ba"
 V5_DESIGN_BASE = "f0cfbc3b0d7feeda9cca649de5a53e4e3ac008dc"
 PATCH_RELATIVE = "packaging/science_deps/gdal-3.13.1-parallel-head-range.patch"
 VERSIONS_RELATIVE = "packaging/science_deps/versions.env"
-PATCH_SHA256 = "a5bd7acd3f31c40e8a631ffd8ca5a37a232812a495037e456077a59442c07567"
-VERSIONS_SHA256 = "fa5172d7c88c988364fe19acd6261e4804d70f73dd1203d24dcbc196960f4826"
+PATCH_SHA256 = "0e67079267a4adfc316f20c88ba22cf078e5d653d2f35c2e3b54fff7efd0de1e"
+VERSIONS_SHA256 = "2df93f51dcc78b9a5fbb5b3545e4ba6c1878547c1af8dac01fd384c21c280af9"
 
 
 def require(condition, message):
@@ -3183,6 +3184,26 @@ def require_exact_retry_codes(patch_text):
                 f"broader or reordered retry codes in {name}: {codes}")
 
 
+def require_capacity_contract(patch_text):
+    capacity = re.search(
+        r"knMAX_BLOCKED_OPERATIONS\s*=\s*(\d+);", patch_text)
+    require(capacity is not None and int(capacity.group(1)) == 256,
+            "blocked-operation capacity is not exactly 256")
+    full = re.search(
+        r"\+\s*if \(m_oParallelHeadRangeBlockedOperations\.size\(\) >=\s*\n"
+        r"\+\s*knMAX_BLOCKED_OPERATIONS\)\s*\n\+\s*\{"
+        r"(?P<body>.*?)\n\+\s*\}", patch_text, re.DOTALL)
+    require(full is not None, "missing full-capacity branch")
+    body = full.group("body")
+    require("m_oParallelHeadRangeBlockedOverflowExpiry" in body and
+            "return;" in body and ".erase(" not in body,
+            "full-capacity branch does not fail closed without live eviction")
+    require("scope=overflow" in patch_text and
+            "m_oParallelHeadRangeBlockedOverflowExpiry !=" in patch_text and
+            "std::chrono::steady_clock::time_point{}" in patch_text,
+            "overflow fail-closed check is missing")
+
+
 def self_test():
     payload = b"ScienceEarth-v5"
     require_hash_bytes("synthetic", payload, sha256_bytes(payload))
@@ -3243,7 +3264,31 @@ def self_test():
                 "retry-code rejection reason mismatch")
     else:
         raise AssertionError("broader retry codes were accepted")
-    print("V5_AUTHORIZATION_PURE_HELPERS=PASS;MUTATIONS=4/4")
+
+    capacity = """+    static constexpr std::size_t knMAX_BLOCKED_OPERATIONS = 256;
++    if (m_oParallelHeadRangeBlockedOperations.size() >=
++        knMAX_BLOCKED_OPERATIONS)
++    {
++        m_oParallelHeadRangeBlockedOverflowExpiry = oNow + expiry;
++        return;
++    }
++    if (m_oParallelHeadRangeBlockedOverflowExpiry !=
++        std::chrono::steady_clock::time_point{})
++        CPLDebug(GetDebugKey(), "scope=overflow");
+"""
+    require_capacity_contract(capacity)
+    eviction = capacity.replace(
+        "+        m_oParallelHeadRangeBlockedOverflowExpiry = oNow + expiry;",
+        "+        m_oParallelHeadRangeBlockedOperations.erase(\n"
+        "+            m_oParallelHeadRangeBlockedOperations.begin());")
+    try:
+        require_capacity_contract(eviction)
+    except AssertionError as error:
+        require("without live eviction" in str(error),
+                "capacity-eviction rejection reason mismatch")
+    else:
+        raise AssertionError("live blocked-operation eviction was accepted")
+    print("V5_AUTHORIZATION_PURE_HELPERS=PASS;MUTATIONS=5/5")
 
 
 def main():
@@ -3267,6 +3312,7 @@ def main():
     require_file_hash(VERSIONS_RELATIVE, VERSIONS_SHA256)
     patch_text = (ROOT / PATCH_RELATIVE).read_text()
     require_exact_retry_codes(patch_text)
+    require_capacity_contract(patch_text)
     versions = (ROOT / VERSIONS_RELATIVE).read_text()
     require(f"GDAL_PREFETCH_PATCH_SHA256={PATCH_SHA256}\n" in versions,
             "private patch pin mismatch")
@@ -3469,40 +3515,41 @@ def main():
         "0a9594708a084db4669c3199315eb7e1a1878cb636d87190644ff3bd5a82b985")
 
     offline_logs = {
-        ".superpowers/sdd/task-3-v5-offline-python.log": (
-            "b5d3fa4f44e4c36be8bdce868a4df93397a80af01daca478d1c4b1e7798b03a4",
+        ".superpowers/sdd/task-3-v5-renewed-offline-python.log": (
+            "f8d15a434f6a0e5951ce1c9c5d1e15bb4133fdb6425770eb157405564f6b91a9",
             ("Ran 66 tests", "\nOK\n")),
-        ".superpowers/sdd/task-3-v5-offline-science-deps-contract.log": (
-            "a72e1a7aeceb86167443ffd53cd4480e3a6f9e8a189c5767d4cf18e905a4ea65",
+        ".superpowers/sdd/task-3-v5-renewed-offline-deps-contract.log": (
+            "93913923aaaa04b56115f0ec75f655c7054348eda553aa12364f30e9db25f8aa",
             ("[OK] ScienceEarth private dependency builder contract",)),
-        ".superpowers/sdd/task-3-v5-science-off-reconfigure.log": (
+        ".superpowers/sdd/task-3-v5-renewed-science-off-reconfigure.log": (
             "3758bd29d7e3cff3e0684e8b6aef29356e1a033ff320b4906ed81a27e7122a26",
             ("Configuring done", "Generating done")),
-        ".superpowers/sdd/task-3-v5-science-off-build-contract-build.log": (
+        ".superpowers/sdd/task-3-v5-renewed-science-off-contract-build.log": (
             "f519272382694a9cd14dd45a772ac7e6d6d403a928fd96ab04eafc0717009692",
             ("Built target osgVerse_Test_ScienceBuildContract",)),
-        ".superpowers/sdd/task-3-v5-offline-osgsol-core-ctest.log": (
-            "1467690977a48f17998a4eaa04f6751ec7664edf2f774fdb428793c58a5ce343",
+        ".superpowers/sdd/task-3-v5-renewed-offline-core-ctest.log": (
+            "fca889edbe2d968d00807d6f5f34427fcaf057b0b42eddea94261e6aec455367",
             ("0 tests failed out of 20", "osgVerse_Test_ScienceBuildContract")),
-        ".superpowers/sdd/task-3-v5-offline-science-ctest.log": (
-            "c5f420e1df1e1c1d8dcf7cb2dfabababa648b698f271f18a86454f74ccdf45f0",
-            ("0 tests failed out of 8",
-             "osgVerse_Test_ScienceHttpRangesCoordinatorAbandonment")),
-        ".superpowers/sdd/task-3-v5-offline-private-prefix.log": (
-            "96cfe4e320b262bc215be5f840be7b20a7205e040cbfb260efced96a147793a5",
+        ".superpowers/sdd/task-3-v5-renewed-offline-science-ctest.log": (
+            "9109d5a3f3d5764c8a55c7e048dc349d6894001c3725cd07279a2dc92f72acc1",
+            ("0 tests failed out of 9",
+             "osgVerse_Test_ScienceHttpRangesCoordinatorAbandonment",
+             "osgVerse_Test_ScienceHttpRangesBlockedOperationCapacity")),
+        ".superpowers/sdd/task-3-v5-renewed-offline-prefix-verify.log": (
+            "21e4c1406731894e6194d852b4b31b9cd6b8bc048b054c704a45fb3b8b4fb867",
             ("gdal-3.13.1.tar.gz: OK", "proj-9.8.1.tar.gz: OK",
              "zstd-1.5.7.tar.gz: OK",
              "verified private static prefix and manifest")),
-        ".superpowers/sdd/task-3-v5-probe-build.log": (
-            "92a0c7262d99377fe982563912dee339e1c558d146d2adead5aa7a2e0430fecd",
+        ".superpowers/sdd/task-3-v5-renewed-probe-target-build.log": (
+            "c01078f0d48c18543339d32102563ceb7c2fee369fd979425cc012ff04154d6c",
             ("Built target osgdb_science_g0_probe",)),
-        ".superpowers/sdd/task-3-v5-probe-app-build.log": (
-            "6f79532d205ac34e42c4633c0dd7c91f2ba1519ac3fc0dc842c55fb98c839cbf",
+        ".superpowers/sdd/task-3-v5-renewed-probe-app-build.log": (
+            "271747896144b65623c3689989c8056356cacd3f9d935a278363976dd45172d5",
             ("protected baseline fingerprint unchanged: "
              "91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18",
              "built disposable probe:")),
-        ".superpowers/sdd/task-3-v5-probe-audit.log": (
-            "f64a03b42866b3b4a25edf3758d136416f65454ab0b9e913ccf6251224738992",
+        ".superpowers/sdd/task-3-v5-renewed-probe-audit.log": (
+            "da0fb4e28fbbb420ffa6af4501e252754b670212053be08e6db3b9cd3d25a1a5",
             ("ScienceEarth macOS bundle audit: PASS", "Violations\n  none")),
     }
     for relative, (expected, required_tokens) in offline_logs.items():
@@ -3510,7 +3557,7 @@ def main():
         content = (ROOT / relative).read_text(errors="replace")
         for token in required_tokens:
             require(token in content, f"offline log missing token: {relative}: {token}")
-    require("skipped" not in (ROOT / ".superpowers/sdd/task-3-v5-offline-python.log")
+    require("skipped" not in (ROOT / ".superpowers/sdd/task-3-v5-renewed-offline-python.log")
             .read_text().lower(), "Python suite contains a skip")
 
     audit_json_relative = "build/science_g0_prefetch/bundle-audit.json"
@@ -3518,21 +3565,21 @@ def main():
     plugin_relative = "build/science_g0_prefetch/lib/osgdb_science_g0_probe.so"
     require_file_hash(
         audit_json_relative,
-        "6ad62512867b139601992bc06a4660a37fe69e4c6563e3f1301b9e0397a2438b")
+        "4cac090e6a68e7373fe7a9afcb93cb7c4a9815617aab23b99992682b5500fd70")
     require_file_hash(
         audit_text_relative,
-        "cc00b53b5210ba7d0549db202dffcd4de0577d2ce925b4e3e01bffc85d86055f")
+        "c46b9bf6df7c1ed04a702f9f5e675d35520454be9b1d3bc37ffa2bb2f480ff02")
     require_file_hash(
         plugin_relative,
-        "221134b50179b547a698c5841a4aec2f927222ba45a690ba14da3124cf2f2728")
+        "90c4816ee4cdc3d503b2f5f0a72738870e553714c2d1128433f2984cb9d06fc7")
     audit = json.loads((ROOT / audit_json_relative).read_text())
     require(audit["status"] == "PASS" and audit["ok"] is True and
             audit["exit_code"] == 0, "canonical audit status mismatch")
     require(audit["sizes"] == {
         "baseline_bytes": 542594200,
-        "delta_bytes": 21321367,
-        "science_closure_bytes": 21321208,
-        "total_bytes": 563915567,
+        "delta_bytes": 21304855,
+        "science_closure_bytes": 21304696,
+        "total_bytes": 563899055,
     }, "canonical audit sizes mismatch")
     require(audit["sizes"]["delta_bytes"] < 40 * 1024 * 1024 and
             audit["sizes"]["science_closure_bytes"] < 60 * 1024 * 1024,
@@ -3610,12 +3657,13 @@ def main():
     print(f"IMPLEMENTATION_BASE={IMPLEMENTATION_BASE};ALLOWED_SCOPE=PASS")
     print(f"PRIVATE_PATCH={PATCH_SHA256};ARCHIVES=3/3;PREFIX=PASS")
     print("RETRY_CODES=429,500,502,503,504;CLASSIFIERS=2/2")
+    print("BLOCKED_OPERATION_CAPACITY=256/FAIL_CLOSED/NO_LIVE_EVICTION")
     print("PROTECTED_REGRESSION_DIFF=0;V5_ABSENT_NON_SYMLINK=3/3")
     print("FORMAL=1_TEST/5_ITERATIONS/PREFETCH/FORMAL_EVIDENCE_V4")
     print("IMMUTABLE_EVIDENCE=OLD_95/DIAGNOSTIC_34/V2_61/V3_37/V4_62+31;HASHES_SETS_MODES=PASS")
     print("V4_POSTHOC=SOURCE_BASE_WRAPPER_TRANSCRIPT_PASS")
-    print("OFFLINE=PYTHON_66/CORE_20/SCIENCE_8/CONTRACT_VERIFY_PASS;SKIP_FAIL=0")
-    print("PROBE=TIER_A_0/TIER_B_0_0/DELTA_21321367/CLOSURE_21321208/EXPORT_1/CODESIGN_PASS")
+    print("OFFLINE=PYTHON_66/CORE_20/SCIENCE_9/CONTRACT_VERIFY_PASS;SKIP_FAIL=0")
+    print("PROBE=TIER_A_0/TIER_B_0_0/DELTA_21304855/CLOSURE_21304696/EXPORT_1/CODESIGN_PASS")
     print("DESKTOP=91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18/14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214/414/355")
     print("V5_AUTHORIZATION_VERIFIER=PASS")
 
@@ -3643,14 +3691,14 @@ awk '
   capture { print }
 ' docs/scienceearth/g0-measurements.md > "$verifier"
 test "$(shasum -a 256 "$verifier" | awk '{print $1}')" = \
-  57e4ae9e1e71ae9a8a4b8bfa5fe66e5700d7dc16980bf52e22572613581c82eb
+  2a7e4d999d1e2ae76e1be668fd00bf555ae55b84ac510af0a7aeec7ada963878
 PYTHONDONTWRITEBYTECODE=1 python3 "$verifier" --self-test
 PYTHONDONTWRITEBYTECODE=1 python3 "$verifier"
 ```
 
 It exited 0. The combined self-test/main transcript at
-`.superpowers/sdd/task-3-v5-authorization-green.log` hashes to
-`5dd39936171e71c24db412f8a0cb318a165dac1a81a708f19db9913ff336f52e` and contains the exact
+`.superpowers/sdd/task-3-v5-renewed-verifier-green-precommit.log` hashes to
+`941ff771dc866ad19a9297dc935ff615c543aac6cc25c6826d9a3a899763d203` and contains the exact
 output asserted by the final gate. The ignored transcript is supporting execution evidence; the
 committed verifier source and clean-HEAD gate are the durable authorization controls.
 
@@ -3666,8 +3714,8 @@ umask 077
 
 root=/Users/USER/osgsol/.worktrees/v0.2-runtime-safety
 doc=docs/scienceearth/g0-measurements.md
-base=b3bdb4ea76530e9cc65180b4df97967da87c16a5
-expected_source=57e4ae9e1e71ae9a8a4b8bfa5fe66e5700d7dc16980bf52e22572613581c82eb
+base=38203e62ae02e8992cb7214cfdab8634b3c3f5ba
+expected_source=2a7e4d999d1e2ae76e1be668fd00bf555ae55b84ac510af0a7aeec7ada963878
 cd "$root"
 
 test -z "$(git status --porcelain=v1 --untracked-files=no)"
@@ -3700,20 +3748,21 @@ test "$(shasum -a 256 "$verifier" | awk '{print $1}')" = "$expected_source"
 self_test=$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
     -u http_proxy -u https_proxy -u all_proxy \
     PYTHONDONTWRITEBYTECODE=1 python3 "$verifier" --self-test)
-test "$self_test" = 'V5_AUTHORIZATION_PURE_HELPERS=PASS;MUTATIONS=4/4'
+test "$self_test" = 'V5_AUTHORIZATION_PURE_HELPERS=PASS;MUTATIONS=5/5'
 output=$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
     -u http_proxy -u https_proxy -u all_proxy \
     PYTHONDONTWRITEBYTECODE=1 python3 "$verifier")
 expected_output=$(cat <<'EOF'
-IMPLEMENTATION_BASE=b3bdb4ea76530e9cc65180b4df97967da87c16a5;ALLOWED_SCOPE=PASS
-PRIVATE_PATCH=a5bd7acd3f31c40e8a631ffd8ca5a37a232812a495037e456077a59442c07567;ARCHIVES=3/3;PREFIX=PASS
+IMPLEMENTATION_BASE=38203e62ae02e8992cb7214cfdab8634b3c3f5ba;ALLOWED_SCOPE=PASS
+PRIVATE_PATCH=0e67079267a4adfc316f20c88ba22cf078e5d653d2f35c2e3b54fff7efd0de1e;ARCHIVES=3/3;PREFIX=PASS
 RETRY_CODES=429,500,502,503,504;CLASSIFIERS=2/2
+BLOCKED_OPERATION_CAPACITY=256/FAIL_CLOSED/NO_LIVE_EVICTION
 PROTECTED_REGRESSION_DIFF=0;V5_ABSENT_NON_SYMLINK=3/3
 FORMAL=1_TEST/5_ITERATIONS/PREFETCH/FORMAL_EVIDENCE_V4
 IMMUTABLE_EVIDENCE=OLD_95/DIAGNOSTIC_34/V2_61/V3_37/V4_62+31;HASHES_SETS_MODES=PASS
 V4_POSTHOC=SOURCE_BASE_WRAPPER_TRANSCRIPT_PASS
-OFFLINE=PYTHON_66/CORE_20/SCIENCE_8/CONTRACT_VERIFY_PASS;SKIP_FAIL=0
-PROBE=TIER_A_0/TIER_B_0_0/DELTA_21321367/CLOSURE_21321208/EXPORT_1/CODESIGN_PASS
+OFFLINE=PYTHON_66/CORE_20/SCIENCE_9/CONTRACT_VERIFY_PASS;SKIP_FAIL=0
+PROBE=TIER_A_0/TIER_B_0_0/DELTA_21304855/CLOSURE_21304696/EXPORT_1/CODESIGN_PASS
 DESKTOP=91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18/14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214/414/355
 V5_AUTHORIZATION_VERIFIER=PASS
 EOF
