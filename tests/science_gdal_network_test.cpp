@@ -1111,6 +1111,14 @@ namespace
                                 (std::string(prefetchCase.httpVersion) == "1.1"
                                     ? 1 : 2),
                         caseName + " omitted its exact fail-closed retry event");
+                require(countDebug(capture,
+                            "ParallelHeadRange: blocked-probe-marked") == 1 &&
+                            countDebug(capture,
+                            "ParallelHeadRange: blocked-probe-consumed") == 1 &&
+                            countDebug(capture,
+                            "ParallelHeadRange: blocked-probe-expired") == 0,
+                        caseName +
+                            " did not consume its bounded fail-closed probe once");
             }
             if (std::string(prefetchCase.mode) == "range-503-exhaust")
             {
