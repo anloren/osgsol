@@ -337,6 +337,12 @@ G1/package/tag/push/release is authorized. The committed auditor in the measurem
 recomputes the substantive STOP. Its one-shot ledger cannot prove the absolute absence of an
 omitted, external, overwritten, or otherwise unobserved process.
 
+The reviewed decision auditor now rejects every unexpected direct entry regardless of file type.
+It validates exact v5 parent/candidate and frozen v4 parent/root topology, flatness, symlink
+absence, and modes. Four disposable-copy mutations—dangling symlink, nested directory, FIFO, and
+unexpected regular file—are independently required to fail. No frozen evidence was chmodded or
+edited while applying this auditor-only correction.
+
 G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V5=FAIL
 DESKTOP_PACKAGE=NOT_READY

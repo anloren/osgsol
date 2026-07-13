@@ -3846,7 +3846,16 @@ and root mode `0500`. The protected Desktop tuple remains
 The durable decision auditor below recomputes these substantive conclusions from the frozen
 raw/stats/proof artifacts, complete manifest, transcript and wrapper digests, source/fixture/CMake
 bindings, v4 control, formal absence/listing, and Desktop tuple. Its extracted source SHA-256 is
-`de6fbb21ba8c68b485440867449590b3fe996f9aa1040eacc50f2b7596dca943`.
+`e5a6d34adf1d518377c5e2323bfeb8114c65fb47de05d86cffd9b1f2546f0b07`.
+
+The quality-review correction makes the evidence scanners structural as well as content-aware.
+The v5 parent accepts exactly the candidate directory and regular summary; the candidate accepts
+exactly the five named flat regular files. The frozen v4 requalification parent accepts exactly
+its two roots and two summaries; prefetch/control/formal roots accept exact flat 30/30/31 regular
+file sets. Every required directory is non-symlink with its pinned mode, and every artifact is a
+non-symlink regular file with mode `0400`. Authentic disposable-copy mutations prove rejection of
+an unexpected regular file, dangling symlink, nested directory, and FIFO without changing any
+frozen evidence.
 
 <!-- V5_DECISION_AUDITOR_BEGIN -->
 ```python
@@ -3860,9 +3869,11 @@ import json
 import math
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 
 
 sys.dont_write_bytecode = True
@@ -3870,6 +3881,7 @@ sys.dont_write_bytecode = True
 
 ROOT = Path("/Users/USER/osgsol/.worktrees/v0.2-runtime-safety")
 AUTHORIZATION_HEAD = "a0527b3b72121f423c46206f397bb145f73e72f8"
+REVIEW_FIX_PARENT = "73b6964bae06014f46fabe86220af551ba252f65"
 DECISION_DOCS = {
     "docs/scienceearth/g0-measurements.md",
     "docs/scienceearth/g0-g1-baseline.md",
@@ -3877,6 +3889,7 @@ DECISION_DOCS = {
 CANDIDATE = ROOT / "build/science_g0_prefetch/requalification-evidence-v5/candidate"
 SUMMARY = ROOT / "build/science_g0_prefetch/requalification-evidence-v5/candidate-summary.json"
 FORMAL = ROOT / "build/science_g0_prefetch/formal-evidence-v5"
+V5_PARENT = CANDIDATE.parent
 BINARY = ROOT / "build/science_g0_prefetch/tests/osgVerse_Test_ScienceHttpRanges"
 EXPECTED_BINARY_SHA256 = "4e6c4cf9cc4e89523691022ecfc6822df64cdae979f210f85ad838b839d4aa37"
 EXPECTED_FIXTURE_SHA256 = "6a67af9a1380250704b9032f8b4933965196ed2a119f07be4cb99dafe032806d"
@@ -3944,8 +3957,8 @@ def require_decision_scope(precommit):
     require(not run_git("ls-files", "--others", "--exclude-standard"),
             "unexpected untracked file")
     if precommit:
-        require(run_git("rev-parse", "HEAD") == [AUTHORIZATION_HEAD],
-                "precommit authorization HEAD mismatch")
+        require(run_git("rev-parse", "HEAD") == [REVIEW_FIX_PARENT],
+                "precommit review-fix parent mismatch")
         worktree = set(run_git("diff", "--name-only"))
         index = set(run_git("diff", "--cached", "--name-only"))
         require(worktree == DECISION_DOCS and not index,
@@ -3953,8 +3966,8 @@ def require_decision_scope(precommit):
     else:
         require(not run_git("status", "--porcelain=v1", "--untracked-files=no"),
                 "tracked worktree/index is dirty")
-        require(run_git("rev-parse", "HEAD^") == [AUTHORIZATION_HEAD],
-                "decision parent mismatch")
+        require(run_git("rev-parse", "HEAD^") == [REVIEW_FIX_PARENT],
+                "review-fix parent mismatch")
         committed = set(run_git("diff", "--name-only", f"{AUTHORIZATION_HEAD}..HEAD"))
         require(committed == DECISION_DOCS,
                 f"committed decision scope mismatch: {committed}")
@@ -4022,17 +4035,40 @@ def require_supporting_bindings():
     return transcript
 
 
-def require_frozen_complete_manifest():
-    require(CANDIDATE.is_dir() and not CANDIDATE.is_symlink(),
-            "candidate root missing or symlinked")
-    require(stat.S_IMODE(CANDIDATE.stat().st_mode) == 0o500,
-            "candidate root mode mismatch")
-    require_file(SUMMARY, *SUMMARY_BINDING, expected_mode=0o400)
+def require_directory(path, mode, label):
+    require(path.is_dir() and not path.is_symlink(),
+            f"{label} missing, not a directory, or symlinked")
+    require(stat.S_IMODE(path.stat().st_mode) == mode,
+            f"{label} mode mismatch")
 
-    actual = {path.name for path in CANDIDATE.iterdir()
-              if path.is_file() and not path.is_symlink()}
-    require(actual == set(EVIDENCE_BINDINGS),
-            f"candidate complete file set mismatch: {actual}")
+
+def require_v5_structure(parent):
+    require_directory(parent, 0o700, "v5 requalification parent")
+    parent_entries = list(parent.iterdir())
+    require({path.name for path in parent_entries} ==
+            {"candidate", "candidate-summary.json"} and len(parent_entries) == 2,
+            f"v5 parent exact entry set mismatch: {parent_entries}")
+
+    candidate = parent / "candidate"
+    summary = parent / "candidate-summary.json"
+    require_directory(candidate, 0o500, "v5 candidate root")
+    require(summary.is_file() and not summary.is_symlink() and
+            stat.S_IMODE(summary.stat().st_mode) == 0o400,
+            "v5 candidate summary type/mode mismatch")
+
+    candidate_entries = list(candidate.iterdir())
+    require({path.name for path in candidate_entries} == set(EVIDENCE_BINDINGS) and
+            len(candidate_entries) == len(EVIDENCE_BINDINGS),
+            f"v5 candidate exact entry set mismatch: {candidate_entries}")
+    for path in candidate_entries:
+        require(path.is_file() and not path.is_symlink() and
+                stat.S_IMODE(path.stat().st_mode) == 0o400,
+                f"v5 candidate entry type/mode mismatch: {path}")
+
+
+def require_frozen_complete_manifest():
+    require_v5_structure(V5_PARENT)
+    require_file(SUMMARY, *SUMMARY_BINDING, expected_mode=0o400)
     for name, (digest, size) in EVIDENCE_BINDINGS.items():
         require_file(CANDIDATE / name, digest, size, 0o400)
 
@@ -4052,6 +4088,38 @@ def require_frozen_complete_manifest():
     }
     expected[str(SUMMARY.relative_to(ROOT))] = (*SUMMARY_BINDING, 0o400)
     require(parsed == expected, "candidate manifest does not bind complete set")
+
+
+def require_structure_mutation_self_tests():
+    def expect_rejected(name, mutate):
+        with tempfile.TemporaryDirectory(prefix="osgsol-v5-structure-") as temporary:
+            copied = Path(temporary) / "requalification-evidence-v5"
+            shutil.copytree(V5_PARENT, copied, symlinks=True)
+            copied_candidate = copied / "candidate"
+            os.chmod(copied_candidate, 0o700)
+            mutate(copied_candidate)
+            os.chmod(copied_candidate, 0o500)
+            try:
+                require_v5_structure(copied)
+            except AssertionError:
+                os.chmod(copied_candidate, 0o700)
+                return
+            os.chmod(copied_candidate, 0o700)
+            raise AssertionError(f"structure mutation was accepted: {name}")
+
+    expect_rejected(
+        "dangling-symlink",
+        lambda candidate: os.symlink("missing-target", candidate / "unexpected-link"))
+    expect_rejected(
+        "nested-directory",
+        lambda candidate: (candidate / "unexpected-directory").mkdir())
+    require(hasattr(os, "mkfifo"), "portable FIFO mutation is unavailable")
+    expect_rejected(
+        "fifo",
+        lambda candidate: os.mkfifo(candidate / "unexpected-fifo", 0o600))
+    expect_rejected(
+        "unexpected-regular",
+        lambda candidate: (candidate / "unexpected-regular").write_bytes(b"mutation"))
 
 
 def close(actual, expected, tolerance=1.0e-9):
@@ -4195,26 +4263,56 @@ def verify_only_complete_triplet():
 
 
 def require_frozen_v4_and_downstream_absence():
-    v4_sets = [
-        ROOT / "build/science_g0_prefetch/requalification-evidence-v4/prefetch",
-        ROOT / "build/science_g0_prefetch/requalification-evidence-v4/prefetch-summary.json",
-        ROOT / "build/science_g0_prefetch/requalification-evidence-v4/control",
-        ROOT / "build/science_g0_prefetch/requalification-evidence-v4/control-summary.json",
-        ROOT / "build/science_g0_prefetch/formal-evidence-v4",
-    ]
-    roots = [v4_sets[0], v4_sets[2], v4_sets[4]]
-    for evidence_root in roots:
-        require(evidence_root.is_dir() and not evidence_root.is_symlink() and
-                stat.S_IMODE(evidence_root.stat().st_mode) == 0o500,
-                f"v4 root drift: {evidence_root}")
-    files = []
-    for item in v4_sets:
-        if item.is_file():
-            files.append(item)
-        else:
-            files.extend(path for path in item.rglob("*") if path.is_file())
+    build_parent = ROOT / "build/science_g0_prefetch"
+    requalification = build_parent / "requalification-evidence-v4"
+    prefetch = requalification / "prefetch"
+    control = requalification / "control"
+    prefetch_summary = requalification / "prefetch-summary.json"
+    control_summary = requalification / "control-summary.json"
+    formal = build_parent / "formal-evidence-v4"
+    require_directory(build_parent, 0o755, "v4 build ancestry")
+    require_directory(requalification, 0o500, "v4 requalification parent")
+    require_directory(prefetch, 0o500, "v4 prefetch root")
+    require_directory(control, 0o500, "v4 control root")
+    require_directory(formal, 0o500, "v4 formal root")
+    require(prefetch_summary.is_file() and not prefetch_summary.is_symlink() and
+            stat.S_IMODE(prefetch_summary.stat().st_mode) == 0o400,
+            "v4 prefetch summary type/mode mismatch")
+    require(control_summary.is_file() and not control_summary.is_symlink() and
+            stat.S_IMODE(control_summary.stat().st_mode) == 0o400,
+            "v4 control summary type/mode mismatch")
+    requalification_entries = list(requalification.iterdir())
+    require({path.name for path in requalification_entries} == {
+        "prefetch", "prefetch-summary.json", "control", "control-summary.json"
+    } and len(requalification_entries) == 4,
+            f"v4 requalification exact entry set mismatch: {requalification_entries}")
+
+    def triplet_names(profile):
+        return {
+            f"{profile}-{case}-{iteration}-{suffix}"
+            for case in ("nvidia_hq", "hong_kong")
+            for iteration in range(1, 6)
+            for suffix in ("curl-cpl.log", "network-stats.json", "proof.json")
+        }
+
+    expected_by_root = {
+        prefetch: triplet_names("prefetch"),
+        control: triplet_names("optimized"),
+        formal: triplet_names("prefetch") | {"live-summary.json"},
+    }
+    files = [prefetch_summary, control_summary]
+    for evidence_root, expected_names in expected_by_root.items():
+        entries = list(evidence_root.iterdir())
+        require({path.name for path in entries} == expected_names and
+                len(entries) == len(expected_names),
+                f"v4 root exact entry set mismatch: {evidence_root}: {entries}")
+        for path in entries:
+            require(path.is_file() and not path.is_symlink() and
+                    stat.S_IMODE(path.stat().st_mode) == 0o400,
+                    f"v4 flat entry type/mode mismatch: {path}")
+        files.extend(entries)
     require(len(files) == 93 and len({path.resolve() for path in files}) == 93,
-            "v4 complete file set mismatch")
+            "v4 complete flat file set mismatch")
     tree = hashlib.sha256()
     for path in sorted(files, key=lambda value: value.relative_to(ROOT).as_posix()):
         require(not path.is_symlink() and stat.S_IMODE(path.stat().st_mode) == 0o400,
@@ -4268,14 +4366,16 @@ def main():
     require_decision_scope(arguments == ["--precommit"])
     require_supporting_bindings()
     require_frozen_complete_manifest()
+    require_structure_mutation_self_tests()
     missing = verify_only_complete_triplet()
     require_frozen_v4_and_downstream_absence()
     require_desktop_tuple()
     require(not list(ROOT.rglob("__pycache__")), "__pycache__ directory found")
 
-    print(f"AUTHORIZATION_HEAD={AUTHORIZATION_HEAD};DECISION_SCOPE=2_DOCS")
+    print(f"AUTHORIZATION_HEAD={AUTHORIZATION_HEAD};REVIEW_FIX_PARENT={REVIEW_FIX_PARENT};DECISION_SCOPE=2_DOCS")
     print("ONE_SHOT_TRANSCRIPT=START_1/FINISH_1/EXIT_1;ABSOLUTE_NEGATIVE_HISTORY=NOT_PROVABLE")
     print("CANDIDATE_FROZEN=FILES_6/0400/ROOT_0500/MANIFEST_PASS")
+    print("STRUCTURE_MUTATIONS=DANGLING_SYMLINK,NESTED_DIR,FIFO,UNEXPECTED_REGULAR=4/4_REJECTED")
     print("EXPECTED_10=RAW_2_MISSING_8/STATS_2_MISSING_8/PROOF_1_MISSING_9/COMPLETE_1")
     print("COMPLETE_TRIPLET=REQUEST_BODY_STATS_SCIENCE_RETRY_PASS;ITERATION1_MS=3763.36")
     print("INCOMPLETE_ITERATION=HEAD_INVALID_FALLBACK/HEAD_2/IMMEDIATE_RETRY_2/NO_PROOF")
