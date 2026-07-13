@@ -1125,25 +1125,366 @@ The verified prefix was 52,356 KiB (`du -sh`: 51 MiB), with 404 regular files an
 
 ### Read-only historical, Desktop, profile, and v4-absence audit
 
+The authorization verifier is preserved below as executable source. It uses only read operations
+for protected evidence (`read_bytes`, JSON reads, directory enumeration, and `stat`), lists the
+formal CTest without executing it, and fails closed on every recorded Global Constraint, v2/v3
+table/hash/set/permission invariant, documented v3 scratch/CMake binding, Desktop invariant, formal
+profile invariant, and v4 absence requirement. The extracted source SHA-256 is
+`2a8002d383761a717e672d4293af0c5a8a393e3ed7bc89811fdc3f9e253d830b`.
+
+<!-- V4_AUTHORIZATION_VERIFIER_BEGIN -->
+```python
+from pathlib import Path
+import hashlib
+import importlib.util
+import json
+import re
+import stat
+import subprocess
+import sys
+
+ROOT = Path.cwd().resolve()
+EXPECTED_ROOT = Path(
+    "/Users/USER/osgsol/.worktrees/v0.2-runtime-safety").resolve()
+if ROOT != EXPECTED_ROOT:
+    raise SystemExit(f"wrong worktree: {ROOT} != {EXPECTED_ROOT}")
+DOC_PATH = ROOT / "docs/scienceearth/g0-measurements.md"
+DOC = DOC_PATH.read_text()
+
+
+def require(condition, message):
+    if not condition:
+        raise SystemExit(message)
+
+
+def file_sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def require_hash(relative, expected):
+    path = ROOT / relative
+    require(path.is_file() and not path.is_symlink(), f"missing file: {relative}")
+    actual = file_sha256(path)
+    require(actual == expected, f"hash mismatch: {relative}: {actual} != {expected}")
+
+
+def tree_digest(relative):
+    root = ROOT / relative
+    require(root.is_dir() and not root.is_symlink(), f"missing tree: {relative}")
+    digest = hashlib.sha256()
+    entries = sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix())
+    regular = 0
+    for path in entries:
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        if path.is_file() and not path.is_symlink():
+            digest.update(path.read_bytes())
+            regular += 1
+    return digest.hexdigest(), len(entries), regular
+
+
+global_constraints = [
+    ("build/science_g0_prefetch/diagnostic-evidence/control-summary.json",
+     "f793f1c3561e3f746ace2fca164637cd5d238fa81c39298b9a2e29ec2b781096"),
+    ("build/science_g0_prefetch/diagnostic-evidence/prefetch-summary.json",
+     "1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff"),
+    ("build/science_g0_prefetch/diagnostic-evidence/prefetch/"
+     "prefetch-nvidia_hq-1-curl-cpl.log",
+     "3312a78a073140ea1422ece0ffbc927ce853a4d7b8cec02f3033734a7e217a3a"),
+    ("build/science_g0_prefetch/diagnostic-evidence/prefetch/"
+     "prefetch-nvidia_hq-1-network-stats.json",
+     "0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe"),
+    ("build/science_g0/science-network-evidence/baseline-summary.json",
+     "17ff3cd876e7995c5257fad1f2da7f27bf0ae7901d46716829f1440d16a321ed"),
+    ("build/science_g0/science-network-evidence/live-summary.json",
+     "e4eb9ea1a8d5795db6197110ba96f4851c127dbe06b6bfcae5d3e9ea9b466dfe"),
+    ("build/science_g0_prefetch/requalification-evidence-v2/control-summary.json",
+     "0b59ba209faf574f1439f78f6fa53b16e81b20e05ae4b87ae2ef90c43de59fc0"),
+    ("build/science_g0_prefetch/requalification-evidence-v2/prefetch-summary.json",
+     "1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff"),
+    ("build/science_g0_prefetch/requalification-evidence-v2/prefetch/"
+     "prefetch-hong_kong-5-curl-cpl.log",
+     "f32cfdfd05f50a3de8f34b4f69e1e2cefe61d667e20936ddcf86f1fa8b1a429e"),
+    ("build/science_g0_prefetch/requalification-evidence-v2/prefetch/"
+     "prefetch-hong_kong-5-network-stats.json",
+     "f54110c20ab81230c5d3af708f2df4d9d8754e5957366875c162b0395d2c1974"),
+]
+for relative, expected in global_constraints:
+    require_hash(relative, expected)
+require(len(global_constraints) == 10, "Global Constraint count mismatch")
+require(len({expected for _, expected in global_constraints}) == 9,
+        "Global Constraint unique-hash count mismatch")
+
+control_tree = tree_digest(
+    "build/science_g0_prefetch/diagnostic-evidence/control")
+candidate_tree = tree_digest(
+    "build/science_g0_prefetch/diagnostic-evidence/prefetch")
+require(control_tree == (
+    "d3eb2a1adb60aa4a911b14e47854a2fc7b7fe7b81424de17779ae7862b888133",
+    30, 30), f"rejected control tree mismatch: {control_tree}")
+require(candidate_tree == (
+    "054d7d76266febab932255db9658845717625d1ea348bef4021fd3330adffca0",
+    2, 2), f"rejected candidate tree mismatch: {candidate_tree}")
+
+
+def table_rows(start_marker, end_marker):
+    start = DOC.index(start_marker)
+    block = DOC[start:DOC.index(end_marker, start)]
+    pattern = re.compile(
+        r"^\| `(?P<stem>(?:optimized|prefetch)-[^`]+)` "
+        r"\| `(?P<raw>[0-9a-f]{64})` "
+        r"\| `(?P<stats>[0-9a-f]{64})` "
+        r"\| (?P<proof>`[0-9a-f]{64}`|absent;[^|]+) \|$", re.MULTILINE)
+    return list(pattern.finditer(block))
+
+
+def verify_evidence(version, start_marker, end_marker, expected_rows,
+                    expected_iteration_files, summaries, require_mode_0400):
+    root = ROOT / f"build/science_g0_prefetch/requalification-evidence-{version}"
+    rows = table_rows(start_marker, end_marker)
+    require(len(rows) == expected_rows,
+            f"{version} row count mismatch: {len(rows)} != {expected_rows}")
+    expected_paths = set()
+    slots = iteration_files = absent = 0
+    for match in rows:
+        stem = match["stem"]
+        subdir = "control" if stem.startswith("optimized-") else "prefetch"
+        for suffix, field in (("-curl-cpl.log", "raw"),
+                              ("-network-stats.json", "stats")):
+            path = root / subdir / f"{stem}{suffix}"
+            require(path.is_file() and not path.is_symlink(), f"missing file: {path}")
+            actual = file_sha256(path)
+            require(actual == match[field],
+                    f"{version} hash mismatch: {path}: {actual} != {match[field]}")
+            expected_paths.add(path)
+            slots += 1
+            iteration_files += 1
+        proof_path = root / subdir / f"{stem}-proof.json"
+        slots += 1
+        if match["proof"].startswith("`"):
+            expected = match["proof"].strip("`")
+            require(proof_path.is_file() and not proof_path.is_symlink(),
+                    f"missing proof: {proof_path}")
+            actual = file_sha256(proof_path)
+            require(actual == expected,
+                    f"{version} proof mismatch: {proof_path}: {actual} != {expected}")
+            expected_paths.add(proof_path)
+            iteration_files += 1
+        else:
+            require(not proof_path.exists(), f"expected absent proof exists: {proof_path}")
+            absent += 1
+    for name, expected in summaries.items():
+        path = root / name
+        require(path.is_file() and not path.is_symlink(), f"missing summary: {path}")
+        actual = file_sha256(path)
+        require(actual == expected,
+                f"{version} summary mismatch: {path}: {actual} != {expected}")
+        expected_paths.add(path)
+    actual_paths = {
+        path for path in root.rglob("*") if path.is_file() and not path.is_symlink()
+    }
+    require(actual_paths == expected_paths,
+            f"{version} complete-set mismatch: missing={expected_paths - actual_paths}; "
+            f"extra={actual_paths - expected_paths}")
+    require(iteration_files == expected_iteration_files,
+            f"{version} iteration-file count mismatch: {iteration_files}")
+    non_0400 = [
+        path for path in actual_paths if stat.S_IMODE(path.stat().st_mode) != 0o400
+    ]
+    if require_mode_0400:
+        require(not non_0400, f"{version} frozen mode mismatch: {non_0400}")
+    return {
+        "rows": len(rows), "slots": slots, "iteration_files": iteration_files,
+        "absent": absent, "summaries": len(summaries), "regular": len(actual_paths),
+        "non_0400": len(non_0400),
+    }
+
+
+v2 = verify_evidence(
+    "v2", "### V2 control artifact hashes",
+    "The failed complete candidate proof forbids formal promotion.", 20, 59,
+    {"control-summary.json":
+     "0b59ba209faf574f1439f78f6fa53b16e81b20e05ae4b87ae2ef90c43de59fc0",
+     "prefetch-summary.json":
+     "1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff"},
+    False)
+v3 = verify_evidence(
+    "v3", "### Frozen v3 artifact hashes",
+    "The hashed decision-gate transcript is", 12, 35,
+    {"control-summary.json":
+     "47abb0bc91e4afba412d1150822b90110650f8e225b45b7fa52f4627889c405c",
+     "prefetch-summary.json":
+     "1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff"},
+    True)
+require(v2 == {"rows": 20, "slots": 60, "iteration_files": 59, "absent": 1,
+               "summaries": 2, "regular": 61, "non_0400": 61},
+        f"v2 totals mismatch: {v2}")
+require(v3 == {"rows": 12, "slots": 36, "iteration_files": 35, "absent": 1,
+               "summaries": 2, "regular": 37, "non_0400": 0},
+        f"v3 totals mismatch: {v3}")
+
+scratch = [
+    (".superpowers/sdd/task-3-v3-preflight.log",
+     "d48994e70732786983b9c5d2f9c67bb2ca0c936d0b25e69c7acefd694fbe6aff"),
+    (".superpowers/sdd/task-3-v3-control.log",
+     "a1d8e36c152f71771e1ad80ae548e43e397456ce6ea47fe03e50e2cad9b2d142"),
+    (".superpowers/sdd/task-3-v3-candidate.log",
+     "c7f98c3e8428cb72092e6e49a1fff359232c4b4463607e18d52d55aac1b907d2"),
+    (".superpowers/sdd/task-3-v3-control-artifacts.sha256",
+     "c81a325b4aecd6b1a722c01789270c2568fc55cb7a1b201b7a6dd8c73e4b3849"),
+    (".superpowers/sdd/task-3-v3-candidate-artifacts.sha256",
+     "5845a9aac3a9b7e4b88e9323b16f20ff45f1e6f99ecc7a3997175b0f791458ff"),
+    (".superpowers/sdd/task-3-v3-decision-gate.log",
+     "0fd10896a891e20eb8e63a755fb68f4772e2cefc36b5b30f148165101001bafa"),
+    (".superpowers/sdd/task-3-v3-final-protected.log",
+     "cb5bc37da993e862b4cfbfae4e8777df586fd03e05a753693b972c518dc072a9"),
+    ("tests/CMakeLists.txt",
+     "b9eea24fabb9fa2fb1d79bf384320e5082bd0155aedfcc18fa2d2ab33411141a"),
+]
+for relative, expected in scratch:
+    require_hash(relative, expected)
+
+manifest_path = ROOT / "packaging/scienceearth/g0_manifest.py"
+spec = importlib.util.spec_from_file_location("v4_authorization_manifest", manifest_path)
+manifest = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(manifest)
+reference_path = ROOT / (
+    "packaging/scienceearth/baselines/v0.2.0-macos-arm64-reference.json")
+ratchet_path = ROOT / (
+    "packaging/scienceearth/baselines/current-macos-arm64-ratchet.json")
+reference = json.loads(reference_path.read_text())
+ratchet = json.loads(ratchet_path.read_text())
+require(manifest.manifest_sha256(reference) ==
+        "145231333a233cd356d0aa3e908db922ad1fbbc244868903a60801b334ba5ada",
+        "reference canonical hash mismatch")
+require(file_sha256(reference_path) ==
+        "afd80d8ad9419882793926d781affb970246358fbf74c514b950bf0eb924a5a6",
+        "reference file hash mismatch")
+require(manifest.manifest_sha256(ratchet) ==
+        "fd2d67424356637dd71beb4120647726836fb9a9b3cec03223bb83378fe960cb",
+        "ratchet canonical hash mismatch")
+require(file_sha256(ratchet_path) ==
+        "a732bacfec5b16b6e42ef4b4573827df6edfa73a5d8bf5b2c7b94d0d684c06cc",
+        "ratchet file hash mismatch")
+require(reference["metadata"]["normalization_profile"]["source_roots_sha256"] ==
+        "646b5eb80be60524ca6aa8dad55921f2966cc40562b29489483f1184a04c1936",
+        "normalization descriptor hash mismatch")
+require(ratchet["reference_sha256"] ==
+        "145231333a233cd356d0aa3e908db922ad1fbbc244868903a60801b334ba5ada",
+        "ratchet reference hash mismatch")
+require(ratchet["releases"][0]["parent_finding_ids_sha256"] ==
+        "5eeb1fc96226557050bffecfe5ab7cb11f32713fddb83c3147b1684ad675bd55",
+        "ratchet parent-finding-set hash mismatch")
+
+fixture_path = ROOT / "tests/data/science/alphaearth_rgb_cases.json"
+fixture = json.loads(fixture_path.read_text())
+require(file_sha256(fixture_path) ==
+        "6a67af9a1380250704b9032f8b4933965196ed2a119f07be4cb99dafe032806d",
+        "fixture file hash mismatch")
+require(fixture["source_index_sha256"] ==
+        "f738e7d274ad582e56e20a3a8b444c6f2a3ece5781f8f9855bb7ca3d9ed2942f",
+        "fixture source-index hash mismatch")
+require({case["name"]: case["record_fingerprint"] for case in fixture["cases"]} == {
+    "nvidia_hq":
+    "03956d76d3bc0d67c4f61608a1771ffb036a7e3ece6df326a2b52e66d412a0f1",
+    "hong_kong":
+    "deded3c50b4a91db0fe3fe97691734c7fa5a802647c1571d28f75515587a59ff",
+}, "fixture record fingerprints mismatch")
+
+sys.path.insert(0, str(ROOT))
+from tests.science_bundle_audit_tests import ScienceProbeBuilderTests, MANIFEST
+
+desktop = Path("/Users/USER/Desktop/osgSol Earth.app")
+desktop_entries = list(desktop.rglob("*"))
+desktop_regular = [
+    path for path in desktop_entries if path.is_file() and not path.is_symlink()
+]
+desktop_fingerprint = MANIFEST.bundle_fingerprint(desktop)
+desktop_digest = ScienceProbeBuilderTests().tree_digest(desktop)
+require(desktop_fingerprint ==
+        "91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18",
+        "Desktop fingerprint mismatch")
+require(desktop_digest ==
+        "14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214",
+        "Desktop helper digest mismatch")
+require(len(desktop_entries) == 414, "Desktop entry count mismatch")
+require(len(desktop_regular) == 355, "Desktop regular-file count mismatch")
+
+formal = subprocess.run([
+    "ctest", "--test-dir", "build/science_g0_prefetch", "-N", "-V",
+    "-R", "^osgVerse_Test_ScienceGdalLive$",
+], cwd=ROOT, text=True, capture_output=True, check=False)
+formal_output = formal.stdout + formal.stderr
+require(formal.returncode == 0, f"formal listing exit mismatch: {formal.returncode}")
+require(len(re.findall(
+    r"Test #[0-9]+: osgVerse_Test_ScienceGdalLive", formal_output)) == 1,
+    "formal listing count mismatch")
+for token in ('"--iterations" "5"', '"--profile" "optimized"',
+              "science-network-evidence", '"--enforce-latency"'):
+    require(token in formal_output, f"formal listing missing token: {token}")
+require("formal-evidence-v4" not in formal_output,
+        "formal listing contains future v4 path")
+
+v4_paths = [
+    ROOT / "build/science_g0_prefetch/requalification-evidence-v4/control",
+    ROOT / "build/science_g0_prefetch/requalification-evidence-v4/prefetch",
+    ROOT / "build/science_g0_prefetch/formal-evidence-v4",
+    ROOT / "build/science_g0_prefetch/requalification-evidence-v4/control-summary.json",
+    ROOT / "build/science_g0_prefetch/requalification-evidence-v4/prefetch-summary.json",
+]
+for path in v4_paths:
+    require(not path.exists(), f"v4 path exists: {path}")
+
+print("GLOBAL_CONSTRAINTS=10/10;UNIQUE_SHA256=9")
+print("REJECTED_TREES=2/2;CONTROL=30/30;CANDIDATE=2/2")
+print("V2=20_ROWS/60_SLOTS/59_HASHES/1_ABSENT/2_SUMMARIES/61_FILES")
+print("V3=12_ROWS/36_SLOTS/35_HASHES/1_ABSENT/2_SUMMARIES/37_FILES/0_WRITABLE")
+print("V3_SCRATCH_AND_CMAKE=8/8")
+print("REFERENCE_RATCHET_FIXTURE=PASS")
+print(f"DESKTOP={desktop_fingerprint}/{desktop_digest}/414/355")
+print("FORMAL=1_TEST/5_ITERATIONS/OPTIMIZED/NO_FORMAL_V4")
+print("V4_ABSENT=5/5")
+print("AUTHORIZATION_VERIFIER=PASS")
+```
+<!-- V4_AUTHORIZATION_VERIFIER_END -->
+
+The exact extraction and invocation are:
+
+```bash
+verifier=$(mktemp "${TMPDIR:-/tmp}/osgsol-v4-authorization-verifier.XXXXXX")
+trap 'rm -f "$verifier"' EXIT
+awk '
+  $0 == "<!-- V4_AUTHORIZATION_VERIFIER_BEGIN -->" { capture = 1; next }
+  $0 == "<!-- V4_AUTHORIZATION_VERIFIER_END -->" { exit }
+  capture && $0 == "```python" { next }
+  capture && $0 == "```" { next }
+  capture { print }
+' docs/scienceearth/g0-measurements.md > "$verifier"
+test "$(shasum -a 256 "$verifier" | awk '{print $1}')" = \
+  '2a8002d383761a717e672d4293af0c5a8a393e3ed7bc89811fdc3f9e253d830b'
+PYTHONDONTWRITEBYTECODE=1 python3 "$verifier"
+```
+
 A read-only Python verifier used `hashlib.sha256(path.read_bytes())`, parsed the committed v2 and
 v3 hash tables in this document, derived each raw/stats/proof path, compared the complete regular
 file sets, and used the committed sorted-relative-path-plus-file-bytes tree helper for the rejected
-diagnostic roots. It exited 0 with:
+diagnostic roots. The exact documented invocation exited 0 in 0.419 seconds wall time with:
 
 ```text
-Global Constraints: 10/10 bindings exact (9 unique SHA-256 values)
-rejected diagnostic control tree: exact, 30 entries / 30 regular files
-rejected diagnostic candidate tree: exact, 2 entries / 2 regular files
-v2: 20 rows / 60 slots; 59 iteration hashes exact; 1 expected proof absent
-v2: 2/2 summary hashes exact; 61/61 regular files accounted for
-v3: 12 rows / 36 slots; 35 iteration hashes exact; 1 expected proof absent
-v3: 2/2 summary hashes exact; all 37/37 regular files accounted for and non-writable
-v3 documented transcripts/manifests/final gate plus tests/CMakeLists.txt: 8/8 exact
-HISTORICAL_EVIDENCE_GATE=PASS
+GLOBAL_CONSTRAINTS=10/10;UNIQUE_SHA256=9
+REJECTED_TREES=2/2;CONTROL=30/30;CANDIDATE=2/2
+V2=20_ROWS/60_SLOTS/59_HASHES/1_ABSENT/2_SUMMARIES/61_FILES
+V3=12_ROWS/36_SLOTS/35_HASHES/1_ABSENT/2_SUMMARIES/37_FILES/0_WRITABLE
+V3_SCRATCH_AND_CMAKE=8/8
+REFERENCE_RATCHET_FIXTURE=PASS
+DESKTOP=91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18/14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214/414/355
+FORMAL=1_TEST/5_ITERATIONS/OPTIMIZED/NO_FORMAL_V4
+V4_ABSENT=5/5
+AUTHORIZATION_VERIFIER=PASS
 ```
 
-No v2, v3, diagnostic, or older-formal artifact was written, deleted, or chmodded. The 37 frozen
-v3 files retained mode `0400`; the verifier found zero write bits. The critical bindings remained:
+The verifier opens protected evidence read-only. Its final hashes and complete file sets matched,
+and all 37 frozen v3 files retained mode `0400` with zero write bits. This final-state audit cannot
+prove the absence of a transient mutation before verification. The critical bindings remained:
 
 | Historical binding | Fresh SHA-256 |
 |---|---|
@@ -1194,6 +1535,146 @@ build/science_g0_prefetch/requalification-evidence-v4/prefetch
 build/science_g0_prefetch/formal-evidence-v4
 build/science_g0_prefetch/requalification-evidence-v4/control-summary.json
 build/science_g0_prefetch/requalification-evidence-v4/prefetch-summary.json
+```
+
+The exact final combined gate is preserved below. It extracts and hash-binds the verifier, requires
+its exact exit/output, rebinds every private/audit artifact and audit status, verifies the signature,
+export, direct dependencies, and forbidden-path absence, requires all five recorded regression
+status rows, checks the two-document edit scope and terminal authorization, and fails on any missing
+or mismatched prerequisite.
+
+<!-- V4_FINAL_COMBINED_GATE_BEGIN -->
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=/Users/USER/osgsol/.worktrees/v0.2-runtime-safety
+DOC="$ROOT/docs/scienceearth/g0-measurements.md"
+EXPECTED_VERIFIER_SHA=2a8002d383761a717e672d4293af0c5a8a393e3ed7bc89811fdc3f9e253d830b
+cd "$ROOT"
+
+verifier=$(mktemp "${TMPDIR:-/tmp}/osgsol-v4-authorization-verifier.XXXXXX")
+trap 'rm -f "$verifier"' EXIT
+awk '
+  $0 == "<!-- V4_AUTHORIZATION_VERIFIER_BEGIN -->" { capture = 1; next }
+  $0 == "<!-- V4_AUTHORIZATION_VERIFIER_END -->" { exit }
+  capture && $0 == "```python" { next }
+  capture && $0 == "```" { next }
+  capture { print }
+' "$DOC" > "$verifier"
+actual_verifier_sha=$(shasum -a 256 "$verifier" | awk '{print $1}')
+test "$actual_verifier_sha" = "$EXPECTED_VERIFIER_SHA"
+
+verifier_output=$(PYTHONDONTWRITEBYTECODE=1 python3 "$verifier")
+expected_verifier_output=$(cat <<'EOF'
+GLOBAL_CONSTRAINTS=10/10;UNIQUE_SHA256=9
+REJECTED_TREES=2/2;CONTROL=30/30;CANDIDATE=2/2
+V2=20_ROWS/60_SLOTS/59_HASHES/1_ABSENT/2_SUMMARIES/61_FILES
+V3=12_ROWS/36_SLOTS/35_HASHES/1_ABSENT/2_SUMMARIES/37_FILES/0_WRITABLE
+V3_SCRATCH_AND_CMAKE=8/8
+REFERENCE_RATCHET_FIXTURE=PASS
+DESKTOP=91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18/14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214/414/355
+FORMAL=1_TEST/5_ITERATIONS/OPTIMIZED/NO_FORMAL_V4
+V4_ABSENT=5/5
+AUTHORIZATION_VERIFIER=PASS
+EOF
+)
+test "$verifier_output" = "$expected_verifier_output"
+
+check_hash()
+{
+    local relative=$1 expected=$2 actual
+    actual=$(shasum -a 256 "$relative" | awk '{print $1}')
+    test "$actual" = "$expected"
+}
+
+check_hash packaging/science_deps/gdal-3.13.1-parallel-head-range.patch \
+  5ce830f7853db1c6f53b833741261f55f382c0b8972161999a2d34b99c3ab15f
+test "$(sed -n 's/^GDAL_PREFETCH_PATCH_SHA256=//p' \
+  packaging/science_deps/versions.env)" = \
+  5ce830f7853db1c6f53b833741261f55f382c0b8972161999a2d34b99c3ab15f
+check_hash tests/data/science/prefetch_nvidia_transient_retry_trace.log \
+  124564316b6a1cfc0dd89ada2c0d4d43ca503dfe5e5b122b3a50eff605f5dd46
+check_hash tests/data/science/prefetch_nvidia_transient_retry_stats.json \
+  ea88aae77d69537b90dbd5e6c7188d37ad31837b3500e614cb0f3500d48d42b6
+check_hash build/science-deps-prefetch/prefix/science-deps-manifest.json \
+  a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116
+check_hash build/science_g0_prefetch/lib/osgdb_science_g0_probe.so \
+  1184bb101c5f8a3fb0bbff26b0efaa1987f002306a949fc51c587e20fdb1a218
+check_hash build/science_g0_prefetch/bundle-audit.json \
+  eee5b4b4dd5c946f802a2dd92296efec47e1fb9ed357a750295b8d1214fb217d
+check_hash build/science_g0_prefetch/bundle-audit.txt \
+  975065237553f763bb71e189330dbf206a56723145cbfab95c45c4ec09c4950e
+
+jq -e '
+  .status == "PASS" and .ok == true and .exit_code == 0 and
+  .sizes.baseline_bytes == 542594200 and .sizes.total_bytes == 563895343 and
+  .sizes.delta_bytes == 21301143 and .sizes.science_closure_bytes == 21300984 and
+  (.graph | length) == 128 and (.unresolved | length) == 0 and
+  (.absolute.science | length) == 0 and (.absolute.non_science | length) == 1086 and
+  (.delta.new | length) == 0 and (.delta.removed | length) == 0 and
+  (.violations | length) == 0 and (.findings | length) == 1086
+' build/science_g0_prefetch/bundle-audit.json >/dev/null
+
+/usr/bin/codesign --verify --deep --strict \
+  'build/science_g0_prefetch/osgSol Science G0 Probe.app'
+test "$(nm -gU build/science_g0_prefetch/lib/osgdb_science_g0_probe.so | \
+  awk '{print $3}')" = _osgsol_science_g0_probe_anchor
+actual_dependencies=$(otool -L \
+  build/science_g0_prefetch/lib/osgdb_science_g0_probe.so | \
+  tail -n +2 | awk '{print $1}' | sort)
+expected_dependencies=$(printf '%s\n' \
+  /usr/lib/libSystem.B.dylib /usr/lib/libc++.1.dylib \
+  /usr/lib/libcurl.4.dylib /usr/lib/libsqlite3.dylib | sort)
+test "$actual_dependencies" = "$expected_dependencies"
+path_hits=$( { otool -L build/science_g0_prefetch/lib/osgdb_science_g0_probe.so; \
+  otool -l build/science_g0_prefetch/lib/osgdb_science_g0_probe.so; \
+  strings -a build/science_g0_prefetch/lib/osgdb_science_g0_probe.so; } | \
+  rg -n '/Users/USER/osgsol/\.worktrees|science-deps-prefetch' || true )
+test -z "$path_hits"
+
+for required_record in \
+  '| Manifest and bundle-audit Python suites | 0 | 66/66, zero skip/failure | 5.361 s internal; 5.389 s wall |' \
+  '| Private dependency builder contract | 0 | PASS | 1.151 s wall |' \
+  '| `build/osgsol_core` CTest | 0 | 16/16 | 10.27 s CTest real |' \
+  '| Selected `build/science_g0_prefetch` CTest | 0 | 7/7 | 11.88 s CTest real |' \
+  '| Standalone private-prefix verifier | 0 | PASS | 1.264 s wall |'
+do
+    rg -Fqx "$required_record" "$DOC"
+done
+
+expected_decision=$(printf '%s\n' G0_DECISION=STOP \
+  PUBLIC_REQUALIFICATION_V4=AUTHORIZED_NOT_RUN DESKTOP_PACKAGE=NOT_READY)
+test "$(tail -n 3 docs/scienceearth/gdal-build.md)" = "$expected_decision"
+test "$(tail -n 3 docs/scienceearth/g0-measurements.md)" = "$expected_decision"
+test "$(git diff --name-only | sort)" = \
+  $'docs/scienceearth/g0-measurements.md\ndocs/scienceearth/gdal-build.md'
+test -z "$(find . -type d -name __pycache__ -prune -print)"
+git diff --check
+
+echo "VERIFIER_SOURCE_SHA256=$actual_verifier_sha"
+printf '%s\n' "$verifier_output"
+echo 'PRIVATE_BINDINGS=7/7'
+echo 'AUDIT_SIGNATURE_EXPORT_DEPENDENCY_PATH=PASS'
+echo 'RECORDED_REGRESSION_RESULTS=5/5'
+echo 'DOC_SCOPE_AND_CONTENT=PASS'
+echo 'FINAL_COMBINED_GATE=PASS'
+```
+<!-- V4_FINAL_COMBINED_GATE_END -->
+
+The exact extraction and execution of that preserved gate are:
+
+```bash
+gate=$(mktemp "${TMPDIR:-/tmp}/osgsol-v4-final-combined-gate.XXXXXX")
+trap 'rm -f "$gate"' EXIT
+awk '
+  $0 == "<!-- V4_FINAL_COMBINED_GATE_BEGIN -->" { capture = 1; next }
+  $0 == "<!-- V4_FINAL_COMBINED_GATE_END -->" { exit }
+  capture && $0 == "```bash" { next }
+  capture && $0 == "```" { next }
+  capture { print }
+' docs/scienceearth/g0-measurements.md > "$gate"
+bash "$gate"
 ```
 
 This evidence authorizes exactly one later v4 public control/candidate set. It does not execute or
