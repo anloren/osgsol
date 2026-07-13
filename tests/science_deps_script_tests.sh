@@ -14,6 +14,8 @@ relocatable_patch="$repo_root/packaging/science_deps/gdal-3.13.1-relocatable-sta
 prefetch_patch="$repo_root/packaging/science_deps/gdal-3.13.1-parallel-head-range.patch"
 prefetch_trace="$repo_root/tests/data/science/prefetch_nvidia_partial_trace.log"
 prefetch_stats="$repo_root/tests/data/science/prefetch_nvidia_partial_stats.json"
+prefetch_transient_trace="$repo_root/tests/data/science/prefetch_hong_kong_transient_trace.log"
+prefetch_transient_stats="$repo_root/tests/data/science/prefetch_hong_kong_transient_stats.json"
 tests_cmake="$repo_root/tests/CMakeLists.txt"
 
 fail()
@@ -51,6 +53,10 @@ assert_not_contains()
 [[ -f "$prefetch_patch" ]] || fail "missing pinned parallel HEAD/Range GDAL patch"
 [[ -f "$prefetch_trace" ]] || fail "missing credential-free prefetch replay trace"
 [[ -f "$prefetch_stats" ]] || fail "missing prefetch replay network statistics"
+[[ -f "$prefetch_transient_trace" ]] ||
+    fail "missing credential-free transient fallback replay trace"
+[[ -f "$prefetch_transient_stats" ]] ||
+    fail "missing transient fallback replay network statistics"
 if grep -nE '[[:blank:]]$' "$prefetch_patch" >/dev/null; then
     fail "parallel HEAD/Range patch must not contain nested trailing whitespace"
 fi
@@ -128,6 +134,12 @@ assert_contains "$prefetch_patch" \
     'ParallelHeadRange: logical-get-complete bytes=%zu' \
     "prefetch patch must expose one exact logical GET completion format"
 assert_contains "$prefetch_patch" \
+    'ParallelHeadRange: transient-fallback ' \
+    "prefetch patch must expose the coordinator transient fallback event"
+assert_contains "$prefetch_patch" \
+    'range=bytes=0-131071 status=%ld bytes=%zu' \
+    "prefetch patch must expose the exact coordinator fallback fields"
+assert_contains "$prefetch_patch" \
     'ParallelHeadRange: transport head-connection=' \
     "prefetch patch must expose the role-labelled transport prefix"
 assert_contains "$prefetch_patch" \
@@ -153,12 +165,18 @@ assert_contains "$prefetch_trace" \
 assert_contains "$prefetch_trace" \
     'proxy 127\.0\.0\.1|host 127\.0\.0\.1 left intact' \
     "prefetch replay must retain only the loopback proxy class"
-assert_not_contains "$prefetch_trace" \
-    '(^|[^[:alpha:]])(Authorization|Proxy-Authorization|Bearer|token|key|password)([^[:alpha:]]|$)' \
-    "prefetch replay trace must not contain credentials"
-assert_not_contains "$prefetch_stats" \
-    '(^|[^[:alpha:]])(Authorization|Proxy-Authorization|Bearer|token|key|password)([^[:alpha:]]|$)' \
-    "prefetch replay statistics must not contain credentials"
+for replay_fixture in "$prefetch_trace" "$prefetch_stats" \
+                      "$prefetch_transient_trace" "$prefetch_transient_stats"; do
+    assert_not_contains "$replay_fixture" \
+        '(^|[^[:alpha:]])(Authorization|Proxy-Authorization|Bearer|token|key|password)([^[:alpha:]]|$)' \
+        "prefetch replay fixtures must not contain credential fields"
+    assert_not_contains "$replay_fixture" \
+        'https?://[^[:space:]]*[?]|https?:\\/\\/[^[:space:]]*[?]' \
+        "prefetch replay fixtures must not contain signed query syntax"
+    assert_not_contains "$replay_fixture" \
+        'https?://[^/@[:space:]]+@|https?:\\/\\/[^/@[:space:]]+@' \
+        "prefetch replay fixtures must not contain URI userinfo syntax"
+done
 
 for component in GDAL PROJ ZSTD; do
     archive_variable="${component}_ARCHIVE"

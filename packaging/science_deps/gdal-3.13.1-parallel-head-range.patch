@@ -567,7 +567,7 @@
 +        {
 +            sParallelResult.bFallback = true;
 +            sParallelResult.osReason = "head-invalid";
-@@ -1756,0 +2246,137 @@
+@@ -1756,0 +2246,149 @@
 +        else if (sParallelResult.bWriterOverflow)
 +        {
 +            bReject = true;
@@ -612,6 +612,18 @@
 +            sParallelResult.osReason = sParallelResult.nRangeCode > 0
 +                ? CPLSPrintf("status-%ld", sParallelResult.nRangeCode)
 +                : "transport";
++            if (sParallelResult.nRangeCode == 429 ||
++                sParallelResult.nRangeCode == 500 ||
++                sParallelResult.nRangeCode == 502 ||
++                sParallelResult.nRangeCode == 503 ||
++                sParallelResult.nRangeCode == 504)
++            {
++                CPLDebug(poFS->GetDebugKey(),
++                         "ParallelHeadRange: transient-fallback "
++                         "range=bytes=0-131071 status=%ld bytes=%zu",
++                         sParallelResult.nRangeCode,
++                         sParallelResult.nRangeSize);
++            }
 +        }
 +        else if (sParallelResult.nRangeCode != 206 ||
 +                 sParallelResult.nRangeSize != 131072)
@@ -705,15 +717,15 @@
 +            CPLDebug(poFS->GetDebugKey(), "ParallelHeadRange: fallback=%s",
 +                     sParallelResult.osReason.c_str());
 +        }
-@@ -1761 +2387 @@
+@@ -1761 +2399 @@
 -    curl_easy_cleanup(hCurlHandle);
 +    CleanupCurlHandle(hCurlHandle);
-@@ -1768 +2394 @@
+@@ -1768 +2406 @@
 -        poFS->SetCachedFileProp(m_pszURL, oFileProp);
 +        PublishFileProperty();
-@@ -4003,0 +4630 @@
+@@ -4003,0 +4642 @@
 +    bool bParallelHeadRangeDisabled = false;
-@@ -4124,0 +4752,24 @@
+@@ -4124,0 +4764,24 @@
 +/*                    AbandonCurlMultiHandle()                          */
 +/************************************************************************/
 +

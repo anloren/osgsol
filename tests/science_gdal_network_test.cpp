@@ -150,10 +150,12 @@ namespace
         int actualHeadCount = 0;
         int successfulGetCount = 0;
         int transientRetryCount = 0;
+        int coordinatorTransientFallbackCount = 0;
         int statsGetOperationCount = 0;
         int statsHeadCount = 0;
         int coordinatorLogicalGetCount = 0;
         std::uint64_t coordinatorLogicalGetBytes = 0;
+        std::uint64_t coordinatorTransientFallbackBytes = 0;
         std::uint64_t successfulRangeBytes = 0;
         std::uint64_t declaredTransientBytes = 0;
         std::uint64_t actualHttpBodyBytes = 0;
@@ -170,6 +172,7 @@ namespace
         std::array<double, 2> rawPixel = {};
         std::array<double, 4> verifiedWgs84Bbox = {};
         std::map<int, int> transientRetryCodes;
+        std::map<int, int> coordinatorTransientFallbackCodes;
         std::vector<int> responseCodes;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> successfulByteIntervals;
         MetadataPrefetchProof metadataPrefetch;
@@ -1376,6 +1379,18 @@ namespace
             stream << "\"" << retry.first << "\":" << retry.second;
             firstRetryCode = false;
         }
+        stream << "},\n  \"coordinator_transient_fallback_count\": "
+               << proof.coordinatorTransientFallbackCount
+               << ",\n  \"coordinator_transient_fallback_bytes\": "
+               << proof.coordinatorTransientFallbackBytes
+               << ",\n  \"coordinator_transient_fallback_codes\": {";
+        bool firstCoordinatorCode = true;
+        for (const auto& fallback : proof.coordinatorTransientFallbackCodes)
+        {
+            if (!firstCoordinatorCode) stream << ',';
+            stream << "\"" << fallback.first << "\":" << fallback.second;
+            firstCoordinatorCode = false;
+        }
         stream << "},\n"
                << "  \"actual_http_head_count\": " << proof.actualHeadCount << ",\n"
                << "  \"stats_get_operation_count\": " << proof.statsGetOperationCount
@@ -1932,9 +1947,16 @@ namespace
             int code = 0;
             std::map<std::string, std::string> headers;
         };
+        struct CoordinatorFallback
+        {
+            std::string range;
+            int code = 0;
+            std::uint64_t bytes = 0;
+        };
         std::vector<Request> requests;
         std::vector<Response> responses;
         std::vector<std::pair<std::string, int>> retryEvents;
+        std::vector<CoordinatorFallback> coordinatorFallbacks;
         Response currentResponse;
         bool responseOpen = false;
         int logicalGetOperations = 0;
@@ -2021,6 +2043,29 @@ namespace
             if (std::regex_search(message, retryMatch, retryPattern))
                 retryEvents.emplace_back("bytes=" + retryMatch[1].str(),
                                          std::stoi(retryMatch[2].str()));
+            static const std::regex coordinatorFallbackPattern(
+                R"(^VSICURL: ParallelHeadRange: transient-fallback )"
+                R"(range=(bytes=[0-9]+-[0-9]+) status=([0-9]+) )"
+                R"(bytes=([0-9]+)$)");
+            std::smatch coordinatorFallbackMatch;
+            if (std::regex_match(message, coordinatorFallbackMatch,
+                                 coordinatorFallbackPattern))
+            {
+                CoordinatorFallback fallback;
+                fallback.range = coordinatorFallbackMatch[1].str();
+                fallback.code = std::stoi(coordinatorFallbackMatch[2].str());
+                fallback.bytes = std::stoull(coordinatorFallbackMatch[3].str());
+                coordinatorFallbacks.push_back(fallback);
+                require(coordinatorFallbacks.size() == 1,
+                        "coordinator transient fallback event is duplicated");
+            }
+            else
+            {
+                require(message.find(
+                            "ParallelHeadRange: transient-fallback") ==
+                            std::string::npos,
+                        "coordinator transient fallback event is malformed");
+            }
         }
         if (responseOpen) responses.push_back(currentResponse);
 
@@ -2053,6 +2098,7 @@ namespace
 
         std::map<std::string, int> successfulRanges;
         std::map<int, int> transientResponses;
+        std::map<std::pair<int, std::uint64_t>, int> transientResponseBodies;
         int headResponses = 0;
         int connectResponses = 0;
         for (const Response& response : responses)
@@ -2066,8 +2112,11 @@ namespace
                         "transient response unexpectedly carried Content-Range");
                 require(contentLength != response.headers.end(),
                         "transient response omitted Content-Length body accounting");
-                proof.declaredTransientBytes += std::stoull(contentLength->second);
+                const std::uint64_t bodyBytes =
+                    std::stoull(contentLength->second);
+                proof.declaredTransientBytes += bodyBytes;
                 ++transientResponses[response.code];
+                ++transientResponseBodies[{response.code, bodyBytes}];
                 continue;
             }
             if (contentRange == response.headers.end())
@@ -2136,23 +2185,56 @@ namespace
             require(requestedRanges.count(retry.first) != 0,
                     "CPL retry event names a Range that was never emitted");
         }
+        std::map<std::string, int> coordinatorFallbacksByRange;
+        for (const CoordinatorFallback& fallback : coordinatorFallbacks)
+        {
+            require(fallback.range == "bytes=0-131071" &&
+                    requestedRanges.count(fallback.range) != 0,
+                    "coordinator transient fallback names an unknown Range");
+            require(transientCodes.count(fallback.code) != 0,
+                    "coordinator fallback used an unlisted transient response code");
+            auto response = transientResponseBodies.find(
+                {fallback.code, fallback.bytes});
+            require(response != transientResponseBodies.end() &&
+                    response->second > 0,
+                    "coordinator fallback has no matching transient HTTP response");
+            --response->second;
+            auto responseCode = transientResponses.find(fallback.code);
+            require(responseCode != transientResponses.end() &&
+                    responseCode->second > 0,
+                    "coordinator fallback response code accounting underflowed");
+            if (--responseCode->second == 0)
+                transientResponses.erase(responseCode);
+            ++coordinatorFallbacksByRange[fallback.range];
+            ++proof.coordinatorTransientFallbackCount;
+            proof.coordinatorTransientFallbackBytes += fallback.bytes;
+            ++proof.coordinatorTransientFallbackCodes[fallback.code];
+        }
         require(retryCodes == transientResponses,
                 "transient HTTP responses do not reconcile with CPL retry events");
         for (const auto& request : requestedRanges)
         {
             const int successful = successfulRanges[request.first];
             const int retries = retriesByRange[request.first];
+            const int coordinatorFallbackCount =
+                coordinatorFallbacksByRange[request.first];
             require(successful > 0,
                     "emitted GET Range had no final HTTP 206 response");
-            require(request.second == successful + retries,
-                    "emitted GET Range count does not reconcile with retries and HTTP 206");
+            require(request.second == successful + retries +
+                        coordinatorFallbackCount,
+                    "emitted GET Range count does not reconcile with retries, "
+                    "coordinator fallbacks, and HTTP 206");
         }
         require(proof.actualGetCount ==
-                    proof.successfulGetCount + static_cast<int>(retryEvents.size()),
-                "GET request count does not reconcile with successes and retries");
+                    proof.successfulGetCount +
+                        static_cast<int>(retryEvents.size()) +
+                        proof.coordinatorTransientFallbackCount,
+                "GET request count does not reconcile with successes, retries, "
+                "and coordinator fallbacks");
         proof.transientRetryCount = static_cast<int>(retryEvents.size());
         proof.transientRetryCodes = retryCodes;
-        proof.actualHttpBodyBytes = proof.successfulRangeBytes;
+        proof.actualHttpBodyBytes = proof.successfulRangeBytes +
+            proof.coordinatorTransientFallbackBytes;
         proof.conservativeBodyUpperBound =
             proof.successfulRangeBytes + proof.declaredTransientBytes;
         require(proof.actualGetCount > 0 && proof.successfulRangeBytes > 0 &&
@@ -2173,7 +2255,8 @@ namespace
         proof.statsHeadCount = static_cast<int>(field(head, "count").get<double>());
         const std::uint64_t statsBytes = static_cast<std::uint64_t>(
             field(get, "downloaded_bytes").get<double>());
-        require(statsBytes == proof.successfulRangeBytes,
+        require(statsBytes == proof.successfulRangeBytes +
+                    proof.coordinatorTransientFallbackBytes,
                 "VSINetworkStats downloaded bytes disagree with HTTP response bodies");
         require(proof.statsHeadCount == proof.actualHeadCount,
                 "VSINetworkStats HEAD count disagrees with curl headers");
@@ -2181,13 +2264,23 @@ namespace
                 "VSINetworkStats GET operations disagree with CPL read operations");
         if (proof.coordinatorLogicalGetCount == 1)
         {
-            require(!proof.successfulByteIntervals.empty(),
-                    "parallel metadata prefetch logical GET omitted its interval");
-            const auto& interval = proof.successfulByteIntervals.front();
-            require(proof.coordinatorLogicalGetBytes ==
-                        interval.second - interval.first + 1,
-                    "parallel metadata prefetch logical GET bytes disagree with "
-                    "the first successful interval");
+            if (proof.coordinatorTransientFallbackCount == 1)
+            {
+                require(proof.coordinatorLogicalGetBytes ==
+                            proof.coordinatorTransientFallbackBytes,
+                        "parallel metadata prefetch logical GET bytes disagree "
+                        "with the coordinator fallback");
+            }
+            else
+            {
+                require(!proof.successfulByteIntervals.empty(),
+                        "parallel metadata prefetch logical GET omitted its interval");
+                const auto& interval = proof.successfulByteIntervals.front();
+                require(proof.coordinatorLogicalGetBytes ==
+                            interval.second - interval.first + 1,
+                        "parallel metadata prefetch logical GET bytes disagree "
+                        "with the first successful interval");
+            }
         }
         return proof;
     }
@@ -2364,6 +2457,9 @@ namespace
         }
         require(activeResponse < 0,
                 "metadata prefetch response evidence is incomplete");
+        require(httpProof.coordinatorTransientFallbackCount == 0 &&
+                fallbackReasons.empty(),
+                "metadata prefetch formal proof contains a fallback");
 
         const RequestEvidence* headRequest = nullptr;
         const RequestEvidence* rangeRequest = nullptr;
@@ -2451,9 +2547,6 @@ namespace
                 "metadata prefetch request headers did not overlap HEAD completion");
         require(publicationCount == 1,
                 "metadata prefetch cache publication evidence is missing or ambiguous");
-        require(fallbackReasons.empty(),
-                "metadata prefetch formal proof contains a fallback");
-
         MetadataPrefetchProof proof;
         proof.enabled = true;
         proof.headRequestCount = headRequestCount;
@@ -3049,6 +3142,157 @@ namespace
                 "prefetch replay lacked the generic marker mutation target");
         require(!metadataRejected(misleadingGeneric),
                 "prefetch replay inferred roles from a misleading generic marker");
+    }
+
+    void verifyPrefetchTransientFallbackReplayRegression()
+    {
+        const std::filesystem::path fixtureRoot =
+            std::filesystem::path(__FILE__).parent_path() / "data" / "science";
+        DebugCapture replay;
+        loadReplayCapture(
+            fixtureRoot / "prefetch_hong_kong_transient_trace.log", replay);
+        const std::string stats = loadReplayText(
+            fixtureRoot / "prefetch_hong_kong_transient_stats.json");
+
+        const HttpProof proof = buildHttpProof(replay, stats);
+        require(proof.coordinatorTransientFallbackCount == 1 &&
+                proof.coordinatorTransientFallbackBytes == 17 &&
+                proof.coordinatorTransientFallbackCodes ==
+                    std::map<int, int>({{500, 1}}),
+                "Hong Kong replay lost coordinator transient fallback accounting");
+        require(proof.actualGetCount == 5 && proof.successfulGetCount == 4 &&
+                proof.transientRetryCount == 0 &&
+                proof.transientRetryCodes.empty() &&
+                proof.successfulByteIntervals.size() == 4 &&
+                proof.statsGetOperationCount == 3,
+                "Hong Kong replay physical/logical GET counts did not reconcile");
+        require(proof.successfulRangeBytes == 1264092 &&
+                proof.declaredTransientBytes == 17 &&
+                proof.actualHttpBodyBytes == 1264109 &&
+                proof.conservativeBodyUpperBound == 1264109,
+                "Hong Kong replay byte accounting did not reconcile");
+
+        const auto failureMessage = [](const auto& operation)
+        {
+            try
+            {
+                operation();
+            }
+            catch (const std::exception& error)
+            {
+                return std::string(error.what());
+            }
+            fail("expected replay mutation to be rejected");
+        };
+        const std::string formalFailure = failureMessage(
+            [&replay, &proof]()
+            {
+                static_cast<void>(buildMetadataPrefetchProof(replay, proof));
+            });
+        require(formalFailure ==
+                    "metadata prefetch formal proof contains a fallback",
+                "Hong Kong replay failed at the wrong formal gate: " +
+                    formalFailure);
+
+        const auto messageIndex = [](const DebugCapture& capture,
+                                     const std::string& needle)
+        {
+            const auto iterator = std::find_if(
+                capture.messages.begin(), capture.messages.end(),
+                [&needle](const std::string& message)
+                {
+                    return message.find(needle) != std::string::npos;
+                });
+            require(iterator != capture.messages.end(),
+                    "Hong Kong replay mutation target is missing");
+            return static_cast<std::size_t>(
+                std::distance(capture.messages.begin(), iterator));
+        };
+        const auto copyCapture = [](const DebugCapture& source,
+                                    DebugCapture& destination)
+        {
+            destination.messages = source.messages;
+            destination.timestamps = source.timestamps;
+        };
+        const auto httpRejected = [&failureMessage, &stats](
+                                      const DebugCapture& candidate)
+        {
+            return !failureMessage(
+                [&candidate, &stats]()
+                {
+                    static_cast<void>(buildHttpProof(candidate, stats));
+                }).empty();
+        };
+        const auto replaceCoordinatorEvent =
+            [&copyCapture, &messageIndex, &httpRejected, &replay](
+                const std::string& event)
+        {
+            DebugCapture candidate;
+            copyCapture(replay, candidate);
+            candidate.messages[messageIndex(
+                candidate, "ParallelHeadRange: transient-fallback")] = event;
+            return httpRejected(candidate);
+        };
+
+        DebugCapture missingEvent;
+        copyCapture(replay, missingEvent);
+        const std::size_t missingIndex = messageIndex(
+            missingEvent, "ParallelHeadRange: transient-fallback");
+        missingEvent.messages.erase(missingEvent.messages.begin() + missingIndex);
+        missingEvent.timestamps.erase(missingEvent.timestamps.begin() + missingIndex);
+        require(httpRejected(missingEvent),
+                "Hong Kong replay accepted a missing coordinator fallback event");
+
+        DebugCapture duplicateEvent;
+        copyCapture(replay, duplicateEvent);
+        const std::size_t duplicateIndex = messageIndex(
+            duplicateEvent, "ParallelHeadRange: transient-fallback");
+        duplicateEvent.messages.insert(
+            duplicateEvent.messages.begin() + duplicateIndex,
+            duplicateEvent.messages[duplicateIndex]);
+        duplicateEvent.timestamps.insert(
+            duplicateEvent.timestamps.begin() + duplicateIndex,
+            duplicateEvent.timestamps[duplicateIndex]);
+        require(httpRejected(duplicateEvent),
+                "Hong Kong replay accepted duplicate coordinator fallback events");
+
+        require(replaceCoordinatorEvent(
+                    "VSICURL: ParallelHeadRange: transient-fallback "
+                    "range=bytes=0-131070 status=500 bytes=17"),
+                "Hong Kong replay accepted the wrong coordinator Range");
+        require(replaceCoordinatorEvent(
+                    "VSICURL: ParallelHeadRange: transient-fallback "
+                    "range=bytes=0-131071 status=503 bytes=17"),
+                "Hong Kong replay accepted the wrong coordinator status");
+        require(replaceCoordinatorEvent(
+                    "VSICURL: ParallelHeadRange: transient-fallback "
+                    "range=bytes=0-131071 status=500 bytes=18"),
+                "Hong Kong replay accepted the wrong coordinator byte count");
+        require(replaceCoordinatorEvent(
+                    "VSICURL: ParallelHeadRange: transient-fallback "
+                    "range=bytes=0-131071 status=404 bytes=17"),
+                "Hong Kong replay accepted a non-transient coordinator status");
+        require(replaceCoordinatorEvent(
+                    "VSICURL: ParallelHeadRange: transient-fallback "
+                    "range=bytes=zero-131071 status=500 bytes=17"),
+                "Hong Kong replay accepted a malformed Range integer");
+        require(replaceCoordinatorEvent(
+                    "VSICURL: ParallelHeadRange: transient-fallback "
+                    "range=bytes=0-131071 status=oops bytes=17"),
+                "Hong Kong replay accepted a malformed status integer");
+        require(replaceCoordinatorEvent(
+                    "VSICURL: ParallelHeadRange: transient-fallback "
+                    "range=bytes=0-131071 status=500 bytes=oops"),
+                "Hong Kong replay accepted a malformed byte integer");
+
+        DebugCapture unmatchedResponse;
+        copyCapture(replay, unmatchedResponse);
+        unmatchedResponse.messages[messageIndex(
+            unmatchedResponse, "CURL_INFO_HEADER_IN: HTTP/2 500")] =
+            "CURL_INFO_HEADER_IN: HTTP/2 503";
+        require(httpRejected(unmatchedResponse),
+                "Hong Kong replay accepted a coordinator event without a "
+                "matching transient response");
     }
 
     struct PixelWindow
@@ -4306,6 +4550,7 @@ int runMain(int argc, char** argv)
     verifyLatencyGateRegression();
     verifyLiveCommandAndSummaryRegression();
     verifyPrefetchReplayRegression();
+    verifyPrefetchTransientFallbackReplayRegression();
     verifyHttpParserRegression();
     registerScienceRuntime();
     verifyGeoreferenceRegression();

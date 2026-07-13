@@ -1,0 +1,84 @@
+503124872585458ns CURL_INFO_HEADER_OUT: CONNECT data.source.coop:443 HTTP/1.1
+Host: data.source.coop:443
+User-Agent: GDAL/3.13.1
+Proxy-Connection: Keep-Alive
+
+503124872830333ns CURL_INFO_HEADER_IN: HTTP/1.1 200 Connection established
+503124872834500ns CURL_INFO_HEADER_IN:
+503125491398666ns CURL_INFO_TEXT: [HTTP/2] [1] OPENED stream for https://data.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff
+503125491431791ns CURL_INFO_HEADER_OUT: HEAD /tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff HTTP/2
+Host: data.source.coop
+User-Agent: GDAL/3.13.1
+Accept: */*
+
+503125491703625ns CURL_INFO_TEXT: Multiplexed connection found
+503125491731458ns CURL_INFO_TEXT: [HTTP/2] [3] OPENED stream for https://data.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff
+503125491825958ns CURL_INFO_HEADER_OUT: GET /tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff HTTP/2
+Host: data.source.coop
+User-Agent: GDAL/3.13.1
+Accept: */*
+Range: bytes=0-131071
+
+503125744732416ns CURL_INFO_HEADER_IN: HTTP/2 500
+503125744782083ns CURL_INFO_HEADER_IN: content-length: 17
+503125744812666ns CURL_INFO_HEADER_IN:
+503126286220250ns CURL_INFO_HEADER_IN: HTTP/2 200
+503126286281166ns CURL_INFO_HEADER_IN: content-length: 2352783157
+503126286412000ns CURL_INFO_HEADER_IN:
+503126286448958ns CURL_INFO_TEXT: Connection #0 to host 127.0.0.1 left intact
+503126286468333ns VSICURL: ParallelHeadRange: detach-success=range
+503126286475125ns VSICURL: ParallelHeadRange: detach-success=head
+503126286477625ns VSICURL: ParallelHeadRange: transport head-connection=0 range-connection=0 head-http=2 range-http=2
+503126286494916ns VSICURL: ParallelHeadRange: logical-get-complete bytes=17
+503126286567291ns VSICURL: ParallelHeadRange: transient-fallback range=bytes=0-131071 status=500 bytes=17
+503126286568291ns VSICURL: ParallelHeadRange: fallback=status-500
+503126286892166ns CURL_INFO_TEXT: [HTTP/2] [5] OPENED stream for https://data.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff
+503126286972833ns CURL_INFO_HEADER_OUT: GET /tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff HTTP/2
+Host: data.source.coop
+User-Agent: GDAL/3.13.1
+Accept: */*
+Range: bytes=0-131071
+
+503126744577500ns CURL_INFO_HEADER_IN: HTTP/2 206
+503126744641208ns CURL_INFO_HEADER_IN: content-length: 131072
+503126744648125ns CURL_INFO_HEADER_IN: content-range: bytes 0-131071/2352783157
+503126744716833ns CURL_INFO_HEADER_IN:
+503127117392750ns CURL_INFO_TEXT: Connection #0 to host 127.0.0.1 left intact
+503127117421916ns VSICURL: Got response_code=206
+503127127292125ns CURL_INFO_TEXT: [HTTP/2] [7] OPENED stream for https://data.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff
+503127127387625ns CURL_INFO_HEADER_OUT: GET /tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff HTTP/2
+Host: data.source.coop
+User-Agent: GDAL/3.13.1
+Accept: */*
+Range: bytes=46029923-46405871
+
+503127127436500ns CURL_INFO_TEXT: Multiplexed connection found
+503127127450041ns CURL_INFO_TEXT: [HTTP/2] [9] OPENED stream for https://data.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff
+503127127483833ns CURL_INFO_HEADER_OUT: GET /tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff HTTP/2
+Host: data.source.coop
+User-Agent: GDAL/3.13.1
+Accept: */*
+Range: bytes=62196464-62556994
+
+503127127523125ns CURL_INFO_TEXT: Multiplexed connection found
+503127127533500ns CURL_INFO_TEXT: [HTTP/2] [11] OPENED stream for https://data.source.coop/tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff
+503127127564541ns CURL_INFO_HEADER_OUT: GET /tge-labs/aef/v1/annual/2025/50N/x005bocsz0upyc9h7-0000000000-0000000000.tiff HTTP/2
+Host: data.source.coop
+User-Agent: GDAL/3.13.1
+Accept: */*
+Range: bytes=75229143-75625682
+
+503127563907666ns CURL_INFO_HEADER_IN: HTTP/2 206
+503127563947666ns CURL_INFO_HEADER_IN: content-length: 375949
+503127563954625ns CURL_INFO_HEADER_IN: content-range: bytes 46029923-46405871/2352783157
+503127564090750ns CURL_INFO_HEADER_IN:
+503127564200625ns CURL_INFO_HEADER_IN: HTTP/2 206
+503127564213000ns CURL_INFO_HEADER_IN: content-length: 396540
+503127564216250ns CURL_INFO_HEADER_IN: content-range: bytes 75229143-75625682/2352783157
+503127564347625ns CURL_INFO_HEADER_IN:
+503127564499083ns CURL_INFO_HEADER_IN: HTTP/2 206
+503127564509958ns CURL_INFO_HEADER_IN: content-length: 360531
+503127564512833ns CURL_INFO_HEADER_IN: content-range: bytes 62196464-62556994/2352783157
+503127564569500ns CURL_INFO_HEADER_IN:
+503128040212916ns CURL_INFO_TEXT: Connection #0 to host 127.0.0.1 left intact
+503128040476125ns VSICURL: Download completed
