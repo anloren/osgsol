@@ -1940,19 +1940,73 @@ SOURCE_SHA256=a323b698030b2168fca8a533d2ff043269cf1edcd16f99067ccf812b31829591
 TRANSCRIPT_SHA256=b56a4a65c2a4b400f7d7e9870ea76b328531b171ee37edd80084ac5563d1be93
 ```
 
-The staged extraction command is:
+The exact clean-`HEAD` wrapper below is fail-closed. It rejects a tracked-dirty worktree, requires
+exactly one source begin marker and one source end marker, extracts only from committed `HEAD`,
+and checks the extracted source digest before invoking Python. It tees the proxy-free offline
+auditor output to the deterministic transcript, checks the transcript digest, and exits nonzero
+on either mismatch.
 
-```sh
-git show :docs/scienceearth/g0-measurements.md |
-awk '/^<!-- V4_POSTHOC_DECISION_AUDIT_BEGIN -->$/{inside=1; next} /^<!-- V4_POSTHOC_DECISION_AUDIT_END -->$/{inside=0} inside && !/^```python$/ && !/^```$/' > "$audit"
-```
+<!-- V4_POSTHOC_DECISION_WRAPPER_BEGIN -->
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
 
-The clean-`HEAD` extraction substitutes `git show HEAD:docs/scienceearth/g0-measurements.md`. The offline invocation removes all proxy variables and records the source identity before executing:
+doc=docs/scienceearth/g0-measurements.md
+transcript=.superpowers/sdd/task-3-v4-posthoc-audit.log
+expected_source_sha=a323b698030b2168fca8a533d2ff043269cf1edcd16f99067ccf812b31829591
+expected_transcript_sha=b56a4a65c2a4b400f7d7e9870ea76b328531b171ee37edd80084ac5563d1be93
 
-```sh
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    printf '%s\n' 'tracked worktree/index must be clean' >&2
+    exit 1
+fi
+
+marker_counts=$(
+    git show HEAD:"$doc" | awk '
+        /^<!-- V4_POSTHOC_DECISION_AUDIT_BEGIN -->$/ { opens += 1 }
+        /^<!-- V4_POSTHOC_DECISION_AUDIT_END -->$/ { closes += 1 }
+        END { printf "%d %d", opens, closes }
+    '
+)
+if [[ "$marker_counts" != "1 1" ]]; then
+    printf 'source marker count mismatch: %s\n' "$marker_counts" >&2
+    exit 1
+fi
+
+audit=$(mktemp "${TMPDIR:-/tmp}/osgsol-v4-posthoc-audit.XXXXXX")
+trap 'rm -f "$audit"' EXIT
+git show HEAD:"$doc" |
+    awk '/^<!-- V4_POSTHOC_DECISION_AUDIT_BEGIN -->$/{inside=1; next} /^<!-- V4_POSTHOC_DECISION_AUDIT_END -->$/{inside=0} inside && !/^```python$/ && !/^```$/' > "$audit"
+
 source_sha=$(shasum -a 256 "$audit" | awk '{print $1}')
-{ printf 'SOURCE_SHA256=%s\n' "$source_sha"; env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy PYTHONDONTWRITEBYTECODE=1 python3 "$audit"; } > .superpowers/sdd/task-3-v4-posthoc-audit.log
+if [[ "$source_sha" != "$expected_source_sha" ]]; then
+    printf 'source SHA-256 mismatch: %s != %s\n' \
+        "$source_sha" "$expected_source_sha" >&2
+    exit 1
+fi
+
+rm -f "$transcript"
+{
+    printf 'SOURCE_SHA256=%s\n' "$source_sha"
+    env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+        -u http_proxy -u https_proxy -u all_proxy \
+        PYTHONDONTWRITEBYTECODE=1 python3 "$audit"
+} | tee "$transcript"
+
+transcript_sha=$(shasum -a 256 "$transcript" | awk '{print $1}')
+chmod 0400 "$transcript"
+if [[ "$transcript_sha" != "$expected_transcript_sha" ]]; then
+    printf 'transcript SHA-256 mismatch: %s != %s\n' \
+        "$transcript_sha" "$expected_transcript_sha" >&2
+    exit 1
+fi
+
+printf 'WRAPPER_SOURCE_SHA256_ASSERTION=PASS;%s\n' "$source_sha"
+printf 'WRAPPER_TRANSCRIPT_SHA256_ASSERTION=PASS;%s\n' "$transcript_sha"
+printf '%s\n' 'WRAPPER_AUDIT=PASS'
 ```
+<!-- V4_POSTHOC_DECISION_WRAPPER_END -->
 
 The exact deterministic output is:
 
@@ -1974,7 +2028,7 @@ DECISION=STOP/FAIL/NOT_READY
 POSTHOC_V4_DECISION_AUDIT=PASS
 ```
 
-The output is preserved at `.superpowers/sdd/task-3-v4-posthoc-audit.log`; its SHA-256 is the recorded transcript hash above. The staged extraction and the clean-`HEAD` extraction must be byte-identical to the committed source hash.
+The output is preserved at `.superpowers/sdd/task-3-v4-posthoc-audit.log`; its SHA-256 is the recorded transcript hash above. The original staged extraction and every clean-`HEAD` extraction are byte-identical to the committed source hash. The wrapper's explicit `WRAPPER_SOURCE_SHA256_ASSERTION=PASS`, `WRAPPER_TRANSCRIPT_SHA256_ASSERTION=PASS`, and `WRAPPER_AUDIT=PASS` lines are outside the transcript file, so the transcript remains deterministic.
 
 <!-- V4_POSTHOC_DECISION_AUDIT_BEGIN -->
 ```python
