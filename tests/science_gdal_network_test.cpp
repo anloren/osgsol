@@ -78,6 +78,8 @@ namespace
     constexpr std::uint64_t LIVE_TRANSFER_BUDGET = 16 * 1024 * 1024;
     constexpr double MAX_MEDIAN_MS = 3000.0;
     constexpr double MAX_P95_MS = 8000.0;
+    constexpr auto COORDINATOR_RETRY_CHRONOLOGY_ROUNDING_TOLERANCE =
+        std::chrono::microseconds(999);
 
     struct LiveCase
     {
@@ -2503,7 +2505,8 @@ namespace
                         timedRetry.messageIndex < nextRequest.messageIndex,
                     "coordinator retry event is outside its request chronology");
             const auto earliestRetryRequest = timedRetry.emitted +
-                std::chrono::milliseconds(retry.delayMs);
+                std::chrono::milliseconds(retry.delayMs) -
+                COORDINATOR_RETRY_CHRONOLOGY_ROUNDING_TOLERANCE;
             require(nextRequest.sent >= earliestRetryRequest,
                     "coordinator retry request preceded its declared delay");
 
@@ -2972,7 +2975,8 @@ namespace
             const RequestEvidence& retryRequest = *rangeRequests[index + 1];
             const TimedCoordinatorRetry& retry = coordinatorRetries[index];
             const auto earliestRetryRequest = retry.emitted +
-                std::chrono::milliseconds(retry.evidence.delayMs);
+                std::chrono::milliseconds(retry.evidence.delayMs) -
+                COORDINATOR_RETRY_CHRONOLOGY_ROUNDING_TOLERANCE;
             require(retryRequest.sent >= earliestRetryRequest,
                     "metadata prefetch retry request preceded its declared delay");
             require(retryRequest.uri == rangeRequest->uri &&
@@ -3926,6 +3930,22 @@ namespace
         requireRejected(missingSecondRequest,
                         "a retry event without a second exact Range request");
 
+        DebugCapture upwardRoundedSecondRequest;
+        upwardRoundedSecondRequest.messages = replay.messages;
+        upwardRoundedSecondRequest.timestamps = replay.timestamps;
+        const std::size_t upwardRoundedRetryEventIndex = messageIndex(
+            upwardRoundedSecondRequest, "ParallelHeadRange: transient-retry");
+        const std::size_t upwardRoundedRequestIndex = messageIndex(
+            upwardRoundedSecondRequest, "CURL_INFO_HEADER_OUT: GET", 1);
+        upwardRoundedSecondRequest.timestamps[upwardRoundedRequestIndex] =
+            upwardRoundedSecondRequest.timestamps[upwardRoundedRetryEventIndex] +
+            std::chrono::microseconds(99500);
+        const std::string upwardRoundedFailure =
+            failureMessage(upwardRoundedSecondRequest);
+        require(upwardRoundedFailure.empty(),
+                "NVIDIA retry replay rejected an upward-rounded valid delay: " +
+                    upwardRoundedFailure);
+
         DebugCapture earlySecondRequest;
         earlySecondRequest.messages = replay.messages;
         earlySecondRequest.timestamps = replay.timestamps;
@@ -3936,8 +3956,13 @@ namespace
         earlySecondRequest.timestamps[secondRequestIndex] =
             earlySecondRequest.timestamps[retryEventIndex] +
             std::chrono::milliseconds(99);
-        requireRejected(earlySecondRequest,
-                        "a retry request before its declared delay");
+        const std::string earlySecondRequestFailure =
+            failureMessage(earlySecondRequest);
+        require(earlySecondRequestFailure ==
+                    "coordinator retry request preceded its declared delay",
+                "NVIDIA retry replay did not reject the 99 ms premature "
+                "request at the chronology boundary: " +
+                    earlySecondRequestFailure);
 
         DebugCapture extraHead;
         extraHead.messages = replay.messages;
