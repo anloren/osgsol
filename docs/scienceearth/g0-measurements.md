@@ -703,3 +703,142 @@ decision.
 G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V2=FAIL
 DESKTOP_PACKAGE=NOT_READY
+
+## Prefetch v3 Task 2 offline requalification authorization
+
+On 2026-07-13, source base
+`d4505b077e067f7f16276fe5191c8042092c961d` was requalified locally after the
+transient-fallback accounting change. This task performed no public request, did not create a v3
+diagnostic or formal root, did not reconfigure or promote the formal CMake profile, and did not
+package or replace the protected Desktop app.
+
+The complete non-public regression commands were:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
+  tests.science_g0_manifest_tests tests.science_bundle_audit_tests -v
+bash tests/science_deps_script_tests.sh
+ctest --test-dir build/osgsol_core --output-on-failure
+ctest --test-dir build/science_g0_prefetch --output-on-failure \
+  -R 'ScienceEarthRelease|AefIndexTool|ScienceG0Manifest|ScienceDepsScript|ScienceGdalSpike|ScienceHttpRanges|ScienceHttpRangeServer'
+SCIENCE_DEPS_ROOT="$PWD/build/science-deps-prefetch" \
+  bash packaging/science_deps/build_science_deps.sh --verify
+```
+
+Each command ran once and passed freshly:
+
+| Regression | Fresh result |
+|---|---:|
+| Manifest and bundle-audit Python suites | 66/66 passed in 4.75 s |
+| Private dependency builder contract | passed in 1.15 s |
+| `build/osgsol_core` CTest | 16/16 passed in 10.53 s |
+| Selected `build/science_g0_prefetch` CTest | 7/7 passed in 8.79 s |
+| Standalone final private-prefix verifier | passed in 1.29 s |
+
+Only generated `tests/__pycache__` and `packaging/scienceearth/__pycache__` directories were
+removed after their producing Python gates had been recorded.
+
+The disposable plugin and app were rebuilt once with:
+
+```bash
+cmake --build build/science_g0_prefetch \
+  --target osgdb_science_g0_probe --parallel 8
+SCIENCE_G0_PROBE_PLUGIN="$PWD/build/science_g0_prefetch/lib/osgdb_science_g0_probe.so" \
+SCIENCE_G0_OUTPUT_APP="$PWD/build/science_g0_prefetch/osgSol Science G0 Probe.app" \
+  bash packaging/build_science_g0_probe.sh
+```
+
+The target build passed in 0.51 seconds and the copy/sign/strict-verify builder passed in 1.00
+second. The policy-bearing audit then ran once in 14.39 seconds:
+
+```bash
+python3 packaging/audit_macos_bundle.py \
+  --app 'build/science_g0_prefetch/osgSol Science G0 Probe.app' \
+  --baseline '/Users/USER/Desktop/osgSol Earth.app' \
+  --reference-manifest packaging/scienceearth/baselines/v0.2.0-macos-arm64-reference.json \
+  --ratchet-manifest packaging/scienceearth/baselines/current-macos-arm64-ratchet.json \
+  --source-root /Users/USER/osgverse \
+  --source-root /Users/USER/osgsol/.worktrees/v0.2-runtime-safety \
+  --json build/science_g0_prefetch/bundle-audit.json \
+  --text build/science_g0_prefetch/bundle-audit.txt
+```
+
+| V3 offline isolation measurement | Fresh result |
+|---|---:|
+| Audit status | PASS, exit 0 |
+| Mach-O graph nodes | 128 |
+| Protected baseline size | 542,594,200 bytes |
+| Disposable probe size | 563,878,831 bytes |
+| Added size | 21,284,631 bytes (20.30 MiB; below 40 MiB) |
+| Science-only closure | 21,284,472 bytes (20.30 MiB; below 60 MiB), probe plugin only |
+| Tier A absolute science findings | 0 |
+| Tier B new / removed identities | 0 / 0 |
+| Unresolved dependencies | 0 |
+| Historical non-science identities still visible | 1,086 |
+
+`codesign --verify --deep --strict` passed. `nm -gU` exposed exactly
+`_osgsol_science_g0_probe_anchor`. A combined `otool -L`, `otool -l`, and `strings` scan found
+zero worktree or `science-deps-prefetch` path hits in the plugin. Fresh build/audit hashes were:
+
+| V3 private artifact | SHA-256 |
+|---|---|
+| Final pinned prefetch patch | `70307965af8caf8a9644335e99b0a34c9c15b85185ec96ed333a85407cf68569` |
+| Sanitized transient replay trace | `18df92055ef74d460743b01b8f9853b1b3d3e4baf267017f43b08928c7734c04` |
+| Byte-identical replay stats fixture | `f54110c20ab81230c5d3af708f2df4d9d8754e5957366875c162b0395d2c1974` |
+| Private-prefix manifest | `a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116` |
+| Rebuilt probe plugin | `0aa31d3d5da931fbb7458cf3228c7e43b9b65ba54083e31cdc1f2f9f2fc4656b` |
+| Canonical audit JSON | `794b94472590dbaa88a8df99b0beb30cb1bb8846996bc1bf20b0a8a50ee2ec42` |
+| Canonical audit text | `b26711027fb7ff1f20790031f888b2155a9819ee56179312f5b6281f59c434e6` |
+
+Every old diagnostic/formal binding and every v2 summary/raw/stats/proof table entry was
+recomputed without rewriting evidence. The old diagnostic tree helper hashed sorted relative
+paths followed by each regular non-symlink file's bytes. The v2 verifier parsed all 20 committed
+iteration rows in this document, derived the raw/stats/proof path for each row, and checked 60
+artifact slots: 59 file hashes matched and the rejected Hong Kong iteration-5 proof remained the
+one expected absence. The filesystem contained exactly those 59 per-iteration files plus two v2
+summaries. The two v2 summaries also matched independently.
+
+| Critical immutable artifact | Fresh SHA-256 |
+|---|---|
+| Rejected diagnostic control summary | `f793f1c3561e3f746ace2fca164637cd5d238fa81c39298b9a2e29ec2b781096` |
+| Rejected diagnostic candidate summary | `1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff` |
+| Rejected diagnostic candidate raw log | `3312a78a073140ea1422ece0ffbc927ce853a4d7b8cec02f3033734a7e217a3a` |
+| Rejected diagnostic candidate network statistics | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` |
+| Older baseline formal summary | `17ff3cd876e7995c5257fad1f2da7f27bf0ae7901d46716829f1440d16a321ed` |
+| Older optimized/live formal summary | `e4eb9ea1a8d5795db6197110ba96f4851c127dbe06b6bfcae5d3e9ea9b466dfe` |
+| V2 control summary | `0b59ba209faf574f1439f78f6fa53b16e81b20e05ae4b87ae2ef90c43de59fc0` |
+| V2 candidate summary | `1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff` |
+| V2 Hong Kong iteration-5 raw log | `f32cfdfd05f50a3de8f34b4f69e1e2cefe61d667e20936ddcf86f1fa8b1a429e` |
+| V2 Hong Kong iteration-5 network statistics | `f54110c20ab81230c5d3af708f2df4d9d8754e5957366875c162b0395d2c1974` |
+
+The duplicate candidate-summary binding means the Global Constraints' ten listed bindings are
+nine unique SHA-256 values; all bindings matched. The old diagnostic 30-file control tree and
+two-file candidate tree hashes also remained respectively
+`d3eb2a1adb60aa4a911b14e47854a2fc7b7fe7b81424de17779ae7862b888133` and
+`054d7d76266febab932255db9658845717625d1ea348bef4021fd3330adffca0`.
+
+The protected Desktop canonical fingerprint and exact committed
+`ScienceProbeBuilderTests.tree_digest()` helper remained respectively
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18` and
+`14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214`.
+The helper again covered 414 recursive entries and 355 regular non-symlink files.
+
+`ctest --test-dir build/science_g0_prefetch -N -V -R
+'^osgVerse_Test_ScienceGdalLive$'` returned the configured formal command with `--iterations 5`,
+`--profile optimized`, the existing `science-network-evidence` paths, and `--enforce-latency`.
+It listed the test without running it. The following required v3 roots were absent before
+documentation and at the final local gate:
+
+```text
+build/science_g0_prefetch/requalification-evidence-v3/control
+build/science_g0_prefetch/requalification-evidence-v3/prefetch
+build/science_g0_prefetch/formal-evidence-v3
+```
+
+This evidence authorizes exactly one later public v3 requalification set; it does not execute or
+prejudge that set, promote the formal CTest profile, authorize Desktop packaging, or start G1.
+The old rejected diagnostic and failed v2 result remain part of the immutable record.
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V3=AUTHORIZED_NOT_RUN
+DESKTOP_PACKAGE=NOT_READY

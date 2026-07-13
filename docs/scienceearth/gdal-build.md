@@ -270,3 +270,35 @@ evidence roots were not created.
 
 G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V2=AUTHORIZED_NOT_RUN
+
+### V3 offline requalification readiness after transient-fallback accounting
+
+On 2026-07-13, at source base
+`d4505b077e067f7f16276fe5191c8042092c961d`, the Task 1 clean private prefix was re-audited
+without reconfiguration or public network use. The standalone verifier rechecked the three pinned
+archives, independent GDAL `#embed` capability, private static prefix, and manifest and passed in
+1.29 seconds. The prefix remained 52,356 KiB (`du -sh`: 51 MiB), with 404 regular files and 52
+symlinks. Its manifest SHA-256 remained
+`a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116`.
+
+The final transient-fallback-observability patch SHA-256 is
+`70307965af8caf8a9644335e99b0a34c9c15b85185ec96ed333a85407cf68569`, exactly matching
+`GDAL_PREFETCH_PATCH_SHA256`. The sanitized replay trace and byte-identical stats fixture hashes
+are respectively
+`18df92055ef74d460743b01b8f9853b1b3d3e4baf267017f43b08928c7734c04` and
+`f54110c20ab81230c5d3af708f2df4d9d8754e5957366875c162b0395d2c1974`.
+
+`osgdb_science_g0_probe` was rebuilt against the verified prefix without changing the CMake
+profile. Its SHA-256 is
+`0aa31d3d5da931fbb7458cf3228c7e43b9b65ba54083e31cdc1f2f9f2fc4656b`, and its direct load
+dependencies are only the macOS system curl, SQLite, C++, and System libraries. The disposable
+probe bundle passed the committed reference/ratchet isolation audit and strict signature,
+anchor-export, size, dependency, and forbidden-path gates recorded in `g0-measurements.md`.
+
+This is non-public readiness only. Every old diagnostic/formal and v2 artifact was verified in
+place, the protected Desktop application was not changed, the formal CTest remains optimized,
+and all v3 public/formal evidence roots remain absent.
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V3=AUTHORIZED_NOT_RUN
+DESKTOP_PACKAGE=NOT_READY
