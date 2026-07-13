@@ -1130,7 +1130,7 @@ for protected evidence (`read_bytes`, JSON reads, directory enumeration, and `st
 formal CTest without executing it, and fails closed on every recorded Global Constraint, v2/v3
 table/hash/set/permission invariant, documented v3 scratch/CMake binding, Desktop invariant, formal
 profile invariant, and v4 absence requirement. The extracted source SHA-256 is
-`2a8002d383761a717e672d4293af0c5a8a393e3ed7bc89811fdc3f9e253d830b`.
+`807c3a1c5e0c4000dcb2ba2e3da06c97900b1fec099aed372455ec8a5294ad30`.
 
 <!-- V4_AUTHORIZATION_VERIFIER_BEGIN -->
 ```python
@@ -1148,13 +1148,28 @@ EXPECTED_ROOT = Path(
     "/Users/USER/osgsol/.worktrees/v0.2-runtime-safety").resolve()
 if ROOT != EXPECTED_ROOT:
     raise SystemExit(f"wrong worktree: {ROOT} != {EXPECTED_ROOT}")
-DOC_PATH = ROOT / "docs/scienceearth/g0-measurements.md"
-DOC = DOC_PATH.read_text()
+AUTHORIZATION_BASE = "4a1c1172e02ce13b5fd6452a97834dbd9f2001b3"
+DOC_RELATIVE = "docs/scienceearth/g0-measurements.md"
+DOC_PATH = ROOT / DOC_RELATIVE
+DOC_BYTES = DOC_PATH.read_bytes()
 
 
 def require(condition, message):
     if not condition:
         raise SystemExit(message)
+
+
+base_type = subprocess.run(
+    ["git", "cat-file", "-t", AUTHORIZATION_BASE], cwd=ROOT,
+    capture_output=True, check=False)
+require(base_type.returncode == 0 and base_type.stdout == b"commit\n",
+        f"authorization base is not a commit: {AUTHORIZATION_BASE}")
+base_doc_result = subprocess.run(
+    ["git", "show", f"{AUTHORIZATION_BASE}:{DOC_RELATIVE}"], cwd=ROOT,
+    capture_output=True, check=False)
+require(base_doc_result.returncode == 0,
+        f"cannot read authorization base document: {base_doc_result.stderr!r}")
+BASE_DOC_BYTES = base_doc_result.stdout
 
 
 def file_sha256(path):
@@ -1226,21 +1241,55 @@ require(candidate_tree == (
     2, 2), f"rejected candidate tree mismatch: {candidate_tree}")
 
 
-def table_rows(start_marker, end_marker):
-    start = DOC.index(start_marker)
-    block = DOC[start:DOC.index(end_marker, start)]
+def exact_table_block(content, start_marker, end_marker, label):
+    require(content.count(start_marker) == 1,
+            f"{label} start-marker count mismatch: {content.count(start_marker)}")
+    require(content.count(end_marker) == 1,
+            f"{label} end-marker count mismatch: {content.count(end_marker)}")
+    start = content.index(start_marker)
+    end = content.index(end_marker)
+    require(start < end, f"{label} markers out of order")
+    return content[start:end]
+
+
+V2_START = ("### V2 " + "control artifact hashes\n").encode("utf-8")
+V2_END = ("\n### Prefetch " + "candidate and hard stop\n").encode("utf-8")
+V3_START = ("### Frozen v3 " + "artifact hashes\n").encode("utf-8")
+V3_END = ("\nThe hashed decision-gate " + "transcript is").encode("utf-8")
+V2_TABLE_BLOCK_SHA256 = \
+    "5a15d5a87a87d1976321aff7f2afde63d4a2eb19b1c6be824c6fdd4f7d8c0f8b"
+V3_TABLE_BLOCK_SHA256 = \
+    "a9f3c6c2f929c01429809d684841213fcd72718f75f2274b666395c733a9e76a"
+
+current_v2_block = exact_table_block(DOC_BYTES, V2_START, V2_END, "current v2")
+base_v2_block = exact_table_block(BASE_DOC_BYTES, V2_START, V2_END, "base v2")
+current_v3_block = exact_table_block(DOC_BYTES, V3_START, V3_END, "current v3")
+base_v3_block = exact_table_block(BASE_DOC_BYTES, V3_START, V3_END, "base v3")
+require(current_v2_block == base_v2_block, "v2 table block differs from base Git object")
+require(current_v3_block == base_v3_block, "v3 table block differs from base Git object")
+require(hashlib.sha256(base_v2_block).hexdigest() == V2_TABLE_BLOCK_SHA256,
+        "base v2 table-block hash mismatch")
+require(hashlib.sha256(current_v2_block).hexdigest() == V2_TABLE_BLOCK_SHA256,
+        "current v2 table-block hash mismatch")
+require(hashlib.sha256(base_v3_block).hexdigest() == V3_TABLE_BLOCK_SHA256,
+        "base v3 table-block hash mismatch")
+require(hashlib.sha256(current_v3_block).hexdigest() == V3_TABLE_BLOCK_SHA256,
+        "current v3 table-block hash mismatch")
+
+
+def table_rows(block):
     pattern = re.compile(
         r"^\| `(?P<stem>(?:optimized|prefetch)-[^`]+)` "
         r"\| `(?P<raw>[0-9a-f]{64})` "
         r"\| `(?P<stats>[0-9a-f]{64})` "
         r"\| (?P<proof>`[0-9a-f]{64}`|absent;[^|]+) \|$", re.MULTILINE)
-    return list(pattern.finditer(block))
+    return list(pattern.finditer(block.decode("utf-8")))
 
 
-def verify_evidence(version, start_marker, end_marker, expected_rows,
+def verify_evidence(version, table_block, expected_rows,
                     expected_iteration_files, summaries, require_mode_0400):
     root = ROOT / f"build/science_g0_prefetch/requalification-evidence-{version}"
-    rows = table_rows(start_marker, end_marker)
+    rows = table_rows(table_block)
     require(len(rows) == expected_rows,
             f"{version} row count mismatch: {len(rows)} != {expected_rows}")
     expected_paths = set()
@@ -1300,16 +1349,14 @@ def verify_evidence(version, start_marker, end_marker, expected_rows,
 
 
 v2 = verify_evidence(
-    "v2", "### V2 control artifact hashes",
-    "The failed complete candidate proof forbids formal promotion.", 20, 59,
+    "v2", current_v2_block, 20, 59,
     {"control-summary.json":
      "0b59ba209faf574f1439f78f6fa53b16e81b20e05ae4b87ae2ef90c43de59fc0",
      "prefetch-summary.json":
      "1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff"},
     False)
 v3 = verify_evidence(
-    "v3", "### Frozen v3 artifact hashes",
-    "The hashed decision-gate transcript is", 12, 35,
+    "v3", current_v3_block, 12, 35,
     {"control-summary.json":
      "47abb0bc91e4afba412d1150822b90110650f8e225b45b7fa52f4627889c405c",
      "prefetch-summary.json":
@@ -1434,6 +1481,9 @@ v4_paths = [
 for path in v4_paths:
     require(not path.exists(), f"v4 path exists: {path}")
 
+print(f"AUTHORIZATION_BASE={AUTHORIZATION_BASE}")
+print(f"V2_TABLE_BLOCK_SHA256={V2_TABLE_BLOCK_SHA256};BASE_MATCH=YES")
+print(f"V3_TABLE_BLOCK_SHA256={V3_TABLE_BLOCK_SHA256};BASE_MATCH=YES")
 print("GLOBAL_CONSTRAINTS=10/10;UNIQUE_SHA256=9")
 print("REJECTED_TREES=2/2;CONTROL=30/30;CANDIDATE=2/2")
 print("V2=20_ROWS/60_SLOTS/59_HASHES/1_ABSENT/2_SUMMARIES/61_FILES")
@@ -1460,16 +1510,21 @@ awk '
   capture { print }
 ' docs/scienceearth/g0-measurements.md > "$verifier"
 test "$(shasum -a 256 "$verifier" | awk '{print $1}')" = \
-  '2a8002d383761a717e672d4293af0c5a8a393e3ed7bc89811fdc3f9e253d830b'
+  '807c3a1c5e0c4000dcb2ba2e3da06c97900b1fec099aed372455ec8a5294ad30'
 PYTHONDONTWRITEBYTECODE=1 python3 "$verifier"
 ```
 
-A read-only Python verifier used `hashlib.sha256(path.read_bytes())`, parsed the committed v2 and
-v3 hash tables in this document, derived each raw/stats/proof path, compared the complete regular
-file sets, and used the committed sorted-relative-path-plus-file-bytes tree helper for the rejected
-diagnostic roots. The exact documented invocation exited 0 in 0.419 seconds wall time with:
+A read-only Python verifier first loaded the immutable authorization-base document from Git,
+required unique fail-closed boundaries and exact base/current byte equality for both v2/v3 table
+blocks, and checked their hard SHA-256 bindings before parsing any iteration hash. It then derived
+each raw/stats/proof path, compared the complete regular-file sets, and used the committed
+sorted-relative-path-plus-file-bytes tree helper for the rejected diagnostic roots. The documented
+invocation exited 0 in 0.57 seconds wall time with:
 
 ```text
+AUTHORIZATION_BASE=4a1c1172e02ce13b5fd6452a97834dbd9f2001b3
+V2_TABLE_BLOCK_SHA256=5a15d5a87a87d1976321aff7f2afde63d4a2eb19b1c6be824c6fdd4f7d8c0f8b;BASE_MATCH=YES
+V3_TABLE_BLOCK_SHA256=a9f3c6c2f929c01429809d684841213fcd72718f75f2274b666395c733a9e76a;BASE_MATCH=YES
 GLOBAL_CONSTRAINTS=10/10;UNIQUE_SHA256=9
 REJECTED_TREES=2/2;CONTROL=30/30;CANDIDATE=2/2
 V2=20_ROWS/60_SLOTS/59_HASHES/1_ABSENT/2_SUMMARIES/61_FILES
@@ -1540,8 +1595,9 @@ build/science_g0_prefetch/requalification-evidence-v4/prefetch-summary.json
 The exact final combined gate is preserved below. It extracts and hash-binds the verifier, requires
 its exact exit/output, rebinds every private/audit artifact and audit status, verifies the signature,
 export, direct dependencies, and forbidden-path absence, requires all five recorded regression
-status rows, checks the two-document edit scope and terminal authorization, and fails on any missing
-or mismatched prerequisite.
+status rows, verifies the immutable base object and exact base-to-HEAD two-document range, requires
+a clean tracked worktree/index, checks terminal authorization, and fails on any missing or mismatched
+prerequisite.
 
 <!-- V4_FINAL_COMBINED_GATE_BEGIN -->
 ```bash
@@ -1550,8 +1606,21 @@ set -euo pipefail
 
 ROOT=/Users/USER/osgsol/.worktrees/v0.2-runtime-safety
 DOC="$ROOT/docs/scienceearth/g0-measurements.md"
-EXPECTED_VERIFIER_SHA=2a8002d383761a717e672d4293af0c5a8a393e3ed7bc89811fdc3f9e253d830b
+AUTHORIZATION_BASE=4a1c1172e02ce13b5fd6452a97834dbd9f2001b3
+EXPECTED_VERIFIER_SHA=807c3a1c5e0c4000dcb2ba2e3da06c97900b1fec099aed372455ec8a5294ad30
 cd "$ROOT"
+
+tracked_status=$(git status --porcelain=v1 --untracked-files=no)
+test -z "$tracked_status"
+git cat-file -e "${AUTHORIZATION_BASE}^{commit}"
+git merge-base --is-ancestor "$AUTHORIZATION_BASE" HEAD
+authorization_head=$(git rev-parse HEAD)
+authorization_range="$AUTHORIZATION_BASE..$authorization_head"
+expected_range_files=$(printf '%s\n' \
+  docs/scienceearth/g0-measurements.md docs/scienceearth/gdal-build.md | sort)
+actual_range_files=$(git diff --name-only "$authorization_range" | sort)
+test "$actual_range_files" = "$expected_range_files"
+git diff --check "$authorization_range"
 
 verifier=$(mktemp "${TMPDIR:-/tmp}/osgsol-v4-authorization-verifier.XXXXXX")
 trap 'rm -f "$verifier"' EXIT
@@ -1567,6 +1636,9 @@ test "$actual_verifier_sha" = "$EXPECTED_VERIFIER_SHA"
 
 verifier_output=$(PYTHONDONTWRITEBYTECODE=1 python3 "$verifier")
 expected_verifier_output=$(cat <<'EOF'
+AUTHORIZATION_BASE=4a1c1172e02ce13b5fd6452a97834dbd9f2001b3
+V2_TABLE_BLOCK_SHA256=5a15d5a87a87d1976321aff7f2afde63d4a2eb19b1c6be824c6fdd4f7d8c0f8b;BASE_MATCH=YES
+V3_TABLE_BLOCK_SHA256=a9f3c6c2f929c01429809d684841213fcd72718f75f2274b666395c733a9e76a;BASE_MATCH=YES
 GLOBAL_CONSTRAINTS=10/10;UNIQUE_SHA256=9
 REJECTED_TREES=2/2;CONTROL=30/30;CANDIDATE=2/2
 V2=20_ROWS/60_SLOTS/59_HASHES/1_ABSENT/2_SUMMARIES/61_FILES
@@ -1647,17 +1719,16 @@ expected_decision=$(printf '%s\n' G0_DECISION=STOP \
   PUBLIC_REQUALIFICATION_V4=AUTHORIZED_NOT_RUN DESKTOP_PACKAGE=NOT_READY)
 test "$(tail -n 3 docs/scienceearth/gdal-build.md)" = "$expected_decision"
 test "$(tail -n 3 docs/scienceearth/g0-measurements.md)" = "$expected_decision"
-test "$(git diff --name-only | sort)" = \
-  $'docs/scienceearth/g0-measurements.md\ndocs/scienceearth/gdal-build.md'
 test -z "$(find . -type d -name __pycache__ -prune -print)"
-git diff --check
 
 echo "VERIFIER_SOURCE_SHA256=$actual_verifier_sha"
+echo "AUTHORIZATION_RANGE=$authorization_range"
+echo 'TRACKED_WORKTREE_INDEX=CLEAN'
 printf '%s\n' "$verifier_output"
 echo 'PRIVATE_BINDINGS=7/7'
 echo 'AUDIT_SIGNATURE_EXPORT_DEPENDENCY_PATH=PASS'
 echo 'RECORDED_REGRESSION_RESULTS=5/5'
-echo 'DOC_SCOPE_AND_CONTENT=PASS'
+echo 'DOC_RANGE_SCOPE_AND_CONTENT=PASS'
 echo 'FINAL_COMBINED_GATE=PASS'
 ```
 <!-- V4_FINAL_COMBINED_GATE_END -->

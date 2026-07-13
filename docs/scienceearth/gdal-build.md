@@ -338,7 +338,7 @@ All Global Constraints, old formal summaries, v2 evidence, and 37 frozen v3 arti
 rechecked read-only. The protected Desktop fingerprint and helper digest remained exact, the
 formal CTest still lists `--profile optimized`, and the three v4 roots plus both v4 summary files
 remain absent. The executable verifier source is preserved in `g0-measurements.md` with SHA-256
-`2a8002d383761a717e672d4293af0c5a8a393e3ed7bc89811fdc3f9e253d830b`. This authorizes only
+`807c3a1c5e0c4000dcb2ba2e3da06c97900b1fec099aed372455ec8a5294ad30`. This authorizes only
 a later one-shot v4 public requalification; it does not execute or prejudge it, authorize
 packaging, or start G1.
 
