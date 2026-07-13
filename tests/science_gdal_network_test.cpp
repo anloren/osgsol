@@ -781,16 +781,16 @@ namespace
                 "", true, "path", "", 1},
             {"range-504-once", true, false, "", "2TLS", 2,
                 "", true, "path", "", 1},
-            {"range-500-once", true, true, "head-503-invalid", "2TLS", 2,
+            {"range-500-once", true, true, "head-503-invalid", "2TLS", 1,
                 "head-invalid", true, "path", "", 2, -1,
                 "head-invalid"},
-            {"range-500-once", true, true, "http1-invalid", "1.1", 2,
+            {"range-500-once", true, true, "http1-invalid", "1.1", 1,
                 "head-protocol", false, "path", "", 2, -1,
                 "head-protocol"},
-            {"range-500-once", true, true, "connection-invalid", "2TLS", 2,
+            {"range-500-once", true, true, "connection-invalid", "2TLS", 1,
                 "range-connection", true, "path", "", 1, -1,
                 "range-connection", "connection"},
-            {"range-500-once", true, true, "redirect-invalid", "2TLS", 2,
+            {"range-500-once", true, true, "redirect-invalid", "2TLS", 1,
                 "range-redirect", true, "path", "", 1, -1,
                 "range-redirect", "redirect"},
             {"range-503-exhaust", false, false, "", "2TLS", 3,
@@ -1054,15 +1054,16 @@ namespace
             }
             if (prefetchCase.blockedReason[0])
             {
-                require(std::count_if(ranges.begin(), ranges.end(),
+                require(rangeCount == 1 && ranges.size() == 1 &&
+                            std::count_if(ranges.begin(), ranges.end(),
                             [](const Http2StreamEvidence* range)
                             {
                                 return range->status == 500 &&
                                     range->range == "bytes=0-131071";
                             }) == 1,
-                        caseName + " did not retain exactly one invalid first Range");
+                        caseName + " emitted more than one total invalid Range");
                 require(countDebug(capture,
-                            "ParallelHeadRange: transient-retry") == 0 &&
+                            "ParallelHeadRange: transient-retry range=") == 0 &&
                             countDebug(capture,
                             "ParallelHeadRange: published") == 0,
                         caseName + " retried or published an invalid Range: " +
