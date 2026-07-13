@@ -1,0 +1,11 @@
+{
+  "methods": {
+    "GET": {
+      "count": 1,
+      "downloaded_bytes": 131089
+    },
+    "HEAD": {
+      "count": 1
+    }
+  }
+}

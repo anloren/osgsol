@@ -125,8 +125,22 @@ namespace
         int statsGetOperationCount = 0;
         int successfulGetCount = 0;
         int transientRetryCount = 0;
+        int coordinatorTransientRetryCount = 0;
+        std::uint64_t coordinatorTransientRetryBytes = 0;
         std::map<int, int> transientRetryCodes;
+        std::map<int, int> coordinatorTransientRetryCodes;
         std::vector<int> responseCodes;
+    };
+
+    struct CoordinatorRetryEvidence
+    {
+        std::string range;
+        int code = 0;
+        std::uint64_t bytes = 0;
+        int attempt = 0;
+        long long delayMs = 0;
+        long long connectionId = -1;
+        int httpMajor = 0;
     };
 
     struct MetadataPrefetchProof
@@ -142,6 +156,7 @@ namespace
         bool requestsOverlapped = false;
         bool cachePublished = false;
         std::string fallbackReason;
+        std::vector<CoordinatorRetryEvidence> coordinatorRetries;
     };
 
     struct HttpProof
@@ -150,11 +165,13 @@ namespace
         int actualHeadCount = 0;
         int successfulGetCount = 0;
         int transientRetryCount = 0;
+        int coordinatorTransientRetryCount = 0;
         int coordinatorTransientFallbackCount = 0;
         int statsGetOperationCount = 0;
         int statsHeadCount = 0;
         int coordinatorLogicalGetCount = 0;
         std::uint64_t coordinatorLogicalGetBytes = 0;
+        std::uint64_t coordinatorTransientRetryBytes = 0;
         std::uint64_t coordinatorTransientFallbackBytes = 0;
         std::uint64_t successfulRangeBytes = 0;
         std::uint64_t declaredTransientBytes = 0;
@@ -172,6 +189,7 @@ namespace
         std::array<double, 2> rawPixel = {};
         std::array<double, 4> verifiedWgs84Bbox = {};
         std::map<int, int> transientRetryCodes;
+        std::map<int, int> coordinatorTransientRetryCodes;
         std::map<int, int> coordinatorTransientFallbackCodes;
         std::vector<int> responseCodes;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> successfulByteIntervals;
@@ -703,7 +721,21 @@ namespace
 
         const PrefetchCase cases[] = {
             {"success", true, false},
-            {"range-503", true, true},
+            {"range-503", true, false, "", "2TLS", 2},
+            {"range-429-once", true, false, "", "2TLS", 2,
+                "", true, "path", "", 1},
+            {"range-500-once", true, false, "", "2TLS", 2,
+                "", true, "path", "", 1},
+            {"range-502-once", true, false, "", "2TLS", 2,
+                "", true, "path", "", 1},
+            {"range-503-once", true, false, "", "2TLS", 2,
+                "", true, "path", "", 1},
+            {"range-504-once", true, false, "", "2TLS", 2,
+                "", true, "path", "", 1},
+            {"range-503-exhaust", false, false, "", "2TLS", 3,
+                "", true, "path", "", 1},
+            {"success", false, false, "range-404", "2TLS", 1,
+                "", true, "path", "", 1},
             {"range-200", false, false},
             {"range-200-body", false, false},
             {"short-range", false, false},
@@ -815,6 +847,7 @@ namespace
 
             const Http2StreamEvidence* head = nullptr;
             const Http2StreamEvidence* firstRange = nullptr;
+            std::vector<const Http2StreamEvidence*> ranges;
             int rangeCount = 0;
             int getWithoutRangeCount = 0;
             int headCount = 0;
@@ -832,6 +865,7 @@ namespace
                     else
                     {
                         ++rangeCount;
+                        ranges.push_back(&stream);
                         if (firstRange == nullptr) firstRange = &stream;
                     }
                 }
@@ -866,14 +900,82 @@ namespace
                 prefetchCase.requireSharedHttp2)
                 verifyTransport();
 
+            const std::map<std::string, int> transientOnceStatuses = {
+                {"range-429-once", 429},
+                {"range-500-once", 500},
+                {"range-502-once", 502},
+                {"range-503-once", 503},
+                {"range-504-once", 504},
+            };
+            const auto transientOnce =
+                transientOnceStatuses.find(prefetchCase.mode);
+            if (transientOnce != transientOnceStatuses.end())
+            {
+                require(headCount == 1 && ranges.size() == 2 &&
+                            ranges[0]->range == "bytes=0-131071" &&
+                            ranges[1]->range == "bytes=0-131071" &&
+                            ranges[0]->status == transientOnce->second &&
+                            ranges[0]->attemptedBodyBytes == 17 &&
+                            ranges[1]->status == 206 &&
+                            ranges[0]->sessionId == head->sessionId &&
+                            ranges[1]->sessionId == head->sessionId,
+                        caseName +
+                            " did not preserve the one-session retry request contract");
+                require(countDebug(capture,
+                            "ParallelHeadRange: transient-retry") == 1 &&
+                            countDebug(capture,
+                            "ParallelHeadRange: transient-fallback") == 0 &&
+                            countDebug(capture,
+                            "ParallelHeadRange: published") == 1 && opened,
+                        caseName +
+                            " did not recover through one coordinator retry: " +
+                            parallelDebugSummary(capture));
+            }
+            if (std::string(prefetchCase.mode) == "range-503-exhaust")
+            {
+                require(headCount == 1 && ranges.size() == 3,
+                        "range-503-exhaust request counts changed");
+                for (const Http2StreamEvidence* range : ranges)
+                {
+                    require(range->range == "bytes=0-131071" &&
+                                range->status == 503 &&
+                                range->attemptedBodyBytes == 17 &&
+                                range->sessionId == head->sessionId,
+                            "range-503-exhaust retry stream changed");
+                }
+                require(countDebug(capture,
+                            "ParallelHeadRange: transient-retry") == 2 &&
+                            countDebug(capture,
+                            "ParallelHeadRange: transient-fallback") == 1 &&
+                            countDebug(capture,
+                            "ParallelHeadRange: rejected=status-503") == 1 &&
+                            countDebug(capture,
+                            "ParallelHeadRange: published") == 0 && !opened,
+                        "range-503-exhaust did not fail closed after two retries: " +
+                            parallelDebugSummary(capture));
+            }
+            if (std::string(prefetchCase.variant) == "range-404")
+            {
+                require(headCount == 1 && ranges.size() == 1 &&
+                            ranges[0]->status == 404 &&
+                            ranges[0]->sessionId == head->sessionId &&
+                            countDebug(capture,
+                            "ParallelHeadRange: transient-retry") == 0 &&
+                            countDebug(capture,
+                            "ParallelHeadRange: rejected=status-404") == 1,
+                        "range-404 was retried as a coordinator transient");
+            }
+
             const bool published =
                 containsDebug(capture, "ParallelHeadRange: published");
             const bool fallback =
                 containsDebug(capture, "ParallelHeadRange: fallback=");
             const bool expectedPublication =
-                std::string(prefetchCase.mode) == "success" &&
-                (prefetchCase.variant[0] == '\0' ||
-                 prefetchCase.completionOrder[0] != '\0');
+                (std::string(prefetchCase.mode) == "success" &&
+                 (prefetchCase.variant[0] == '\0' ||
+                  prefetchCase.completionOrder[0] != '\0')) ||
+                std::string(prefetchCase.mode) == "range-503" ||
+                transientOnce != transientOnceStatuses.end();
             require(countDebug(capture, "ParallelHeadRange: published") ==
                         (expectedPublication ? 1 : 0),
                     std::string(prefetchCase.mode) +
@@ -986,7 +1088,7 @@ namespace
                             std::string("ParallelHeadRange: fallback=") +
                                 prefetchCase.fallbackReason),
                         caseName + " fallback reason changed");
-            else if (!prefetchCase.opens)
+            else if (!prefetchCase.opens && prefetchCase.exactRangeCount < 0)
             {
                 require(rangeCount == 1,
                         std::string(prefetchCase.mode) +
@@ -1365,6 +1467,23 @@ namespace
                << "    \"cache_published\": "
                << (proof.metadataPrefetch.cachePublished ? "true" : "false")
                << ",\n"
+               << "    \"coordinator_retries\": [";
+        for (std::size_t index = 0;
+             index < proof.metadataPrefetch.coordinatorRetries.size(); ++index)
+        {
+            if (index) stream << ',';
+            const CoordinatorRetryEvidence& retry =
+                proof.metadataPrefetch.coordinatorRetries[index];
+            stream << "{\"range\":"
+                   << picojson::value(retry.range).serialize()
+                   << ",\"code\":" << retry.code
+                   << ",\"bytes\":" << retry.bytes
+                   << ",\"attempt\":" << retry.attempt
+                   << ",\"delay_ms\":" << retry.delayMs
+                   << ",\"connection_id\":" << retry.connectionId
+                   << ",\"http_major\":" << retry.httpMajor << '}';
+        }
+        stream << "],\n"
                << "    \"fallback_reason\": "
                << picojson::value(proof.metadataPrefetch.fallbackReason).serialize()
                << "\n  },\n"
@@ -1378,6 +1497,18 @@ namespace
             if (!firstRetryCode) stream << ',';
             stream << "\"" << retry.first << "\":" << retry.second;
             firstRetryCode = false;
+        }
+        stream << "},\n  \"coordinator_transient_retry_count\": "
+               << proof.coordinatorTransientRetryCount
+               << ",\n  \"coordinator_transient_retry_bytes\": "
+               << proof.coordinatorTransientRetryBytes
+               << ",\n  \"coordinator_transient_retry_codes\": {";
+        bool firstCoordinatorRetryCode = true;
+        for (const auto& retry : proof.coordinatorTransientRetryCodes)
+        {
+            if (!firstCoordinatorRetryCode) stream << ',';
+            stream << "\"" << retry.first << "\":" << retry.second;
+            firstCoordinatorRetryCode = false;
         }
         stream << "},\n  \"coordinator_transient_fallback_count\": "
                << proof.coordinatorTransientFallbackCount
@@ -1935,17 +2066,41 @@ namespace
                                   std::chrono::steady_clock::time_point(timestamp));
     }
 
+    bool parseCoordinatorRetryEvidence(const std::string& message,
+                                       CoordinatorRetryEvidence& evidence)
+    {
+        static const std::regex coordinatorRetryPattern(
+            R"(^VSICURL: ParallelHeadRange: transient-retry )"
+            R"(range=(bytes=[0-9]+-[0-9]+) status=([0-9]+) bytes=([0-9]+) )"
+            R"(attempt=([0-9]+) delay-ms=([0-9]+) )"
+            R"(range-connection=(-?[0-9]+) range-http=([0-9]+)$)");
+        std::smatch match;
+        if (!std::regex_match(message, match, coordinatorRetryPattern))
+            return false;
+        evidence.range = match[1].str();
+        evidence.code = std::stoi(match[2].str());
+        evidence.bytes = std::stoull(match[3].str());
+        evidence.attempt = std::stoi(match[4].str());
+        evidence.delayMs = std::stoll(match[5].str());
+        evidence.connectionId = std::stoll(match[6].str());
+        evidence.httpMajor = std::stoi(match[7].str());
+        return true;
+    }
+
     HttpProof buildHttpProof(const DebugCapture& capture, const std::string& statsJson)
     {
         struct Request
         {
             std::string method;
+            std::string uri;
             std::string range;
+            std::size_t messageIndex = 0;
         };
         struct Response
         {
             int code = 0;
             std::map<std::string, std::string> headers;
+            std::size_t completedIndex = 0;
         };
         struct CoordinatorFallback
         {
@@ -1953,17 +2108,25 @@ namespace
             int code = 0;
             std::uint64_t bytes = 0;
         };
+        struct TimedCoordinatorRetry
+        {
+            CoordinatorRetryEvidence evidence;
+            std::size_t messageIndex = 0;
+        };
         std::vector<Request> requests;
         std::vector<Response> responses;
         std::vector<std::pair<std::string, int>> retryEvents;
+        std::vector<TimedCoordinatorRetry> coordinatorRetries;
         std::vector<CoordinatorFallback> coordinatorFallbacks;
         Response currentResponse;
         bool responseOpen = false;
         int logicalGetOperations = 0;
         HttpProof proof;
 
-        for (const std::string& message : capture.messages)
+        for (std::size_t messageIndex = 0;
+             messageIndex < capture.messages.size(); ++messageIndex)
         {
+            const std::string& message = capture.messages[messageIndex];
             const std::string outputPrefix = "CURL_INFO_HEADER_OUT: ";
             const std::string inputPrefix = "CURL_INFO_HEADER_IN: ";
             if (message.rfind(outputPrefix, 0) == 0)
@@ -1975,11 +2138,11 @@ namespace
                 std::istringstream firstLineStream(firstLine);
                 Request request;
                 firstLineStream >> request.method;
-                std::string uri;
-                firstLineStream >> uri;
+                firstLineStream >> request.uri;
                 const auto headers = parseHeaders(stream);
                 const auto range = headers.find("range");
                 if (range != headers.end()) request.range = range->second;
+                request.messageIndex = messageIndex;
                 requests.push_back(request);
             }
             else if (message.rfind(inputPrefix, 0) == 0)
@@ -1997,7 +2160,11 @@ namespace
                 }
                 else if (line.empty())
                 {
-                    if (responseOpen) responses.push_back(currentResponse);
+                    if (responseOpen)
+                    {
+                        currentResponse.completedIndex = messageIndex;
+                        responses.push_back(currentResponse);
+                    }
                     responseOpen = false;
                 }
                 else if (responseOpen)
@@ -2043,6 +2210,19 @@ namespace
             if (std::regex_search(message, retryMatch, retryPattern))
                 retryEvents.emplace_back("bytes=" + retryMatch[1].str(),
                                          std::stoi(retryMatch[2].str()));
+            CoordinatorRetryEvidence coordinatorRetry;
+            if (parseCoordinatorRetryEvidence(message, coordinatorRetry))
+            {
+                coordinatorRetries.push_back(
+                    {coordinatorRetry, messageIndex});
+            }
+            else
+            {
+                require(message.find(
+                            "ParallelHeadRange: transient-retry") ==
+                            std::string::npos,
+                        "coordinator transient retry event is malformed");
+            }
             static const std::regex coordinatorFallbackPattern(
                 R"(^VSICURL: ParallelHeadRange: transient-fallback )"
                 R"(range=(bytes=[0-9]+-[0-9]+) status=([0-9]+) )"
@@ -2071,6 +2251,7 @@ namespace
 
         const std::set<int> transientCodes = {429, 500, 502, 503, 504};
         std::map<std::string, int> requestedRanges;
+        std::vector<const Request*> coordinatorRangeRequests;
         int connectRequests = 0;
         for (const Request& request : requests)
         {
@@ -2094,6 +2275,8 @@ namespace
             require(request.range.rfind("bytes=", 0) == 0,
                     "GET Range syntax is not bytes=start-end");
             ++requestedRanges[request.range];
+            if (request.range == "bytes=0-131071")
+                coordinatorRangeRequests.push_back(&request);
         }
 
         std::map<std::string, int> successfulRanges;
@@ -2185,6 +2368,85 @@ namespace
             require(requestedRanges.count(retry.first) != 0,
                     "CPL retry event names a Range that was never emitted");
         }
+        require(coordinatorRetries.size() <= 3,
+                "coordinator Range exceeded the three-retry policy");
+        std::vector<bool> consumedTransientResponses(responses.size(), false);
+        std::map<std::string, int> coordinatorRetriesByRange;
+        for (std::size_t index = 0; index < coordinatorRetries.size(); ++index)
+        {
+            const TimedCoordinatorRetry& timedRetry = coordinatorRetries[index];
+            const CoordinatorRetryEvidence& retry = timedRetry.evidence;
+            require(retry.range == "bytes=0-131071",
+                    "coordinator retry did not name the exact initial Range");
+            require(transientCodes.count(retry.code) != 0,
+                    "coordinator retry used an unlisted transient response code");
+            require(retry.attempt >= 1 && retry.attempt <= 3,
+                    "coordinator retry attempt must be in 1..3");
+            require(retry.attempt == static_cast<int>(index + 1),
+                    "coordinator retry attempts are not contiguous");
+            require(retry.delayMs > 0,
+                    "coordinator retry delay must be positive");
+            require(retry.connectionId >= 0,
+                    "coordinator retry connection must be nonnegative");
+            require(retry.httpMajor == 2,
+                    "coordinator retry requires HTTP/2");
+            if (index > 0)
+            {
+                require(retry.connectionId ==
+                            coordinatorRetries.front().evidence.connectionId,
+                        "coordinator retries changed connection");
+            }
+            require(coordinatorRangeRequests.size() > index + 1,
+                    "coordinator retry has no following exact Range request");
+            const Request& failedRequest = *coordinatorRangeRequests[index];
+            const Request& nextRequest = *coordinatorRangeRequests[index + 1];
+            require(failedRequest.messageIndex < timedRetry.messageIndex &&
+                        timedRetry.messageIndex < nextRequest.messageIndex,
+                    "coordinator retry event is outside its request chronology");
+
+            int matchingResponse = -1;
+            for (std::size_t responseIndex = 0;
+                 responseIndex < responses.size(); ++responseIndex)
+            {
+                if (consumedTransientResponses[responseIndex])
+                    continue;
+                const Response& response = responses[responseIndex];
+                const auto contentLength =
+                    response.headers.find("content-length");
+                if (response.code != retry.code ||
+                    contentLength == response.headers.end() ||
+                    std::stoull(contentLength->second) != retry.bytes ||
+                    response.completedIndex <= failedRequest.messageIndex ||
+                    response.completedIndex >= timedRetry.messageIndex)
+                {
+                    continue;
+                }
+                require(matchingResponse < 0,
+                        "coordinator retry matches multiple transient responses");
+                matchingResponse = static_cast<int>(responseIndex);
+            }
+            require(matchingResponse >= 0,
+                    "coordinator retry has no matching transient HTTP response");
+            consumedTransientResponses[matchingResponse] = true;
+
+            auto responseBody = transientResponseBodies.find(
+                {retry.code, retry.bytes});
+            require(responseBody != transientResponseBodies.end() &&
+                        responseBody->second > 0,
+                    "coordinator retry transient body accounting underflowed");
+            --responseBody->second;
+            auto responseCode = transientResponses.find(retry.code);
+            require(responseCode != transientResponses.end() &&
+                        responseCode->second > 0,
+                    "coordinator retry response code accounting underflowed");
+            if (--responseCode->second == 0)
+                transientResponses.erase(responseCode);
+
+            ++coordinatorRetriesByRange[retry.range];
+            ++proof.coordinatorTransientRetryCount;
+            proof.coordinatorTransientRetryBytes += retry.bytes;
+            ++proof.coordinatorTransientRetryCodes[retry.code];
+        }
         std::map<std::string, int> coordinatorFallbacksByRange;
         for (const CoordinatorFallback& fallback : coordinatorFallbacks)
         {
@@ -2216,24 +2478,29 @@ namespace
         {
             const int successful = successfulRanges[request.first];
             const int retries = retriesByRange[request.first];
+            const int coordinatorRetryCount =
+                coordinatorRetriesByRange[request.first];
             const int coordinatorFallbackCount =
                 coordinatorFallbacksByRange[request.first];
             require(successful > 0,
                     "emitted GET Range had no final HTTP 206 response");
             require(request.second == successful + retries +
+                        coordinatorRetryCount +
                         coordinatorFallbackCount,
                     "emitted GET Range count does not reconcile with retries, "
-                    "coordinator fallbacks, and HTTP 206");
+                    "coordinator retries, coordinator fallbacks, and HTTP 206");
         }
         require(proof.actualGetCount ==
                     proof.successfulGetCount +
                         static_cast<int>(retryEvents.size()) +
+                        proof.coordinatorTransientRetryCount +
                         proof.coordinatorTransientFallbackCount,
                 "GET request count does not reconcile with successes, retries, "
-                "and coordinator fallbacks");
+                "coordinator retries, and coordinator fallbacks");
         proof.transientRetryCount = static_cast<int>(retryEvents.size());
         proof.transientRetryCodes = retryCodes;
         proof.actualHttpBodyBytes = proof.successfulRangeBytes +
+            proof.coordinatorTransientRetryBytes +
             proof.coordinatorTransientFallbackBytes;
         proof.conservativeBodyUpperBound =
             proof.successfulRangeBytes + proof.declaredTransientBytes;
@@ -2256,6 +2523,7 @@ namespace
         const std::uint64_t statsBytes = static_cast<std::uint64_t>(
             field(get, "downloaded_bytes").get<double>());
         require(statsBytes == proof.successfulRangeBytes +
+                    proof.coordinatorTransientRetryBytes +
                     proof.coordinatorTransientFallbackBytes,
                 "VSINetworkStats downloaded bytes disagree with HTTP response bodies");
         require(proof.statsHeadCount == proof.actualHeadCount,
@@ -2315,6 +2583,11 @@ namespace
             std::map<std::string, std::string> headers;
             std::chrono::steady_clock::time_point completed;
         };
+        struct TimedCoordinatorRetry
+        {
+            CoordinatorRetryEvidence evidence;
+            std::chrono::steady_clock::time_point emitted;
+        };
 
         require(capture.messages.size() == capture.timestamps.size(),
                 "metadata prefetch evidence is missing steady-clock timestamps");
@@ -2335,6 +2608,7 @@ namespace
         int headTransportHttp = 0;
         int rangeTransportHttp = 0;
         std::vector<std::string> fallbackReasons;
+        std::vector<TimedCoordinatorRetry> coordinatorRetries;
         static const std::regex transportPattern(
             R"(^VSICURL: ParallelHeadRange: transport )"
             R"(head-connection=(-?[0-9]+) range-connection=(-?[0-9]+) )"
@@ -2427,6 +2701,19 @@ namespace
                     ++headDetachSuccessCount;
                     headDetachSuccess = capture.timestamps[index];
                 }
+                CoordinatorRetryEvidence coordinatorRetry;
+                if (parseCoordinatorRetryEvidence(message, coordinatorRetry))
+                {
+                    coordinatorRetries.push_back(
+                        {coordinatorRetry, capture.timestamps[index]});
+                }
+                else
+                {
+                    require(message.find(
+                                "ParallelHeadRange: transient-retry") ==
+                                std::string::npos,
+                            "metadata prefetch coordinator retry event is malformed");
+                }
                 std::smatch transportMatch;
                 if (std::regex_match(message, transportMatch, transportPattern))
                 {
@@ -2463,6 +2750,7 @@ namespace
 
         const RequestEvidence* headRequest = nullptr;
         const RequestEvidence* rangeRequest = nullptr;
+        std::vector<const RequestEvidence*> rangeRequests;
         int headRequestCount = 0;
         int rangeRequestCount = 0;
         bool sawGet = false;
@@ -2486,6 +2774,7 @@ namespace
                 if (request.range == "bytes=0-131071")
                 {
                     ++rangeRequestCount;
+                    rangeRequests.push_back(&request);
                     if (!rangeRequest) rangeRequest = &request;
                 }
             }
@@ -2493,8 +2782,35 @@ namespace
         require(headRequestCount == 1 && headRequest != nullptr &&
                 httpProof.actualHeadCount == 1,
                 "metadata prefetch requires exactly one HEAD request");
-        require(rangeRequestCount == 1 && rangeRequest != nullptr,
-                "metadata prefetch requires exactly one initial 128 KiB Range request");
+        require(rangeRequestCount ==
+                    1 + httpProof.coordinatorTransientRetryCount &&
+                    rangeRequest != nullptr,
+                "metadata prefetch Range requests do not reconcile with "
+                "coordinator retries");
+        require(coordinatorRetries.size() ==
+                    static_cast<std::size_t>(
+                        httpProof.coordinatorTransientRetryCount) &&
+                    coordinatorRetries.size() <= 3,
+                "metadata prefetch coordinator retry evidence count changed");
+        std::uint64_t coordinatorRetryBytes = 0;
+        std::map<int, int> coordinatorRetryCodes;
+        for (std::size_t index = 0; index < coordinatorRetries.size(); ++index)
+        {
+            const CoordinatorRetryEvidence& retry =
+                coordinatorRetries[index].evidence;
+            require(retry.attempt == static_cast<int>(index + 1) &&
+                        retry.delayMs > 0 && retry.httpMajor == 2 &&
+                        retry.connectionId >= 0 &&
+                        retry.range == "bytes=0-131071",
+                    "metadata prefetch coordinator retry evidence is invalid");
+            coordinatorRetryBytes += retry.bytes;
+            ++coordinatorRetryCodes[retry.code];
+        }
+        require(coordinatorRetryBytes ==
+                    httpProof.coordinatorTransientRetryBytes &&
+                    coordinatorRetryCodes ==
+                    httpProof.coordinatorTransientRetryCodes,
+                "metadata prefetch coordinator retry accounting changed");
         require(!httpProof.successfulByteIntervals.empty() &&
                 httpProof.successfulByteIntervals.front() ==
                     std::make_pair<std::uint64_t, std::uint64_t>(0, 131071),
@@ -2542,6 +2858,23 @@ namespace
                 rangeRequest->multiplexReuse &&
                 headConnectionId == rangeConnectionId,
                 "metadata prefetch lacks unambiguous shared HTTP/2 connection evidence");
+        for (std::size_t index = 0; index < coordinatorRetries.size(); ++index)
+        {
+            const RequestEvidence& previousRequest = *rangeRequests[index];
+            const RequestEvidence& retryRequest = *rangeRequests[index + 1];
+            const TimedCoordinatorRetry& retry = coordinatorRetries[index];
+            require(retryRequest.sent > retry.emitted &&
+                        retryRequest.uri == rangeRequest->uri &&
+                        retryRequest.httpVersion == 2 &&
+                        retryRequest.multiplexReuse &&
+                        retryRequest.streamId > previousRequest.streamId,
+                    "metadata prefetch retry request did not follow its event "
+                    "on HTTP/2");
+            require(retry.evidence.connectionId == headConnectionId &&
+                        retry.evidence.connectionId == rangeConnectionId &&
+                        retry.evidence.httpMajor == 2,
+                    "metadata prefetch retry event changed connection or protocol");
+        }
         require(headRequest->sent < rangeRequest->sent &&
                 rangeRequest->sent < headResponse->completed,
                 "metadata prefetch request headers did not overlap HEAD completion");
@@ -2559,6 +2892,8 @@ namespace
         proof.requestsOverlapped = true;
         proof.cachePublished = true;
         proof.fallbackReason.clear();
+        for (const TimedCoordinatorRetry& retry : coordinatorRetries)
+            proof.coordinatorRetries.push_back(retry.evidence);
         return proof;
     }
 
@@ -2867,10 +3202,30 @@ namespace
             "    \"shared_connection\": true,\n"
             "    \"requests_overlapped\": true,\n"
             "    \"cache_published\": true,\n"
+            "    \"coordinator_retries\": [],\n"
             "    \"fallback_reason\": \"\"\n"
             "  }";
         require(serializeProof(prefetchHttp).find(expectedMetadata) != std::string::npos,
                 "metadata_prefetch exact serialized object changed");
+        picojson::value serializedPrefetchProof;
+        require(picojson::parse(serializedPrefetchProof,
+                    serializeProof(prefetchHttp)).empty() &&
+                    serializedPrefetchProof.is<picojson::object>(),
+                "serialized prefetch proof is not valid JSON");
+        const picojson::object& serializedPrefetchObject =
+            serializedPrefetchProof.get<picojson::object>();
+        require(field(serializedPrefetchObject,
+                    "coordinator_transient_retry_count").get<double>() == 0.0 &&
+                    field(serializedPrefetchObject,
+                    "coordinator_transient_retry_bytes").get<double>() == 0.0 &&
+                    field(serializedPrefetchObject,
+                    "coordinator_transient_retry_codes")
+                        .is<picojson::object>() &&
+                    field(field(serializedPrefetchObject, "metadata_prefetch")
+                        .get<picojson::object>(), "coordinator_retries")
+                        .is<picojson::array>(),
+                "serialized prefetch proof omitted coordinator retry fields "
+                "or changed their types");
 
         const auto prefetchRejected = [&prefetchHttp](const DebugCapture& candidate)
         {
@@ -3293,6 +3648,194 @@ namespace
         require(httpRejected(unmatchedResponse),
                 "Hong Kong replay accepted a coordinator event without a "
                 "matching transient response");
+    }
+
+    void verifyPrefetchTransientRetryReplayRegression()
+    {
+        const std::filesystem::path fixtureRoot =
+            std::filesystem::path(__FILE__).parent_path() / "data" / "science";
+        DebugCapture replay;
+        loadReplayCapture(
+            fixtureRoot / "prefetch_nvidia_transient_retry_trace.log", replay);
+        const std::string stats = loadReplayText(
+            fixtureRoot / "prefetch_nvidia_transient_retry_stats.json");
+
+        HttpProof proof = buildHttpProof(replay, stats);
+        require(proof.coordinatorTransientRetryCount == 1 &&
+                    proof.coordinatorTransientRetryBytes == 17 &&
+                    proof.coordinatorTransientRetryCodes ==
+                        std::map<int, int>{{500, 1}},
+                "NVIDIA retry replay did not preserve coordinator retry accounting");
+        require(proof.actualHeadCount == 1 && proof.actualGetCount == 2 &&
+                    proof.successfulGetCount == 1 &&
+                    proof.statsGetOperationCount == 1,
+                "NVIDIA retry replay physical/logical request counts did not reconcile");
+        proof.metadataPrefetch = buildMetadataPrefetchProof(replay, proof);
+        require(proof.metadataPrefetch.headRequestCount == 1 &&
+                    proof.metadataPrefetch.rangeRequestCount == 2 &&
+                    proof.metadataPrefetch.cachePublished &&
+                    proof.metadataPrefetch.coordinatorRetries.size() == 1 &&
+                    proof.metadataPrefetch.coordinatorRetries.front().attempt == 1 &&
+                    proof.metadataPrefetch.coordinatorRetries.front().code == 500,
+                "NVIDIA retry replay did not prove retried prefetch publication");
+
+        const auto messageIndex = [](const DebugCapture& capture,
+                                     const std::string& needle,
+                                     std::size_t occurrence = 0)
+        {
+            for (std::size_t index = 0; index < capture.messages.size(); ++index)
+            {
+                if (capture.messages[index].find(needle) == std::string::npos)
+                    continue;
+                if (occurrence-- == 0) return index;
+            }
+            fail("NVIDIA retry replay mutation target is missing: " + needle);
+        };
+        const auto eraseMessage = [](DebugCapture& capture, std::size_t index)
+        {
+            capture.messages.erase(capture.messages.begin() + index);
+            capture.timestamps.erase(capture.timestamps.begin() + index);
+        };
+        const auto insertMessage = [](DebugCapture& capture, std::size_t index,
+                                      const std::string& message)
+        {
+            capture.messages.insert(capture.messages.begin() + index, message);
+            capture.timestamps.insert(
+                capture.timestamps.begin() + index, capture.timestamps[index]);
+        };
+        const auto failureMessage = [&stats](const DebugCapture& candidate)
+        {
+            try
+            {
+                HttpProof candidateProof = buildHttpProof(candidate, stats);
+                candidateProof.metadataPrefetch =
+                    buildMetadataPrefetchProof(candidate, candidateProof);
+            }
+            catch (const std::exception& error)
+            {
+                return std::string(error.what());
+            }
+            return std::string();
+        };
+        const auto requireRejected = [&failureMessage](
+                                         const DebugCapture& candidate,
+                                         const std::string& description)
+        {
+            const std::string message = failureMessage(candidate);
+            require(!message.empty(),
+                    "NVIDIA retry replay accepted " + description);
+        };
+        const auto retryEventMutation = [&replay, &messageIndex, &requireRejected](
+                                            const std::string& event,
+                                            const std::string& description)
+        {
+            DebugCapture candidate;
+            candidate.messages = replay.messages;
+            candidate.timestamps = replay.timestamps;
+            candidate.messages[messageIndex(
+                candidate, "ParallelHeadRange: transient-retry")] = event;
+            requireRejected(candidate, description);
+        };
+
+        DebugCapture missingEvent;
+        missingEvent.messages = replay.messages;
+        missingEvent.timestamps = replay.timestamps;
+        eraseMessage(missingEvent, messageIndex(
+            missingEvent, "ParallelHeadRange: transient-retry"));
+        requireRejected(missingEvent, "a missing coordinator retry event");
+
+        DebugCapture duplicateEvent;
+        duplicateEvent.messages = replay.messages;
+        duplicateEvent.timestamps = replay.timestamps;
+        const std::size_t retryIndex = messageIndex(
+            duplicateEvent, "ParallelHeadRange: transient-retry");
+        insertMessage(duplicateEvent, retryIndex,
+                      duplicateEvent.messages[retryIndex]);
+        requireRejected(duplicateEvent, "a duplicate coordinator retry event");
+
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131071 status=503 bytes=17 attempt=1 delay-ms=100 "
+            "range-connection=0 range-http=2",
+            "the wrong coordinator retry status");
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131071 status=404 bytes=17 attempt=1 delay-ms=100 "
+            "range-connection=0 range-http=2",
+            "a nontransient coordinator retry status");
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131071 status=500 bytes=18 attempt=1 delay-ms=100 "
+            "range-connection=0 range-http=2",
+            "the wrong coordinator retry body byte count");
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131071 status=500 bytes=17 attempt=0 delay-ms=100 "
+            "range-connection=0 range-http=2",
+            "coordinator retry attempt zero");
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131071 status=500 bytes=17 attempt=4 delay-ms=100 "
+            "range-connection=0 range-http=2",
+            "coordinator retry attempt four");
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131071 status=500 bytes=17 attempt=2 delay-ms=100 "
+            "range-connection=0 range-http=2",
+            "a noncontiguous coordinator retry attempt");
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131071 status=500 bytes=17 attempt=1 delay-ms=0 "
+            "range-connection=0 range-http=2",
+            "a zero coordinator retry delay");
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131071 status=500 bytes=17 attempt=1 delay-ms=100 "
+            "range-connection=8 range-http=2",
+            "the wrong coordinator retry connection");
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131071 status=500 bytes=17 attempt=1 delay-ms=100 "
+            "range-connection=0 range-http=1",
+            "HTTP/1 coordinator retry evidence");
+        retryEventMutation(
+            "VSICURL: ParallelHeadRange: transient-retry "
+            "range=bytes=0-131070 status=500 bytes=17 attempt=1 delay-ms=100 "
+            "range-connection=0 range-http=2",
+            "the wrong coordinator retry Range");
+
+        DebugCapture missingSecondRequest;
+        missingSecondRequest.messages = replay.messages;
+        missingSecondRequest.timestamps = replay.timestamps;
+        eraseMessage(missingSecondRequest, messageIndex(
+            missingSecondRequest, "CURL_INFO_HEADER_OUT: GET", 1));
+        requireRejected(missingSecondRequest,
+                        "a retry event without a second exact Range request");
+
+        DebugCapture extraHead;
+        extraHead.messages = replay.messages;
+        extraHead.timestamps = replay.timestamps;
+        const std::size_t headIndex = messageIndex(
+            extraHead, "CURL_INFO_HEADER_OUT: HEAD");
+        insertMessage(extraHead, headIndex, extraHead.messages[headIndex]);
+        requireRejected(extraHead, "an extra HEAD request");
+
+        DebugCapture fallbackPresent;
+        fallbackPresent.messages = replay.messages;
+        fallbackPresent.timestamps = replay.timestamps;
+        insertMessage(fallbackPresent, messageIndex(
+            fallbackPresent, "ParallelHeadRange: published"),
+            "VSICURL: ParallelHeadRange: fallback=status-500");
+        requireRejected(fallbackPresent, "a fallback before publication");
+
+        DebugCapture duplicatePublication;
+        duplicatePublication.messages = replay.messages;
+        duplicatePublication.timestamps = replay.timestamps;
+        const std::size_t publicationIndex = messageIndex(
+            duplicatePublication, "ParallelHeadRange: published");
+        insertMessage(duplicatePublication, publicationIndex,
+                      duplicatePublication.messages[publicationIndex]);
+        requireRejected(duplicatePublication, "duplicate cache publication");
     }
 
     struct PixelWindow
@@ -3905,7 +4448,13 @@ namespace
         measurement.statsGetOperationCount = proof.statsGetOperationCount;
         measurement.successfulGetCount = proof.successfulGetCount;
         measurement.transientRetryCount = proof.transientRetryCount;
+        measurement.coordinatorTransientRetryCount =
+            proof.coordinatorTransientRetryCount;
+        measurement.coordinatorTransientRetryBytes =
+            proof.coordinatorTransientRetryBytes;
         measurement.transientRetryCodes = proof.transientRetryCodes;
+        measurement.coordinatorTransientRetryCodes =
+            proof.coordinatorTransientRetryCodes;
         measurement.responseCodes = proof.responseCodes;
         measurement.milliseconds = phases.totalMs;
         return measurement;
@@ -3974,12 +4523,16 @@ namespace
             static_cast<double>(measurement.successfulGetCount));
         httpCounts["transient_retries"] = picojson::value(
             static_cast<double>(measurement.transientRetryCount));
+        httpCounts["coordinator_transient_retries"] = picojson::value(
+            static_cast<double>(measurement.coordinatorTransientRetryCount));
 
         picojson::object bytes;
         bytes["successful_range"] = picojson::value(
             static_cast<double>(measurement.successfulRangeBytes));
         bytes["declared_transient"] = picojson::value(
             static_cast<double>(measurement.declaredTransientBytes));
+        bytes["coordinator_transient_retry"] = picojson::value(
+            static_cast<double>(measurement.coordinatorTransientRetryBytes));
         bytes["actual_http_body"] = picojson::value(
             static_cast<double>(measurement.actualHttpBodyBytes));
         bytes["conservative_body_upper_bound"] = picojson::value(
@@ -3995,6 +4548,8 @@ namespace
         result["bytes"] = picojson::value(bytes);
         result["transient_retry_codes"] = picojson::value(
             retryCountsJson(measurement.transientRetryCodes));
+        result["coordinator_transient_retry_codes"] = picojson::value(
+            retryCountsJson(measurement.coordinatorTransientRetryCodes));
         result["response_codes"] = picojson::value(
             responseCodesJson(measurement.responseCodes));
         return picojson::value(result);
@@ -4017,6 +4572,7 @@ namespace
         double summedTotalMs = 0.0;
         std::uint64_t totalSuccessfulBytes = 0;
         std::uint64_t totalDeclaredTransientBytes = 0;
+        std::uint64_t totalCoordinatorTransientRetryBytes = 0;
         std::uint64_t totalActualBodyBytes = 0;
         std::uint64_t totalConservativeBodyUpperBound = 0;
         std::uint64_t sourceSize = 0;
@@ -4025,7 +4581,9 @@ namespace
         int totalStatsGetOperations = 0;
         int totalSuccessfulGets = 0;
         int totalRetries = 0;
+        int totalCoordinatorRetries = 0;
         std::map<int, int> retryCodes;
+        std::map<int, int> coordinatorRetryCodes;
         std::set<int> responseCodes;
         for (std::size_t index = 0; index < measurements.size(); ++index)
         {
@@ -4042,6 +4600,8 @@ namespace
             summedTotalMs += measurement.phases.totalMs;
             totalSuccessfulBytes += measurement.successfulRangeBytes;
             totalDeclaredTransientBytes += measurement.declaredTransientBytes;
+            totalCoordinatorTransientRetryBytes +=
+                measurement.coordinatorTransientRetryBytes;
             totalActualBodyBytes += measurement.actualHttpBodyBytes;
             totalConservativeBodyUpperBound +=
                 measurement.conservativeBodyUpperBound;
@@ -4050,8 +4610,15 @@ namespace
             totalStatsGetOperations += measurement.statsGetOperationCount;
             totalSuccessfulGets += measurement.successfulGetCount;
             totalRetries += measurement.transientRetryCount;
+            totalCoordinatorRetries +=
+                measurement.coordinatorTransientRetryCount;
             for (const auto& retry : measurement.transientRetryCodes)
                 retryCodes[retry.first] += retry.second;
+            for (const auto& retry :
+                 measurement.coordinatorTransientRetryCodes)
+            {
+                coordinatorRetryCodes[retry.first] += retry.second;
+            }
             require(sourceSize == 0 || sourceSize == measurement.sourceSize,
                     item.name + " source size changed between live iterations");
             sourceSize = measurement.sourceSize;
@@ -4092,6 +4659,8 @@ namespace
             static_cast<double>(totalSuccessfulGets));
         httpCounts["transient_retries"] = picojson::value(
             static_cast<double>(totalRetries));
+        httpCounts["coordinator_transient_retries"] = picojson::value(
+            static_cast<double>(totalCoordinatorRetries));
         picojson::object bytes;
         bytes["successful_range"] = picojson::value(
             static_cast<double>(totalSuccessfulBytes));
@@ -4099,6 +4668,8 @@ namespace
             static_cast<double>(totalActualBodyBytes));
         bytes["declared_transient"] = picojson::value(
             static_cast<double>(totalDeclaredTransientBytes));
+        bytes["coordinator_transient_retry"] = picojson::value(
+            static_cast<double>(totalCoordinatorTransientRetryBytes));
         bytes["conservative_body_upper_bound"] = picojson::value(
             static_cast<double>(totalConservativeBodyUpperBound));
         bytes["source_size"] = picojson::value(static_cast<double>(sourceSize));
@@ -4118,6 +4689,8 @@ namespace
         result["bytes"] = picojson::value(bytes);
         result["transient_retry_codes"] = picojson::value(
             retryCountsJson(retryCodes));
+        result["coordinator_transient_retry_codes"] = picojson::value(
+            retryCountsJson(coordinatorRetryCodes));
         result["response_codes"] = picojson::value(responseCodeSummary);
         result["complete_cog"] = picojson::value(false);
         result["status"] = picojson::value(
@@ -4256,7 +4829,10 @@ namespace
             measurement.statsGetOperationCount = 1;
             measurement.successfulGetCount = 1;
             measurement.transientRetryCount = 1;
+            measurement.coordinatorTransientRetryCount = 1;
+            measurement.coordinatorTransientRetryBytes = 8;
             measurement.transientRetryCodes = {{503, 1}};
+            measurement.coordinatorTransientRetryCodes = {{500, 1}};
             measurement.responseCodes = {503, 206};
             measurement.successfulRangeBytes = 128;
             measurement.declaredTransientBytes = 8;
@@ -4282,8 +4858,14 @@ namespace
                       "open").get<double>() == 100.0 &&
                 field(field(firstIteration, "http_counts").get<picojson::object>(),
                       "actual_get").get<double>() == 2.0 &&
+                field(field(firstIteration, "http_counts").get<picojson::object>(),
+                      "coordinator_transient_retries").get<double>() == 1.0 &&
                 field(field(firstIteration, "bytes").get<picojson::object>(),
-                      "successful_range").get<double>() == 128.0,
+                      "successful_range").get<double>() == 128.0 &&
+                field(field(firstIteration, "bytes").get<picojson::object>(),
+                      "coordinator_transient_retry").get<double>() == 8.0 &&
+                field(firstIteration, "coordinator_transient_retry_codes")
+                    .get<picojson::object>().count("500") == 1,
                 "live iteration timing, phase, HTTP, or byte JSON changed");
         const picojson::object& latency =
             field(synthetic, "latency_ms").get<picojson::object>();
@@ -4292,11 +4874,17 @@ namespace
                 "live case latency summary JSON changed");
         require(field(field(synthetic, "http_counts").get<picojson::object>(),
                       "actual_get").get<double>() == 10.0 &&
+                field(field(synthetic, "http_counts").get<picojson::object>(),
+                      "coordinator_transient_retries").get<double>() == 5.0 &&
                 field(field(synthetic, "bytes").get<picojson::object>(),
                       "successful_range").get<double>() == 640.0 &&
+                field(field(synthetic, "bytes").get<picojson::object>(),
+                      "coordinator_transient_retry").get<double>() == 40.0 &&
                 field(synthetic, "response_codes").get<picojson::array>().size() == 2 &&
                 field(synthetic, "transient_retry_codes").get<picojson::object>()
-                    .count("503") == 1,
+                    .count("503") == 1 &&
+                field(synthetic, "coordinator_transient_retry_codes")
+                    .get<picojson::object>().count("500") == 1,
                 "live case aggregate HTTP, byte, retry, or response JSON changed");
 
         const std::filesystem::path evidenceRoot =
@@ -4551,6 +5139,7 @@ int runMain(int argc, char** argv)
     verifyLiveCommandAndSummaryRegression();
     verifyPrefetchReplayRegression();
     verifyPrefetchTransientFallbackReplayRegression();
+    verifyPrefetchTransientRetryReplayRegression();
     verifyHttpParserRegression();
     registerScienceRuntime();
     verifyGeoreferenceRegression();

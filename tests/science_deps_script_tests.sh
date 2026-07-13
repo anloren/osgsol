@@ -16,6 +16,8 @@ prefetch_trace="$repo_root/tests/data/science/prefetch_nvidia_partial_trace.log"
 prefetch_stats="$repo_root/tests/data/science/prefetch_nvidia_partial_stats.json"
 prefetch_transient_trace="$repo_root/tests/data/science/prefetch_hong_kong_transient_trace.log"
 prefetch_transient_stats="$repo_root/tests/data/science/prefetch_hong_kong_transient_stats.json"
+prefetch_retry_trace="$repo_root/tests/data/science/prefetch_nvidia_transient_retry_trace.log"
+prefetch_retry_stats="$repo_root/tests/data/science/prefetch_nvidia_transient_retry_stats.json"
 tests_cmake="$repo_root/tests/CMakeLists.txt"
 
 fail()
@@ -57,6 +59,10 @@ assert_not_contains()
     fail "missing credential-free transient fallback replay trace"
 [[ -f "$prefetch_transient_stats" ]] ||
     fail "missing transient fallback replay network statistics"
+[[ -f "$prefetch_retry_trace" ]] ||
+    fail "missing credential-free transient retry replay trace"
+[[ -f "$prefetch_retry_stats" ]] ||
+    fail "missing transient retry replay network statistics"
 if grep -nE '[[:blank:]]$' "$prefetch_patch" >/dev/null; then
     fail "parallel HEAD/Range patch must not contain nested trailing whitespace"
 fi
@@ -134,11 +140,29 @@ assert_contains "$prefetch_patch" \
     'ParallelHeadRange: logical-get-complete bytes=%zu' \
     "prefetch patch must expose one exact logical GET completion format"
 assert_contains "$prefetch_patch" \
-    'ParallelHeadRange: transient-fallback ' \
-    "prefetch patch must expose the coordinator transient fallback event"
+    'static bool IsParallelHeadRangeTransientStatus\(long nStatus\)' \
+    "prefetch patch must centralize coordinator transient status classification"
+classifier=$(sed -n \
+    '/^+static bool IsParallelHeadRangeTransientStatus(long nStatus)/,/^+}/p' \
+    "$prefetch_patch")
+for status in 429 500 502 503 504; do
+    [[ $(grep -Ec "^\\+        case ${status}:$" <<<"$classifier") -eq 1 ]] ||
+        fail "prefetch patch must classify transient status ${status} exactly once"
+done
+[[ $(grep -Ec '^\+        case [0-9]+:$' <<<"$classifier") -eq 5 ]] ||
+    fail "prefetch patch transient classifier must contain exactly five statuses"
 assert_contains "$prefetch_patch" \
-    'range=bytes=0-131071 status=%ld bytes=%zu' \
-    "prefetch patch must expose the exact coordinator fallback fields"
+    'ParallelHeadRange: transient-retry range=bytes=0-131071 ' \
+    "prefetch patch must emit the exact coordinator retry prefix"
+assert_contains "$prefetch_patch" \
+    'status=%ld bytes=%zu attempt=%d delay-ms=%lld ' \
+    "prefetch patch must emit exact coordinator retry numeric fields"
+assert_contains "$prefetch_patch" \
+    'range-connection=' \
+    "prefetch patch must emit coordinator retry connection evidence"
+assert_contains "$prefetch_patch" \
+    'ParallelHeadRange: transient-fallback range=bytes=0-131071 status=%ld bytes=%zu' \
+    "prefetch patch must retain the exact terminal fallback contract"
 assert_contains "$prefetch_patch" \
     'ParallelHeadRange: transport head-connection=' \
     "prefetch patch must expose the role-labelled transport prefix"
@@ -151,7 +175,7 @@ assert_contains "$prefetch_patch" 'CURL_HTTP_VERSION_1_0' \
     "prefetch transport event must canonicalize HTTP/1.0"
 assert_contains "$prefetch_patch" 'CURL_HTTP_VERSION_1_1' \
     "prefetch transport event must canonicalize HTTP/1.1"
-log_get_line=$(grep -n 'NetworkStatisticsLogger::LogGET(sParallelResult.nRangeSize)' \
+log_get_line=$(grep -n 'NetworkStatisticsLogger::LogGET(nCoordinatorDownloadedBytes)' \
     "$prefetch_patch" | cut -d: -f1)
 logical_event_line=$(grep -n 'ParallelHeadRange: logical-get-complete bytes=%zu' \
     "$prefetch_patch" | cut -d: -f1)
@@ -166,7 +190,8 @@ assert_contains "$prefetch_trace" \
     'proxy 127\.0\.0\.1|host 127\.0\.0\.1 left intact' \
     "prefetch replay must retain only the loopback proxy class"
 for replay_fixture in "$prefetch_trace" "$prefetch_stats" \
-                      "$prefetch_transient_trace" "$prefetch_transient_stats"; do
+                      "$prefetch_transient_trace" "$prefetch_transient_stats" \
+                      "$prefetch_retry_trace" "$prefetch_retry_stats"; do
     assert_not_contains "$replay_fixture" \
         '(^|[^[:alpha:]])(Authorization|Proxy-Authorization|Bearer|token|key|password)([^[:alpha:]]|$)' \
         "prefetch replay fixtures must not contain credential fields"

@@ -3,13 +3,17 @@
 import fs from 'node:fs';
 import http2 from 'node:http2';
 
+const TRANSIENT_ONCE_MODES = new Map([
+    ['range-429-once', 429],
+    ['range-500-once', 500],
+    ['range-502-once', 502],
+    ['range-503-once', 503],
+    ['range-504-once', 504],
+]);
 const MODES = new Set([
-    'success',
-    'range-200',
-    'range-200-body',
-    'short-range',
-    'size-mismatch',
-    'range-503',
+    'success', 'range-200', 'range-200-body', 'short-range',
+    'size-mismatch', 'range-503', 'range-503-exhaust',
+    ...TRANSIENT_ONCE_MODES.keys(),
 ]);
 const EXPECTED_RANGE = 'bytes=0-131071';
 const PREFETCH_BYTES = 131072;
@@ -405,6 +409,25 @@ server.on('stream', (stream, headers) =>
         return;
     }
 
+    const transientStatus = TRANSIENT_ONCE_MODES.get(options.mode);
+    if (transientStatus !== undefined && getCount === 1)
+    {
+        sendRangeBody(stream, context, transientStatus,
+            { 'content-length': '17' }, Buffer.from('transient-error!\n'));
+        return;
+    }
+    if (options.mode === 'range-503-exhaust')
+    {
+        sendRangeBody(stream, context, 503,
+            { 'content-length': '17' }, Buffer.from('transient-error!\n'));
+        return;
+    }
+    if (path.includes('range-404'))
+    {
+        sendRangeBody(stream, context, 404,
+            { 'content-length': '0' }, Buffer.alloc(0));
+        return;
+    }
     if (options.mode === 'range-503' && getCount === 1)
     {
         sendRangeBody(stream, context, 503,

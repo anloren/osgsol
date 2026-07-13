@@ -1,0 +1,39 @@
+512711901627083ns VSICURL: ParallelHeadRange: started
+512712562938791ns CURL_INFO_TEXT: [HTTP/2] [1] OPENED stream for https://data.source.coop/tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff
+512712562971958ns CURL_INFO_HEADER_OUT: HEAD /tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff HTTP/2
+Host: data.source.coop
+User-Agent: GDAL/3.13.1
+Accept: */*
+
+512712563101125ns CURL_INFO_TEXT: Multiplexed connection found
+512712563118041ns CURL_INFO_TEXT: [HTTP/2] [3] OPENED stream for https://data.source.coop/tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff
+512712563144916ns CURL_INFO_HEADER_OUT: GET /tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff HTTP/2
+Host: data.source.coop
+User-Agent: GDAL/3.13.1
+Accept: */*
+Range: bytes=0-131071
+
+512712878989625ns CURL_INFO_HEADER_IN: HTTP/2 500
+512712879038666ns CURL_INFO_HEADER_IN: content-length: 17
+512712879071000ns CURL_INFO_HEADER_IN:
+512713386048875ns CURL_INFO_HEADER_IN: HTTP/2 200
+512713386122583ns CURL_INFO_HEADER_IN: content-length: 3700007174
+512713386325833ns CURL_INFO_HEADER_IN:
+512713386330000ns VSICURL: ParallelHeadRange: transient-retry range=bytes=0-131071 status=500 bytes=17 attempt=1 delay-ms=100 range-connection=0 range-http=2
+512713486340000ns CURL_INFO_TEXT: Multiplexed connection found
+512713486350000ns CURL_INFO_TEXT: [HTTP/2] [5] OPENED stream for https://data.source.coop/tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff
+512713486360000ns CURL_INFO_HEADER_OUT: GET /tge-labs/aef/v1/annual/2025/10N/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff HTTP/2
+Host: data.source.coop
+User-Agent: GDAL/3.13.1
+Accept: */*
+Range: bytes=0-131071
+
+512713804429625ns CURL_INFO_HEADER_IN: HTTP/2 206
+512713804477333ns CURL_INFO_HEADER_IN: content-length: 131072
+512713804487500ns CURL_INFO_HEADER_IN: content-range: bytes 0-131071/3700007174
+512713804702083ns CURL_INFO_HEADER_IN:
+512714231600000ns VSICURL: ParallelHeadRange: detach-success=range
+512714231610000ns VSICURL: ParallelHeadRange: detach-success=head
+512714231620000ns VSICURL: ParallelHeadRange: transport head-connection=0 range-connection=0 head-http=2 range-http=2
+512714231630000ns VSICURL: ParallelHeadRange: logical-get-complete bytes=131072
+512714231640000ns VSICURL: ParallelHeadRange: published
