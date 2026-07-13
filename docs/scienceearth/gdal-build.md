@@ -27,7 +27,7 @@ compile test recognize AppleClang. The private build additionally verifies and a
 relocatable-resource patch (SHA-256
 `17741b49beeb10a4f6663e0e3197807e7a3daa84610d4c092ddc9c6e81b9fa79`) and the opt-in
 parallel HEAD/Range prototype patch (SHA-256
-`d545c492eda3a7c9c7faa4ed06334dfd0723c50aa99ca5f62cb6c7ae664255e8`). The latter remains
+`42db517609c534c6178ce23052449ad747bf4d641b8eae07744839ae92f34c9c`). The latter remains
 path-specific and off by default; it is not part of the protected Desktop runtime.
 
 ## Rebuild commands
@@ -242,3 +242,31 @@ and PROJ warp operations. It reported raster drivers `GTiff`, `MEM`, and `VRT`; 
 only `/vsicurl/` as an active remote VFS; inactive COG and GNM; and independent/upstream GDAL
 resource embedding enabled. These are private-prefix results only; the public latency diagnostic
 and any promotion remain pending.
+
+### Offline requalification readiness after transport-proof remediation
+
+On 2026-07-13, at source base
+`fc56a9b23b827bd61fdf84b754f7c5e6970fb786`, the existing final private prefix at
+`build/science-deps-prefetch` passed a fresh standalone `--verify`. The verifier rechecked all
+three pinned archives, the independent GDAL `#embed` capability, the private static prefix, and
+its manifest. No CMake profile was reconfigured and no public request was made.
+
+The installed prefix remained 52,356 KiB (`du -sh`: 51 MiB), with 404 regular files and 52
+symlinks. Its regenerated manifest SHA-256 remained
+`a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116`. The final pinned
+parallel HEAD/Range patch SHA-256 is
+`42db517609c534c6178ce23052449ad747bf4d641b8eae07744839ae92f34c9c`.
+
+`osgdb_science_g0_probe` was then rebuilt from this verified prefix without reconfiguration. The
+resulting plugin SHA-256 was
+`660c8278d5e9105089afabe2acaee717dfd1fcd260354786a599de5c6feba1a1`. Its direct load
+dependencies remained the macOS system curl, SQLite, C++, and System libraries. The disposable
+probe bundle passed the canonical isolation audit and strict signature verification recorded in
+`g0-measurements.md`.
+
+This is non-public readiness only. The rejected diagnostic and older formal evidence remain
+immutable, the protected Desktop application was not packaged or replaced, and the new v2 public
+evidence roots were not created.
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V2=AUTHORIZED_NOT_RUN

@@ -465,3 +465,82 @@ G0_AUTOMATED_GATES=NOT_RUN
 PUBLIC_PREFETCH_DIAGNOSTIC=FAIL
 HUMAN_PRODUCT_SIGN_OFF=PENDING
 DESKTOP_PACKAGE=NOT_READY
+
+## Remediation Task 2 offline requalification readiness
+
+On 2026-07-13, source base
+`fc56a9b23b827bd61fdf84b754f7c5e6970fb786` was requalified locally after the transport-proof
+remediation. This task performed no public request, did not create either requalification sample
+root or the new formal root, did not reconfigure the CMake profile, and did not package or replace
+the protected Desktop app.
+
+The complete exact non-public regression set passed freshly:
+
+| Regression | Fresh result |
+|---|---:|
+| Manifest and bundle-audit Python suites | 66/66 passed in 5.000 s |
+| Private dependency builder contract | passed in 1.12 s |
+| `build/osgsol_core` CTest | 16/16 passed in 10.57 s |
+| Selected `build/science_g0_prefetch` release/index/manifest/dependency/GDAL/local HTTP CTest | 7/7 passed in 9.22 s |
+| Standalone final private-prefix verifier | passed in 1.39 s |
+
+The verified private prefix remained 52,356 KiB (51 MiB), with 404 regular files and 52
+symlinks. Its manifest SHA-256 was
+`a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116`, and the final pinned
+prefetch patch SHA-256 was
+`42db517609c534c6178ce23052449ad747bf4d641b8eae07744839ae92f34c9c`.
+
+The disposable plugin was rebuilt against that verified prefix. Its SHA-256 was
+`660c8278d5e9105089afabe2acaee717dfd1fcd260354786a599de5c6feba1a1`. The probe app was
+rebuilt at `build/science_g0_prefetch/osgSol Science G0 Probe.app`, ad-hoc signed, and passed
+`codesign --verify --deep --strict`. The canonical policy-bearing audit returned `PASS`:
+
+| Requalification isolation measurement | Fresh result |
+|---|---:|
+| Mach-O graph nodes | 128 |
+| Protected baseline size | 542,594,200 bytes |
+| Disposable probe size | 563,878,831 bytes |
+| Added size | 21,284,631 bytes (20.30 MiB; below 40 MiB) |
+| Science-only closure | 21,284,472 bytes (20.30 MiB; below 60 MiB), probe plugin only |
+| Tier A absolute science findings | 0 |
+| Tier B new / removed identities | 0 / 0 |
+| Unresolved dependencies | 0 |
+| Historical non-science identities still visible | 1,086 |
+
+`nm -gU` exposed exactly `_osgsol_science_g0_probe_anchor`. A combined `otool -L`, `otool -l`,
+and `strings` scan found no worktree or `science-deps-prefetch` path in the plugin. The audit JSON
+and text SHA-256 values were respectively
+`794b94472590dbaa88a8df99b0beb30cb1bb8846996bc1bf20b0a8a50ee2ec42` and
+`b26711027fb7ff1f20790031f888b2155a9819ee56179312f5b6281f59c434e6`.
+
+Every immutable artifact was recomputed without rewriting it:
+
+| Immutable artifact | Fresh SHA-256 |
+|---|---|
+| Rejected control summary | `f793f1c3561e3f746ace2fca164637cd5d238fa81c39298b9a2e29ec2b781096` |
+| Rejected candidate summary | `1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff` |
+| Rejected candidate raw log | `3312a78a073140ea1422ece0ffbc927ce853a4d7b8cec02f3033734a7e217a3a` |
+| Rejected candidate network statistics | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` |
+| Older baseline formal summary | `17ff3cd876e7995c5257fad1f2da7f27bf0ae7901d46716829f1440d16a321ed` |
+| Older optimized/live formal summary | `e4eb9ea1a8d5795db6197110ba96f4851c127dbe06b6bfcae5d3e9ea9b466dfe` |
+
+The protected Desktop canonical fingerprint and independent tree digest remained respectively
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18` and
+`14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214`. The exact helper scan
+again covered 414 recursive entries and 355 regular non-symlink files.
+
+The following required v2 roots were all absent after the complete local run:
+
+```text
+build/science_g0_prefetch/requalification-evidence-v2/control
+build/science_g0_prefetch/requalification-evidence-v2/prefetch
+build/science_g0_prefetch/formal-evidence-v2
+```
+
+This evidence authorizes exactly one later public v2 requalification set; it does not execute or
+prejudge that set, promote the formal CTest profile, authorize Desktop packaging, or start G1.
+The immutable rejected result remains part of the record.
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V2=AUTHORIZED_NOT_RUN
+DESKTOP_PACKAGE=NOT_READY
