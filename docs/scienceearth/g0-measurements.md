@@ -842,3 +842,167 @@ The old rejected diagnostic and failed v2 result remain part of the immutable re
 G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V3=AUTHORIZED_NOT_RUN
 DESKTOP_PACKAGE=NOT_READY
+
+## Prefetch v3 Task 3 one-shot public requalification decision
+
+At `2026-07-13T13:09:11+08:00`, immediately before public network use, the binding
+preflight passed on clean commit `e2d1f17e2fc958f6625971909dbcac9bfccabe4d` and branch
+`codex/science-earth-g0-g1`. The active proxy was recorded only as a credential-free
+`loopback_http` endpoint class. The exact executable was 28,968,240 bytes with SHA-256
+`56a6d68f8ab6e709dee51b0394f49666a5a9a82163232981456a5963c9628218`.
+
+The preflight recomputed all rejected-diagnostic, older-formal, and v2 bindings. All 59 present
+v2 iteration artifacts and both v2 summaries matched, the rejected Hong Kong iteration-5 proof
+was the one expected absence, and the v2 tree still contained 61 regular files. The ten critical
+bindings retained the values in the Task 2 authorization section above. The rejected control and
+candidate tree digests remained
+`d3eb2a1adb60aa4a911b14e47854a2fc7b7fe7b81424de17779ae7862b888133` and
+`054d7d76266febab932255db9658845717625d1ea348bef4021fd3330adffca0`.
+The protected Desktop fingerprint/helper/counts were exactly
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18`,
+`14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214`,
+and `414 / 355`. CTest listed one formal test with `--iterations 5`, `--profile optimized`,
+the existing `science-network-evidence` paths, and `--enforce-latency`, without executing it.
+The v3 parent, control, prefetch, and formal roots were absent.
+
+The independently inspectable preflight transcript is
+`.superpowers/sdd/task-3-v3-preflight.log`, SHA-256
+`d48994e70732786983b9c5d2f9c67bb2ca0c936d0b25e69c7acefd694fbe6aff`. It records
+`PREFLIGHT_EXIT_STATUS=0`.
+
+### Exact one-shot processes
+
+The two authorized processes ran once each, in control-then-candidate order, with no smoke or
+preflight invocation of the executable:
+
+```bash
+build/science_g0_prefetch/tests/osgVerse_Test_ScienceHttpRanges \
+  --live-cases tests/data/science/alphaearth_rgb_cases.json \
+  --iterations 5 --profile optimized \
+  --evidence-dir build/science_g0_prefetch/requalification-evidence-v3/control \
+  --summary-json build/science_g0_prefetch/requalification-evidence-v3/control-summary.json
+
+build/science_g0_prefetch/tests/osgVerse_Test_ScienceHttpRanges \
+  --live-cases tests/data/science/alphaearth_rgb_cases.json \
+  --iterations 5 --profile prefetch \
+  --evidence-dir build/science_g0_prefetch/requalification-evidence-v3/prefetch \
+  --summary-json build/science_g0_prefetch/requalification-evidence-v3/prefetch-summary.json \
+  --enforce-latency
+```
+
+| Process | Start / finish | Exit | Transcript SHA-256 |
+|---|---|---:|---|
+| Optimized control | `13:10:08 / 13:10:41 +0800` | 0 | `a1d8e36c152f71771e1ad80ae548e43e397456ce6ea47fe03e50e2cad9b2d142` |
+| Prefetch candidate | `13:11:34 / 13:11:41 +0800` | 1 | `c7f98c3e8428cb72092e6e49a1fff359232c4b4463607e18d52d55aac1b907d2` |
+
+Each transcript contains exactly one process label, command, start, finish, and exit record. The
+control and candidate artifact manifests have SHA-256 values
+`c81a325b4aecd6b1a722c01789270c2568fc55cb7a1b201b7a6dd8c73e4b3849` and
+`5845a9aac3a9b7e4b88e9323b16f20ff45f1e6f99ecc7a3997175b0f791458ff`.
+All 37 produced diagnostic artifacts were made non-writable after their process exited.
+
+### Optimized control
+
+The control completed all ten iterations and produced all ten raw/stats/proof triplets. Its
+summary SHA-256 is
+`47abb0bc91e4afba412d1150822b90110650f8e225b45b7fa52f4627889c405c`.
+The process exits zero because latency is diagnostic without `--enforce-latency`; the summary is
+`FAIL` because NVIDIA's median exceeds 3000 ms. Every iteration retained correct fixture output,
+bounded successful ranges, reconciled GET/HEAD/stats accounting, and a complete proof. Ordinary
+CPL retry events were accepted only after exact status/range/byte reconciliation; this control
+profile has no metadata-prefetch coordinator fallback.
+
+| Control case | Iteration | Total / open / georeference / read / close ms | GET successful/actual; HEAD; stats GET | Successful / actual / transient / conservative bytes | Ordinary retries |
+|---|---:|---|---|---|---:|
+| NVIDIA | 1 | 3852.527208 / 2011.467667 / 12.410708 / 1828.464542 / 0.184291 | 7/9; 1; 2 | 5010811 / 5010811 / 34 / 5010845 | 2 x 500 |
+| NVIDIA | 2 | 3699.333500 / 1969.281667 / 1.447666 / 1728.420334 / 0.183833 | 7/9; 1; 2 | 5010811 / 5010811 / 34 / 5010845 | 2 x 500 |
+| NVIDIA | 3 | 3131.709959 / 1968.486459 / 1.518000 / 1161.571208 / 0.134292 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| NVIDIA | 4 | 3691.365250 / 1910.753000 / 1.778458 / 1778.656750 / 0.177042 | 7/10; 1; 2 | 5010811 / 5010811 / 51 / 5010862 | 3 x 500 |
+| NVIDIA | 5 | 3576.102667 / 1815.754208 / 1.895834 / 1758.276791 / 0.175834 | 7/9; 1; 2 | 5010811 / 5010811 / 34 / 5010845 | 2 x 500 |
+| Hong Kong | 1 | 2929.535709 / 1967.382750 / 1.914750 / 959.927167 / 0.311042 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 2 | 3358.329875 / 2001.104417 / 1.581291 / 1355.334750 / 0.309417 | 4/5; 1; 2 | 1264092 / 1264092 / 17 / 1264109 | 1 x 500 |
+| Hong Kong | 3 | 2811.656375 / 1885.494000 / 3.090708 / 922.756625 / 0.315042 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 4 | 2912.941459 / 1898.625000 / 1.112667 / 1012.805667 / 0.398125 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 5 | 2777.528250 / 1931.166459 / 2.080916 / 843.978542 / 0.302333 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+
+| Control aggregate | NVIDIA | Hong Kong |
+|---|---:|---:|
+| Median / P95 ms | 3691.365250 / 3852.527208 | 2912.941459 / 3358.329875 |
+| GET successful/actual; HEAD; stats GET | 35/44; 5; 10 | 20/21; 5; 10 |
+| Successful / actual / transient / conservative bytes | 25054055 / 25054055 / 153 / 25054208 | 6320460 / 6320460 / 17 / 6320477 |
+| Ordinary retries | 9 x 500 | 1 x 500 |
+| Status | FAIL, median above 3000 ms | PASS |
+
+### Prefetch candidate and hard stop
+
+NVIDIA iteration 1 completed in `2813.06 ms` and produced a valid proof. It recorded exact first
+Range `bytes=0-131071`, one HEAD and one prefetch Range on HTTP/2, equal explicit connection IDs,
+request overlap, cache publication, zero ordinary retry, zero coordinator fallback, correct
+fixture output, 7/7 GETs, one HEAD, two stats GET operations, and
+`5010811 / 5010811 / 0 / 5010811` successful/actual/transient/conservative bytes.
+
+NVIDIA iteration 2 then received HTTP/2 `500` with a 17-byte body on the parallel first Range.
+The hashed raw trace contains exactly one authoritative event
+`ParallelHeadRange: transient-fallback range=bytes=0-131071 status=500 bytes=17`, one
+`fallback=status-500`, shared connection IDs `0/0`, HTTP/2 for both handles, and three separate
+ordinary CPL `500` retry events. Physical GETs reconcile as 7 successful + 3 ordinary retries +
+1 coordinator fallback = 11. VSINetworkStats records 3 GET operations, one HEAD, and 5,010,828
+downloaded bytes, exactly 5,010,811 successful bytes plus the 17 coordinator bytes. The HTTP
+layer therefore reconciled the coordinator event separately and then the formal proof rejected
+the iteration with exactly:
+
+```text
+ScienceHttpRanges failure: metadata prefetch formal proof contains a fallback
+```
+
+No iteration-2 proof was published. The candidate summary is the atomic `ERROR` object with zero
+cases and SHA-256
+`1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff`.
+The candidate produced two NVIDIA raw files, two NVIDIA stats files, one NVIDIA proof, and no
+Hong Kong file: only 1/10 required proofs and 0/5 Hong Kong iterations. Candidate medians and
+P95s do not exist. The complete proof, zero-fallback, latency, and two-fixture gates therefore
+fail closed.
+
+### Frozen v3 artifact hashes
+
+| Control iteration | Raw SHA-256 | Stats SHA-256 | Proof SHA-256 |
+|---|---|---|---|
+| `optimized-hong_kong-1` | `e992b0723f763dbeb14853f3e0c5b400d22ebe8de999b8c21e44985f8db041b6` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `dafe7f8dda16027077624aa31f90a63cd97260986772c69c03c6784a902112aa` |
+| `optimized-hong_kong-2` | `a256cd80c76aea3eeb8e9dbdcd49649364743f4de504e50a37732edc6e0136aa` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `a3229f4cb831b5ed7d21a964118d5342eacd44f9269d2275ab6546965efdbf04` |
+| `optimized-hong_kong-3` | `a97ccb41648f67d4220e7d806f49f1691a722641e7f2d9b8561b2782d1b30042` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `6abeff76fc5027f50ee792295eda95388c65d982852b930d2cfa82100e2621a1` |
+| `optimized-hong_kong-4` | `5f3c255450e329888f9d5356b6eb60d0db6ef93ce49dd4d71ac6227d2fa93802` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `6abeff76fc5027f50ee792295eda95388c65d982852b930d2cfa82100e2621a1` |
+| `optimized-hong_kong-5` | `32a060dfb41e72424b57e5261d410d2038164fef932f72bad776f1028c1c824e` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `dafe7f8dda16027077624aa31f90a63cd97260986772c69c03c6784a902112aa` |
+| `optimized-nvidia_hq-1` | `4d7df3e3af6ae51021319461bb194e58138b184bcdacb454b2fbc13233aefb7f` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `6f31188548645cec15770310cae26b8adacdbaa9a31ee1f05b7c066e3da7c989` |
+| `optimized-nvidia_hq-2` | `656993a304546cb01fbaed2312038ae9fcc4e2873ba0401169596b9f90186fa9` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `7eaf175f6ec176410b30c2f33391760e34bd202dc1098dd62b4b7b373e6cbe84` |
+| `optimized-nvidia_hq-3` | `c308295d9c59a791c01bd26817169a4026cafee19e1f7b77fdbb01155544b8a0` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `4513289ba2f2affe33d4f982e354584640faa53eadfc088eec899de10aeb70d4` |
+| `optimized-nvidia_hq-4` | `f2086a3cfc1314d85d3d7581e410ca7f2693c0213e2ac325bec3dd7adde04c71` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `8a8ee4a8cf6b9473702ed540ad9a15828e8b7096187125c7a80278a2c21ea703` |
+| `optimized-nvidia_hq-5` | `9613fbcaf1c2f206f0aa502bd813da411d2217db2d17ba1d5e45468952ebf0bb` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `15236a898fe3c4c99c504c0b5edb323c921aa93550f2a29fa73100b7727855e1` |
+
+| Candidate iteration | Raw SHA-256 | Stats SHA-256 | Proof SHA-256 |
+|---|---|---|---|
+| `prefetch-nvidia_hq-1` | `114d20ad165945e144d48c6ea18c4db1e190311a218394f5d99c831e8950343b` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `da4ebeddbbff9cc6d13854c941172bf24c3dbe455d0e1fe6fbc7abf677b72ca4` |
+| `prefetch-nvidia_hq-2` | `1ccb4361f6c0c5bd5c19271cf74f2f72135bdebd87515f55110c18353ecadc07` | `67168772dbae8576f3e2810b65931e6737e854aba9c4183b2d40726e1fb97fd8` | absent; formal no-fallback rejection |
+
+The hashed decision-gate transcript is
+`.superpowers/sdd/task-3-v3-decision-gate.log`, SHA-256
+`0fd10896a891e20eb8e63a755fb68f4772e2cefc36b5b30f148165101001bafa`.
+The final protected-state transcript is `.superpowers/sdd/task-3-v3-final-protected.log`,
+SHA-256 `cb5bc37da993e862b4cfbfae4e8777df586fd03e05a753693b972c518dc072a9`.
+It freshly reverified every old and v2 artifact, the Desktop hashes/counts, the unchanged
+`tests/CMakeLists.txt` SHA-256
+`b9eea24fabb9fa2fb1d79bf384320e5082bd0155aedfcc18fa2d2ab33411141a`,
+and the absent v3 formal root.
+
+Because the candidate did not produce 10/10 complete zero-fallback proofs, `tests/CMakeLists.txt`
+was not modified or committed. Formal CTest process count is zero; every downstream test, audit,
+signature, size, export, path, memory, correctness, range, camera/cache, and clean-machine process
+count is zero. The formal profile remains `optimized`, and no Desktop package was built or
+replaced. No tag, push, G1 work, threshold/retry change, or old/v2 evidence mutation occurred.
+
+G0_DECISION=STOP
+REASON=The one-shot v3 prefetch candidate encountered one explicitly accounted coordinator HTTP 500 fallback on NVIDIA iteration 2 and was correctly rejected by the formal no-fallback gate after producing only 1/10 proofs.
+G0_AUTOMATED_GATES=NOT_RUN
+PUBLIC_REQUALIFICATION_V3=FAIL
+HUMAN_PRODUCT_SIGN_OFF=PENDING
+DESKTOP_PACKAGE=NOT_READY
+RECORDED_DATE=2026-07-13

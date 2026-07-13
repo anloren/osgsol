@@ -225,3 +225,43 @@ PUBLIC_REQUALIFICATION_V2=FAIL
 HUMAN_PRODUCT_SIGN_OFF=PENDING
 DESKTOP_PACKAGE=NOT_READY
 RECORDED_DATE=2026-07-13
+
+## Prefetch v3 Task 3 one-shot public requalification decision
+
+The v3 binding preflight passed on clean commit
+`e2d1f17e2fc958f6625971909dbcac9bfccabe4d`: all old/v2 bindings matched, the protected Desktop
+remained at fingerprint/helper/counts
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18` /
+`14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214` /
+`414 / 355`, the formal test remained `optimized`, and every v3 root was absent. The durable
+preflight transcript hashes to
+`d48994e70732786983b9c5d2f9c67bb2ca0c936d0b25e69c7acefd694fbe6aff`.
+
+The optimized control and prefetch candidate then ran once each, in that order, with no rerun.
+The control exited 0 and completed 10/10 proofs, but its diagnostic summary was `FAIL`: NVIDIA
+median/P95 were `3691.365250 / 3852.527208 ms`, while Hong Kong median/P95 were
+`2912.941459 / 3358.329875 ms`. Its transcript and summary hashes are respectively
+`a1d8e36c152f71771e1ad80ae548e43e397456ce6ea47fe03e50e2cad9b2d142` and
+`47abb0bc91e4afba412d1150822b90110650f8e225b45b7fa52f4627889c405c`.
+
+The candidate exited 1 during NVIDIA iteration 2. Iteration 1 was a valid zero-fallback proof in
+`2813.06 ms`. Iteration 2's overlapping shared-HTTP/2 first Range received `500` with 17 bytes;
+the authoritative coordinator-fallback event and three separate ordinary CPL retries reconciled,
+then the formal proof rejected the sample with `metadata prefetch formal proof contains a
+fallback`. The atomic candidate summary is `ERROR` with zero cases. Only 1/10 proof files and no
+Hong Kong iteration exist. Candidate transcript and summary hashes are respectively
+`c7f98c3e8428cb72092e6e49a1fff359232c4b4463607e18d52d55aac1b907d2` and
+`1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff`.
+
+The candidate therefore failed the complete-proof and zero-fallback gates. Formal promotion was
+forbidden: `tests/CMakeLists.txt` remains unchanged at `--profile optimized`, the v3 formal root
+is absent, and formal/downstream process counts are zero. The protected Desktop was not packaged
+or replaced; no tag, push, G1 work, threshold/retry change, or old/v2 evidence mutation occurred.
+
+G0_DECISION=STOP
+REASON=The one-shot v3 prefetch candidate encountered one explicitly accounted coordinator HTTP 500 fallback on NVIDIA iteration 2 and was correctly rejected by the formal no-fallback gate after producing only 1/10 proofs.
+G0_AUTOMATED_GATES=NOT_RUN
+PUBLIC_REQUALIFICATION_V3=FAIL
+HUMAN_PRODUCT_SIGN_OFF=PENDING
+DESKTOP_PACKAGE=NOT_READY
+RECORDED_DATE=2026-07-13
