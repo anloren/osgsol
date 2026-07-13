@@ -337,11 +337,11 @@ IF(BUILD_TESTING)
                         --live-cases
                         "${CMAKE_CURRENT_SOURCE_DIR}/data/science/alphaearth_rgb_cases.json"
                         --iterations 5
-                        --profile optimized
+                        --profile prefetch
                         --evidence-dir
-                        "${CMAKE_BINARY_DIR}/science-network-evidence"
+                        "${CMAKE_BINARY_DIR}/formal-evidence-v4"
                         --summary-json
-                        "${CMAKE_BINARY_DIR}/science-network-evidence/live-summary.json"
+                        "${CMAKE_BINARY_DIR}/formal-evidence-v4/live-summary.json"
                         --enforce-latency)
             SET_TESTS_PROPERTIES(osgVerse_Test_ScienceGdalLive PROPERTIES
                 LABELS "network;scienceearth"
