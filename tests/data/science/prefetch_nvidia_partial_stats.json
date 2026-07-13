@@ -1,0 +1,71 @@
+{
+  "handlers": {
+    "vsicurl": {
+      "actions": {
+        "Stat": {
+          "files": {
+            "\/vsicurl\/https:\/\/data.source.coop\/tge-labs\/aef\/v1\/annual\/2025\/10N\/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff": {
+              "methods": {
+                "GET": {
+                  "count": 1,
+                  "downloaded_bytes": 131072
+                },
+                "HEAD": {
+                  "count": 1
+                }
+              }
+            }
+          },
+          "methods": {
+            "GET": {
+              "count": 1,
+              "downloaded_bytes": 131072
+            },
+            "HEAD": {
+              "count": 1
+            }
+          }
+        }
+      },
+      "files": {
+        "\/vsicurl\/https:\/\/data.source.coop\/tge-labs\/aef\/v1\/annual\/2025\/10N\/x2lqsp4xl1lnajb1p-0000000000-0000008192.tiff": {
+          "actions": {
+            "ReadMultiRange": {
+              "methods": {
+                "GET": {
+                  "count": 1,
+                  "downloaded_bytes": 4879739
+                }
+              }
+            }
+          },
+          "methods": {
+            "GET": {
+              "count": 1,
+              "downloaded_bytes": 4879739
+            }
+          }
+        }
+      },
+      "methods": {
+        "GET": {
+          "count": 2,
+          "downloaded_bytes": 5010811
+        },
+        "HEAD": {
+          "count": 1
+        }
+      }
+    }
+  },
+  "methods": {
+    "GET": {
+      "count": 2,
+      "downloaded_bytes": 5010811
+    },
+    "HEAD": {
+      "count": 1
+    }
+  }
+}
+

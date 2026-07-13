@@ -12,6 +12,8 @@ embed_probe="$repo_root/packaging/science_deps/gdal_embed_probe.c"
 gdal_patch="$repo_root/packaging/science_deps/gdal-3.13.1-disable-shapelib.patch"
 relocatable_patch="$repo_root/packaging/science_deps/gdal-3.13.1-relocatable-static.patch"
 prefetch_patch="$repo_root/packaging/science_deps/gdal-3.13.1-parallel-head-range.patch"
+prefetch_trace="$repo_root/tests/data/science/prefetch_nvidia_partial_trace.log"
+prefetch_stats="$repo_root/tests/data/science/prefetch_nvidia_partial_stats.json"
 tests_cmake="$repo_root/tests/CMakeLists.txt"
 
 fail()
@@ -47,6 +49,8 @@ assert_not_contains()
 [[ -f "$gdal_patch" ]] || fail "missing pinned GDAL Shapelib-disable patch"
 [[ -f "$relocatable_patch" ]] || fail "missing pinned relocatable GDAL patch"
 [[ -f "$prefetch_patch" ]] || fail "missing pinned parallel HEAD/Range GDAL patch"
+[[ -f "$prefetch_trace" ]] || fail "missing credential-free prefetch replay trace"
+[[ -f "$prefetch_stats" ]] || fail "missing prefetch replay network statistics"
 if grep -nE '[[:blank:]]$' "$prefetch_patch" >/dev/null; then
     fail "parallel HEAD/Range patch must not contain nested trailing whitespace"
 fi
@@ -120,6 +124,41 @@ assert_not_contains "$prefetch_patch" 'PREFETCH_TEST_' \
     "prefetch patch must not ship runtime fault-injection controls"
 assert_contains "$prefetch_patch" 'AddRegion\(m_pszURL, 0, 131072' \
     "validated prefetch bytes must use the existing region cache"
+assert_contains "$prefetch_patch" \
+    'ParallelHeadRange: logical-get-complete bytes=%zu' \
+    "prefetch patch must expose one exact logical GET completion format"
+assert_contains "$prefetch_patch" \
+    'ParallelHeadRange: transport head-connection=' \
+    "prefetch patch must expose the role-labelled transport prefix"
+assert_contains "$prefetch_patch" \
+    'range-connection=" CPL_FRMT_GIB' \
+    "prefetch transport event must label the Range connection ID"
+assert_contains "$prefetch_patch" 'head-http=%d range-http=%d' \
+    "prefetch transport event must expose canonical HTTP majors"
+assert_contains "$prefetch_patch" 'CURL_HTTP_VERSION_1_0' \
+    "prefetch transport event must canonicalize HTTP/1.0"
+assert_contains "$prefetch_patch" 'CURL_HTTP_VERSION_1_1' \
+    "prefetch transport event must canonicalize HTTP/1.1"
+log_get_line=$(grep -n 'NetworkStatisticsLogger::LogGET(sParallelResult.nRangeSize)' \
+    "$prefetch_patch" | cut -d: -f1)
+logical_event_line=$(grep -n 'ParallelHeadRange: logical-get-complete bytes=%zu' \
+    "$prefetch_patch" | cut -d: -f1)
+[[ -n $log_get_line && -n $logical_event_line &&
+      $logical_event_line -eq $((log_get_line + 2)) ]] ||
+    fail "logical GET event must be adjacent to its NetworkStatisticsLogger call"
+
+assert_contains "$prefetch_trace" \
+    'https://data\.source\.coop/tge-labs/aef/v1/annual/2025/10N/' \
+    "prefetch replay must retain the public object URI"
+assert_contains "$prefetch_trace" \
+    'proxy 127\.0\.0\.1|host 127\.0\.0\.1 left intact' \
+    "prefetch replay must retain only the loopback proxy class"
+assert_not_contains "$prefetch_trace" \
+    '(^|[^[:alpha:]])(Authorization|Proxy-Authorization|Bearer|token|key|password)([^[:alpha:]]|$)' \
+    "prefetch replay trace must not contain credentials"
+assert_not_contains "$prefetch_stats" \
+    '(^|[^[:alpha:]])(Authorization|Proxy-Authorization|Bearer|token|key|password)([^[:alpha:]]|$)' \
+    "prefetch replay statistics must not contain credentials"
 
 for component in GDAL PROJ ZSTD; do
     archive_variable="${component}_ARCHIVE"

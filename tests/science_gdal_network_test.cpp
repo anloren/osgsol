@@ -18,6 +18,7 @@
 #include <regex>
 #include <stdexcept>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -151,6 +152,8 @@ namespace
         int transientRetryCount = 0;
         int statsGetOperationCount = 0;
         int statsHeadCount = 0;
+        int coordinatorLogicalGetCount = 0;
+        std::uint64_t coordinatorLogicalGetBytes = 0;
         std::uint64_t successfulRangeBytes = 0;
         std::uint64_t declaredTransientBytes = 0;
         std::uint64_t actualHttpBodyBytes = 0;
@@ -1860,6 +1863,63 @@ namespace
         return headers;
     }
 
+    void loadReplayCapture(const std::filesystem::path& path,
+                           DebugCapture& capture)
+    {
+        std::ifstream stream(path);
+        require(stream.good(), "failed to open prefetch replay trace");
+        static const std::regex recordPattern(R"(^([0-9]+)ns (.*)$)");
+        std::string line;
+        while (std::getline(stream, line))
+        {
+            std::smatch match;
+            if (std::regex_match(line, match, recordPattern))
+            {
+                capture.timestamps.emplace_back(
+                    std::chrono::nanoseconds(std::stoll(match[1].str())));
+                std::string message = match[2].str();
+                if (message == "CURL_INFO_HEADER_IN:") message += " ";
+                capture.messages.push_back(message);
+                continue;
+            }
+            require(!capture.messages.empty(),
+                    "prefetch replay trace starts with a continuation line");
+            capture.messages.back() += "\n" + line;
+        }
+        require(!capture.messages.empty() &&
+                capture.messages.size() == capture.timestamps.size(),
+                "prefetch replay trace is empty or missing timestamps");
+    }
+
+    std::string loadReplayText(const std::filesystem::path& path)
+    {
+        std::ifstream stream(path);
+        require(stream.good(), "failed to open prefetch replay statistics");
+        std::ostringstream text;
+        text << stream.rdbuf();
+        return text.str();
+    }
+
+    void insertReplayEventBefore(DebugCapture& capture,
+                                 const std::string& boundary,
+                                 const std::string& event,
+                                 std::chrono::nanoseconds timestamp)
+    {
+        const auto iterator = std::find_if(
+            capture.messages.begin(), capture.messages.end(),
+            [&boundary](const std::string& message)
+            {
+                return message.find(boundary) != std::string::npos;
+            });
+        require(iterator != capture.messages.end(),
+                "prefetch replay event boundary is missing");
+        const auto index = static_cast<std::size_t>(
+            std::distance(capture.messages.begin(), iterator));
+        capture.messages.insert(iterator, event);
+        capture.timestamps.insert(capture.timestamps.begin() + index,
+                                  std::chrono::steady_clock::time_point(timestamp));
+    }
+
     HttpProof buildHttpProof(const DebugCapture& capture, const std::string& statsJson)
     {
         struct Request
@@ -1878,6 +1938,7 @@ namespace
         Response currentResponse;
         bool responseOpen = false;
         int logicalGetOperations = 0;
+        HttpProof proof;
 
         for (const std::string& message : capture.messages)
         {
@@ -1929,9 +1990,31 @@ namespace
                     }
                 }
             }
-            if (message.rfind("VSICURL: Got response_code=206", 0) == 0 ||
-                message == "VSICURL: Download completed")
+            static const std::regex logicalGetPattern(
+                R"(^VSICURL: ParallelHeadRange: logical-get-complete )"
+                R"(bytes=([0-9]+)$)");
+            std::smatch logicalGetMatch;
+            if (std::regex_match(message, logicalGetMatch, logicalGetPattern))
+            {
+                ++proof.coordinatorLogicalGetCount;
+                require(proof.coordinatorLogicalGetCount == 1,
+                        "parallel metadata prefetch logical GET event is duplicated");
+                proof.coordinatorLogicalGetBytes =
+                    std::stoull(logicalGetMatch[1].str());
                 ++logicalGetOperations;
+            }
+            else
+            {
+                require(message.find(
+                            "ParallelHeadRange: logical-get-complete") ==
+                            std::string::npos,
+                        "parallel metadata prefetch logical GET event is malformed");
+                if (message.rfind("VSICURL: Got response_code=206", 0) == 0 ||
+                    message == "VSICURL: Download completed")
+                {
+                    ++logicalGetOperations;
+                }
+            }
             static const std::regex retryPattern(
                 R"(HTTP error code for .* range ([0-9]+-[0-9]+): ([0-9]+)\. Retrying)");
             std::smatch retryMatch;
@@ -1941,7 +2024,6 @@ namespace
         }
         if (responseOpen) responses.push_back(currentResponse);
 
-        HttpProof proof;
         const std::set<int> transientCodes = {429, 500, 502, 503, 504};
         std::map<std::string, int> requestedRanges;
         int connectRequests = 0;
@@ -2097,6 +2179,16 @@ namespace
                 "VSINetworkStats HEAD count disagrees with curl headers");
         require(proof.statsGetOperationCount == logicalGetOperations,
                 "VSINetworkStats GET operations disagree with CPL read operations");
+        if (proof.coordinatorLogicalGetCount == 1)
+        {
+            require(!proof.successfulByteIntervals.empty(),
+                    "parallel metadata prefetch logical GET omitted its interval");
+            const auto& interval = proof.successfulByteIntervals.front();
+            require(proof.coordinatorLogicalGetBytes ==
+                        interval.second - interval.first + 1,
+                    "parallel metadata prefetch logical GET bytes disagree with "
+                    "the first successful interval");
+        }
         return proof;
     }
 
@@ -2129,7 +2221,6 @@ namespace
             int httpVersion = 0;
             std::map<std::string, std::string> headers;
             std::chrono::steady_clock::time_point completed;
-            long long connectionId = -1;
         };
 
         require(capture.messages.size() == capture.timestamps.size(),
@@ -2137,13 +2228,24 @@ namespace
         std::vector<RequestEvidence> requests;
         std::vector<ResponseEvidence> responses;
         int activeResponse = -1;
-        std::vector<int> pendingConnections;
         int pendingStreamId = -1;
         bool pendingMultiplexReuse = false;
         int publicationCount = 0;
+        int rangeDetachSuccessCount = 0;
+        int headDetachSuccessCount = 0;
+        int transportEventCount = 0;
+        std::chrono::steady_clock::time_point rangeDetachSuccess;
+        std::chrono::steady_clock::time_point headDetachSuccess;
+        std::chrono::steady_clock::time_point transportEvent;
+        long long headConnectionId = -1;
+        long long rangeConnectionId = -1;
+        int headTransportHttp = 0;
+        int rangeTransportHttp = 0;
         std::vector<std::string> fallbackReasons;
-        static const std::regex connectionPattern(
-            R"(Connection #([0-9]+) to host .+ left intact)");
+        static const std::regex transportPattern(
+            R"(^VSICURL: ParallelHeadRange: transport )"
+            R"(head-connection=(-?[0-9]+) range-connection=(-?[0-9]+) )"
+            R"(head-http=(-?[0-9]+) range-http=(-?[0-9]+)$)");
         static const std::regex streamPattern(
             R"(\[HTTP/2\] \[([0-9]+)\] OPENED stream)");
 
@@ -2195,13 +2297,6 @@ namespace
                             "metadata prefetch response ended without a status");
                     ResponseEvidence& response = responses[activeResponse];
                     response.completed = capture.timestamps[index];
-                    const bool isHead = response.code == 200 &&
-                        response.headers.count("content-length") != 0 &&
-                        response.headers.count("content-range") == 0;
-                    const bool isRange = response.code == 206 &&
-                        response.headers.count("content-range") != 0;
-                    if (isHead || isRange)
-                        pendingConnections.push_back(activeResponse);
                     activeResponse = -1;
                 }
                 else
@@ -2227,20 +2322,37 @@ namespace
                 {
                     pendingMultiplexReuse = true;
                 }
-                std::smatch connectionMatch;
-                if (std::regex_search(message, connectionMatch, connectionPattern))
+                if (message ==
+                    "VSICURL: ParallelHeadRange: detach-success=range")
                 {
-                    const long long connectionId =
-                        std::stoll(connectionMatch[1].str());
-                    if (!pendingConnections.empty())
-                    {
-                        require(pendingConnections.size() == 1,
-                                "metadata prefetch connection roles are ambiguous");
-                        responses[pendingConnections.front()].connectionId =
-                            connectionId;
-                        pendingConnections.clear();
-                    }
+                    ++rangeDetachSuccessCount;
+                    rangeDetachSuccess = capture.timestamps[index];
                 }
+                if (message ==
+                    "VSICURL: ParallelHeadRange: detach-success=head")
+                {
+                    ++headDetachSuccessCount;
+                    headDetachSuccess = capture.timestamps[index];
+                }
+                std::smatch transportMatch;
+                if (std::regex_match(message, transportMatch, transportPattern))
+                {
+                    ++transportEventCount;
+                    require(transportEventCount == 1,
+                            "metadata prefetch transport event is duplicated");
+                    require(rangeDetachSuccessCount == 1 &&
+                            headDetachSuccessCount == 1,
+                            "metadata prefetch transport preceded successful detaches");
+                    transportEvent = capture.timestamps[index];
+                    headConnectionId = std::stoll(transportMatch[1].str());
+                    rangeConnectionId = std::stoll(transportMatch[2].str());
+                    headTransportHttp = std::stoi(transportMatch[3].str());
+                    rangeTransportHttp = std::stoi(transportMatch[4].str());
+                }
+                else
+                    require(message.find("ParallelHeadRange: transport") ==
+                                std::string::npos,
+                            "metadata prefetch transport event is malformed");
                 if (message.find("ParallelHeadRange: published") != std::string::npos)
                     ++publicationCount;
                 const std::string fallbackPrefix = "ParallelHeadRange: fallback=";
@@ -2250,8 +2362,8 @@ namespace
                         fallback + fallbackPrefix.size()));
             }
         }
-        require(activeResponse < 0 && pendingConnections.empty(),
-                "metadata prefetch response or connection evidence is incomplete");
+        require(activeResponse < 0,
+                "metadata prefetch response evidence is incomplete");
 
         const RequestEvidence* headRequest = nullptr;
         const RequestEvidence* rangeRequest = nullptr;
@@ -2318,12 +2430,21 @@ namespace
         require(headRequest->httpVersion == 2 && rangeRequest->httpVersion == 2 &&
                 headResponse->httpVersion == 2 && rangeResponse->httpVersion == 2,
                 "metadata prefetch requires HTTP/2 for HEAD and Range");
+        require(httpProof.coordinatorLogicalGetCount == 1,
+                "metadata prefetch requires exactly one logical GET event");
+        require(rangeDetachSuccessCount == 1 && headDetachSuccessCount == 1 &&
+                transportEvent > rangeDetachSuccess &&
+                transportEvent > headDetachSuccess,
+                "metadata prefetch transport preceded successful detaches");
+        require(transportEventCount == 1 && headConnectionId >= 0 &&
+                headConnectionId == rangeConnectionId &&
+                headTransportHttp == 2 && rangeTransportHttp == 2,
+                "metadata prefetch lacks authoritative shared HTTP/2 transport evidence");
         require(headRequest->streamId > 0 && rangeRequest->streamId > 0 &&
                 rangeRequest->streamId > headRequest->streamId &&
                 headRequest->uri == rangeRequest->uri &&
                 rangeRequest->multiplexReuse &&
-                headResponse->connectionId >= 0 &&
-                headResponse->connectionId == rangeResponse->connectionId,
+                headConnectionId == rangeConnectionId,
                 "metadata prefetch lacks unambiguous shared HTTP/2 connection evidence");
         require(headRequest->sent < rangeRequest->sent &&
                 rangeRequest->sent < headResponse->completed,
@@ -2606,6 +2727,10 @@ namespace
             "CURL_INFO_HEADER_IN: content-length: 1000000\r",
             "CURL_INFO_HEADER_IN: \r",
             "CURL_INFO_TEXT: Connection #7 to host proxy.example left intact",
+            "VSICURL: ParallelHeadRange: detach-success=range",
+            "VSICURL: ParallelHeadRange: detach-success=head",
+            "VSICURL: ParallelHeadRange: transport head-connection=7 "
+            "range-connection=7 head-http=2 range-http=2",
             "ParallelHeadRange: published",
         };
         prefetch.timestamps = {
@@ -2625,11 +2750,16 @@ namespace
             epoch + std::chrono::milliseconds(14),
             epoch + std::chrono::milliseconds(15),
             epoch + std::chrono::milliseconds(16),
+            epoch + std::chrono::milliseconds(17),
+            epoch + std::chrono::milliseconds(18),
+            epoch + std::chrono::milliseconds(19),
         };
         HttpProof prefetchHttp;
         prefetchHttp.actualHeadCount = 1;
         prefetchHttp.actualGetCount = 1;
         prefetchHttp.successfulGetCount = 1;
+        prefetchHttp.coordinatorLogicalGetCount = 1;
+        prefetchHttp.coordinatorLogicalGetBytes = 131072;
         prefetchHttp.successfulByteIntervals = {{0, 131071}};
         prefetchHttp.metadataPrefetch = buildMetadataPrefetchProof(prefetch, prefetchHttp);
         const std::string expectedMetadata =
@@ -2670,34 +2800,20 @@ namespace
         DebugCapture distinctConnection;
         distinctConnection.messages = prefetch.messages;
         distinctConnection.timestamps = prefetch.timestamps;
-        distinctConnection.messages[14] =
-            "CURL_INFO_TEXT: Connection #8 to host proxy.example left intact";
+        distinctConnection.messages[17] =
+            "VSICURL: ParallelHeadRange: transport head-connection=7 "
+            "range-connection=8 head-http=2 range-http=2";
         require(prefetchRejected(distinctConnection),
                 "metadata prefetch proof accepted distinct connections");
-        DebugCapture missingRangeConnection;
-        missingRangeConnection.messages = prefetch.messages;
-        missingRangeConnection.timestamps = prefetch.timestamps;
-        missingRangeConnection.messages.erase(
-            missingRangeConnection.messages.begin() + 10);
-        missingRangeConnection.timestamps.erase(
-            missingRangeConnection.timestamps.begin() + 10);
-        require(prefetchRejected(missingRangeConnection),
-                "metadata prefetch proof accepted one marker for two responses");
-        DebugCapture ambiguousConnections;
-        ambiguousConnections.messages = prefetch.messages;
-        ambiguousConnections.timestamps = prefetch.timestamps;
-        ambiguousConnections.messages.erase(
-            ambiguousConnections.messages.begin() + 10);
-        ambiguousConnections.timestamps.erase(
-            ambiguousConnections.timestamps.begin() + 10);
-        ambiguousConnections.messages.insert(
-            ambiguousConnections.messages.begin() + 14,
-            "CURL_INFO_TEXT: Connection #8 to host proxy.example left intact");
-        ambiguousConnections.timestamps.insert(
-            ambiguousConnections.timestamps.begin() + 14,
-            epoch + std::chrono::milliseconds(16));
-        require(prefetchRejected(ambiguousConnections),
-                "metadata prefetch proof mapped ambiguous responses to connection #7");
+        DebugCapture missingGenericMarker;
+        missingGenericMarker.messages = prefetch.messages;
+        missingGenericMarker.timestamps = prefetch.timestamps;
+        missingGenericMarker.messages.erase(
+            missingGenericMarker.messages.begin() + 10);
+        missingGenericMarker.timestamps.erase(
+            missingGenericMarker.timestamps.begin() + 10);
+        require(!prefetchRejected(missingGenericMarker),
+                "metadata prefetch proof required a generic connection marker");
         DebugCapture noOverlap;
         noOverlap.messages = prefetch.messages;
         noOverlap.timestamps = prefetch.timestamps;
@@ -2708,7 +2824,7 @@ namespace
         ambiguousPublication.messages = prefetch.messages;
         ambiguousPublication.timestamps = prefetch.timestamps;
         ambiguousPublication.messages.push_back("ParallelHeadRange: published");
-        ambiguousPublication.timestamps.push_back(epoch + std::chrono::milliseconds(17));
+        ambiguousPublication.timestamps.push_back(epoch + std::chrono::milliseconds(20));
         require(prefetchRejected(ambiguousPublication),
                 "metadata prefetch proof accepted ambiguous cache publication");
         DebugCapture duplicateHead;
@@ -2732,7 +2848,7 @@ namespace
         fallback.messages = prefetch.messages;
         fallback.timestamps = prefetch.timestamps;
         fallback.messages.push_back("ParallelHeadRange: fallback=protocol");
-        fallback.timestamps.push_back(epoch + std::chrono::milliseconds(17));
+        fallback.timestamps.push_back(epoch + std::chrono::milliseconds(20));
         require(prefetchRejected(fallback),
                 "metadata prefetch proof accepted a runtime fallback");
         DebugCapture missingRangeResponse;
@@ -2742,6 +2858,197 @@ namespace
             "CURL_INFO_HEADER_IN: content-type: application/octet-stream\r";
         require(prefetchRejected(missingRangeResponse),
                 "metadata prefetch proof accepted missing exact HTTP 206 evidence");
+    }
+
+    void verifyPrefetchReplayRegression()
+    {
+        const std::filesystem::path fixtureRoot =
+            std::filesystem::path(__FILE__).parent_path() / "data" / "science";
+        DebugCapture replay;
+        loadReplayCapture(fixtureRoot / "prefetch_nvidia_partial_trace.log", replay);
+        const std::string stats = loadReplayText(
+            fixtureRoot / "prefetch_nvidia_partial_stats.json");
+        insertReplayEventBefore(
+            replay, "ParallelHeadRange: published",
+            "VSICURL: ParallelHeadRange: logical-get-complete bytes=131072",
+            std::chrono::nanoseconds(474401786400000));
+        insertReplayEventBefore(
+            replay, "ParallelHeadRange: logical-get-complete",
+            "VSICURL: ParallelHeadRange: transport head-connection=0 "
+            "range-connection=0 head-http=2 range-http=2",
+            std::chrono::nanoseconds(474401786394000));
+
+        HttpProof proof = buildHttpProof(replay, stats);
+        require(proof.statsGetOperationCount == 2,
+                "prefetch replay did not preserve two logical GET operations");
+        proof.metadataPrefetch = buildMetadataPrefetchProof(replay, proof);
+        require(proof.metadataPrefetch.sharedConnection,
+                "prefetch replay did not prove the authoritative shared connection");
+
+        const auto messageIndex = [](const DebugCapture& capture,
+                                     const std::string& needle)
+        {
+            const auto iterator = std::find_if(
+                capture.messages.begin(), capture.messages.end(),
+                [&needle](const std::string& message)
+                {
+                    return message.find(needle) != std::string::npos;
+                });
+            require(iterator != capture.messages.end(),
+                    "prefetch replay mutation target is missing");
+            return static_cast<std::size_t>(
+                std::distance(capture.messages.begin(), iterator));
+        };
+        const auto copyCapture = [](const DebugCapture& source,
+                                    DebugCapture& destination)
+        {
+            destination.messages = source.messages;
+            destination.timestamps = source.timestamps;
+        };
+        const auto eraseEvent = [&messageIndex](DebugCapture& capture,
+                                                const std::string& needle)
+        {
+            const std::size_t index = messageIndex(capture, needle);
+            capture.messages.erase(capture.messages.begin() + index);
+            capture.timestamps.erase(capture.timestamps.begin() + index);
+        };
+        const auto httpRejected = [&stats](const DebugCapture& candidate)
+        {
+            try
+            {
+                static_cast<void>(buildHttpProof(candidate, stats));
+                return false;
+            }
+            catch (const std::exception&)
+            {
+                return true;
+            }
+        };
+        const auto metadataRejected = [&proof](const DebugCapture& candidate)
+        {
+            try
+            {
+                static_cast<void>(buildMetadataPrefetchProof(candidate, proof));
+                return false;
+            }
+            catch (const std::exception&)
+            {
+                return true;
+            }
+        };
+
+        DebugCapture transportBeforeDetach;
+        copyCapture(replay, transportBeforeDetach);
+        const std::string transportEvent = transportBeforeDetach.messages[
+            messageIndex(transportBeforeDetach, "ParallelHeadRange: transport")];
+        eraseEvent(transportBeforeDetach, "ParallelHeadRange: transport");
+        insertReplayEventBefore(
+            transportBeforeDetach, "ParallelHeadRange: detach-success=range",
+            transportEvent, std::chrono::nanoseconds(474401786390000));
+        require(metadataRejected(transportBeforeDetach),
+                "prefetch replay accepted transport before successful detaches");
+
+        DebugCapture missingLogical;
+        copyCapture(replay, missingLogical);
+        eraseEvent(missingLogical, "ParallelHeadRange: logical-get-complete");
+        require(httpRejected(missingLogical),
+                "prefetch replay accepted a missing logical GET event");
+        DebugCapture duplicateLogical;
+        copyCapture(replay, duplicateLogical);
+        const std::size_t logicalIndex = messageIndex(
+            duplicateLogical, "ParallelHeadRange: logical-get-complete");
+        duplicateLogical.messages.insert(
+            duplicateLogical.messages.begin() + logicalIndex,
+            duplicateLogical.messages[logicalIndex]);
+        duplicateLogical.timestamps.insert(
+            duplicateLogical.timestamps.begin() + logicalIndex,
+            duplicateLogical.timestamps[logicalIndex]);
+        require(httpRejected(duplicateLogical),
+                "prefetch replay accepted duplicate logical GET events");
+        DebugCapture mismatchedLogicalBytes;
+        copyCapture(replay, mismatchedLogicalBytes);
+        mismatchedLogicalBytes.messages[messageIndex(
+            mismatchedLogicalBytes, "ParallelHeadRange: logical-get-complete")] =
+            "VSICURL: ParallelHeadRange: logical-get-complete bytes=131071";
+        require(httpRejected(mismatchedLogicalBytes),
+                "prefetch replay accepted mismatched logical GET bytes");
+        DebugCapture malformedLogical;
+        copyCapture(replay, malformedLogical);
+        malformedLogical.messages[messageIndex(
+            malformedLogical, "ParallelHeadRange: logical-get-complete")] =
+            "VSICURL: ParallelHeadRange: logical-get-complete bytes=oops";
+        require(httpRejected(malformedLogical),
+                "prefetch replay accepted a malformed logical GET integer");
+
+        DebugCapture missingTransport;
+        copyCapture(replay, missingTransport);
+        eraseEvent(missingTransport, "ParallelHeadRange: transport");
+        require(metadataRejected(missingTransport),
+                "prefetch replay accepted a missing transport event");
+        DebugCapture duplicateTransport;
+        copyCapture(replay, duplicateTransport);
+        const std::size_t transportIndex = messageIndex(
+            duplicateTransport, "ParallelHeadRange: transport");
+        duplicateTransport.messages.insert(
+            duplicateTransport.messages.begin() + transportIndex,
+            duplicateTransport.messages[transportIndex]);
+        duplicateTransport.timestamps.insert(
+            duplicateTransport.timestamps.begin() + transportIndex,
+            duplicateTransport.timestamps[transportIndex]);
+        require(metadataRejected(duplicateTransport),
+                "prefetch replay accepted duplicate transport events");
+
+        const auto transportRowRejected =
+            [&copyCapture, &messageIndex, &metadataRejected, &replay](
+                const std::string& event)
+        {
+            DebugCapture candidate;
+            copyCapture(replay, candidate);
+            candidate.messages[messageIndex(
+                candidate, "ParallelHeadRange: transport")] = event;
+            return metadataRejected(candidate);
+        };
+        require(transportRowRejected(
+                    "VSICURL: ParallelHeadRange: transport head-connection=-1 "
+                    "range-connection=-1 head-http=2 range-http=2"),
+                "prefetch replay accepted negative connection IDs");
+        require(transportRowRejected(
+                    "VSICURL: ParallelHeadRange: transport head-connection=0 "
+                    "range-connection=8 head-http=2 range-http=2"),
+                "prefetch replay accepted distinct connection IDs");
+        require(transportRowRejected(
+                    "VSICURL: ParallelHeadRange: transport head-connection=0 "
+                    "range-connection=0 head-http=1 range-http=2"),
+                "prefetch replay accepted HTTP/1 for HEAD");
+        require(transportRowRejected(
+                    "VSICURL: ParallelHeadRange: transport head-connection=0 "
+                    "range-connection=0 head-http=2 range-http=1"),
+                "prefetch replay accepted HTTP/1 for Range");
+        require(transportRowRejected(
+                    "VSICURL: ParallelHeadRange: transport head-connection=zero "
+                    "range-connection=0 head-http=2 range-http=2"),
+                "prefetch replay accepted a malformed transport integer");
+
+        DebugCapture misleadingGeneric;
+        copyCapture(replay, misleadingGeneric);
+        bool replacedGeneric = false;
+        for (std::size_t index = misleadingGeneric.messages.size(); index-- > 0;)
+        {
+            if (misleadingGeneric.messages[index].find(
+                    "Connection #0 to host 127.0.0.1 left intact") ==
+                std::string::npos)
+            {
+                continue;
+            }
+            misleadingGeneric.messages[index] =
+                "CURL_INFO_TEXT: Connection #8 to host 127.0.0.1 left intact";
+            replacedGeneric = true;
+            break;
+        }
+        require(replacedGeneric,
+                "prefetch replay lacked the generic marker mutation target");
+        require(!metadataRejected(misleadingGeneric),
+                "prefetch replay inferred roles from a misleading generic marker");
     }
 
     struct PixelWindow
@@ -3998,6 +4305,7 @@ int runMain(int argc, char** argv)
     verifyRangeAccessConfig(processProfile);
     verifyLatencyGateRegression();
     verifyLiveCommandAndSummaryRegression();
+    verifyPrefetchReplayRegression();
     verifyHttpParserRegression();
     registerScienceRuntime();
     verifyGeoreferenceRegression();

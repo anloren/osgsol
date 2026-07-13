@@ -256,7 +256,7 @@
 +        bColdRegion && !bGetHeaders && nTryCount == 1 && !bRetryWithGet &&
 +        !bS3LikeRedirect && knDOWNLOAD_CHUNK_SIZE == 131072 &&
 +        !poFS->IsParallelHeadRangeDisabled();
-@@ -1269,0 +1502,232 @@
+@@ -1269,0 +1502,256 @@
 +    if (bAttemptParallel)
 +    {
 +        sParallelResult.bAttempted = true;
@@ -406,6 +406,27 @@
 +                    ? sRangeHeaderWriter.nConnectionId
 +                    : sRangeWriter.nConnectionId;
 +            }
++            const int nHeadHTTPMajor =
++                sParallelResult.nHeadHTTPVersion == CURL_HTTP_VERSION_2_0
++                ? 2
++                : (sParallelResult.nHeadHTTPVersion == CURL_HTTP_VERSION_1_0 ||
++                   sParallelResult.nHeadHTTPVersion == CURL_HTTP_VERSION_1_1)
++                    ? 1
++                    : 0;
++            const int nRangeHTTPMajor =
++                sParallelResult.nRangeHTTPVersion == CURL_HTTP_VERSION_2_0
++                ? 2
++                : (sParallelResult.nRangeHTTPVersion == CURL_HTTP_VERSION_1_0 ||
++                   sParallelResult.nRangeHTTPVersion == CURL_HTTP_VERSION_1_1)
++                    ? 1
++                    : 0;
++            CPLDebug(poFS->GetDebugKey(),
++                     "ParallelHeadRange: transport head-connection="
++                     CPL_FRMT_GIB " range-connection=" CPL_FRMT_GIB
++                     " head-http=%d range-http=%d",
++                     static_cast<GIntBig>(sParallelResult.nHeadConnectionId),
++                     static_cast<GIntBig>(sParallelResult.nRangeConnectionId),
++                     nHeadHTTPMajor, nRangeHTTPMajor);
 +        }
 +        else
 +        {
@@ -463,6 +484,9 @@
 +        if (sRangeHeaderData.pBuffer)
 +            sParallelResult.osRangeHeaders = sRangeHeaderData.pBuffer;
 +        NetworkStatisticsLogger::LogGET(sParallelResult.nRangeSize);
++        CPLDebug(poFS->GetDebugKey(),
++                 "ParallelHeadRange: logical-get-complete bytes=%zu",
++                 sParallelResult.nRangeSize);
 +        const auto CleanupRangeHandle = [&]()
 +        {
 +            CleanupParallelHandle(
