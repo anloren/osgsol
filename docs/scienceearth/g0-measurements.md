@@ -1936,9 +1936,14 @@ The original candidate/formal/final helper scripts were ignored mutable files: t
 The source is delimited by unique extraction markers. Its recorded source SHA-256 and deterministic offline transcript SHA-256 are populated after extraction from the exact staged document and rechecked from clean committed `HEAD`.
 
 ```text
-SOURCE_SHA256=a323b698030b2168fca8a533d2ff043269cf1edcd16f99067ccf812b31829591
-TRANSCRIPT_SHA256=b56a4a65c2a4b400f7d7e9870ea76b328531b171ee37edd80084ac5563d1be93
+SOURCE_SHA256=7c2008834b24e6af519390a05dc8a9317c21f29e40ecc535e992d3843211f661
+TRANSCRIPT_SHA256=7619084e74eb89e8cf2d79b792f4e21d8b151e6461028b266e52cd651906531d
 ```
+
+The final v4 review found that the first committed auditor admitted HTTP 408 even though the
+runtime classifier and approved policy contain exactly `429/500/502/503/504`. The source above
+now enforces that exact five-code set; the revised source and deterministic transcript hashes are
+the bindings recorded here. No frozen v4 network artifact or decision value changed.
 
 The exact clean-`HEAD` wrapper below is fail-closed. It rejects a tracked-dirty worktree, requires
 exactly one source begin marker and one source end marker, extracts only from committed `HEAD`,
@@ -1954,8 +1959,8 @@ umask 077
 
 doc=docs/scienceearth/g0-measurements.md
 transcript=.superpowers/sdd/task-3-v4-posthoc-audit.log
-expected_source_sha=a323b698030b2168fca8a533d2ff043269cf1edcd16f99067ccf812b31829591
-expected_transcript_sha=b56a4a65c2a4b400f7d7e9870ea76b328531b171ee37edd80084ac5563d1be93
+expected_source_sha=7c2008834b24e6af519390a05dc8a9317c21f29e40ecc535e992d3843211f661
+expected_transcript_sha=7619084e74eb89e8cf2d79b792f4e21d8b151e6461028b266e52cd651906531d
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
     printf '%s\n' 'tracked worktree/index must be clean' >&2
@@ -2011,7 +2016,7 @@ printf '%s\n' 'WRAPPER_AUDIT=PASS'
 The exact deterministic output is:
 
 ```text
-SOURCE_SHA256=a323b698030b2168fca8a533d2ff043269cf1edcd16f99067ccf812b31829591
+SOURCE_SHA256=7c2008834b24e6af519390a05dc8a9317c21f29e40ecc535e992d3843211f661
 IMMUTABLE_OLD_V2_V3_PRIVATE_BINDINGS=PASS
 DESKTOP_PROTECTED_TUPLE=91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18/14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214/414/355
 V4_MANIFESTS=3/3;ENTRIES=31/31/31;RAW_STATS_PROOFS=10/10/10_EACH;FILES=0400;ROOTS=0500
@@ -2365,7 +2370,7 @@ def verify_prefetch_proofs(label, evidence_relative, summary_relative, fixtures)
                                         (400, 625))[index - 1]
                 require(item["range"] == "bytes=0-131071" and
                         item["attempt"] == index and
-                        item["code"] in (408, 429, 500, 502, 503, 504) and
+                        item["code"] in (429, 500, 502, 503, 504) and
                         delay_min <= item["delay_ms"] <= delay_max and
                         item["http_major"] == 2,
                         f"{label}/{stem}: coordinator retry fields mismatch")
@@ -2460,7 +2465,7 @@ def verify_prefetch_proofs(label, evidence_relative, summary_relative, fixtures)
                     range_method < first_target_response,
                     f"{label}/{stem}: overlap chronology mismatch")
 
-            require(all(code in (200, 206, 408, 429, 500, 502, 503, 504)
+            require(all(code in (200, 206, 429, 500, 502, 503, 504)
                         for code in proof["response_codes"]),
                     f"{label}/{stem}: response code mismatch")
             response_codes.update(proof["response_codes"])
