@@ -174,3 +174,54 @@ PUBLIC_PREFETCH_DIAGNOSTIC=FAIL
 HUMAN_PRODUCT_SIGN_OFF=PENDING
 DESKTOP_PACKAGE=NOT_READY
 RECORDED_DATE=2026-07-13
+
+## Remediation Task 3 public requalification v2 decision
+
+Evidence classification: named summary/raw/stats/proof hashes and contents, plus current
+filesystem file counts, mtimes, and absence, are independently inspectable. Exact preflight
+result/timestamp, process exit statuses, process counts/order/no-rerun, candidate console
+timing/phase lines, and final-verifier result are contemporaneous operator console observations
+only. Their stdout, preflight, and final-verifier transcripts were not preserved, so they are not
+independently hash-verifiable.
+
+Contemporaneous operator console observation (preflight transcript not preserved): the binding
+snapshot reported PASS at `2026-07-13T10:30:33+0800` on clean commit
+`ea96c86ee2668ab701f6801293edb1d1d2bae5e7`, with all six immutable hashes, protected Desktop
+fingerprint/helper digest/counts, credential-free loopback HTTP proxy class, and absent v2 roots
+matching the authorized baseline. This before-public-use claim is not independently
+hash-verifiable.
+
+Contemporaneous operator console observation (process stdout not preserved): exactly one
+optimized control process and one enforced prefetch candidate process ran in that order, with no
+reruns; the control completed 10/10 and exited `0`. The process count/order/no-rerun and exit
+status are not independently hash-verifiable. Independently, the hashed control summary status is
+`FAIL`: NVIDIA median/P95 is `3475.268042/3771.631000 ms`, so the median exceeds `3000 ms`; Hong
+Kong is `2747.161708/2924.877542 ms`. Its SHA-256 is
+`0b59ba209faf574f1439f78f6fa53b16e81b20e05ae4b87ae2ef90c43de59fc0`.
+
+Current filesystem counts show five NVIDIA and four Hong Kong candidate proof files. The hashed
+Hong Kong iteration 5 raw artifact records an overlapping initial HTTP/2 Range returning `500`
+with a 17-byte body, and no proof file exists for that iteration. Contemporaneous operator console
+observation (process stdout not preserved): the candidate exited `1` and printed
+`transient HTTP responses do not reconcile with CPL retry events`. That exit status and exact
+diagnostic are not independently hash-verifiable. The hashed atomic summary is `ERROR` with zero
+cases and SHA-256
+`1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff`. The complete candidate
+proof is therefore absent. Under the operator-recorded no-rerun decision above, this sample set is
+frozen; the no-rerun history is not independently hash-verifiable.
+
+Formal promotion was forbidden. Current tracked CTest profile remains `optimized`, and the
+current filesystem has no v2 formal root. Contemporaneous operator console observation
+(stdout/final-verifier transcript not preserved): formal/downstream gate process counts were zero,
+the protected Desktop was not packaged or replaced, and no tag, push, G1 work, or threshold change
+occurred. Those process/no-action statements are not independently hash-verifiable.
+
+G0_DECISION=STOP
+REASON=Hashed raw/stats and the absent proof establish an incomplete Hong Kong iteration 5 after HTTP 500; an unpreserved contemporaneous operator console observation recorded exit 1 and a retry-reconciliation diagnostic; the hashed atomic summary is ERROR with zero cases.
+RECORDED_BY=Codex automated remediation Task 3 public requalification v2
+G0_AUTOMATED_GATES=NOT_RUN
+AUTOMATED_GATE_PROCESS_COUNT_EVIDENCE=CONTEMPORANEOUS_OPERATOR_CONSOLE_OBSERVATION_ONLY; TRANSCRIPT_NOT_PRESERVED; NOT_INDEPENDENTLY_HASH_VERIFIABLE
+PUBLIC_REQUALIFICATION_V2=FAIL
+HUMAN_PRODUCT_SIGN_OFF=PENDING
+DESKTOP_PACKAGE=NOT_READY
+RECORDED_DATE=2026-07-13

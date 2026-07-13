@@ -544,3 +544,162 @@ The immutable rejected result remains part of the record.
 G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V2=AUTHORIZED_NOT_RUN
 DESKTOP_PACKAGE=NOT_READY
+
+## Remediation Task 3 one-shot public requalification v2
+
+Evidence classification for this section: SHA-256 values and content extracted from the named
+summary, raw, stats, and proof artifacts, plus current filesystem file counts, mtimes, and
+absence, are independently inspectable. Exact preflight result and timestamp, process exit
+statuses, process counts/order/no-rerun statements, candidate console timing/phase lines, and the
+final-verifier result are contemporaneous operator console observations only. Their stdout,
+preflight, and final-verifier transcripts were not preserved, so those observations are not
+independently hash-verifiable.
+
+Contemporaneous operator console observation (preflight transcript not preserved): the binding
+pre-call snapshot reported PASS at `2026-07-13T10:30:33+0800` on clean commit
+`ea96c86ee2668ab701f6801293edb1d1d2bae5e7`. It recorded the active proxy only as a
+credential-free loopback HTTP endpoint. It reported the protected Desktop canonical fingerprint
+as
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18`; the exact committed
+`ScienceProbeBuilderTests.tree_digest()` helper returned
+`14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214` over 414 recursive
+entries and 355 regular non-symlink files. The formal CTest profile was still `optimized` with
+five iterations. Both v2 diagnostic paths, both v2 summary paths, and the v2 formal root were
+reported absent. These preflight observations are not independently hash-verifiable because the
+preflight stdout was not preserved.
+
+The preflight console reported that all six protected hashes matched immediately before public
+use; that timing claim is an operator observation only. The hash values themselves remain
+independently recomputable from the preserved artifacts:
+
+| Protected artifact | Binding SHA-256 |
+|---|---|
+| Rejected control summary | `f793f1c3561e3f746ace2fca164637cd5d238fa81c39298b9a2e29ec2b781096` |
+| Rejected candidate summary | `1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff` |
+| Rejected candidate raw log | `3312a78a073140ea1422ece0ffbc927ce853a4d7b8cec02f3033734a7e217a3a` |
+| Rejected candidate network statistics | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` |
+| Older baseline formal summary | `17ff3cd876e7995c5257fad1f2da7f27bf0ae7901d46716829f1440d16a321ed` |
+| Older optimized/live formal summary | `e4eb9ea1a8d5795db6197110ba96f4851c127dbe06b6bfcae5d3e9ea9b466dfe` |
+
+Contemporaneous operator console observation (process stdout not preserved): the optimized
+control and prefetch candidate each ran exactly once, control first, as two separate executable
+processes with separate v2 output paths; neither was rerun. The same unpreserved console record
+reported that the control exited `0` after 10/10 iterations. These process-count, order, no-rerun,
+and exit-status statements are not independently hash-verifiable.
+
+Independently, the hashed control summary contains two five-iteration cases and status `FAIL`
+because NVIDIA's median exceeded the immutable limit; Hong Kong passed. Its SHA-256 is
+`0b59ba209faf574f1439f78f6fa53b16e81b20e05ae4b87ae2ef90c43de59fc0`.
+
+| Control case | Iteration | Total / open / georeference / read / close ms | GET successful/actual; HEAD; stats GET | Successful / actual / transient / conservative bytes | Retries |
+|---|---:|---|---|---|---:|
+| NVIDIA | 1 | 3726.996750 / 2475.881958 / 13.598000 / 1237.333250 / 0.183542 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| NVIDIA | 2 | 3031.761959 / 1847.655500 / 1.396459 / 1182.609041 / 0.100959 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| NVIDIA | 3 | 3099.048208 / 1928.344000 / 0.348708 / 1170.255334 / 0.100166 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| NVIDIA | 4 | 3771.631000 / 2495.449583 / 1.078750 / 1274.922584 / 0.180083 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| NVIDIA | 5 | 3475.268042 / 2306.899834 / 0.756833 / 1167.433667 / 0.177708 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| Hong Kong | 1 | 2924.877542 / 1893.256792 / 0.994542 / 1030.452708 / 0.173500 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 2 | 2652.629125 / 1807.329291 / 1.299250 / 843.655084 / 0.345500 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 3 | 2796.605875 / 1839.025750 / 0.953541 / 956.434792 / 0.191792 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 4 | 2640.291500 / 1692.710250 / 1.171916 / 945.885917 / 0.523417 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 5 | 2747.161708 / 1903.087916 / 1.166667 / 842.598083 / 0.309042 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+
+| Control aggregate | NVIDIA | Hong Kong |
+|---|---:|---:|
+| Median / P95 ms | 3475.268042 / 3771.631000 | 2747.161708 / 2924.877542 |
+| Summed open / georeference / read / close / total ms | 11054.230875 / 17.178750 / 6032.553876 / 0.742458 / 17104.705959 | 9135.409999 / 5.585916 / 4619.026584 / 1.543251 / 13761.565750 |
+| GET successful/actual; HEAD; stats GET | 35/35; 5; 10 | 20/20; 5; 10 |
+| Successful / actual / transient / conservative bytes | 25054055 / 25054055 / 0 / 25054055 | 6320460 / 6320460 / 0 / 6320460 |
+| Source size | 3700007174 | 2352783157 |
+| Retries | 0 | 0 |
+| Status | FAIL, median above 3000 ms | PASS |
+
+Contemporaneous operator console observation (process stdout not preserved): the enforced
+prefetch process exited `1` during Hong Kong iteration 5 with
+`transient HTTP responses do not reconcile with CPL retry events`. The exact exit status and
+diagnostic line are not independently hash-verifiable. Independently, the filesystem contains
+five NVIDIA proofs and four Hong Kong proofs, and the hashed atomic summary has status `ERROR`,
+contains zero cases, and hashes to
+`1fc1f695aec9930ac6bfe540dd11829bc6ffb0b12c01ec4f952a1b3879eea5ff`. This byte-identical
+empty-error summary is in the new v2 path. The old/rejected artifacts currently retain the six
+hashes above; that verifies their current content, not the unpreserved terminal history.
+
+The exact timing and phase values in the next table are contemporaneous operator console
+observations whose stdout was not preserved; they are not independently hash-verifiable. For the
+nine completed rows, the GET/HEAD/stats/byte/retry columns are independently recorded by the
+hashed raw/stats/proof triplets. The Hong Kong iteration 5 row is limited to its hashed raw and
+stats artifacts. None of these partial rows form a complete accepted candidate sample because the
+atomic summary rejected the run:
+
+| Candidate case | Iteration | Total / open / georeference / read / close ms | GET successful/actual; HEAD; stats GET | Successful / actual / transient / conservative bytes | Retries |
+|---|---:|---|---|---|---:|
+| NVIDIA | 1 | 2790.07 / 1572.97 / 10.993 / 1205.94 / 0.168791 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| NVIDIA | 2 | 2750.87 / 1578.86 / 1.13163 / 1170.70 / 0.177917 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| NVIDIA | 3 | 2832.01 / 1573.41 / 1.24283 / 1257.07 / 0.285250 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| NVIDIA | 4 | 2641.63 / 1470.16 / 0.812541 / 1170.47 / 0.185917 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| NVIDIA | 5 | 2628.96 / 1458.67 / 1.14604 / 1168.96 / 0.177334 | 7/7; 1; 2 | 5010811 / 5010811 / 0 / 5010811 | 0 |
+| Hong Kong | 1 | 2433.78 / 1564.08 / 1.23737 / 867.747 / 0.710959 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 2 | 2209.19 / 1375.02 / 1.03846 / 832.812 / 0.321167 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 3 | 2403.25 / 1484.32 / 1.20471 / 917.408 / 0.316125 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 4 | 2332.39 / 1489.94 / 1.15842 / 841.075 / 0.217875 | 4/4; 1; 2 | 1264092 / 1264092 / 0 / 1264092 | 0 |
+| Hong Kong | 5 | no accepted timing or proof | observed raw 4 successful / 5 actual GET; 1 HEAD; stats GET 3 | stats downloaded 1264109, including the 17-byte transient body | 500 not reconciled |
+
+The unpreserved operator console emitted NVIDIA median/P95 `2750.87/2832.01 ms` and summed phase
+values `7654.07/15.3261/5973.15/0.995209 ms` for open/georeference/read/close. Those timing and
+phase values are not independently hash-verifiable. The five hashed NVIDIA proofs independently
+record 35/35 GETs, five HEADs, ten stats GET operations, 25,054,055 successful and actual body
+bytes, zero declared transient bytes, and zero retries. Those partial values cannot qualify the
+candidate. Hong Kong iteration 5's hashed raw artifact records an overlapping initial HTTP/2
+Range returning `500` with a 17-byte body while HEAD returned `200`; it records
+`logical-get-complete bytes=17`, fallback, the later exact `bytes=0-131071` read, and three bounded
+multi-ranges returning `206`. The hashed stats artifact records 1,264,109 downloaded bytes. No
+proof JSON exists for that iteration. The statement that the process rejected this chronology for
+lacking a matching CPL retry event is the unpreserved operator diagnostic quoted above.
+
+Every accepted candidate proof recorded exact first Range `0-131071`, overlapping HEAD/Range,
+HTTP/2 for both handles, equal explicit connection IDs, a published cache, correct fixture output,
+bounded bytes, and zero retry. The complete required 10-iteration proof is nevertheless absent.
+
+### V2 control artifact hashes
+
+| Iteration | Raw SHA-256 | Stats SHA-256 | Proof SHA-256 |
+|---|---|---|---|
+| `optimized-hong_kong-1` | `d924d50008b72437fdc3e55c58c9752d7f0b65b61284b501bbb3ee1969c00e12` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `b4e1c2f3079869021eb8efa873e6dbc504751fdd34298349c069210dabb6c2c8` |
+| `optimized-hong_kong-2` | `8bf93e338293aa65366e85bcac250bf4e2e5ff0fa9b4b2a04471aa6508ce4c2f` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `8bac34615ff79ab6daea7a9e12ff69074caa010683b6060487fc07d6fa2d46a1` |
+| `optimized-hong_kong-3` | `cef27ffd3ec32db26456376c162fc92ce78418ae4f7430a649a3213fd13e714d` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `b4e1c2f3079869021eb8efa873e6dbc504751fdd34298349c069210dabb6c2c8` |
+| `optimized-hong_kong-4` | `74bd5ae05e094a206477dfb062bbda09c157df1746370dbd3f2447766307fb1d` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `2d7eed81bb68e48c9a7aba80b861a4288ec362cf9bceab9f0c11e2d0539451a6` |
+| `optimized-hong_kong-5` | `3d1b8db16a4e78a8e0c27be669363448983065942f3389c4cce14dd0b2aecd71` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `8bac34615ff79ab6daea7a9e12ff69074caa010683b6060487fc07d6fa2d46a1` |
+| `optimized-nvidia_hq-1` | `e5670ed476381d7a88d713417c000bdefb8bb93ef851494efebfc67f9c59b216` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `78851862e3c3a90d18fd012c182019907234c19e7efb698332637cc3dcd087ff` |
+| `optimized-nvidia_hq-2` | `9c6bc931f2f1d0e20d5fa5fac289e4338300f1617f6e7e1c7772c39092a35831` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `5db4834db1b1b62b0c45421b0438c9870dba5683832dc977e6b4e7de1974e55e` |
+| `optimized-nvidia_hq-3` | `09bb302001fe28c31e54dabd1e557b3e0c8e52b39ef5211c2622661ea82cd93e` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `cb94ed252db861434583d1fc1721c80dc13dc97322caef4fe4646b4499601c1c` |
+| `optimized-nvidia_hq-4` | `13a4b772e63e0b8f817b4828adcb41d9a659bec322d509eddff6ea741c6b4523` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `3db6f1f0c60decb06ea3a2ff0ae2174d5513529e4e8b68c1c032ca0bd93009b4` |
+| `optimized-nvidia_hq-5` | `d73a8a53264f076b63a33b69f481ed5699ff9284aaa99a32183896f0e74b49ea` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `d492859747c1385a4b139d3915280a45a93c9d69610be5ff9113fc1a231fc1a3` |
+
+### V2 candidate artifact hashes
+
+| Iteration | Raw SHA-256 | Stats SHA-256 | Proof SHA-256 |
+|---|---|---|---|
+| `prefetch-hong_kong-1` | `b90a64c3f5bb07fa34e22aaef0af6c1f2b6f8d53bd14921eea713a1731fa8d80` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `713442423979d9780d5316754cb197ef6976fbfa6e0233184a3f9a00ad61a6ca` |
+| `prefetch-hong_kong-2` | `6c8f0229e7ea5f5e1f09924c2ac1d70734b0a1d0149cfb68de87b1929655c4a9` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `4e5da004266ce20810f24bb260ce99eb8499eb0371c0e404013db6f9d8c732d2` |
+| `prefetch-hong_kong-3` | `ac5d7b0c6c6f8538b4caccef5da663dbb83f08568d1a72a9c9d52bc7e4685465` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `4e5da004266ce20810f24bb260ce99eb8499eb0371c0e404013db6f9d8c732d2` |
+| `prefetch-hong_kong-4` | `bd98f1a06ed0d594625e200b35076b2c2959c10c88a6c2a1baf0b5cf4fb2aad7` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `a831394cb00c0136b0e31743a2c58b075ed8f1457d473b8673522caabcd53731` |
+| `prefetch-hong_kong-5` | `f32cfdfd05f50a3de8f34b4f69e1e2cefe61d667e20936ddcf86f1fa8b1a429e` | `f54110c20ab81230c5d3af708f2df4d9d8754e5957366875c162b0395d2c1974` | absent; parser rejected the iteration |
+| `prefetch-nvidia_hq-1` | `3123151aacce8660a4bf2957793d5cc32973d2acfaee16a77037ef53e0ce6bd6` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `8fb3837b2faf776118ed747b03896f8c643c3d7abf4522c9c3b779794bc2c7cf` |
+| `prefetch-nvidia_hq-2` | `3078be57af6922e2a5ac4daa9204c60c2b735946a84fa65dece457017b81c318` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `6c050b99ee7a696c228c82d62f9ea68de0752b6e6066df8eb16feb9464825e8b` |
+| `prefetch-nvidia_hq-3` | `5fe6c1e7069c74daf0ba2197698b963ccc3a9b78bf6e15fc2e31ba7faa79c4a0` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `4a157cb77250c16f9b320182a8cb4da868ae9f0fb46e987440f0db0a45c54643` |
+| `prefetch-nvidia_hq-4` | `308e896f4173d21f58f4fd49668ef2d224dffcede0a6477d096b4c46b5dd1387` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `4837de28b1a5ed9626a2538175670636cc388111f4784bea6cc66221bdef0e77` |
+| `prefetch-nvidia_hq-5` | `669199de9898bbfffe16027f681f69370dd6619e46a52fd4ed0bce19781ae686` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `2a90942362f552b42fb3cc5ca05e70406871f9cf58b0482c45488afed8951ea0` |
+
+The failed complete candidate proof forbids formal promotion. Current tracked
+`tests/CMakeLists.txt` remains `--profile optimized`, and the current filesystem has no
+`build/science_g0_prefetch/formal-evidence-v2` root. Contemporaneous operator console observation
+(stdout/final-verifier transcript not preserved): formal CTest and every formal/downstream audit,
+signature, size, export, path, memory, correctness, range, camera/cache, and clean-machine process
+count were zero, and no Desktop package was built or replaced. Those process-count and no-package
+statements are not independently hash-verifiable. The Task 2 section above records the last local
+canonical audit; it was not rerun as a Task 3 post-promotion gate and does not change this
+decision.
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V2=FAIL
+DESKTOP_PACKAGE=NOT_READY
