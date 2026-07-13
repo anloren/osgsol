@@ -2,6 +2,7 @@
 
 #include <cstdarg>
 #include <cstdlib>
+#include <map>
 #include <mutex>
 #include <string>
 
@@ -29,10 +30,29 @@ bool shouldFailRemove()
     return true;
 }
 
-template<typename Value>
-bool consumeOverride(const char* name, Value& replacement)
+struct GetInfoState
 {
-    const std::lock_guard<std::mutex> lock(faultMutex());
+    enum class Stage
+    {
+        None,
+        TransientStatus,
+        HttpVersion,
+        Connection,
+    };
+
+    long responseCode = 0;
+    Stage stage = Stage::None;
+};
+
+std::map<CURL*, GetInfoState>& getInfoStates()
+{
+    static std::map<CURL*, GetInfoState> states;
+    return states;
+}
+
+template<typename Value>
+bool consumeOverrideLocked(const char* name, Value& replacement)
+{
     const char* value = std::getenv(name);
     if (!value || !*value) return false;
     char* end = nullptr;
@@ -47,27 +67,49 @@ template<typename GetInfoFunction>
 CURLcode forwardGetInfo(GetInfoFunction realGetInfo, CURL* easyHandle,
                         CURLINFO info, void* output)
 {
-    static thread_local CURLINFO previousInfo = CURLINFO_NONE;
     const CURLcode result = realGetInfo(easyHandle, info, output);
-    if (result == CURLE_OK && output != nullptr)
+    if (result != CURLE_OK || output == nullptr) return result;
+
+    const std::lock_guard<std::mutex> lock(faultMutex());
+    GetInfoState& state = getInfoStates()[easyHandle];
+    if (info == CURLINFO_HTTP_CODE)
     {
-        if (info == CURLINFO_CONN_ID && previousInfo == CURLINFO_HTTP_VERSION)
-        {
-            curl_off_t replacement = 0;
-            if (consumeOverride("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", replacement))
-                *static_cast<curl_off_t*>(output) = replacement;
-        }
-        else if (info == CURLINFO_REDIRECT_COUNT)
-        {
-            long replacement = 0;
-            if (consumeOverride("OSGSOL_TEST_CURLINFO_REDIRECT_COUNT_ONCE",
-                                replacement))
-            {
-                *static_cast<long*>(output) = replacement;
-            }
-        }
+        state.responseCode = *static_cast<long*>(output);
+        state.stage = state.responseCode == 500
+            ? GetInfoState::Stage::TransientStatus
+            : GetInfoState::Stage::None;
     }
-    previousInfo = info;
+    else if (info == CURLINFO_HTTP_VERSION &&
+             state.stage == GetInfoState::Stage::TransientStatus)
+    {
+        state.stage = GetInfoState::Stage::HttpVersion;
+    }
+    else if (info == CURLINFO_CONN_ID &&
+             state.stage == GetInfoState::Stage::HttpVersion)
+    {
+        curl_off_t replacement = 0;
+        if (consumeOverrideLocked(
+                "OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", replacement))
+        {
+            *static_cast<curl_off_t*>(output) = replacement;
+        }
+        state.stage = GetInfoState::Stage::Connection;
+    }
+    else if (info == CURLINFO_REDIRECT_COUNT &&
+             state.stage == GetInfoState::Stage::Connection)
+    {
+        long replacement = 0;
+        if (consumeOverrideLocked(
+                "OSGSOL_TEST_CURLINFO_REDIRECT_COUNT_ONCE", replacement))
+        {
+            *static_cast<long*>(output) = replacement;
+        }
+        state.stage = GetInfoState::Stage::None;
+    }
+    else
+    {
+        state.stage = GetInfoState::Stage::None;
+    }
     return result;
 }
 }

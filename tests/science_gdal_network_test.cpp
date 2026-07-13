@@ -75,9 +75,12 @@ namespace
     constexpr std::int8_t NODATA_VALUE = -128;
     constexpr int LIVE_OVERVIEW_FACTOR = 4;
     constexpr std::uint64_t TRANSFER_BUDGET = 1024 * 1024;
+    constexpr std::uint64_t HTTP2_TEST_BODY_BUDGET = 4 * 131072;
     constexpr std::uint64_t LIVE_TRANSFER_BUDGET = 16 * 1024 * 1024;
     constexpr double MAX_MEDIAN_MS = 3000.0;
     constexpr double MAX_P95_MS = 8000.0;
+    constexpr long long TEST_CONNECTION_ID_SENTINEL =
+        922337203685477000LL;
     constexpr auto COORDINATOR_RETRY_CHRONOLOGY_ROUNDING_TOLERANCE =
         std::chrono::microseconds(999);
 
@@ -250,6 +253,7 @@ namespace
         std::vector<Http2StreamEvidence> streams;
         std::uint64_t maximumAttemptedBodyBytes = 0;
         std::uint64_t totalAttemptedBodyBytes = 0;
+        std::uint64_t totalReservedBodyBytes = 0;
     };
 
     struct PrefetchCase
@@ -625,7 +629,8 @@ namespace
         require(process.pid >= 0, "fork failed while starting HTTP/2 server");
         if (process.pid == 0)
         {
-            const std::string budget = std::to_string(4 * 131072);
+            const std::string budget =
+                std::to_string(HTTP2_TEST_BODY_BUDGET);
             setenv("OSGSOL_TEST_SERVER_PROTOCOL", protocol.c_str(), 1);
             execl(OSGSOL_NODE, OSGSOL_NODE, OSGSOL_SCIENCE_HTTP2_RANGE_SERVER,
                   "--file", fixture.string().c_str(),
@@ -694,6 +699,11 @@ namespace
                     static_cast<std::uint64_t>(
                         field(object,
                             "total_attempted_body_bytes").get<double>()));
+                evidence.totalReservedBodyBytes = std::max(
+                    evidence.totalReservedBodyBytes,
+                    static_cast<std::uint64_t>(
+                        field(object,
+                            "total_reserved_body_bytes").get<double>()));
                 record.aborted = field(object, "aborted").get<bool>();
             }
         }
@@ -713,6 +723,8 @@ namespace
             evidence.streams.push_back(item.second);
         }
         require(!evidence.streams.empty(), "HTTP/2 server logged no streams");
+        require(evidence.totalReservedBodyBytes <= HTTP2_TEST_BODY_BUDGET,
+                "HTTP/2 server oversubscribed its synchronous body budget");
         return evidence;
     }
 
@@ -899,7 +911,8 @@ namespace
                     if (std::string(prefetchCase.getInfoFault) == "connection")
                     {
                         setenv("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE",
-                               "922337203685477000", 1);
+                               std::to_string(TEST_CONNECTION_ID_SENTINEL).c_str(),
+                               1);
                     }
                     if (std::string(prefetchCase.getInfoFault) == "redirect")
                     {
@@ -1082,11 +1095,18 @@ namespace
                                 caseName + " emitted a malformed blocked event");
                     }
                 }
+                const bool hasExpectedBlockedConnection =
+                    std::string(prefetchCase.getInfoFault) == "connection"
+                    ? blocked.size() == 1 &&
+                        blocked.front().connectionId ==
+                            TEST_CONNECTION_ID_SENTINEL
+                    : blocked.size() == 1 &&
+                        blocked.front().connectionId >= 0;
                 require(blocked.size() == 1 &&
                             blocked.front().range == "bytes=0-131071" &&
                             blocked.front().code == 500 &&
                             blocked.front().reason == prefetchCase.blockedReason &&
-                            blocked.front().connectionId >= 0 &&
+                            hasExpectedBlockedConnection &&
                             blocked.front().httpMajor ==
                                 (std::string(prefetchCase.httpVersion) == "1.1"
                                     ? 1 : 2),
@@ -1453,56 +1473,69 @@ namespace
             for (const std::string& range : RANGES)
             {
                 const std::size_t expectedCount =
-                    range == RANGES[1] ? 2 : 1;
+                    range == RANGES[0] ? 1 : 2;
                 require(ranges[range].size() == expectedCount,
                         std::string(activation.name) + " request count changed for " +
                             range);
             }
             const auto* slow = ranges[RANGES[0]].front();
-            const auto* failed = ranges[RANGES[1]].front();
-            const auto* retry = ranges[RANGES[1]].back();
-            const auto* medium = ranges[RANGES[2]].front();
+            const auto* failedFirst = ranges[RANGES[1]].front();
+            const auto* retryFirst = ranges[RANGES[1]].back();
+            const auto* failedSecond = ranges[RANGES[2]].front();
+            const auto* retrySecond = ranges[RANGES[2]].back();
             const std::uint64_t latestInitialStart = std::max(
-                {slow->start, failed->start, medium->start});
+                {slow->start, failedFirst->start, failedSecond->start});
             const std::uint64_t earliestInitialEnd = std::min(
-                {slow->end, failed->end, medium->end});
-            require(slow->sessionId == failed->sessionId &&
-                        slow->sessionId == retry->sessionId &&
-                        slow->sessionId == medium->sessionId &&
+                {slow->end, failedFirst->end, failedSecond->end});
+            require(slow->sessionId == failedFirst->sessionId &&
+                        slow->sessionId == retryFirst->sessionId &&
+                        slow->sessionId == failedSecond->sessionId &&
+                        slow->sessionId == retrySecond->sessionId &&
                         latestInitialStart < earliestInitialEnd &&
-                        failed->status == 500 &&
-                        failed->attemptedBodyBytes == 17 &&
-                        retry->status == 206,
+                        failedFirst->status == 500 &&
+                        failedFirst->attemptedBodyBytes == 17 &&
+                        failedSecond->status == 500 &&
+                        failedSecond->attemptedBodyBytes == 17 &&
+                        retryFirst->status == 206 &&
+                        retrySecond->status == 206,
                     std::string(activation.name) +
                         " did not preserve one multiplexed HTTP/2 session");
             require(evidence.totalAttemptedBodyBytes ==
-                        3 * 65536 + 17 &&
-                        proof.actualGetCount == 4 &&
+                        3 * 65536 + 2 * 17 &&
+                        evidence.totalReservedBodyBytes ==
+                            3 * 65536 + 2 * 17 &&
+                        proof.actualGetCount == 5 &&
                         proof.actualHeadCount == 1 &&
                         proof.successfulGetCount == 3 &&
-                        proof.transientRetryCount == 1 &&
+                        proof.transientRetryCount == 2 &&
                         proof.transientRetryCodes ==
-                            std::map<int, int>{{500, 1}} &&
+                            std::map<int, int>{{500, 2}} &&
                         proof.successfulRangeBytes == 3 * 65536 &&
-                        proof.declaredTransientBytes == 17 &&
+                        proof.declaredTransientBytes == 2 * 17 &&
                         proof.statsGetOperationCount == 1,
                     std::string(activation.name) +
                         " multi-range bytes or network statistics did not reconcile");
             if (activation.pathSpecific)
             {
-                require(proof.immediateTransientRetryCount == 1 &&
-                            proof.immediateTransientRetryBytes == 17 &&
+                require(proof.immediateTransientRetryCount == 2 &&
+                            proof.immediateTransientRetryBytes == 2 * 17 &&
                             proof.immediateTransientRetryCodes ==
-                                std::map<int, int>{{500, 1}} &&
-                            proof.immediateRetries.size() == 1 &&
-                            retry->start < slow->end,
-                        "path immediate retry event is absent or the second "
-                        "multi-range request remained behind the slow sibling");
+                                std::map<int, int>{{500, 2}} &&
+                            proof.immediateRetries.size() == 2 &&
+                            std::set<std::string>({
+                                proof.immediateRetries[0].range,
+                                proof.immediateRetries[1].range}) ==
+                                std::set<std::string>({RANGES[1], RANGES[2]}) &&
+                            retryFirst->start < slow->end &&
+                            retrySecond->start < slow->end,
+                        "path immediate retry events are absent or either "
+                        "retry remained behind the slow sibling");
             }
             else
             {
                 require(proof.immediateTransientRetryCount == 0 &&
-                            retry->start >= slow->end,
+                            retryFirst->start >= slow->end &&
+                            retrySecond->start >= slow->end,
                         "global-only activation entered the immediate branch");
             }
         }
@@ -2899,9 +2932,9 @@ namespace
         require(immediateRetries.empty() || hasCompleteTimestamps,
                 "immediate retry proof is missing steady-clock timestamps");
         std::vector<bool> consumedOrdinaryRetries(retryEvents.size(), false);
-        std::vector<bool> consumedImmediateResponses(responses.size(), false);
         std::map<std::string, int> immediateAttemptsByRange;
         std::map<std::string, long long> immediateConnectionsByRange;
+        std::map<std::pair<int, std::uint64_t>, int> immediateResponseBodies;
         for (const TimedImmediateRetry& timedImmediate : immediateRetries)
         {
             const ImmediateRetryEvidence& immediate = timedImmediate.evidence;
@@ -2968,27 +3001,7 @@ namespace
             require(nextRequest->sent >= earliestRetry,
                     "immediate retry request preceded its declared delay");
 
-            int responseIndex = -1;
-            for (std::size_t index = 0; index < responses.size(); ++index)
-            {
-                if (consumedImmediateResponses[index]) continue;
-                const Response& response = responses[index];
-                const auto contentLength =
-                    response.headers.find("content-length");
-                if (response.code == immediate.code &&
-                    contentLength != response.headers.end() &&
-                    std::stoull(contentLength->second) == immediate.bytes &&
-                    response.completedIndex > failedRequest->messageIndex &&
-                    response.completedIndex < ordinary.messageIndex)
-                {
-                    require(responseIndex < 0,
-                            "immediate retry matches multiple transient responses");
-                    responseIndex = static_cast<int>(index);
-                }
-            }
-            require(responseIndex >= 0,
-                    "immediate retry has no matching transient response body");
-            consumedImmediateResponses[static_cast<std::size_t>(responseIndex)] = true;
+            ++immediateResponseBodies[{immediate.code, immediate.bytes}];
             ++proof.immediateTransientRetryCount;
             proof.immediateTransientRetryBytes += immediate.bytes;
             ++proof.immediateTransientRetryCodes[immediate.code];
@@ -3111,6 +3124,33 @@ namespace
             ++proof.coordinatorTransientFallbackCount;
             proof.coordinatorTransientFallbackBytes += fallback.bytes;
             ++proof.coordinatorTransientFallbackCodes[fallback.code];
+        }
+        if (!immediateRetries.empty())
+        {
+            require(immediateRetries.size() == retryEvents.size() &&
+                        std::all_of(consumedOrdinaryRetries.begin(),
+                                    consumedOrdinaryRetries.end(),
+                                    [](bool consumed) { return consumed; }),
+                    "immediate events do not cover every ordinary retry event");
+            std::map<std::pair<int, std::uint64_t>, int>
+                residualTransientResponseBodies;
+            int residualTransientResponseCount = 0;
+            for (const auto& response : transientResponseBodies)
+            {
+                if (response.second <= 0) continue;
+                residualTransientResponseBodies[response.first] =
+                    response.second;
+                residualTransientResponseCount += response.second;
+            }
+            require(residualTransientResponseCount ==
+                        static_cast<int>(immediateRetries.size()) &&
+                        immediateResponseBodies ==
+                            residualTransientResponseBodies &&
+                        proof.immediateTransientRetryCount ==
+                            static_cast<int>(retryEvents.size()) &&
+                        proof.immediateTransientRetryCodes == retryCodes,
+                    "immediate retry events do not reconcile with residual "
+                    "ordinary transient response bodies");
         }
         require(retryCodes == transientResponses,
                 "transient HTTP responses do not reconcile with CPL retry events");
@@ -3635,7 +3675,12 @@ namespace
         immediate.timestamps[10] = immediateEpoch + std::chrono::milliseconds(10);
         immediate.timestamps[11] = immediateEpoch + std::chrono::milliseconds(20);
         immediate.timestamps[12] = immediateEpoch + std::chrono::milliseconds(30);
-        immediate.timestamps[13] = immediateEpoch + std::chrono::milliseconds(130);
+        for (std::size_t index = 13; index < immediate.timestamps.size(); ++index)
+        {
+            immediate.timestamps[index] = immediateEpoch +
+                std::chrono::milliseconds(
+                    130 + static_cast<long long>(index - 13));
+        }
         const HttpProof immediateProof = buildHttpProof(immediate, stats);
         require(immediateProof.transientRetryCount == 1 &&
                     immediateProof.immediateTransientRetryCount == 1 &&
@@ -3650,6 +3695,97 @@ namespace
                         "\"immediate_transient_retry_count\": 1") !=
                         std::string::npos,
                 "immediate retry parser/schema regression fixture failed");
+
+        DebugCapture simultaneousImmediate;
+        simultaneousImmediate.messages = {
+            "CURL_INFO_HEADER_OUT: HEAD /tile.tiff HTTP/2\r\n"
+            "Host: data.example\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 200\r",
+            "CURL_INFO_HEADER_IN: content-length: 1000\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\n"
+            "Host: data.example\r\nRange: bytes=10-19\r\n\r\n",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\n"
+            "Host: data.example\r\nRange: bytes=20-29\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 500\r",
+            "CURL_INFO_HEADER_IN: content-length: 17\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "CURL_INFO_HEADER_IN: HTTP/2 500\r",
+            "CURL_INFO_HEADER_IN: content-length: 17\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "HTTP error code for https://data.example/tile.tiff range 10-19: 500. "
+            "Retrying again in 0.1 secs",
+            "VSICURL: ReadMultiRange: immediate-retry "
+            "range=bytes=10-19 status=500 bytes=17 attempt=1 "
+            "delay-ms=100 connection=7 http=2",
+            "HTTP error code for https://data.example/tile.tiff range 20-29: 500. "
+            "Retrying again in 0.1 secs",
+            "VSICURL: ReadMultiRange: immediate-retry "
+            "range=bytes=20-29 status=500 bytes=17 attempt=1 "
+            "delay-ms=100 connection=7 http=2",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\n"
+            "Host: data.example\r\nRange: bytes=10-19\r\n\r\n",
+            "CURL_INFO_HEADER_OUT: GET /tile.tiff HTTP/2\r\n"
+            "Host: data.example\r\nRange: bytes=20-29\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/2 206\r",
+            "CURL_INFO_HEADER_IN: content-range: bytes 10-19/1000\r",
+            "CURL_INFO_HEADER_IN: content-length: 10\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "VSICURL: Got response_code=206",
+            "CURL_INFO_HEADER_IN: HTTP/2 206\r",
+            "CURL_INFO_HEADER_IN: content-range: bytes 20-29/1000\r",
+            "CURL_INFO_HEADER_IN: content-length: 10\r",
+            "CURL_INFO_HEADER_IN: \r",
+            "VSICURL: Got response_code=206",
+        };
+        simultaneousImmediate.timestamps.resize(
+            simultaneousImmediate.messages.size());
+        for (std::size_t index = 0;
+             index < simultaneousImmediate.timestamps.size(); ++index)
+        {
+            simultaneousImmediate.timestamps[index] = immediateEpoch +
+                std::chrono::milliseconds(static_cast<long long>(index));
+        }
+        simultaneousImmediate.timestamps[12] = immediateEpoch +
+            std::chrono::milliseconds(20);
+        simultaneousImmediate.timestamps[13] = immediateEpoch +
+            std::chrono::milliseconds(30);
+        simultaneousImmediate.timestamps[14] = immediateEpoch +
+            std::chrono::milliseconds(31);
+        simultaneousImmediate.timestamps[15] = immediateEpoch +
+            std::chrono::milliseconds(32);
+        simultaneousImmediate.timestamps[16] = immediateEpoch +
+            std::chrono::milliseconds(130);
+        simultaneousImmediate.timestamps[17] = immediateEpoch +
+            std::chrono::milliseconds(132);
+        for (std::size_t index = 18;
+             index < simultaneousImmediate.timestamps.size(); ++index)
+        {
+            simultaneousImmediate.timestamps[index] = immediateEpoch +
+                std::chrono::milliseconds(
+                    133 + static_cast<long long>(index - 18));
+        }
+        const std::string simultaneousStats =
+            "{\"methods\":{\"GET\":{\"count\":2,\"downloaded_bytes\":20},"
+            "\"HEAD\":{\"count\":1}}}";
+        const HttpProof simultaneousProof =
+            buildHttpProof(simultaneousImmediate, simultaneousStats);
+        require(simultaneousProof.actualGetCount == 4 &&
+                    simultaneousProof.successfulGetCount == 2 &&
+                    simultaneousProof.transientRetryCount == 2 &&
+                    simultaneousProof.transientRetryCodes ==
+                        std::map<int, int>{{500, 2}} &&
+                    simultaneousProof.immediateTransientRetryCount == 2 &&
+                    simultaneousProof.immediateTransientRetryBytes == 34 &&
+                    simultaneousProof.immediateTransientRetryCodes ==
+                        std::map<int, int>{{500, 2}} &&
+                    simultaneousProof.immediateRetries.size() == 2 &&
+                    simultaneousProof.immediateRetries[0].range ==
+                        "bytes=10-19" &&
+                    simultaneousProof.immediateRetries[1].range ==
+                        "bytes=20-29",
+                "simultaneous identical transient responses did not reconcile "
+                "as an immediate retry multiset");
 
         const auto isRejected = [&stats](const DebugCapture& candidate)
         {

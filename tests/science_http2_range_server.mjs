@@ -22,7 +22,8 @@ const MULTIRANGE_INTERVALS = new Map([
     ['bytes=262144-327679', { start: 262144, end: 327679, delayMs: 700 }],
     ['bytes=393216-458751', { start: 393216, end: 458751, delayMs: 0,
         transientOnce: true }],
-    ['bytes=524288-589823', { start: 524288, end: 589823, delayMs: 200 }],
+    ['bytes=524288-589823', { start: 524288, end: 589823, delayMs: 200,
+        transientOnce: true }],
 ]);
 
 function fail(message)
@@ -77,9 +78,11 @@ if (fixture.length <= PREFETCH_BYTES)
 const logFd = fs.openSync(options.logFile, 'w');
 let nextSessionId = 1;
 let totalAttemptedBodyBytes = 0;
+let totalReservedBodyBytes = 0;
 let getCount = 0;
 let headCount = 0;
 const rangeAttempts = new Map();
+const pendingInitialMultirangeResponses = new Map();
 let violation = null;
 const sessions = new Set();
 const activeStreamFinalizers = new Set();
@@ -112,11 +115,12 @@ function reject(stream, context, reason)
 
 function sendBody(stream, context, status, headers, body, bodyLimit = body.length)
 {
-    if (totalAttemptedBodyBytes + bodyLimit > options.budget)
+    if (totalReservedBodyBytes + bodyLimit > options.budget)
     {
         reject(stream, context, 'response body exceeds total budget');
         return;
     }
+    totalReservedBodyBytes += bodyLimit;
     stream.respond({ ':status': status, ...headers });
     emit({
         event: 'response_headers',
@@ -139,6 +143,7 @@ function sendBody(stream, context, status, headers, body, bodyLimit = body.lengt
             ...context,
             attempted_body_bytes: offset,
             total_attempted_body_bytes: totalAttemptedBodyBytes,
+            total_reserved_body_bytes: totalReservedBodyBytes,
             aborted,
             violation: null,
         });
@@ -229,12 +234,21 @@ server.on('request', (request, response) =>
             ...context,
             attempted_body_bytes: bodyBytes,
             total_attempted_body_bytes: totalAttemptedBodyBytes,
+            total_reserved_body_bytes: totalReservedBodyBytes,
             aborted: !response.writableEnded,
             violation: null,
         });
     });
     const send = (status, headers, body = Buffer.alloc(0)) =>
     {
+        if (totalReservedBodyBytes + body.length > options.budget)
+        {
+            violation ??= 'response body exceeds total budget';
+            status = 400;
+            headers = { 'content-length': '0' };
+            body = Buffer.alloc(0);
+        }
+        totalReservedBodyBytes += body.length;
         response.writeHead(status, headers);
         emit({
             event: 'response_headers',
@@ -372,6 +386,7 @@ server.on('stream', (stream, headers) =>
                 ...context,
                 attempted_body_bytes: 0,
                 total_attempted_body_bytes: totalAttemptedBodyBytes,
+                total_reserved_body_bytes: totalReservedBodyBytes,
                 aborted: !headEnded,
                 violation: null,
             });
@@ -411,22 +426,47 @@ server.on('stream', (stream, headers) =>
         }
         const attempt = (rangeAttempts.get(range) ?? 0) + 1;
         rangeAttempts.set(range, attempt);
-        if (interval.transientOnce && attempt === 1)
+        const maximumAttempts = interval.transientOnce ? 2 : 1;
+        if (attempt > maximumAttempts)
         {
-            sendBody(stream, context, 500, { 'content-length': '17' },
-                Buffer.from('transient-error!\n'));
+            reject(stream, context,
+                `unexpected multi-range retry ${attempt} for ${range}`);
             return;
         }
-        const body = fixture.subarray(interval.start, interval.end + 1);
-        const send = () => sendBody(stream, context, 206, {
-            'content-length': String(body.length),
-            'content-range':
-                `bytes ${interval.start}-${interval.end}/${fixture.length}`,
-        }, body);
-        if (interval.delayMs > 0)
-            setTimeout(send, interval.delayMs);
-        else
-            send();
+        const respond = () =>
+        {
+            if (interval.transientOnce && attempt === 1)
+            {
+                sendBody(stream, context, 500, { 'content-length': '17' },
+                    Buffer.from('transient-error!\n'));
+                return;
+            }
+            const body = fixture.subarray(interval.start, interval.end + 1);
+            const send = () => sendBody(stream, context, 206, {
+                'content-length': String(body.length),
+                'content-range':
+                    `bytes ${interval.start}-${interval.end}/${fixture.length}`,
+            }, body);
+            if (interval.delayMs > 0)
+                setTimeout(send, interval.delayMs);
+            else
+                send();
+        };
+        if (attempt > 1)
+        {
+            respond();
+            return;
+        }
+        pendingInitialMultirangeResponses.set(range, respond);
+        if (pendingInitialMultirangeResponses.size ===
+            MULTIRANGE_INTERVALS.size)
+        {
+            const initialResponses = [...MULTIRANGE_INTERVALS.keys()].map(
+                initialRange =>
+                    pendingInitialMultirangeResponses.get(initialRange));
+            pendingInitialMultirangeResponses.clear();
+            for (const initialResponse of initialResponses) initialResponse();
+        }
         return;
     }
     if (range !== EXPECTED_RANGE)
