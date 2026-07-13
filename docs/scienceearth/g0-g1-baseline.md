@@ -265,3 +265,17 @@ PUBLIC_REQUALIFICATION_V3=FAIL
 HUMAN_PRODUCT_SIGN_OFF=PENDING
 DESKTOP_PACKAGE=NOT_READY
 RECORDED_DATE=2026-07-13
+
+## Bounded-retry v4 one-shot decision
+
+The immediate authorization snapshot passed at `2026-07-13T20:28:20+0800` on `7a0abbc5212f88e191a0b2279c78d8cc84eb4422`: both proxy classes were credential-free loopback HTTP, all historical/private/Desktop bindings matched, the formal profile was still optimized, and all five v4 output paths were absent. The preserved transcript hashes to `2bae6ec0237839cc14cdde0f90c8084b89b46336ecee20ebaf4598b7d6d2f22b`.
+
+Exactly one optimized control and one enforced prefetch candidate ran, with no rerun. The control exited 0 with ten complete proofs but failed both median gates: NVIDIA `3391.137834 ms`, Hong Kong `3231.595583 ms`. The candidate exited 0 and passed all ten correctness/range/HTTP2/shared-connection/overlap/publication/byte proofs with zero terminal fallback. Its NVIDIA median/P95 was `2896.292875 / 3360.568375 ms`; Hong Kong was `2313.934292 / 3459.563000 ms`. Hong Kong iteration 1 recovered one bounded coordinator HTTP/2 500 retry; all retry/request/byte accounting reconciled.
+
+Candidate PASS authorized CMake-only promotion commit `bede4b09c93d2383e7467000538bae1c7b03dbcd`. The promoted formal CTest then ran exactly once and exited 8 after producing ten complete proofs. Hong Kong passed at `2474.804959 / 2829.896208 ms`, and NVIDIA P95 passed at `3376.432625 ms`, but NVIDIA median `3207.465916 ms` exceeded the fixed `3000 ms` gate by `207.465916 ms`. The formal run was not rerun, and all downstream process counts are zero.
+
+All 93 v4 summary/raw/stats/proof files are mode `0400` and their evidence roots mode `0500`. The post-public verifier re-established the exact protected Desktop fingerprint/helper/count tuple and every old/v2/v3/private binding; its SHA-256 is `cd7d76d414917d99437f725eb2744446e08f0de67f608d25950acc7660669b6d`. The Desktop was not packaged or modified. This v4 evidence set is immutable and exhausted.
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V4=FAIL
+DESKTOP_PACKAGE=NOT_READY

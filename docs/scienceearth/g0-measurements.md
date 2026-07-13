@@ -1755,3 +1755,182 @@ v3 result and all earlier STOP evidence remain binding.
 G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V4=AUTHORIZED_NOT_RUN
 DESKTOP_PACKAGE=NOT_READY
+
+## Bounded-retry v4 one-shot public and formal decision
+
+The immutable pre-network snapshot ran at `2026-07-13T20:28:20+0800` on clean commit `7a0abbc5212f88e191a0b2279c78d8cc84eb4422`. Both `HTTP_PROXY` and `HTTPS_PROXY` were credential-free loopback HTTP endpoint classes. The preserved authorization verifier and combined gate passed, all five v4 output paths were absent, and control/candidate/formal process counts were zero. Its transcript SHA-256 is `2bae6ec0237839cc14cdde0f90c8084b89b46336ecee20ebaf4598b7d6d2f22b`.
+
+The snapshot re-bound the final patch and private-prefix manifest to `5ce830f7853db1c6f53b833741261f55f382c0b8972161999a2d34b99c3ab15f` and `a42f77f80f252755bf78226e292a9857c71ea1033dc4d27ae016d47ba0fea116`. It rechecked all 10 Global Constraints, both rejected trees, all 61 v2 files, all 37 non-writable v3 files, the reference/ratchet/fixture identities, and the protected Desktop fingerprint/helper/count tuple `91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18 / 14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214 / 414 / 355`. The formal CTest still listed one optimized, five-iteration, latency-enforced command. `tests/CMakeLists.txt` then hashed to `b9eea24fabb9fa2fb1d79bf384320e5082bd0155aedfcc18fa2d2ab33411141a`.
+
+### Exactly-once process ledger
+
+| Process | Start / finish | Count | Exit | Complete artifacts | Result |
+|---|---|---:|---:|---:|---|
+| Optimized control | `2026-07-13T20:28:47+0800` / `2026-07-13T20:29:20+0800` | 1 | 0 | 10 raw / 10 stats / 10 proof | Diagnostic `FAIL` on both medians; non-enforced |
+| Prefetch candidate | `2026-07-13T20:30:05+0800` / `2026-07-13T20:30:33+0800` | 1 | 0 | 10 raw / 10 stats / 10 proof | Complete qualification `PASS` |
+| Promoted formal CTest | `2026-07-13T20:37:45+0800` / `2026-07-13T20:38:14+0800` | 1 | 8 | 10 raw / 10 stats / 10 proof | Formal `FAIL`: NVIDIA median `3207.465916 ms` |
+
+No control, candidate, or formal process was restarted, retried, resumed, or rerun. Every one of the 93 summary/raw/stats/proof artifacts is mode `0400`; the control, candidate, requalification-parent, and formal evidence directories are mode `0500`.
+
+### Control per-iteration measurements
+
+Times are `total / open / georeference / read / close` in milliseconds. Retry counts are `coordinator / ordinary`; bytes are `successful / actual / declared transient / conservative`.
+
+| Case | Iteration | Phase times | GET actual/success | HEAD / stats GET | Retries | Bytes | Response codes |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `nvidia_hq` | 1 | 4056.281667 / 2360.760917 / 9.633167 / 1685.806791 / 0.080792 | 8/7 | 1 / 2 | 0 / 1 | 5010811 / 5010811 / 17 / 5010828 | 200,200,206,500,206,206,206,206,206,206 |
+| `nvidia_hq` | 2 | 3272.290542 / 1750.258709 / 1.515000 / 1520.442666 / 0.074167 | 10/7 | 1 / 2 | 0 / 3 | 5010811 / 5010811 / 51 / 5010862 | 200,200,206,206,206,500,500,500,206,206,206,206 |
+| `nvidia_hq` | 3 | 3537.941083 / 1855.944625 / 1.486583 / 1680.431750 / 0.078125 | 10/7 | 1 / 2 | 0 / 3 | 5010811 / 5010811 / 51 / 5010862 | 200,200,206,206,500,500,500,206,206,206,206,206 |
+| `nvidia_hq` | 4 | 3391.137834 / 1881.673417 / 1.259083 / 1508.123042 / 0.082292 | 8/7 | 1 / 2 | 0 / 1 | 5010811 / 5010811 / 17 / 5010828 | 200,200,206,206,206,206,500,206,206,206 |
+| `nvidia_hq` | 5 | 3362.548834 / 2221.456334 / 1.179583 / 1139.825000 / 0.087917 | 7/7 | 1 / 2 | 0 / 0 | 5010811 / 5010811 / 0 / 5010811 | 200,200,206,206,206,206,206,206,206 |
+| `hong_kong` | 1 | 3231.595583 / 1705.478083 / 0.644458 / 1525.311750 / 0.161292 | 5/4 | 1 / 2 | 0 / 1 | 1264092 / 1264092 / 17 / 1264109 | 200,200,206,500,206,206,206 |
+| `hong_kong` | 2 | 3319.029083 / 1810.487875 / 0.647375 / 1507.727958 / 0.165875 | 5/4 | 1 / 2 | 0 / 1 | 1264092 / 1264092 / 17 / 1264109 | 200,200,206,500,206,206,206 |
+| `hong_kong` | 3 | 3237.080583 / 1726.223833 / 0.754292 / 1509.904750 / 0.197708 | 5/4 | 1 / 2 | 0 / 1 | 1264092 / 1264092 / 17 / 1264109 | 200,200,206,500,206,206,206 |
+| `hong_kong` | 4 | 2711.758292 / 1882.907459 / 1.485166 / 827.285042 / 0.080625 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,200,206,206,206,206 |
+| `hong_kong` | 5 | 3072.389250 / 1854.121334 / 1.468708 / 1216.627875 / 0.171333 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,200,206,206,206,206 |
+
+| Case | Median / P95 ms | GET actual/success | HEAD / stats GET | Retries | Bytes | Response codes | Status |
+|---|---:|---:|---:|---:|---:|---|---|
+| `nvidia_hq` | 3391.137834 / 4056.281667 | 43/35 | 5 / 10 | 0 / 8 | 25054055 / 25054055 / 136 / 25054191 | 200,206,500 | FAIL |
+| `hong_kong` | 3231.595583 / 3319.029083 | 23/20 | 5 / 10 | 0 / 3 | 6320460 / 6320460 / 51 / 6320511 | 200,206,500 | FAIL |
+
+### Candidate per-iteration measurements
+
+Times are `total / open / georeference / read / close` in milliseconds. Retry counts are `coordinator / ordinary`; bytes are `successful / actual / declared transient / conservative`.
+
+| Case | Iteration | Phase times | GET actual/success | HEAD / stats GET | Retries | Bytes | Response codes |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `nvidia_hq` | 1 | 2745.894875 / 1539.766791 / 9.774959 / 1196.236625 / 0.116500 | 7/7 | 1 / 2 | 0 / 0 | 5010811 / 5010811 / 0 / 5010811 | 200,206,200,206,206,206,206,206,206 |
+| `nvidia_hq` | 2 | 3132.981917 / 1501.819208 / 1.482250 / 1629.599917 / 0.080542 | 9/7 | 1 / 2 | 0 / 2 | 5010811 / 5010811 / 34 / 5010845 | 200,200,206,500,500,206,206,206,206,206,206 |
+| `nvidia_hq` | 3 | 3360.568375 / 1525.799458 / 1.494500 / 1833.192750 / 0.081667 | 9/7 | 1 / 2 | 0 / 2 | 5010811 / 5010811 / 34 / 5010845 | 200,200,206,500,500,206,206,206,206,206,206 |
+| `nvidia_hq` | 4 | 2688.067250 / 1444.372459 / 1.222750 / 1242.393750 / 0.078291 | 7/7 | 1 / 2 | 0 / 0 | 5010811 / 5010811 / 0 / 5010811 | 200,200,206,206,206,206,206,206,206 |
+| `nvidia_hq` | 5 | 2896.292875 / 1338.875542 / 1.496500 / 1555.836791 / 0.084042 | 9/7 | 1 / 2 | 0 / 2 | 5010811 / 5010811 / 34 / 5010845 | 200,200,206,206,206,500,500,206,206,206,206 |
+| `hong_kong` | 1 | 3459.563000 / 2588.177166 / 1.483042 / 869.720958 / 0.181834 | 5/4 | 1 / 2 | 1 / 0 | 1264092 / 1264109 / 17 / 1264109 | 200,500,200,206,206,206,206 |
+| `hong_kong` | 2 | 2313.934292 / 1480.717667 / 0.926583 / 832.108542 / 0.181500 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,200,206,206,206,206 |
+| `hong_kong` | 3 | 2611.634167 / 1491.738459 / 0.650583 / 1119.073958 / 0.171167 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,206,200,206,206,206 |
+| `hong_kong` | 4 | 2305.279750 / 1474.685041 / 0.646375 / 829.775459 / 0.172875 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,200,206,206,206,206 |
+| `hong_kong` | 5 | 2258.564000 / 1436.755416 / 0.645750 / 820.988459 / 0.174375 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,206,200,206,206,206 |
+
+| Case | Median / P95 ms | GET actual/success | HEAD / stats GET | Retries | Bytes | Response codes | Status |
+|---|---:|---:|---:|---:|---:|---|---|
+| `nvidia_hq` | 2896.292875 / 3360.568375 | 41/35 | 5 / 10 | 0 / 6 | 25054055 / 25054055 / 102 / 25054157 | 200,206,500 | PASS |
+| `hong_kong` | 2313.934292 / 3459.563000 | 21/20 | 5 / 10 | 1 / 0 | 6320460 / 6320477 / 17 / 6320477 | 200,206,500 | PASS |
+
+The candidate has ten complete correctness proofs. All ten retain the exact first `bytes=0-131071` interval, HTTP/2 for HEAD and Range, a shared connection, initial overlap, publication, correct CRS/georeference/bounding box, exact request/retry/byte reconciliation, and a conservative transfer below `16 MiB`. NVIDIA used six ordinary HTTP 500 retries and no coordinator retry. Hong Kong iteration 1 used one bounded coordinator retry: HTTP/2 `500`, 17 bytes, attempt 1, 100 ms, followed by the exact Range on the same connection and successful publication. The set has zero terminal fallback. The independent qualification log SHA-256 is `d87ba2bd522c2d316865b7229db7c63665755f3c21f0912faab009dc13db306d`.
+
+Candidate PASS authorized the CMake-only promotion. Commit `bede4b09c93d2383e7467000538bae1c7b03dbcd` changes only the formal command to profile `prefetch`, keeps `--iterations 5 --enforce-latency`, and uses `build/science_g0_prefetch/formal-evidence-v4`. The promoted `tests/CMakeLists.txt` SHA-256 is `029bb3044c5dfcf2701cdbedd4cfe4ebe3488b8e23ef6caf9683fb23c10d4a0c`. The non-executing refreshed CTest listing transcript hashes to `5e8873e10bbe939d39451dc93da7e40ba25d39005c7284f979d867e8f78c14b9`.
+
+### Formal per-iteration measurements
+
+Times are `total / open / georeference / read / close` in milliseconds. Retry counts are `coordinator / ordinary`; bytes are `successful / actual / declared transient / conservative`.
+
+| Case | Iteration | Phase times | GET actual/success | HEAD / stats GET | Retries | Bytes | Response codes |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `nvidia_hq` | 1 | 3376.432625 / 1531.704708 / 10.075167 / 1834.566500 / 0.086250 | 8/7 | 1 / 2 | 0 / 1 | 5010811 / 5010811 / 17 / 5010828 | 200,200,206,500,206,206,206,206,206,206 |
+| `nvidia_hq` | 2 | 3259.630084 / 1483.191250 / 0.918417 / 1775.444833 / 0.075584 | 9/7 | 1 / 2 | 0 / 2 | 5010811 / 5010811 / 34 / 5010845 | 200,200,206,500,500,206,206,206,206,206,206 |
+| `nvidia_hq` | 3 | 2831.934542 / 1334.444792 / 1.497541 / 1495.909042 / 0.083167 | 9/7 | 1 / 2 | 0 / 2 | 5010811 / 5010811 / 34 / 5010845 | 200,200,206,206,206,500,500,206,206,206,206 |
+| `nvidia_hq` | 4 | 3207.465916 / 1467.750333 / 1.357917 / 1738.278083 / 0.079583 | 10/7 | 1 / 2 | 0 / 3 | 5010811 / 5010811 / 51 / 5010862 | 200,200,206,206,500,500,500,206,206,206,206,206 |
+| `nvidia_hq` | 5 | 3181.286834 / 1479.039917 / 0.372667 / 1701.798375 / 0.075875 | 10/7 | 1 / 2 | 0 / 3 | 5010811 / 5010811 / 51 / 5010862 | 200,200,206,500,500,500,206,206,206,206,206,206 |
+| `hong_kong` | 1 | 2645.901875 / 1671.559750 / 1.491333 / 972.673042 / 0.177750 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,200,206,206,206,206 |
+| `hong_kong` | 2 | 2829.896208 / 1978.975375 / 1.479125 / 849.258625 / 0.183083 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,200,206,206,206,206 |
+| `hong_kong` | 3 | 2257.364625 / 1442.725208 / 1.490375 / 812.965417 / 0.183625 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,200,206,206,206,206 |
+| `hong_kong` | 4 | 2474.804959 / 1546.867834 / 1.503291 / 926.252959 / 0.180875 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,200,206,206,206,206 |
+| `hong_kong` | 5 | 2369.495208 / 1446.476250 / 1.292333 / 921.546708 / 0.179917 | 4/4 | 1 / 2 | 0 / 0 | 1264092 / 1264092 / 0 / 1264092 | 200,200,206,206,206,206 |
+
+| Case | Median / P95 ms | GET actual/success | HEAD / stats GET | Retries | Bytes | Response codes | Status |
+|---|---:|---:|---:|---:|---:|---|---|
+| `nvidia_hq` | 3207.465916 / 3376.432625 | 46/35 | 5 / 10 | 0 / 11 | 25054055 / 25054055 / 187 / 25054242 | 200,206,500 | FAIL |
+| `hong_kong` | 2474.804959 / 2829.896208 | 20/20 | 5 / 10 | 0 / 0 | 6320460 / 6320460 / 0 / 6320460 | 200,206 | PASS |
+
+The formal process completed all ten correctness/range/byte proofs with zero coordinator retries and zero terminal fallback. It nevertheless failed the immutable latency gate: NVIDIA median `3207.465916 ms` exceeds `3000 ms` by `207.465916 ms`; NVIDIA P95 `3376.432625 ms` passes `8000 ms`. Hong Kong median/P95 `2474.804959 / 2829.896208 ms` both pass. The formal CTest therefore exited 8, was not rerun, and every downstream gate was skipped. The formal proof validator hashes to `5c480cac8395fba806dafc120007b96dcfb6080726b30d830f721e0b16575287`.
+
+### Control immutable artifact hashes
+
+```text
+e19d0dceaf396c039497b52c79f5aff5877740c3bef3dca3fd17adf3fbdc4357  build/science_g0_prefetch/requalification-evidence-v4/control-summary.json
+b2ec9bf61a949a80b6a0fa6c87491ccff79837ab3a201aff445a07423f2f323b  .superpowers/sdd/task-3-v4-control.log
+ce35d41589010eba54b3ccee7b486fb5bbb7dd988141752eba41375ebed393a3  .superpowers/sdd/task-3-v4-control-artifacts.sha256
+```
+
+| Stem | Raw SHA-256 | Stats SHA-256 | Proof SHA-256 |
+|---|---|---|---|
+| `optimized-hong_kong-1` | `683ee2d4ba1418b077acf518b62721ab780642b55d58398e3b276e1912c81fa1` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `0b6bb0051a457bd235202c6b3ebb69ce1a36fc667a51ea621cdc78670b21c19e` |
+| `optimized-hong_kong-2` | `797dd001ea94f5d4e969316edc459b592ee71c3b4223ea575e2e1e84e087b74c` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `e5ce172da6dc7cd013eb20da712a871a25587be2c5815ed278c4d2b494926655` |
+| `optimized-hong_kong-3` | `3886124744a09096e667440cabf84738355eabc6f86cb0df6a0c8d97f9edf647` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `0b6bb0051a457bd235202c6b3ebb69ce1a36fc667a51ea621cdc78670b21c19e` |
+| `optimized-hong_kong-4` | `c54dcef56535a1cda25be83299cc1d336aa5b94ebf5e8511851486dab0d69062` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `2a0a931475ff99c7a4545e41dc9172bea0841b294a735c7a02f737c9367b0a63` |
+| `optimized-hong_kong-5` | `7cdcdc0349c07d9ff5951ba5ec8cdcc94a791edcb5b157a74196fae881565a35` | `479d4278a12e282efbabdb4d0aa3c9e88ba35df983e89d53da848fda3a8e0d9f` | `3c745f9c2bb574d7b2c1d5b46bd1d2d2a7a21ad1300607f07374f304aa117a25` |
+| `optimized-nvidia_hq-1` | `cee7cbf5b2f8983b446c09cafbfe6ef00e0f2033d25c353132f65db81c3d758b` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `476dcc4a20c5e8978f6a2a9dfdaeaeb2c9d799c0836e24255b46aca7e3067788` |
+| `optimized-nvidia_hq-2` | `679749925d79f3061f1ac99697a3c9efdaa07f50e14bd7108d1aa37a498adce7` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `3d606a22267950cb39692ac4af6be5b441ff538d5540fd897cd71cec13eaa76a` |
+| `optimized-nvidia_hq-3` | `98b946ccf2299a7ef5353591acc532cda94ba40e0fd7175c23702a2aedecc6b9` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `5c1e35782ab38345d37ab8fe2f413ac52f53eaf4e408d41cf2e5d0329dcfb877` |
+| `optimized-nvidia_hq-4` | `68ff8c84930fab4d88453e8c6f353c740dceb027b274e8a0a7999261f4ac214b` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `20c5edf44269509223276ab8f368e3f4e5b7b64321b673b6cc7b15f2b5b27565` |
+| `optimized-nvidia_hq-5` | `664193aad06b3c9455f53cd90c845d825b8e34b1cbcb77cc9388f00a5d5672d1` | `9901ae9eae63b68f1a6a5ccf2bf40578ccf479ec57640f18aac1e0cc14cef288` | `a3ebab021769a0f1628b18436c9a5da2fa6f8ae800b122becdda0a413d976f76` |
+
+### Candidate immutable artifact hashes
+
+```text
+ac37e643a7e34840a30cc7dd6f3c17c2464a632936f7366396f5f09cd5f521d4  build/science_g0_prefetch/requalification-evidence-v4/prefetch-summary.json
+81b40fbb098716e59ceada54b7bf33079fa7fcdf8a866aeb1d1828aafe2f434c  .superpowers/sdd/task-3-v4-candidate.log
+81451c29000dab2bcaa262615eb8e9d72ad382adae3269892581423b2587b339  .superpowers/sdd/task-3-v4-candidate-artifacts.sha256
+```
+
+| Stem | Raw SHA-256 | Stats SHA-256 | Proof SHA-256 |
+|---|---|---|---|
+| `prefetch-hong_kong-1` | `5ad7ab1db642d2b49e310911724a33da2107486924d57902ad945ea2479f6dcd` | `b2fa53f61c51e04f947b494cd6ab87c121118b0bec25dae40b52da8808a37ca9` | `d6339159cae624c7655eafb3dcb988d203c06625d5fd1bd006025550356e6c5d` |
+| `prefetch-hong_kong-2` | `095d1d8f835a5405f90f7e5b57b8ed0b4802da7f173f0d6689ad524ca9a58ef3` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `712565d303aa52c450f1d7d4a251d93c04454df4b3fadabdb3ab3114d3f364a6` |
+| `prefetch-hong_kong-3` | `e3e93cc8c242beeab0efd4269ff0a5f0a1e454b1889109eb25114385ff979ac6` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `922ffda94d802c8da9f98e879d999b635e0aae13021bd3ee05802cb3f7eed237` |
+| `prefetch-hong_kong-4` | `71fdb8d994811ee1eef1364d80c624642ebe46bdf6b2566db16fdc3725b1cd2c` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `7e3ee677fa50dfc13dad094898ec23a892e1e9d12cf14675036256e3bd91be42` |
+| `prefetch-hong_kong-5` | `dff632dc492f1464a7924eeb846e23cc700c10dcb18c52978b0939dba0c45d15` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `007cf906142b4e5c03939c422f5e7593a646d497144651dcfbc85dfcfa4f5281` |
+| `prefetch-nvidia_hq-1` | `c5489375f3e1c0c18103deb60f2154721df7551e7776e961c322f68c213b73c4` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `bbacc88ee825d26d5f8af118468bf14905598e9efec227d08fd4ba1b71bf4487` |
+| `prefetch-nvidia_hq-2` | `684f0f6702f28d3696b109f626fe0c05600018f695f3c6602d36240e1da1e57a` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `92b758a47c243fd98b35df96b2a797352b597c224dc47d4270ba33150db20561` |
+| `prefetch-nvidia_hq-3` | `26af8fc183682d89852351f01196d7f733744769b4c90ef10e5fc175770e4a9b` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `4a49972e32dc8ef5adf3e544dd607b4f104720bae86307975b55ac854728ad83` |
+| `prefetch-nvidia_hq-4` | `936d1ad936630be31ff75ed94cded3b0bd3ef7b80ef4132b35bcde44e3923da1` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `f70d43f2491c89e578d25ad3b3e526a32a78d3ab9879a1e5af755db60e1f2708` |
+| `prefetch-nvidia_hq-5` | `bbd19f52f5ada4155ad0e8d58cc8ccb340de7489c1fb2d48eff061bf1b329587` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `645ee3b95758cc9d40248984280d63b76b194bd8c90f01d1b7130bb20dc8ff89` |
+
+### Formal immutable artifact hashes
+
+```text
+e7664bb1ebe09dd8f53baf30c81810ff06a62be5b26cc2e267ade561534f4580  build/science_g0_prefetch/formal-evidence-v4/live-summary.json
+29b280119a919e1ae27a4adb18a24efa20c6254c91bf0d239f0b821edbbf0a00  .superpowers/sdd/task-3-v4-formal-ctest.log
+fe285502c8f3a0c8c9a8f21d543112d8435c7f980698062f7c709119bf98cf3c  .superpowers/sdd/task-3-v4-formal-artifacts.sha256
+```
+
+| Stem | Raw SHA-256 | Stats SHA-256 | Proof SHA-256 |
+|---|---|---|---|
+| `prefetch-hong_kong-1` | `f3b121ffe7e746c39d58b5f943efe5aac1eff62c1c46e3bc17b1c74f0bb973ec` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `7f9544d2095c428b515a20853d1983a1a2e1b0db84380d7408c873cff46f8a17` |
+| `prefetch-hong_kong-2` | `d409bdb09ac110014181fca3dd7da4989480bf07c0fb97061d636acd0096a4e5` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `f6cd65414c72ecf0a95544e0a49dc31c2487021dbba735328ccdade11ab505ff` |
+| `prefetch-hong_kong-3` | `175348daae708cf7cb0c85f56b322c3d01e1c2ee94cc1a9fd3bb426801be5ab3` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `7e3ee677fa50dfc13dad094898ec23a892e1e9d12cf14675036256e3bd91be42` |
+| `prefetch-hong_kong-4` | `128429d672e67821f77cc59e393f9ce2bfdd84ab05812369e4d8d012209be296` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `7f9544d2095c428b515a20853d1983a1a2e1b0db84380d7408c873cff46f8a17` |
+| `prefetch-hong_kong-5` | `1b46442aa5a14e13166938916cd17f6f6476883429e7ab2144d4fabcfcaead71` | `34acfe0cf3ce643b23b52f16baa145ac7df8691db7088ace5fc2c6836e8db5ff` | `712565d303aa52c450f1d7d4a251d93c04454df4b3fadabdb3ab3114d3f364a6` |
+| `prefetch-nvidia_hq-1` | `808cd5c4ae30c274e13be20ac2400d1d96d5b07bb33f7224b849e8f06fbd7e09` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `6a26840cac0e2dab77e30b1a6b6ee5180c52399f67ba30d6e2f8ab5901d59def` |
+| `prefetch-nvidia_hq-2` | `3cca6e0a20d5d51c19589210e07ef5e446627bc986d6c81c094ea916e2fa7a18` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `b1d8be99874bf47bdd6d76df446186acbab78f56fc35a07078eb82d45e8e602e` |
+| `prefetch-nvidia_hq-3` | `48e2356cf7bb0129a37a76268f42486a61cda3b4a1b7a24501063a4cfdad9f04` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `bdb01ae502e4b9b29fbb7471e660c6c38b11d9e392bc1a93c5a691b7fca6c58b` |
+| `prefetch-nvidia_hq-4` | `a57d139fa2da136c7f91d62f9f61874dcd640837f1ebbf059f2ca4fee788c1b5` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `20df536c0387b6c2982839efa7fdbd0071341b1a28ea363646832c12abfefe93` |
+| `prefetch-nvidia_hq-5` | `578e4f1ae96d078b6884bf7c6e1c91154807fa164e27a54b74c7608844bd7978` | `0dd2414c27c7cfc04ff296f4bad1b49ed406d5706e0ff4b6a158134a947254fe` | `36a1e5a24c9ead416903075f092a03f2b36914a15c9b8b39f113b18c1889b5b6` |
+
+### Conditional downstream and final protection
+
+```text
+optimized_control_process_count=1
+prefetch_candidate_process_count=1
+formal_promotion_commit_count=1
+formal_ctest_process_count=1
+downstream_test_process_count=0
+science_off_core_process_count=0
+private_dependency_verifier_process_count=0
+full_python_suite_process_count=0
+selected_scienceearth_process_count=0
+disposable_probe_process_count=0
+canonical_bundle_audit_process_count=0
+signature_size_export_path_process_count=0
+memory_correctness_range_camera_cache_process_count=0
+clean_launch_process_count=0
+desktop_package_build_or_replace_count=0
+```
+
+The post-public protected verifier again matched the patch/prefix, every old/v2/v3 hash and complete set, all v3 non-writable modes, reference/ratchet/fixture, and the exact same protected Desktop tuple. It verified all 93 v4 artifacts from the three manifests, the promoted formal command, frozen file/root modes, and exact process counts. Its transcript SHA-256 is `cd7d76d414917d99437f725eb2744446e08f0de67f608d25950acc7660669b6d`. No Desktop, package, G1, frozen prior evidence, tag, remote, retry policy, fixture, iteration count, or threshold was changed.
+
+The candidate PASS is not a G0 GO because the separately committed formal gate failed. This immutable v4 evidence set is exhausted and must not be rerun.
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V4=FAIL
+DESKTOP_PACKAGE=NOT_READY
