@@ -279,3 +279,29 @@ All 93 v4 summary/raw/stats/proof files are mode `0400` and their evidence roots
 G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V4=FAIL
 DESKTOP_PACKAGE=NOT_READY
+
+## Immediate multi-range retry v5 offline authorization
+
+The frozen v4 STOP remains the control. Exact v5 implementation base
+`b3bdb4ea76530e9cc65180b4df97967da87c16a5` passed the complete non-public gate on
+2026-07-14: Python 66/66, refreshed science-off core 20/20 including `ScienceBuildContract`,
+selected science 8/8 including `ScienceHttpRangesCoordinatorAbandonment`, private builder
+contract, and private-prefix verification, with zero skips/failures.
+
+The disposable probe passed the canonical audit with Tier A `0`, Tier B new/removed `0/0`, zero
+unresolved dependencies, delta `21,321,367` bytes, and science closure `21,321,208` bytes. Its
+single export, strict/deep signature, direct system dependencies, and forbidden-path scan passed.
+The fixed Desktop app was not rebuilt or replaced and retained fingerprint/helper/counts
+`91fa216f3beb528fa71594cb6a425a2f657e490b6d3442ef497753a7c7843e18 /`
+`14d88b71426109ada05b3caee0539195bc2b6938b08d72a7025048b9b4845214 / 414 / 355`.
+
+The committed v5 verifier binds the implementation parent, exact three-document authorization
+scope, patch/prefix/archive provenance, offline result logs and dynamic totals, every historical
+evidence tree and mode, the corrected v4 post-hoc source/base-wrapper/transcript, exact-five retry
+codes, protected source diff, formal `prefetch`/v4 path, and the absent/non-symlink v5 candidate,
+summary, and formal paths. No public candidate/formal process, Desktop update, G1, tag, push, or
+release occurred in this task.
+
+G0_DECISION=STOP
+PUBLIC_REQUALIFICATION_V5=AUTHORIZED_NOT_RUN
+DESKTOP_PACKAGE=NOT_READY
