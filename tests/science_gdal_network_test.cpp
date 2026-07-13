@@ -127,9 +127,12 @@ namespace
         int statsGetOperationCount = 0;
         int successfulGetCount = 0;
         int transientRetryCount = 0;
+        int immediateTransientRetryCount = 0;
         int coordinatorTransientRetryCount = 0;
+        std::uint64_t immediateTransientRetryBytes = 0;
         std::uint64_t coordinatorTransientRetryBytes = 0;
         std::map<int, int> transientRetryCodes;
+        std::map<int, int> immediateTransientRetryCodes;
         std::map<int, int> coordinatorTransientRetryCodes;
         std::vector<int> responseCodes;
     };
@@ -141,6 +144,26 @@ namespace
         std::uint64_t bytes = 0;
         int attempt = 0;
         long long delayMs = 0;
+        long long connectionId = -1;
+        int httpMajor = 0;
+    };
+
+    struct ImmediateRetryEvidence
+    {
+        std::string range;
+        int code = 0;
+        std::uint64_t bytes = 0;
+        int attempt = 0;
+        long long delayMs = 0;
+        long long connectionId = -1;
+        int httpMajor = 0;
+    };
+
+    struct CoordinatorRetryBlockedEvidence
+    {
+        std::string range;
+        int code = 0;
+        std::string reason;
         long long connectionId = -1;
         int httpMajor = 0;
     };
@@ -167,6 +190,7 @@ namespace
         int actualHeadCount = 0;
         int successfulGetCount = 0;
         int transientRetryCount = 0;
+        int immediateTransientRetryCount = 0;
         int coordinatorTransientRetryCount = 0;
         int coordinatorTransientFallbackCount = 0;
         int statsGetOperationCount = 0;
@@ -174,6 +198,7 @@ namespace
         int coordinatorLogicalGetCount = 0;
         std::uint64_t coordinatorLogicalGetBytes = 0;
         std::uint64_t coordinatorTransientRetryBytes = 0;
+        std::uint64_t immediateTransientRetryBytes = 0;
         std::uint64_t coordinatorTransientFallbackBytes = 0;
         std::uint64_t successfulRangeBytes = 0;
         std::uint64_t declaredTransientBytes = 0;
@@ -191,10 +216,12 @@ namespace
         std::array<double, 2> rawPixel = {};
         std::array<double, 4> verifiedWgs84Bbox = {};
         std::map<int, int> transientRetryCodes;
+        std::map<int, int> immediateTransientRetryCodes;
         std::map<int, int> coordinatorTransientRetryCodes;
         std::map<int, int> coordinatorTransientFallbackCodes;
         std::vector<int> responseCodes;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> successfulByteIntervals;
+        std::vector<ImmediateRetryEvidence> immediateRetries;
         MetadataPrefetchProof metadataPrefetch;
     };
 
@@ -239,6 +266,8 @@ namespace
         const char* completionOrder = "";
         int exactHeadCount = -1;
         int expectedFilePropertyPublications = 1;
+        const char* blockedReason = "";
+        const char* getInfoFault = "";
     };
 
     struct DebugCapture
@@ -253,6 +282,8 @@ namespace
     HttpProof buildHttpProof(const DebugCapture& capture,
                              const std::string& statsJson);
     std::string requireNetworkStatsEvidence();
+    bool parseCoordinatorRetryBlockedEvidence(
+        const std::string& message, CoordinatorRetryBlockedEvidence& evidence);
 
     void CPL_STDCALL captureGdalMessage(CPLErr errorClass, CPLErrorNum errorNumber,
                                         const char* message);
@@ -724,6 +755,19 @@ namespace
         const std::filesystem::path key = root / "http2-key.pem";
         createSelfSignedCertificate(certificate, key);
 
+        std::int8_t expectedByteZero = 0;
+        {
+            GDALDataset* local = static_cast<GDALDataset*>(GDALOpenEx(
+                fixture.string().c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
+                nullptr, nullptr, nullptr));
+            require(local != nullptr &&
+                        local->GetRasterBand(1)->RasterIO(
+                            GF_Read, 0, 0, 1, 1, &expectedByteZero,
+                            1, 1, GDT_Int8, 0, 0, nullptr) == CE_None,
+                    "failed to read the coordinator cache oracle byte");
+            GDALClose(local);
+        }
+
         const PrefetchCase cases[] = {
             {"success", true, false},
             {"range-503", true, false, "", "2TLS", 2},
@@ -737,6 +781,18 @@ namespace
                 "", true, "path", "", 1},
             {"range-504-once", true, false, "", "2TLS", 2,
                 "", true, "path", "", 1},
+            {"range-500-once", true, true, "head-503-invalid", "2TLS", 2,
+                "head-invalid", true, "path", "", 2, -1,
+                "head-invalid"},
+            {"range-500-once", true, true, "http1-invalid", "1.1", 2,
+                "head-protocol", false, "path", "", 2, -1,
+                "head-protocol"},
+            {"range-500-once", true, true, "connection-invalid", "2TLS", 2,
+                "range-connection", true, "path", "", 1, -1,
+                "range-connection", "connection"},
+            {"range-500-once", true, true, "redirect-invalid", "2TLS", 2,
+                "range-redirect", true, "path", "", 1, -1,
+                "range-redirect", "redirect"},
             {"range-503-exhaust", false, false, "", "2TLS", 3,
                 "", true, "path", "", 1},
             {"success", false, false, "range-404", "2TLS", 1,
@@ -805,7 +861,8 @@ namespace
                 root / (std::string("http2-") + caseName + ".jsonl");
             ServerProcess server = startHttp2Server(
                 fixture, ready, log, certificate, key, prefetchCase.mode,
-                std::string(prefetchCase.variant) == "http1" ? "http1" : "h2");
+                std::string(prefetchCase.variant).find("http1") == 0
+                    ? "http1" : "h2");
             const int port = waitForPort(ready);
             const std::string vsiUrl = "/vsicurl/https://127.0.0.1:" +
                 std::to_string(port) + "/" + caseName +
@@ -839,6 +896,15 @@ namespace
                     {
                         setenv("OSGSOL_TEST_FAIL_NEXT_CURL_REMOVE", "2", 1);
                     }
+                    if (std::string(prefetchCase.getInfoFault) == "connection")
+                    {
+                        setenv("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE",
+                               "922337203685477000", 1);
+                    }
+                    if (std::string(prefetchCase.getInfoFault) == "redirect")
+                    {
+                        setenv("OSGSOL_TEST_CURLINFO_REDIRECT_COUNT_ONCE", "1", 1);
+                    }
                 }
                 GDALDataset* dataset = static_cast<GDALDataset*>(GDALOpenEx(
                     vsiUrl.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
@@ -851,7 +917,18 @@ namespace
                                 GF_Read, 0, 0, 1, 1, &byteZero,
                                 1, 1, GDT_Int8, 0, 0, nullptr) == CE_None,
                             "prefetch fixture byte-zero read failed");
+                    require(byteZero == expectedByteZero,
+                            caseName + " exposed stale coordinator bytes");
                     GDALClose(dataset);
+                }
+                if (prefetchCase.getInfoFault[0])
+                {
+                    const char* faultName =
+                        std::string(prefetchCase.getInfoFault) == "connection"
+                        ? "OSGSOL_TEST_CURLINFO_CONN_ID_ONCE"
+                        : "OSGSOL_TEST_CURLINFO_REDIRECT_COUNT_ONCE";
+                    require(std::getenv(faultName) == nullptr,
+                            caseName + " did not consume its one-shot curl fault");
                 }
                 if (std::string(prefetchCase.activation) == "path")
                     VSIClearPathSpecificOptions(vsiUrl.c_str());
@@ -920,7 +997,8 @@ namespace
                 prefetchCase.requireSharedHttp2)
                 verifyTransport();
 
-            if (transientOnce != transientOnceStatuses.end())
+            if (transientOnce != transientOnceStatuses.end() &&
+                prefetchCase.blockedReason[0] == '\0')
             {
                 require(headCount == 1 && ranges.size() == 2 &&
                             ranges[0]->range == "bytes=0-131071" &&
@@ -973,6 +1051,45 @@ namespace
                             runtimeProof.metadataPrefetch.coordinatorRetries.front().delayMs == 100,
                         caseName +
                             " runtime metadata retry proof did not reconcile");
+            }
+            if (prefetchCase.blockedReason[0])
+            {
+                require(std::count_if(ranges.begin(), ranges.end(),
+                            [](const Http2StreamEvidence* range)
+                            {
+                                return range->status == 500 &&
+                                    range->range == "bytes=0-131071";
+                            }) == 1,
+                        caseName + " did not retain exactly one invalid first Range");
+                require(countDebug(capture,
+                            "ParallelHeadRange: transient-retry") == 0 &&
+                            countDebug(capture,
+                            "ParallelHeadRange: published") == 0,
+                        caseName + " retried or published an invalid Range: " +
+                            parallelDebugSummary(capture));
+                std::vector<CoordinatorRetryBlockedEvidence> blocked;
+                for (const std::string& message : capture.messages)
+                {
+                    CoordinatorRetryBlockedEvidence evidence;
+                    if (parseCoordinatorRetryBlockedEvidence(message, evidence))
+                        blocked.push_back(evidence);
+                    else
+                    {
+                        require(message.find(
+                                    "ParallelHeadRange: transient-retry-blocked") ==
+                                    std::string::npos,
+                                caseName + " emitted a malformed blocked event");
+                    }
+                }
+                require(blocked.size() == 1 &&
+                            blocked.front().range == "bytes=0-131071" &&
+                            blocked.front().code == 500 &&
+                            blocked.front().reason == prefetchCase.blockedReason &&
+                            blocked.front().connectionId >= 0 &&
+                            blocked.front().httpMajor ==
+                                (std::string(prefetchCase.httpVersion) == "1.1"
+                                    ? 1 : 2),
+                        caseName + " omitted its exact fail-closed retry event");
             }
             if (std::string(prefetchCase.mode) == "range-503-exhaust")
             {
@@ -1036,7 +1153,8 @@ namespace
                  (prefetchCase.variant[0] == '\0' ||
                   prefetchCase.completionOrder[0] != '\0')) ||
                 std::string(prefetchCase.mode) == "range-503" ||
-                transientOnce != transientOnceStatuses.end();
+                (transientOnce != transientOnceStatuses.end() &&
+                 prefetchCase.blockedReason[0] == '\0');
             require(countDebug(capture, "ParallelHeadRange: published") ==
                         (expectedPublication ? 1 : 0),
                     std::string(prefetchCase.mode) +
@@ -1122,10 +1240,13 @@ namespace
                             "ParallelHeadRange: multi-abandoned=success") == 0,
                         "transient remove failure did not recover by retry");
             }
-            require(countDebug(capture,
-                        "ParallelHeadRange: file-property-published") ==
-                        prefetchCase.expectedFilePropertyPublications,
-                    caseName + " file-property publication count changed");
+            if (prefetchCase.expectedFilePropertyPublications >= 0)
+            {
+                require(countDebug(capture,
+                            "ParallelHeadRange: file-property-published") ==
+                            prefetchCase.expectedFilePropertyPublications,
+                        caseName + " file-property publication count changed");
+            }
             if (prefetchCase.exactRangeCount >= 0)
             {
                 require(rangeCount == prefetchCase.exactRangeCount,
@@ -1189,6 +1310,203 @@ namespace
         }
         require(executedCases > 0,
                 "OSGSOL_TEST_PREFETCH_CASE did not name a prefetch mode");
+    }
+
+    void verifyImmediateMultiRangeRetry(const std::filesystem::path& fixture,
+                                        const std::filesystem::path& root)
+    {
+        const std::filesystem::path certificate =
+            root / "multirange-http2-cert.pem";
+        const std::filesystem::path key = root / "multirange-http2-key.pem";
+        createSelfSignedCertificate(certificate, key);
+        constexpr std::array<vsi_l_offset, 3> OFFSETS = {
+            262144, 393216, 524288};
+        constexpr std::array<size_t, 3> SIZES = {65536, 65536, 65536};
+        const std::array<std::string, 3> RANGES = {
+            "bytes=262144-327679", "bytes=393216-458751",
+            "bytes=524288-589823"};
+
+        std::array<std::vector<unsigned char>, 3> expected;
+        std::ifstream fixtureStream(fixture, std::ios::binary);
+        require(fixtureStream.good(), "failed to open the multi-range fixture");
+        for (std::size_t index = 0; index < expected.size(); ++index)
+        {
+            expected[index].resize(SIZES[index]);
+            fixtureStream.seekg(OFFSETS[index]);
+            fixtureStream.read(
+                reinterpret_cast<char*>(expected[index].data()),
+                static_cast<std::streamsize>(expected[index].size()));
+            require(fixtureStream.gcount() ==
+                        static_cast<std::streamsize>(expected[index].size()),
+                    "failed to read an expected multi-range interval");
+        }
+
+        struct ActivationCase
+        {
+            const char* name;
+            bool pathSpecific;
+        };
+        const ActivationCase cases[] = {
+            {"path", true},
+            {"global-only", false},
+        };
+        const char* selectedActivation =
+            CPLGetConfigOption("OSGSOL_TEST_MULTIRANGE_CASE", nullptr);
+        int executedCases = 0;
+        for (const ActivationCase& activation : cases)
+        {
+            if (selectedActivation &&
+                std::string(selectedActivation) != activation.name)
+            {
+                continue;
+            }
+            ++executedCases;
+            const std::filesystem::path ready =
+                root / (std::string("multirange-") + activation.name + ".ready");
+            const std::filesystem::path log =
+                root / (std::string("multirange-") + activation.name + ".jsonl");
+            ServerProcess server = startHttp2Server(
+                fixture, ready, log, certificate, key,
+                "multirange-500-overlap", "h2");
+            const int port = waitForPort(ready);
+            const std::string vsiUrl = "/vsicurl/https://127.0.0.1:" +
+                std::to_string(port) + "/multirange-" + activation.name +
+                "/alphaearth-range-fixture.tif";
+            ScopedGdalConfig config({
+                {"GDAL_HTTP_UNSAFESSL", "YES"},
+                {"GDAL_HTTP_VERSION", "2TLS"},
+                {"GDAL_HTTP_PROXY", ""},
+                {"GDAL_HTTPS_PROXY", ""},
+                {"GDAL_HTTP_MULTIRANGE", "PARALLEL"},
+                {"GDAL_HTTP_MULTIPLEX", "YES"},
+                {"GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES"},
+                {"GDAL_HTTP_MAX_RETRY", "3"},
+                {"GDAL_HTTP_RETRY_DELAY", "0.1"},
+                {"GDAL_HTTP_RETRY_CODES", "429,500,502,503,504"},
+                {"CPL_VSIL_NETWORK_STATS_ENABLED", "YES"},
+                {"CPL_CURL_VERBOSE", "YES"},
+                {"CPL_CURL_VERBOSE_DATA_IN", "NO"},
+                {"CPL_DEBUG", "ON"},
+                {"OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY",
+                    activation.pathSpecific ? "" : "YES"},
+            });
+            VSICurlClearCache();
+            VSINetworkStatsReset();
+            DebugCapture capture;
+            std::array<std::vector<unsigned char>, 3> actual;
+            std::array<void*, 3> buffers = {};
+            for (std::size_t index = 0; index < actual.size(); ++index)
+            {
+                actual[index].resize(SIZES[index]);
+                buffers[index] = actual[index].data();
+            }
+            {
+                ScopedGdalErrorCapture errorCapture(capture);
+                std::unique_ptr<ScopedPathSpecificOption> pathOption;
+                if (activation.pathSpecific)
+                {
+                    require(std::string(VSIGetPathSpecificOption(
+                                vsiUrl.c_str(),
+                                "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY",
+                                "")).empty(),
+                            "immediate multi-range option leaked before activation");
+                    pathOption = std::make_unique<ScopedPathSpecificOption>(
+                        vsiUrl, "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "YES");
+                }
+                VSILFILE* file = VSIFOpenL(vsiUrl.c_str(), "rb");
+                require(file != nullptr, "failed to open the HTTP/2 multi-range fixture");
+                const int result = VSIFReadMultiRangeL(
+                    static_cast<int>(buffers.size()), buffers.data(),
+                    OFFSETS.data(), SIZES.data(), file);
+                require(VSIFCloseL(file) == 0,
+                        "failed to close the HTTP/2 multi-range fixture");
+                require(result == 0,
+                        "VSIFReadMultiRangeL failed the overlap fixture");
+                require(actual == expected,
+                        "VSIFReadMultiRangeL returned incorrect interval bytes");
+                pathOption.reset();
+                if (activation.pathSpecific)
+                {
+                    require(std::string(VSIGetPathSpecificOption(
+                                vsiUrl.c_str(),
+                                "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY",
+                                "")).empty(),
+                            "immediate multi-range option survived RAII cleanup");
+                }
+            }
+            const std::string statsJson = requireNetworkStatsEvidence();
+            server.stop();
+            const Http2Evidence evidence = verifyHttp2Log(log);
+            const HttpProof proof = buildHttpProof(capture, statsJson);
+
+            std::map<std::string, std::vector<const Http2StreamEvidence*>> ranges;
+            int headCount = 0;
+            for (const Http2StreamEvidence& stream : evidence.streams)
+            {
+                if (stream.method == "HEAD") ++headCount;
+                if (stream.method == "GET") ranges[stream.range].push_back(&stream);
+            }
+            require(headCount == 1 && ranges.size() == RANGES.size(),
+                    std::string(activation.name) +
+                        " multi-range request set changed");
+            for (const std::string& range : RANGES)
+            {
+                const std::size_t expectedCount =
+                    range == RANGES[1] ? 2 : 1;
+                require(ranges[range].size() == expectedCount,
+                        std::string(activation.name) + " request count changed for " +
+                            range);
+            }
+            const auto* slow = ranges[RANGES[0]].front();
+            const auto* failed = ranges[RANGES[1]].front();
+            const auto* retry = ranges[RANGES[1]].back();
+            const auto* medium = ranges[RANGES[2]].front();
+            const std::uint64_t latestInitialStart = std::max(
+                {slow->start, failed->start, medium->start});
+            const std::uint64_t earliestInitialEnd = std::min(
+                {slow->end, failed->end, medium->end});
+            require(slow->sessionId == failed->sessionId &&
+                        slow->sessionId == retry->sessionId &&
+                        slow->sessionId == medium->sessionId &&
+                        latestInitialStart < earliestInitialEnd &&
+                        failed->status == 500 &&
+                        failed->attemptedBodyBytes == 17 &&
+                        retry->status == 206,
+                    std::string(activation.name) +
+                        " did not preserve one multiplexed HTTP/2 session");
+            require(evidence.totalAttemptedBodyBytes ==
+                        3 * 65536 + 17 &&
+                        proof.actualGetCount == 4 &&
+                        proof.actualHeadCount == 1 &&
+                        proof.successfulGetCount == 3 &&
+                        proof.transientRetryCount == 1 &&
+                        proof.transientRetryCodes ==
+                            std::map<int, int>{{500, 1}} &&
+                        proof.successfulRangeBytes == 3 * 65536 &&
+                        proof.declaredTransientBytes == 17 &&
+                        proof.statsGetOperationCount == 1,
+                    std::string(activation.name) +
+                        " multi-range bytes or network statistics did not reconcile");
+            if (activation.pathSpecific)
+            {
+                require(proof.immediateTransientRetryCount == 1 &&
+                            proof.immediateTransientRetryBytes == 17 &&
+                            proof.immediateTransientRetryCodes ==
+                                std::map<int, int>{{500, 1}} &&
+                            proof.immediateRetries.size() == 1 &&
+                            retry->start < slow->end,
+                        "path immediate retry event is absent or the second "
+                        "multi-range request remained behind the slow sibling");
+            }
+            else
+            {
+                require(proof.immediateTransientRetryCount == 0 &&
+                            retry->start >= slow->end,
+                        "global-only activation entered the immediate branch");
+            }
+        }
+        require(executedCases > 0,
+                "OSGSOL_TEST_MULTIRANGE_CASE did not name an activation case");
     }
 
     LocalServerEvidence verifyLog(const std::filesystem::path& log,
@@ -1444,6 +1762,9 @@ namespace
         require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                     "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
                 "baseline profile leaked the metadata prefetch option");
+        require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                    "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
+                "baseline profile leaked the immediate multi-range option");
         {
             ScopedGdalConfig optimized(rangeAccessConfig(RangeProfile::Optimized));
             require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
@@ -1457,6 +1778,9 @@ namespace
             require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                         "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
                     "optimized profile leaked the metadata prefetch option");
+            require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                        "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
+                    "optimized profile leaked the immediate multi-range option");
         }
         {
             ScopedGdalConfig prefetch(rangeAccessConfig(RangeProfile::Prefetch));
@@ -1468,16 +1792,27 @@ namespace
             require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                         "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
                     "prefetch activation escaped the dataset-open scope");
+            require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                        "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
+                    "immediate activation escaped the dataset-open scope");
             {
                 ScopedPathSpecificOption activation(activationPath,
                     "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
+                ScopedPathSpecificOption immediateActivation(activationPath,
+                    "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "YES");
                 require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                             "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")) == "YES",
                         "prefetch path option did not activate");
+                require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                            "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")) == "YES",
+                        "immediate multi-range path option did not activate");
             }
             require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
                         "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
                     "prefetch path option survived RAII cleanup");
+            require(std::string(VSIGetPathSpecificOption(activationPath.c_str(),
+                        "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
+                    "immediate path option survived RAII cleanup");
         }
         require(std::string(CPLGetConfigOption("CPL_VSIL_CURL_CHUNK_SIZE", "")) ==
                     "16384", "nested profile did not restore baseline chunk");
@@ -1559,7 +1894,32 @@ namespace
             stream << "\"" << retry.first << "\":" << retry.second;
             firstRetryCode = false;
         }
-        stream << "},\n  \"coordinator_transient_retry_count\": "
+        stream << "},\n  \"immediate_transient_retry_count\": "
+               << proof.immediateTransientRetryCount
+               << ",\n  \"immediate_transient_retry_bytes\": "
+               << proof.immediateTransientRetryBytes
+               << ",\n  \"immediate_transient_retry_codes\": {";
+        bool firstImmediateRetryCode = true;
+        for (const auto& retry : proof.immediateTransientRetryCodes)
+        {
+            if (!firstImmediateRetryCode) stream << ',';
+            stream << "\"" << retry.first << "\":" << retry.second;
+            firstImmediateRetryCode = false;
+        }
+        stream << "},\n  \"immediate_retries\": [";
+        for (std::size_t index = 0; index < proof.immediateRetries.size(); ++index)
+        {
+            if (index) stream << ',';
+            const ImmediateRetryEvidence& retry = proof.immediateRetries[index];
+            stream << "{\"range\":" << picojson::value(retry.range).serialize()
+                   << ",\"code\":" << retry.code
+                   << ",\"bytes\":" << retry.bytes
+                   << ",\"attempt\":" << retry.attempt
+                   << ",\"delay_ms\":" << retry.delayMs
+                   << ",\"connection_id\":" << retry.connectionId
+                   << ",\"http_major\":" << retry.httpMajor << '}';
+        }
+        stream << "],\n  \"coordinator_transient_retry_count\": "
                << proof.coordinatorTransientRetryCount
                << ",\n  \"coordinator_transient_retry_bytes\": "
                << proof.coordinatorTransientRetryBytes
@@ -2148,6 +2508,46 @@ namespace
         return true;
     }
 
+    bool parseImmediateRetryEvidence(const std::string& message,
+                                     ImmediateRetryEvidence& evidence)
+    {
+        static const std::regex immediateRetryPattern(
+            R"(^VSICURL: ReadMultiRange: immediate-retry )"
+            R"(range=(bytes=[0-9]+-[0-9]+) status=([0-9]+) bytes=([0-9]+) )"
+            R"(attempt=([0-9]+) delay-ms=([0-9]+) )"
+            R"(connection=(-?[0-9]+) http=(2)$)");
+        std::smatch match;
+        if (!std::regex_match(message, match, immediateRetryPattern))
+            return false;
+        evidence.range = match[1].str();
+        evidence.code = std::stoi(match[2].str());
+        evidence.bytes = std::stoull(match[3].str());
+        evidence.attempt = std::stoi(match[4].str());
+        evidence.delayMs = std::stoll(match[5].str());
+        evidence.connectionId = std::stoll(match[6].str());
+        evidence.httpMajor = std::stoi(match[7].str());
+        return true;
+    }
+
+    bool parseCoordinatorRetryBlockedEvidence(
+        const std::string& message, CoordinatorRetryBlockedEvidence& evidence)
+    {
+        static const std::regex blockedPattern(
+            R"(^VSICURL: ParallelHeadRange: transient-retry-blocked )"
+            R"(range=(bytes=0-131071) status=([0-9]+) )"
+            R"(reason=([a-z]+(?:-[a-z]+)*) )"
+            R"(range-connection=(-?[0-9]+) range-http=([0-9]+)$)");
+        std::smatch match;
+        if (!std::regex_match(message, match, blockedPattern))
+            return false;
+        evidence.range = match[1].str();
+        evidence.code = std::stoi(match[2].str());
+        evidence.reason = match[3].str();
+        evidence.connectionId = std::stoll(match[4].str());
+        evidence.httpMajor = std::stoi(match[5].str());
+        return true;
+    }
+
     std::pair<long long, long long> expectedCoordinatorRetryDelayEnvelopeMs(
         int attempt)
     {
@@ -2198,9 +2598,23 @@ namespace
             std::size_t messageIndex = 0;
             std::chrono::steady_clock::time_point emitted;
         };
+        struct TimedOrdinaryRetry
+        {
+            std::string range;
+            int code = 0;
+            std::size_t messageIndex = 0;
+            std::chrono::steady_clock::time_point emitted;
+        };
+        struct TimedImmediateRetry
+        {
+            ImmediateRetryEvidence evidence;
+            std::size_t messageIndex = 0;
+            std::chrono::steady_clock::time_point emitted;
+        };
         std::vector<Request> requests;
         std::vector<Response> responses;
-        std::vector<std::pair<std::string, int>> retryEvents;
+        std::vector<TimedOrdinaryRetry> retryEvents;
+        std::vector<TimedImmediateRetry> immediateRetries;
         std::vector<TimedCoordinatorRetry> coordinatorRetries;
         std::vector<CoordinatorFallback> coordinatorFallbacks;
         Response currentResponse;
@@ -2297,8 +2711,29 @@ namespace
                 R"(HTTP error code for .* range ([0-9]+-[0-9]+): ([0-9]+)\. Retrying)");
             std::smatch retryMatch;
             if (std::regex_search(message, retryMatch, retryPattern))
-                retryEvents.emplace_back("bytes=" + retryMatch[1].str(),
-                                         std::stoi(retryMatch[2].str()));
+            {
+                retryEvents.push_back(
+                    {"bytes=" + retryMatch[1].str(),
+                     std::stoi(retryMatch[2].str()), messageIndex,
+                     hasCompleteTimestamps
+                         ? capture.timestamps[messageIndex]
+                         : std::chrono::steady_clock::time_point()});
+            }
+            ImmediateRetryEvidence immediateRetry;
+            if (parseImmediateRetryEvidence(message, immediateRetry))
+            {
+                immediateRetries.push_back(
+                    {immediateRetry, messageIndex,
+                     hasCompleteTimestamps
+                         ? capture.timestamps[messageIndex]
+                         : std::chrono::steady_clock::time_point()});
+            }
+            else
+            {
+                require(message.find("ReadMultiRange: immediate-retry") ==
+                            std::string::npos,
+                        "immediate multi-range retry event is malformed");
+            }
             CoordinatorRetryEvidence coordinatorRetry;
             if (parseCoordinatorRetryEvidence(message, coordinatorRetry))
             {
@@ -2451,14 +2886,112 @@ namespace
         std::map<int, int> retryCodes;
         for (const auto& retry : retryEvents)
         {
-            require(transientCodes.count(retry.second) != 0,
+            require(transientCodes.count(retry.code) != 0,
                     "CPL retry event used an unlisted transient response code");
-            ++retriesByRange[retry.first];
-            ++retryCodes[retry.second];
-            require(retriesByRange[retry.first] <= 3,
+            ++retriesByRange[retry.range];
+            ++retryCodes[retry.code];
+            require(retriesByRange[retry.range] <= 3,
                     "ranged GET exceeded the three-retry policy");
-            require(requestedRanges.count(retry.first) != 0,
+            require(requestedRanges.count(retry.range) != 0,
                     "CPL retry event names a Range that was never emitted");
+        }
+        require(immediateRetries.empty() || hasCompleteTimestamps,
+                "immediate retry proof is missing steady-clock timestamps");
+        std::vector<bool> consumedOrdinaryRetries(retryEvents.size(), false);
+        std::vector<bool> consumedImmediateResponses(responses.size(), false);
+        std::map<std::string, int> immediateAttemptsByRange;
+        std::map<std::string, long long> immediateConnectionsByRange;
+        for (const TimedImmediateRetry& timedImmediate : immediateRetries)
+        {
+            const ImmediateRetryEvidence& immediate = timedImmediate.evidence;
+            require(transientCodes.count(immediate.code) != 0,
+                    "immediate retry used an unlisted transient response code");
+            require(immediate.attempt >= 1 && immediate.attempt <= 3 &&
+                        immediate.attempt ==
+                            ++immediateAttemptsByRange[immediate.range],
+                    "immediate retry attempts are not contiguous in 1..3");
+            require(isExpectedCoordinatorRetryDelay(
+                        immediate.attempt, immediate.delayMs),
+                    "immediate retry delay is outside the native envelope");
+            require(immediate.connectionId >= 0 && immediate.httpMajor == 2,
+                    "immediate retry requires a nonnegative HTTP/2 connection");
+            const auto previousConnection =
+                immediateConnectionsByRange.find(immediate.range);
+            if (previousConnection == immediateConnectionsByRange.end())
+                immediateConnectionsByRange[immediate.range] =
+                    immediate.connectionId;
+            else
+                require(previousConnection->second == immediate.connectionId,
+                        "immediate retries changed connection");
+
+            int ordinaryIndex = -1;
+            for (std::size_t index = 0; index < retryEvents.size(); ++index)
+            {
+                const TimedOrdinaryRetry& ordinary = retryEvents[index];
+                if (!consumedOrdinaryRetries[index] &&
+                    ordinary.range == immediate.range &&
+                    ordinary.code == immediate.code &&
+                    ordinary.messageIndex < timedImmediate.messageIndex)
+                {
+                    require(ordinaryIndex < 0,
+                            "immediate retry matches multiple ordinary events");
+                    ordinaryIndex = static_cast<int>(index);
+                }
+            }
+            require(ordinaryIndex >= 0,
+                    "immediate retry has no matching ordinary retry event");
+            consumedOrdinaryRetries[static_cast<std::size_t>(ordinaryIndex)] = true;
+            const TimedOrdinaryRetry& ordinary =
+                retryEvents[static_cast<std::size_t>(ordinaryIndex)];
+
+            const Request* failedRequest = nullptr;
+            const Request* nextRequest = nullptr;
+            for (const Request& request : requests)
+            {
+                if (request.range != immediate.range) continue;
+                if (request.messageIndex < ordinary.messageIndex)
+                    failedRequest = &request;
+                else if (request.messageIndex > timedImmediate.messageIndex &&
+                         nextRequest == nullptr)
+                    nextRequest = &request;
+            }
+            require(failedRequest != nullptr && nextRequest != nullptr,
+                    "immediate retry lacks its failed or next exact Range request");
+            require(failedRequest->messageIndex < ordinary.messageIndex &&
+                        ordinary.messageIndex < timedImmediate.messageIndex &&
+                        timedImmediate.messageIndex < nextRequest->messageIndex,
+                    "immediate retry chronology is ambiguous");
+            const auto earliestRetry = timedImmediate.emitted +
+                std::chrono::milliseconds(immediate.delayMs) -
+                COORDINATOR_RETRY_CHRONOLOGY_ROUNDING_TOLERANCE;
+            require(nextRequest->sent >= earliestRetry,
+                    "immediate retry request preceded its declared delay");
+
+            int responseIndex = -1;
+            for (std::size_t index = 0; index < responses.size(); ++index)
+            {
+                if (consumedImmediateResponses[index]) continue;
+                const Response& response = responses[index];
+                const auto contentLength =
+                    response.headers.find("content-length");
+                if (response.code == immediate.code &&
+                    contentLength != response.headers.end() &&
+                    std::stoull(contentLength->second) == immediate.bytes &&
+                    response.completedIndex > failedRequest->messageIndex &&
+                    response.completedIndex < ordinary.messageIndex)
+                {
+                    require(responseIndex < 0,
+                            "immediate retry matches multiple transient responses");
+                    responseIndex = static_cast<int>(index);
+                }
+            }
+            require(responseIndex >= 0,
+                    "immediate retry has no matching transient response body");
+            consumedImmediateResponses[static_cast<std::size_t>(responseIndex)] = true;
+            ++proof.immediateTransientRetryCount;
+            proof.immediateTransientRetryBytes += immediate.bytes;
+            ++proof.immediateTransientRetryCodes[immediate.code];
+            proof.immediateRetries.push_back(immediate);
         }
         require(coordinatorRetries.size() <= 3,
                 "coordinator Range exceeded the three-retry policy");
@@ -3035,6 +3568,9 @@ namespace
             verifyOptimizedMetadataIntervals(proof);
         require(proof.metadataPrefetch.enabled == (profile == RangeProfile::Prefetch),
                 "metadata prefetch proof activation does not match the selected profile");
+        require(profile == RangeProfile::Prefetch ||
+                    proof.immediateTransientRetryCount == 0,
+                "non-prefetch profile emitted an immediate multi-range retry");
     }
 
     void verifyHttpParserRegression()
@@ -3080,6 +3616,40 @@ namespace
                     std::vector<std::pair<std::uint64_t, std::uint64_t>>({{10, 19}}),
                 "HTTP parser did not retain the successful byte interval");
 
+        DebugCapture immediate;
+        immediate.messages = capture.messages;
+        immediate.timestamps = capture.timestamps;
+        immediate.messages.insert(
+            immediate.messages.begin() + 12,
+            "VSICURL: ReadMultiRange: immediate-retry "
+            "range=bytes=10-19 status=500 bytes=17 attempt=1 "
+            "delay-ms=100 connection=7 http=2");
+        const auto immediateEpoch = std::chrono::steady_clock::time_point();
+        immediate.timestamps.resize(immediate.messages.size());
+        for (std::size_t index = 0; index < immediate.timestamps.size(); ++index)
+        {
+            immediate.timestamps[index] = immediateEpoch +
+                std::chrono::milliseconds(static_cast<long long>(index));
+        }
+        immediate.timestamps[10] = immediateEpoch + std::chrono::milliseconds(10);
+        immediate.timestamps[11] = immediateEpoch + std::chrono::milliseconds(20);
+        immediate.timestamps[12] = immediateEpoch + std::chrono::milliseconds(30);
+        immediate.timestamps[13] = immediateEpoch + std::chrono::milliseconds(130);
+        const HttpProof immediateProof = buildHttpProof(immediate, stats);
+        require(immediateProof.transientRetryCount == 1 &&
+                    immediateProof.immediateTransientRetryCount == 1 &&
+                    immediateProof.immediateTransientRetryBytes == 17 &&
+                    immediateProof.immediateTransientRetryCodes ==
+                        std::map<int, int>{{500, 1}} &&
+                    immediateProof.immediateRetries.size() == 1 &&
+                    immediateProof.immediateRetries.front().range ==
+                        "bytes=10-19" &&
+                    immediateProof.immediateRetries.front().connectionId == 7 &&
+                    serializeProof(immediateProof).find(
+                        "\"immediate_transient_retry_count\": 1") !=
+                        std::string::npos,
+                "immediate retry parser/schema regression fixture failed");
+
         const auto isRejected = [&stats](const DebugCapture& candidate)
         {
             try
@@ -3092,6 +3662,43 @@ namespace
                 return true;
             }
         };
+
+        DebugCapture malformedImmediate;
+        malformedImmediate.messages = immediate.messages;
+        malformedImmediate.timestamps = immediate.timestamps;
+        malformedImmediate.messages[12].replace(
+            malformedImmediate.messages[12].find("http=2"), 6, "http=1");
+        require(isRejected(malformedImmediate),
+                "HTTP parser accepted a malformed immediate retry event");
+
+        DebugCapture duplicateImmediate;
+        duplicateImmediate.messages = immediate.messages;
+        duplicateImmediate.timestamps = immediate.timestamps;
+        duplicateImmediate.messages.insert(
+            duplicateImmediate.messages.begin() + 13,
+            duplicateImmediate.messages[12]);
+        duplicateImmediate.timestamps.insert(
+            duplicateImmediate.timestamps.begin() + 13,
+            duplicateImmediate.timestamps[12]);
+        require(isRejected(duplicateImmediate),
+                "HTTP parser accepted a duplicate immediate retry event");
+
+        DebugCapture unmatchedImmediate;
+        unmatchedImmediate.messages = immediate.messages;
+        unmatchedImmediate.timestamps = immediate.timestamps;
+        unmatchedImmediate.messages[12].replace(
+            unmatchedImmediate.messages[12].find("status=500"), 10,
+            "status=503");
+        require(isRejected(unmatchedImmediate),
+                "HTTP parser accepted an unmatched immediate retry event");
+
+        DebugCapture earlyImmediate;
+        earlyImmediate.messages = immediate.messages;
+        earlyImmediate.timestamps = immediate.timestamps;
+        earlyImmediate.timestamps[13] =
+            earlyImmediate.timestamps[12] + std::chrono::milliseconds(98);
+        require(isRejected(earlyImmediate),
+                "HTTP parser accepted an early immediate retry request");
 
         DebugCapture unlisted;
         unlisted.messages = capture.messages;
@@ -4505,11 +5112,17 @@ namespace
         require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
                     "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
                 "metadata prefetch path option leaked between live iterations");
+        require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
+                    "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
+                "immediate multi-range path option leaked between live iterations");
         std::unique_ptr<ScopedPathSpecificOption> prefetchActivation;
+        std::unique_ptr<ScopedPathSpecificOption> immediateActivation;
         if (profile == RangeProfile::Prefetch)
         {
             prefetchActivation = std::make_unique<ScopedPathSpecificOption>(
                 vsiUrl, "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
+            immediateActivation = std::make_unique<ScopedPathSpecificOption>(
+                vsiUrl, "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "YES");
         }
         DatasetPtr raw(static_cast<GDALDataset*>(GDALOpenEx(
             vsiUrl.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
@@ -4544,10 +5157,14 @@ namespace
                             [](std::int8_t value) { return value != 0; }),
                 item.name + " RGB window is empty after HTTP retries");
         raw.reset();
+        immediateActivation.reset();
         prefetchActivation.reset();
         require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
                     "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "")).empty(),
                 "metadata prefetch path option survived dataset close");
+        require(std::string(VSIGetPathSpecificOption(vsiUrl.c_str(),
+                    "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "")).empty(),
+                "immediate multi-range path option survived dataset close");
         const auto finished = std::chrono::steady_clock::now();
 
         PhaseTimings phases;
@@ -4600,11 +5217,17 @@ namespace
         measurement.statsGetOperationCount = proof.statsGetOperationCount;
         measurement.successfulGetCount = proof.successfulGetCount;
         measurement.transientRetryCount = proof.transientRetryCount;
+        measurement.immediateTransientRetryCount =
+            proof.immediateTransientRetryCount;
+        measurement.immediateTransientRetryBytes =
+            proof.immediateTransientRetryBytes;
         measurement.coordinatorTransientRetryCount =
             proof.coordinatorTransientRetryCount;
         measurement.coordinatorTransientRetryBytes =
             proof.coordinatorTransientRetryBytes;
         measurement.transientRetryCodes = proof.transientRetryCodes;
+        measurement.immediateTransientRetryCodes =
+            proof.immediateTransientRetryCodes;
         measurement.coordinatorTransientRetryCodes =
             proof.coordinatorTransientRetryCodes;
         measurement.responseCodes = proof.responseCodes;
@@ -4675,6 +5298,8 @@ namespace
             static_cast<double>(measurement.successfulGetCount));
         httpCounts["transient_retries"] = picojson::value(
             static_cast<double>(measurement.transientRetryCount));
+        httpCounts["immediate_transient_retries"] = picojson::value(
+            static_cast<double>(measurement.immediateTransientRetryCount));
         httpCounts["coordinator_transient_retries"] = picojson::value(
             static_cast<double>(measurement.coordinatorTransientRetryCount));
 
@@ -4683,6 +5308,8 @@ namespace
             static_cast<double>(measurement.successfulRangeBytes));
         bytes["declared_transient"] = picojson::value(
             static_cast<double>(measurement.declaredTransientBytes));
+        bytes["immediate_transient_retry"] = picojson::value(
+            static_cast<double>(measurement.immediateTransientRetryBytes));
         bytes["coordinator_transient_retry"] = picojson::value(
             static_cast<double>(measurement.coordinatorTransientRetryBytes));
         bytes["actual_http_body"] = picojson::value(
@@ -4700,6 +5327,8 @@ namespace
         result["bytes"] = picojson::value(bytes);
         result["transient_retry_codes"] = picojson::value(
             retryCountsJson(measurement.transientRetryCodes));
+        result["immediate_transient_retry_codes"] = picojson::value(
+            retryCountsJson(measurement.immediateTransientRetryCodes));
         result["coordinator_transient_retry_codes"] = picojson::value(
             retryCountsJson(measurement.coordinatorTransientRetryCodes));
         result["response_codes"] = picojson::value(
@@ -4724,6 +5353,7 @@ namespace
         double summedTotalMs = 0.0;
         std::uint64_t totalSuccessfulBytes = 0;
         std::uint64_t totalDeclaredTransientBytes = 0;
+        std::uint64_t totalImmediateTransientRetryBytes = 0;
         std::uint64_t totalCoordinatorTransientRetryBytes = 0;
         std::uint64_t totalActualBodyBytes = 0;
         std::uint64_t totalConservativeBodyUpperBound = 0;
@@ -4733,8 +5363,10 @@ namespace
         int totalStatsGetOperations = 0;
         int totalSuccessfulGets = 0;
         int totalRetries = 0;
+        int totalImmediateRetries = 0;
         int totalCoordinatorRetries = 0;
         std::map<int, int> retryCodes;
+        std::map<int, int> immediateRetryCodes;
         std::map<int, int> coordinatorRetryCodes;
         std::set<int> responseCodes;
         for (std::size_t index = 0; index < measurements.size(); ++index)
@@ -4752,6 +5384,8 @@ namespace
             summedTotalMs += measurement.phases.totalMs;
             totalSuccessfulBytes += measurement.successfulRangeBytes;
             totalDeclaredTransientBytes += measurement.declaredTransientBytes;
+            totalImmediateTransientRetryBytes +=
+                measurement.immediateTransientRetryBytes;
             totalCoordinatorTransientRetryBytes +=
                 measurement.coordinatorTransientRetryBytes;
             totalActualBodyBytes += measurement.actualHttpBodyBytes;
@@ -4762,10 +5396,13 @@ namespace
             totalStatsGetOperations += measurement.statsGetOperationCount;
             totalSuccessfulGets += measurement.successfulGetCount;
             totalRetries += measurement.transientRetryCount;
+            totalImmediateRetries += measurement.immediateTransientRetryCount;
             totalCoordinatorRetries +=
                 measurement.coordinatorTransientRetryCount;
             for (const auto& retry : measurement.transientRetryCodes)
                 retryCodes[retry.first] += retry.second;
+            for (const auto& retry : measurement.immediateTransientRetryCodes)
+                immediateRetryCodes[retry.first] += retry.second;
             for (const auto& retry :
                  measurement.coordinatorTransientRetryCodes)
             {
@@ -4811,6 +5448,8 @@ namespace
             static_cast<double>(totalSuccessfulGets));
         httpCounts["transient_retries"] = picojson::value(
             static_cast<double>(totalRetries));
+        httpCounts["immediate_transient_retries"] = picojson::value(
+            static_cast<double>(totalImmediateRetries));
         httpCounts["coordinator_transient_retries"] = picojson::value(
             static_cast<double>(totalCoordinatorRetries));
         picojson::object bytes;
@@ -4820,6 +5459,8 @@ namespace
             static_cast<double>(totalActualBodyBytes));
         bytes["declared_transient"] = picojson::value(
             static_cast<double>(totalDeclaredTransientBytes));
+        bytes["immediate_transient_retry"] = picojson::value(
+            static_cast<double>(totalImmediateTransientRetryBytes));
         bytes["coordinator_transient_retry"] = picojson::value(
             static_cast<double>(totalCoordinatorTransientRetryBytes));
         bytes["conservative_body_upper_bound"] = picojson::value(
@@ -4841,6 +5482,8 @@ namespace
         result["bytes"] = picojson::value(bytes);
         result["transient_retry_codes"] = picojson::value(
             retryCountsJson(retryCodes));
+        result["immediate_transient_retry_codes"] = picojson::value(
+            retryCountsJson(immediateRetryCodes));
         result["coordinator_transient_retry_codes"] = picojson::value(
             retryCountsJson(coordinatorRetryCodes));
         result["response_codes"] = picojson::value(responseCodeSummary);
@@ -4981,9 +5624,12 @@ namespace
             measurement.statsGetOperationCount = 1;
             measurement.successfulGetCount = 1;
             measurement.transientRetryCount = 1;
+            measurement.immediateTransientRetryCount = 1;
             measurement.coordinatorTransientRetryCount = 1;
+            measurement.immediateTransientRetryBytes = 8;
             measurement.coordinatorTransientRetryBytes = 8;
             measurement.transientRetryCodes = {{503, 1}};
+            measurement.immediateTransientRetryCodes = {{503, 1}};
             measurement.coordinatorTransientRetryCodes = {{500, 1}};
             measurement.responseCodes = {503, 206};
             measurement.successfulRangeBytes = 128;
@@ -5012,10 +5658,16 @@ namespace
                       "actual_get").get<double>() == 2.0 &&
                 field(field(firstIteration, "http_counts").get<picojson::object>(),
                       "coordinator_transient_retries").get<double>() == 1.0 &&
+                field(field(firstIteration, "http_counts").get<picojson::object>(),
+                      "immediate_transient_retries").get<double>() == 1.0 &&
                 field(field(firstIteration, "bytes").get<picojson::object>(),
                       "successful_range").get<double>() == 128.0 &&
                 field(field(firstIteration, "bytes").get<picojson::object>(),
                       "coordinator_transient_retry").get<double>() == 8.0 &&
+                field(field(firstIteration, "bytes").get<picojson::object>(),
+                      "immediate_transient_retry").get<double>() == 8.0 &&
+                field(firstIteration, "immediate_transient_retry_codes")
+                    .get<picojson::object>().count("503") == 1 &&
                 field(firstIteration, "coordinator_transient_retry_codes")
                     .get<picojson::object>().count("500") == 1,
                 "live iteration timing, phase, HTTP, or byte JSON changed");
@@ -5028,13 +5680,19 @@ namespace
                       "actual_get").get<double>() == 10.0 &&
                 field(field(synthetic, "http_counts").get<picojson::object>(),
                       "coordinator_transient_retries").get<double>() == 5.0 &&
+                field(field(synthetic, "http_counts").get<picojson::object>(),
+                      "immediate_transient_retries").get<double>() == 5.0 &&
                 field(field(synthetic, "bytes").get<picojson::object>(),
                       "successful_range").get<double>() == 640.0 &&
                 field(field(synthetic, "bytes").get<picojson::object>(),
                       "coordinator_transient_retry").get<double>() == 40.0 &&
+                field(field(synthetic, "bytes").get<picojson::object>(),
+                      "immediate_transient_retry").get<double>() == 40.0 &&
                 field(synthetic, "response_codes").get<picojson::array>().size() == 2 &&
                 field(synthetic, "transient_retry_codes").get<picojson::object>()
                     .count("503") == 1 &&
+                field(synthetic, "immediate_transient_retry_codes")
+                    .get<picojson::object>().count("503") == 1 &&
                 field(synthetic, "coordinator_transient_retry_codes")
                     .get<picojson::object>().count("500") == 1,
                 "live case aggregate HTTP, byte, retry, or response JSON changed");
@@ -5348,6 +6006,7 @@ int runMain(int argc, char** argv)
     }
 
     verifyParallelMetadataPrefetch(fixture, root);
+    verifyImmediateMultiRangeRetry(fixture, root);
 
     ServerProcess server = startServer(fixture, ready, log);
     const int port = waitForPort(ready);

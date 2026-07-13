@@ -151,6 +151,68 @@ for status in 429 500 502 503 504; do
 done
 [[ $(grep -Ec '^\+        case [0-9]+:$' <<<"$classifier") -eq 5 ]] ||
     fail "prefetch patch transient classifier must contain exactly five statuses"
+assert_not_contains <(printf '%s\n' "$classifier") 'case 408:' \
+    "coordinator transient classifier must not include status 408"
+assert_contains "$prefetch_patch" \
+    'static bool IsImmediateMultiRangeTransientStatus\(long nStatus\)' \
+    "prefetch patch must centralize immediate multi-range transient status classification"
+immediate_classifier=$(sed -n \
+    '/^+static bool IsImmediateMultiRangeTransientStatus(long nStatus)/,/^+}/p' \
+    "$prefetch_patch")
+for status in 429 500 502 503 504; do
+    [[ $(grep -Ec "^\\+        case ${status}:$" <<<"$immediate_classifier") -eq 1 ]] ||
+        fail "immediate multi-range classifier must classify status ${status} exactly once"
+done
+[[ $(grep -Ec '^\+        case [0-9]+:$' <<<"$immediate_classifier") -eq 5 ]] ||
+    fail "immediate multi-range classifier must contain exactly five statuses"
+assert_not_contains <(printf '%s\n' "$immediate_classifier") 'case 408:' \
+    "immediate multi-range classifier must not include status 408"
+assert_contains "$prefetch_patch" \
+    'OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY' \
+    "prefetch patch must consume the exact immediate multi-range path option"
+assert_contains "$prefetch_patch" \
+    'pszImmediateOption != pszGlobalImmediateOption' \
+    "global-only immediate multi-range activation must be rejected"
+assert_contains "$prefetch_patch" 'curl_multi_info_read' \
+    "immediate multi-range loop must drain completed handles"
+assert_contains "$prefetch_patch" 'curl_multi_poll' \
+    "immediate multi-range loop must poll only until the next useful event"
+assert_contains "$prefetch_patch" \
+    'std::chrono::steady_clock::time_point oRetryDue' \
+    "each immediate multi-range request must own a retry due time"
+assert_contains "$prefetch_patch" \
+    'curl_multi_add_handle\(hMultiHandle, sRequest\.hCurlHandle\)' \
+    "immediate retry must re-add the same easy handle to the same multi"
+assert_contains "$prefetch_patch" \
+    'ReadMultiRange: immediate-retry range=bytes=%s status=%ld bytes=%zu attempt=%d delay-ms=%lld connection=' \
+    "immediate retry event must expose the exact proof fields"
+assert_contains "$prefetch_patch" 'GetParallelHeadRangeRetryEligibility' \
+    "coordinator retry must use an explicit HEAD/Range eligibility helper"
+eligibility_helper=$(sed -n \
+    '/^+static ParallelHeadRangeRetryEligibility GetParallelHeadRangeRetryEligibility/,/^+}/p' \
+    "$prefetch_patch")
+for token in bHeadDone eHeadCurlCode nHeadCode nHeadSize \
+             nHeadRedirectCount nHeadHTTPVersion nHeadConnectionId \
+             eRangeCurlCode nRangeRedirectCount nRangeHTTPVersion \
+             nRangeConnectionId head-invalid head-transport head-redirect \
+             head-protocol head-connection range-transport range-redirect \
+             range-protocol range-connection; do
+    grep -Fq -- "$token" <<<"$eligibility_helper" ||
+        fail "coordinator retry eligibility helper is missing $token"
+done
+eligibility_line=$(grep -n \
+    'const auto eRetryEligibility = GetParallelHeadRangeRetryEligibility' \
+    "$prefetch_patch" | head -1 | cut -d: -f1)
+coordinator_can_retry_line=$(grep -n 'oRangeRetryContext.CanRetry' \
+    "$prefetch_patch" | head -1 | cut -d: -f1)
+[[ -n $eligibility_line && -n $coordinator_can_retry_line &&
+      $eligibility_line -lt $coordinator_can_retry_line ]] ||
+    fail "HEAD and failed Range transport must be validated before coordinator CanRetry"
+assert_contains "$prefetch_patch" \
+    'ParallelHeadRange: transient-retry-blocked range=bytes=0-131071 status=%ld reason=%s range-connection=' \
+    "prefetch patch must emit the exact fail-closed blocked event"
+assert_not_contains "$prefetch_patch" 'OSGSOL_TEST_|PREFETCH_TEST_' \
+    "production patch must not contain test-only transport fault controls"
 assert_contains "$prefetch_patch" \
     'ParallelHeadRange: transient-retry range=bytes=0-131071 ' \
     "prefetch patch must emit the exact coordinator retry prefix"

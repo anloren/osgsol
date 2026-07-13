@@ -13,10 +13,17 @@ const TRANSIENT_ONCE_MODES = new Map([
 const MODES = new Set([
     'success', 'range-200', 'range-200-body', 'short-range',
     'size-mismatch', 'range-503', 'range-503-exhaust',
+    'multirange-500-overlap',
     ...TRANSIENT_ONCE_MODES.keys(),
 ]);
 const EXPECTED_RANGE = 'bytes=0-131071';
 const PREFETCH_BYTES = 131072;
+const MULTIRANGE_INTERVALS = new Map([
+    ['bytes=262144-327679', { start: 262144, end: 327679, delayMs: 700 }],
+    ['bytes=393216-458751', { start: 393216, end: 458751, delayMs: 0,
+        transientOnce: true }],
+    ['bytes=524288-589823', { start: 524288, end: 589823, delayMs: 200 }],
+]);
 
 function fail(message)
 {
@@ -72,6 +79,7 @@ let nextSessionId = 1;
 let totalAttemptedBodyBytes = 0;
 let getCount = 0;
 let headCount = 0;
+const rangeAttempts = new Map();
 let violation = null;
 const sessions = new Set();
 const activeStreamFinalizers = new Set();
@@ -203,13 +211,14 @@ server.on('request', (request, response) =>
         socket.__scienceSessionId = `session-${nextSessionId++}`;
         emit({ event: 'session_start', session_id: socket.__scienceSessionId });
     }
-    const context = {
-        session_id: socket.__scienceSessionId,
-        stream_id: nextHttp1StreamId++,
-    };
     const method = request.method;
     const path = request.url;
     const range = request.headers.range ?? null;
+    const context = {
+        session_id: socket.__scienceSessionId,
+        stream_id: nextHttp1StreamId++,
+        path,
+    };
     emit({ event: 'stream_start', ...context, method, path, range });
 
     let bodyBytes = 0;
@@ -243,9 +252,10 @@ server.on('request', (request, response) =>
     if (method === 'HEAD')
     {
         ++headCount;
-        setTimeout(() => send(200, {
+        const head503 = path.includes('head-503') && headCount === 1;
+        setTimeout(() => send(head503 ? 503 : 200, {
             'accept-ranges': 'bytes',
-            'content-length': String(fixture.length),
+            'content-length': head503 ? '0' : String(fixture.length),
         }), 200);
         return;
     }
@@ -257,6 +267,13 @@ server.on('request', (request, response) =>
         return;
     }
     ++getCount;
+    const transientStatus = TRANSIENT_ONCE_MODES.get(options.mode);
+    if (transientStatus !== undefined && getCount === 1)
+    {
+        send(transientStatus, { 'content-length': '17' },
+            Buffer.from('transient-error!\n'));
+        return;
+    }
     send(206, {
         'content-length': String(PREFETCH_BYTES),
         'content-range': `bytes 0-${PREFETCH_BYTES - 1}/${fixture.length}`,
@@ -382,6 +399,34 @@ server.on('stream', (stream, headers) =>
     if (range.includes(','))
     {
         reject(stream, context, 'comma Range rejected');
+        return;
+    }
+    if (options.mode === 'multirange-500-overlap')
+    {
+        const interval = MULTIRANGE_INTERVALS.get(range);
+        if (!interval)
+        {
+            reject(stream, context, `unexpected multi-range interval ${range}`);
+            return;
+        }
+        const attempt = (rangeAttempts.get(range) ?? 0) + 1;
+        rangeAttempts.set(range, attempt);
+        if (interval.transientOnce && attempt === 1)
+        {
+            sendBody(stream, context, 500, { 'content-length': '17' },
+                Buffer.from('transient-error!\n'));
+            return;
+        }
+        const body = fixture.subarray(interval.start, interval.end + 1);
+        const send = () => sendBody(stream, context, 206, {
+            'content-length': String(body.length),
+            'content-range':
+                `bytes ${interval.start}-${interval.end}/${fixture.length}`,
+        }, body);
+        if (interval.delayMs > 0)
+            setTimeout(send, interval.delayMs);
+        else
+            send();
         return;
     }
     if (range !== EXPECTED_RANGE)
