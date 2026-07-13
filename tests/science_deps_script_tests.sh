@@ -19,6 +19,7 @@ prefetch_transient_stats="$repo_root/tests/data/science/prefetch_hong_kong_trans
 prefetch_retry_trace="$repo_root/tests/data/science/prefetch_nvidia_transient_retry_trace.log"
 prefetch_retry_stats="$repo_root/tests/data/science/prefetch_nvidia_transient_retry_stats.json"
 tests_cmake="$repo_root/tests/CMakeLists.txt"
+network_test="$repo_root/tests/science_gdal_network_test.cpp"
 
 fail()
 {
@@ -53,6 +54,11 @@ assert_not_contains()
 [[ -f "$gdal_patch" ]] || fail "missing pinned GDAL Shapelib-disable patch"
 [[ -f "$relocatable_patch" ]] || fail "missing pinned relocatable GDAL patch"
 [[ -f "$prefetch_patch" ]] || fail "missing pinned parallel HEAD/Range GDAL patch"
+[[ -f "$network_test" ]] || fail "missing ScienceEarth GDAL network test"
+[[ $(grep -Ec '^--- a/' "$prefetch_patch") -eq 2 &&
+   $(grep -Ec '^--- a/port/cpl_vsil_curl\.cpp$' "$prefetch_patch") -eq 1 &&
+   $(grep -Ec '^--- a/port/cpl_vsil_curl_class\.h$' "$prefetch_patch") -eq 1 ]] ||
+    fail "prefetch patch must contain exactly the implementation and class header"
 [[ -f "$prefetch_trace" ]] || fail "missing credential-free prefetch replay trace"
 [[ -f "$prefetch_stats" ]] || fail "missing prefetch replay network statistics"
 [[ -f "$prefetch_transient_trace" ]] ||
@@ -128,8 +134,18 @@ assert_contains "$prefetch_patch" 'attempt=2 code=%d' \
     "prefetch patch must retry a failed detach before abandonment"
 assert_contains "$prefetch_patch" 'AbandonCurlMultiHandle' \
     "prefetch patch must quarantine a persistently attached cached multi"
-assert_contains "$prefetch_patch" 'bParallelHeadRangeDisabled = true' \
-    "prefetch patch must bound abandonment to one parallel attempt per thread and filesystem"
+assert_contains "$prefetch_patch" \
+    'm_bParallelHeadRangeDisabled\.store\(true, std::memory_order_release\)' \
+    "prefetch patch must permanently latch handler-wide abandonment"
+assert_contains "$prefetch_patch" \
+    'm_bParallelHeadRangeDisabled\.load\(std::memory_order_acquire\)' \
+    "both optimized activation paths must read the handler-wide latch"
+[[ $(grep -Ec '^\+.*poFS->IsParallelHeadRangeDisabled\(\)' \
+        "$prefetch_patch") -eq 2 ]] ||
+    fail "coordinator and immediate activation must both consult the handler latch"
+assert_contains "$prefetch_patch" \
+    'ReadMultiRange: handler-disabled=abandoned fail-closed=1' \
+    "a later exact-path immediate request must fail closed after abandonment"
 assert_contains "$prefetch_patch" 'file-property-publication-blocked' \
     "prefetch patch must block metadata publication after multi abandonment"
 assert_not_contains "$prefetch_patch" 'PREFETCH_TEST_' \
@@ -244,14 +260,37 @@ assert_not_contains "$prefetch_patch" 'ConsumeParallelHeadRangeBlocked' \
     "operation-scoped blocking must not use consume-once semantics"
 assert_contains "$prefetch_patch" 'SweepParallelHeadRangeBlocked' \
     "blocked operation map must actively sweep expired distinct paths"
-assert_contains "$prefetch_patch" 'oIter->second\.oExpiry <= oNow' \
+assert_contains "$prefetch_patch" 'oIter->second <= oNow' \
     "blocked operation expiry must include the exact deadline"
 assert_contains "$prefetch_patch" 'knMAX_BLOCKED_OPERATIONS = 256' \
     "blocked operation map must have a fixed capacity"
 assert_contains "$prefetch_patch" 'blocked-operation-rejected' \
     "same-token blocked opens must expose rejection evidence"
-assert_contains "$prefetch_patch" 'blocked-operation-cleared=' \
-    "absent or changed operation tokens must clear stale blocks"
+assert_not_contains "$prefetch_patch" 'blocked-operation-cleared=' \
+    "absent or changed operation tokens must not erase another token's block"
+assert_contains "$prefetch_patch" \
+    'std::map<std::pair<std::string, std::string>,' \
+    "blocked operations must be keyed by exact path and operation token"
+assert_contains "$prefetch_patch" '#include <chrono>' \
+    "class header must explicitly include chrono for marker expiry state"
+assert_contains "$prefetch_patch" \
+    'std::atomic<bool> m_bParallelHeadRangeDisabled\{false\}' \
+    "class header must own the handler-wide atomic latch"
+assert_contains "$prefetch_patch" \
+    'm_oParallelHeadRangeBlockedOperations\.clear\(\)' \
+    "ClearCache must clear every handler-wide blocked operation"
+assert_contains "$network_test" \
+    'std::map<std::string, std::weak_ptr<std::recursive_mutex>> leases' \
+    "path-option leases must use a process-wide exact-path registry"
+assert_contains "$network_test" \
+    'std::unique_lock<std::recursive_mutex> _lock' \
+    "each path-option lease must hold its exact-path lock for its lifetime"
+assert_contains "$network_test" \
+    'previous != nullptr && previous != global' \
+    "path-option leases must preserve the previous path-specific value"
+assert_contains "$network_test" \
+    'different-path option lease was unnecessarily serialized' \
+    "lease regression must prove different paths remain concurrent"
 assert_contains "$prefetch_patch" 'GetParallelHeadRangeRetryEligibility' \
     "coordinator retry must use an explicit HEAD/Range eligibility helper"
 eligibility_helper=$(sed -n \

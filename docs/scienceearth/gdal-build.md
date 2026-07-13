@@ -27,7 +27,7 @@ compile test recognize AppleClang. The private build additionally verifies and a
 relocatable-resource patch (SHA-256
 `17741b49beeb10a4f6663e0e3197807e7a3daa84610d4c092ddc9c6e81b9fa79`) and the opt-in
 parallel HEAD/Range prototype patch (SHA-256
-`42db517609c534c6178ce23052449ad747bf4d641b8eae07744839ae92f34c9c`). The latter remains
+`b156d680c99fb554a96252e34d84f717b86e7eb9766c25c79d3a69f42c225e85`). The latter remains
 path-specific and off by default; it is not part of the protected Desktop runtime.
 
 ## Rebuild commands
@@ -345,3 +345,32 @@ packaging, or start G1.
 G0_DECISION=STOP
 PUBLIC_REQUALIFICATION_V4=AUTHORIZED_NOT_RUN
 DESKTOP_PACKAGE=NOT_READY
+
+### V5 runtime-safety and G1 provider lease contract
+
+The private patch is a two-file change: `port/cpl_vsil_curl.cpp` contains the behavior and
+`port/cpl_vsil_curl_class.h` contains the handler-wide state. The operation block table belongs to
+the filesystem handler and is keyed by `(exact path, operation token)`, so the same token is
+rejected without network access from any thread. New or missing tokens are independent and do not
+delete an existing token's live record. The table has a 256-entry cap, inclusive expiry sweep,
+full-cache cleanup, and path-prefix partial cleanup.
+
+A successful cached-multi abandonment sets a permanent handler-wide atomic latch. Both custom
+activation sites consult it. A later exact-path immediate request fails closed before multi-handle
+use, preventing a second retained attached-state leak; ordinary paths without the explicit option
+remain on upstream behavior.
+
+The G1 AlphaEarth provider must acquire one process-wide keyed lease for the exact `/vsicurl/`
+object path and hold it for the full dataset lifetime while the metadata option, immediate option,
+and unique operation token are active. Nested guards on that path use the same recursive lock and
+restore the actual prior path-specific values. Different exact paths use different locks and may
+load concurrently, preserving cross-source agent research. No G1 provider may set these three
+options without this lease.
+
+This 2026-07-14 runtime-safety remediation was deliberately incremental: it rebuilt and installed
+the changed private GDAL archive into the existing owned `build/science-deps-prefetch` prefix; it
+did not claim or perform another clean dependency rebuild. A fresh archive extraction applied the
+three pinned patches in order and matched both patched files byte-for-byte. The standalone private
+prefix verifier passed, the focused GDAL/local-HTTP CTest passed 4/4, and the selected ScienceEarth
+offline matrix passed 8/8. No public AlphaEarth request, formal evidence run, Desktop packaging,
+G1 implementation, tag, or push occurred.

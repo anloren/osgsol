@@ -4,6 +4,7 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cerrno>
 #include <cstring>
 #include <CommonCrypto/CommonDigest.h>
@@ -71,6 +72,34 @@
 
 namespace
 {
+    std::shared_ptr<std::recursive_mutex> pathSpecificOptionLeaseMutex(
+        const std::string& path)
+    {
+        struct Registry
+        {
+            std::mutex mutex;
+            std::map<std::string, std::weak_ptr<std::recursive_mutex>> leases;
+        };
+        static Registry registry;
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        for (auto iterator = registry.leases.begin();
+             iterator != registry.leases.end();)
+        {
+            if (iterator->second.expired())
+                iterator = registry.leases.erase(iterator);
+            else
+                ++iterator;
+        }
+        auto& weakLease = registry.leases[path];
+        std::shared_ptr<std::recursive_mutex> lease = weakLease.lock();
+        if (!lease)
+        {
+            lease = std::make_shared<std::recursive_mutex>();
+            weakLease = lease;
+        }
+        return lease;
+    }
+
     constexpr int SIZE = 256;
     constexpr int BAND_COUNT = 64;
     constexpr std::int8_t NODATA_VALUE = -128;
@@ -276,6 +305,7 @@ namespace
         int transportFaultOrdinal = 0;
         bool verifyOperationScope = false;
         const char* retryDelay = "0.1";
+        bool verifyCrossThreadScope = false;
     };
 
     struct DebugCapture
@@ -351,25 +381,38 @@ namespace
     public:
         ScopedPathSpecificOption(const std::string& path,
                                  const char* key, const char* value)
-            : _path(path), _key(key)
+            : _pathMutex(pathSpecificOptionLeaseMutex(path)),
+              _lock(*_pathMutex), _path(path), _key(key)
         {
             if (_path.empty() || _key.empty() || value == nullptr)
                 throw std::invalid_argument(
                     "path-specific option arguments must not be empty");
+            const char* previous = VSIGetPathSpecificOption(
+                _path.c_str(), _key.c_str(), nullptr);
+            const char* global = CPLGetConfigOption(_key.c_str(), nullptr);
+            _hadPreviousPathValue = previous != nullptr && previous != global;
+            if (_hadPreviousPathValue)
+                _previousPathValue = previous;
             VSISetPathSpecificOption(_path.c_str(), _key.c_str(), value);
         }
 
         ~ScopedPathSpecificOption()
         {
-            VSISetPathSpecificOption(_path.c_str(), _key.c_str(), nullptr);
+            VSISetPathSpecificOption(
+                _path.c_str(), _key.c_str(),
+                _hadPreviousPathValue ? _previousPathValue.c_str() : nullptr);
         }
 
         ScopedPathSpecificOption(const ScopedPathSpecificOption&) = delete;
         ScopedPathSpecificOption& operator=(const ScopedPathSpecificOption&) = delete;
 
     private:
+        std::shared_ptr<std::recursive_mutex> _pathMutex;
+        std::unique_lock<std::recursive_mutex> _lock;
         std::string _path;
         std::string _key;
+        std::string _previousPathValue;
+        bool _hadPreviousPathValue = false;
     };
 
     std::string nextPrefetchOperationId()
@@ -422,6 +465,121 @@ namespace
     void require(bool condition, const std::string& message)
     {
         if (!condition) fail(message);
+    }
+
+    void verifyPathSpecificOptionLease()
+    {
+        const char* selectedPhase =
+            std::getenv("OSGSOL_TEST_PATH_LEASE_PHASE");
+        const std::string path =
+            "/vsicurl/https://data.example/path-lease-regression.tif";
+        const char* key = "OSGSOL_VSICURL_PREFETCH_OPERATION_ID";
+
+        if (selectedPhase == nullptr ||
+            std::string(selectedPhase) == "nested")
+        {
+            VSISetPathSpecificOption(path.c_str(), key, "OLD");
+            {
+                ScopedPathSpecificOption outer(path, key, "OUTER");
+                require(std::string(VSIGetPathSpecificOption(
+                            path.c_str(), key, "")) == "OUTER",
+                        "outer path-option lease did not activate");
+                {
+                    ScopedPathSpecificOption inner(path, key, "INNER");
+                    require(std::string(VSIGetPathSpecificOption(
+                                path.c_str(), key, "")) == "INNER",
+                            "inner path-option lease did not activate");
+                }
+                require(std::string(VSIGetPathSpecificOption(
+                            path.c_str(), key, "")) == "OUTER",
+                        "nested path-option lease did not restore outer value");
+            }
+            require(std::string(VSIGetPathSpecificOption(
+                        path.c_str(), key, "")) == "OLD",
+                    "outer path-option lease did not restore old value");
+            VSISetPathSpecificOption(path.c_str(), key, nullptr);
+        }
+
+        if (selectedPhase == nullptr ||
+            std::string(selectedPhase) == "concurrent")
+        {
+            struct LeaseState
+            {
+                std::mutex mutex{};
+                std::condition_variable condition{};
+                bool firstEntered = false;
+                bool secondAttempted = false;
+                bool secondAcquired = false;
+                bool differentPathAcquired = false;
+                bool releaseFirst = false;
+            } state;
+            VSISetPathSpecificOption(path.c_str(), key, "OLD");
+            std::thread first([&]()
+            {
+                ScopedPathSpecificOption lease(path, key, "FIRST");
+                std::unique_lock<std::mutex> lock(state.mutex);
+                state.firstEntered = true;
+                state.condition.notify_all();
+                state.condition.wait(lock,
+                    [&]() { return state.releaseFirst; });
+            });
+            {
+                std::unique_lock<std::mutex> lock(state.mutex);
+                state.condition.wait(lock,
+                    [&]() { return state.firstEntered; });
+            }
+            std::thread differentPath([&]()
+            {
+                ScopedPathSpecificOption lease(
+                    path + ".other", key, "DIFFERENT");
+                std::lock_guard<std::mutex> lock(state.mutex);
+                state.differentPathAcquired = true;
+                state.condition.notify_all();
+            });
+            bool differentPathAcquiredBeforeRelease = false;
+            {
+                std::unique_lock<std::mutex> lock(state.mutex);
+                differentPathAcquiredBeforeRelease = state.condition.wait_for(
+                    lock, std::chrono::milliseconds(100),
+                    [&]() { return state.differentPathAcquired; });
+            }
+            std::thread second([&]()
+            {
+                {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.secondAttempted = true;
+                    state.condition.notify_all();
+                }
+                ScopedPathSpecificOption lease(path, key, "SECOND");
+                std::lock_guard<std::mutex> lock(state.mutex);
+                state.secondAcquired = true;
+                state.condition.notify_all();
+            });
+            bool acquiredBeforeRelease = false;
+            {
+                std::unique_lock<std::mutex> lock(state.mutex);
+                state.condition.wait(lock,
+                    [&]() { return state.secondAttempted; });
+                acquiredBeforeRelease = state.condition.wait_for(
+                    lock, std::chrono::milliseconds(100),
+                    [&]() { return state.secondAcquired; });
+                state.releaseFirst = true;
+                state.condition.notify_all();
+            }
+            first.join();
+            second.join();
+            differentPath.join();
+            require(differentPathAcquiredBeforeRelease,
+                    "different-path option lease was unnecessarily serialized");
+            require(!acquiredBeforeRelease,
+                    "concurrent path-option lease was not serialized");
+            require(state.secondAcquired,
+                    "second path-option lease never acquired after release");
+            require(std::string(VSIGetPathSpecificOption(
+                        path.c_str(), key, "")) == "OLD",
+                    "concurrent path-option lease did not restore old value");
+            VSISetPathSpecificOption(path.c_str(), key, nullptr);
+        }
     }
 
     struct ServerProcess
@@ -827,6 +985,9 @@ namespace
             {"range-500-once", false, true, "head-503-operation-scope",
                 "2TLS", 2, "head-invalid", true, "path", "", 3, 1,
                 "head-invalid", "", 0, true},
+            {"range-500-once", false, true, "head-503-cross-thread-scope",
+                "2TLS", 1, "head-invalid", true, "path", "", 2, 0,
+                "head-invalid", "", 0, false, "0.1", true},
             {"range-500-once", false, true, "invalid-delay-nan",
                 "2TLS", 1, "retry-delay", true, "path", "", 1, 0,
                 "", "", 0, false, "nan"},
@@ -890,6 +1051,8 @@ namespace
         {
             const std::string caseName = std::string(prefetchCase.mode) +
                 (prefetchCase.variant[0] ? "-" + std::string(prefetchCase.variant) : "");
+            if (!selectedMode && caseName == "success-remove-failure")
+                continue;
             if (selectedMode && std::string(selectedMode) != caseName)
                 continue;
             const auto transientOnce =
@@ -993,6 +1156,22 @@ namespace
                             caseName +
                                 " did not consume its exact 500 transport fault");
                 }
+                if (prefetchCase.verifyCrossThreadScope)
+                {
+                    std::atomic<bool> crossThreadOpened{false};
+                    std::thread sameOperation([&]()
+                    {
+                        ScopedGdalErrorCapture threadErrorCapture(capture);
+                        VSILFILE* blocked = VSIFOpenL(vsiUrl.c_str(), "rb");
+                        crossThreadOpened.store(blocked != nullptr);
+                        if (blocked != nullptr)
+                            VSIFCloseL(blocked);
+                    });
+                    sameOperation.join();
+                    require(!crossThreadOpened.load(),
+                        caseName +
+                            " same-token cross-thread open escaped blocking");
+                }
                 if (prefetchCase.verifyOperationScope)
                 {
                     for (int probe = 0; probe < 2; ++probe)
@@ -1013,6 +1192,13 @@ namespace
                         caseName + " new-token independent open stayed blocked");
                     require(VSIFCloseL(recovered) == 0,
                         caseName + " new-token independent open did not close");
+                    VSISetPathSpecificOption(vsiUrl.c_str(),
+                        "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
+                        operationId.c_str());
+                    VSILFILE* original = VSIFOpenL(vsiUrl.c_str(), "rb");
+                    require(original == nullptr,
+                        caseName +
+                            " token A escaped after token B completed");
                 }
                 if (std::string(prefetchCase.activation) == "path" ||
                     std::string(prefetchCase.activation) == "path-no-token")
@@ -1206,13 +1392,21 @@ namespace
                 {
                     require(countDebug(capture,
                                 "ParallelHeadRange: blocked-operation-rejected") >=
-                                3 &&
+                                4 &&
                                 countDebug(capture,
                                 "ParallelHeadRange: blocked-operation-cleared=") ==
-                                1,
+                                0,
                             caseName +
                                 " did not block every same-token probe then "
-                                "clear on token replacement");
+                                "preserve token A across token B");
+                }
+                if (prefetchCase.verifyCrossThreadScope)
+                {
+                    require(countDebug(capture,
+                                "ParallelHeadRange: blocked-operation-rejected") >=
+                                2,
+                            caseName +
+                                " omitted cross-thread blocked evidence");
                 }
             }
             if (std::string(prefetchCase.mode) == "range-503-exhaust")
@@ -1496,17 +1690,19 @@ namespace
             const char* serverMode = "multirange-500-overlap";
             bool expectsSuccess = true;
             int removeFaultCount = 0;
+            bool verifyAbandonmentLatch = false;
         };
         const ActivationCase cases[] = {
             {"path", true},
             {"global-only", false},
             {"remove-transient", true, "multirange-500-overlap", true, 1},
-            {"remove-persistent", true, "multirange-500-overlap", false, 2},
             {"content-range-missing", true, "multirange-success", false},
             {"content-range-malformed", true, "multirange-success", false},
             {"content-range-duplicate", true, "multirange-success", false},
             {"content-range-spoof", true, "multirange-success", false},
             {"content-range-wrong-range", true, "multirange-success", false},
+            {"remove-persistent", true, "multirange-500-repeat",
+                false, 2, true},
         };
         const char* selectedActivation =
             CPLGetConfigOption("OSGSOL_TEST_MULTIRANGE_CASE", nullptr);
@@ -1559,6 +1755,8 @@ namespace
                 buffers[index] = actual[index].data();
             }
             int readResult = -1;
+            int secondReadResult = -1;
+            bool firstReadOutputWasEmpty = false;
             {
                 ScopedGdalErrorCapture errorCapture(capture);
                 std::unique_ptr<ScopedPathSpecificOption> pathOption;
@@ -1583,6 +1781,20 @@ namespace
                 readResult = VSIFReadMultiRangeL(
                     static_cast<int>(buffers.size()), buffers.data(),
                     OFFSETS.data(), SIZES.data(), file);
+                firstReadOutputWasEmpty = std::all_of(actual.begin(), actual.end(),
+                    [](const std::vector<unsigned char>& interval)
+                    {
+                        return std::all_of(interval.begin(), interval.end(),
+                            [](unsigned char value) { return value == 0; });
+                    });
+                if (activation.verifyAbandonmentLatch)
+                {
+                    for (auto& interval : actual)
+                        std::fill(interval.begin(), interval.end(), 0);
+                    secondReadResult = VSIFReadMultiRangeL(
+                        static_cast<int>(buffers.size()), buffers.data(),
+                        OFFSETS.data(), SIZES.data(), file);
+                }
                 require(VSIFCloseL(file) == 0,
                         "failed to close the HTTP/2 multi-range fixture");
                 require((readResult == 0) == activation.expectsSuccess,
@@ -1595,16 +1807,7 @@ namespace
                 }
                 else
                 {
-                    require(std::all_of(actual.begin(), actual.end(),
-                                [](const std::vector<unsigned char>& interval)
-                                {
-                                    return std::all_of(interval.begin(),
-                                        interval.end(),
-                                        [](unsigned char value)
-                                        {
-                                            return value == 0;
-                                        });
-                                }),
+                    require(firstReadOutputWasEmpty,
                             std::string(activation.name) +
                                 " exposed partial caller output");
                 }
@@ -1632,7 +1835,7 @@ namespace
             }
             const std::string statsJson = requireNetworkStatsEvidence();
             server.stop();
-            if (std::string(activation.name) == "remove-persistent")
+            if (std::string(activation.name).find("remove-persistent") == 0)
             {
                 require(countDebug(capture,
                             "ReadMultiRange: detach-failure range=") == 2 &&
@@ -1642,6 +1845,20 @@ namespace
                             "ReadMultiRange: ownership-retained range=") >= 1,
                         "persistent immediate remove failure did not isolate "
                         "the old multi ownership");
+                if (activation.verifyAbandonmentLatch)
+                {
+                    require(secondReadResult == -1 &&
+                                countDebug(capture,
+                                    "ReadMultiRange: immediate-retry ") == 0 &&
+                                countDebug(capture,
+                                    "ReadMultiRange: handler-disabled="
+                                    "abandoned fail-closed=1") == 1 &&
+                                countDebug(capture,
+                                    "ReadMultiRange: multi-abandoned=success") ==
+                                    1,
+                            "persistent abandonment reactivated the custom "
+                            "immediate scheduler");
+                }
                 continue;
             }
 
@@ -6339,6 +6556,7 @@ int runMain(int argc, char** argv)
     const RangeProfile processProfile = liveMode
         ? liveCommand.profile : RangeProfile::Optimized;
     ScopedGdalConfig processConfig(rangeAccessConfig(processProfile));
+    verifyPathSpecificOptionLease();
     verifyRangeProfiles();
     verifyRangeAccessConfig(processProfile);
     verifyLatencyGateRegression();

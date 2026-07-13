@@ -84,11 +84,14 @@ ParallelHeadRange: transient-retry-blocked range=bytes=0-131071 status=<CODE> re
 The same Range transport prerequisites are rechecked after every failed retry attempt. A later
 valid 206 cannot retroactively legitimize an invalid earlier attempt.
 
-The fail-closed marker is operation-scoped. Metadata prefetch activates only when the exact path
-also owns a nonempty, unique `OSGSOL_VSICURL_PREFETCH_OPERATION_ID`. A failed coordinator records
-path, token, and bounded expiry; every later open with that token is rejected without network I/O.
-An absent, changed, or expired token clears the stale record and permits an independent operation.
-The map actively sweeps expired paths and is capped at 256 entries.
+The fail-closed marker is operation-scoped and owned by the filesystem handler, not a thread-local
+connection. Metadata prefetch activates only when the exact path also owns a nonempty, unique
+`OSGSOL_VSICURL_PREFETCH_OPERATION_ID`. A failed coordinator records `(path, token)` and bounded
+expiry; every later open with that pair is rejected without network I/O, including opens from
+another thread. A new or absent token is an independent operation and never erases another token's
+live record. The handler-wide map sweeps entries whose expiry is at or before the current time, is
+capped at 256 entries, is fully cleared by `ClearCache()`, and is prefix-cleaned by
+`PartialClearCache()`.
 
 Retry delays are validated after `CanRetry()` and before integer or chrono conversion. NaN,
 infinity, negative, integer-unrepresentable, or steady-clock-unrepresentable delays fail closed,
@@ -105,13 +108,23 @@ OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY=YES
 ```
 
 It is installed with RAII for only the exact AlphaEarth `/vsicurl/` object during the prefetch
-profile's dataset lifetime. The option is removed at dataset close. A global config value with the
-same name does not activate the feature. Baseline, optimized, ordinary osgVerse/osgSol GDAL,
+profile's dataset lifetime. A process-wide exact-path lease registry permits only one active
+prefetch lease for the same object path, holds that path's recursive lock across all three nested
+option guards, and restores the actual prior path-specific value at unwind. Different object paths
+use different locks and remain concurrent for cross-source research. The option is removed or
+restored at dataset close. A global config value with the same name does not activate the feature.
+Baseline, optimized, ordinary osgVerse/osgSol GDAL,
 terrain, 3D Tiles, photo, media, and unrelated `/vsicurl/` objects retain upstream behavior.
 
 The existing metadata option remains separate:
 `OSGSOL_VSICURL_PREFETCH_HEAD_RANGE=YES`. It requires the operation token above for the same exact
 path and dataset lifetime. Neither optimization option silently enables the other.
+
+A successful multi-handle abandonment permanently sets one handler-wide atomic safety latch.
+Both the HEAD/Range coordinator and immediate multi-range activation read it. Later exact-path
+immediate requests fail closed before touching another multi handle; this bounds retained attached
+state to the first failure and prevents repeated abandonment. Ordinary paths without the explicit
+option retain upstream behavior.
 
 ### Per-handle scheduling
 

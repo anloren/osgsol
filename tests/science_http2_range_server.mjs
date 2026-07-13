@@ -13,7 +13,8 @@ const TRANSIENT_ONCE_MODES = new Map([
 const MODES = new Set([
     'success', 'range-200', 'range-200-body', 'short-range',
     'size-mismatch', 'range-503', 'range-503-exhaust',
-    'range-500-twice', 'multirange-500-overlap', 'multirange-success',
+    'range-500-twice', 'multirange-500-overlap',
+    'multirange-500-repeat', 'multirange-success',
     ...TRANSIENT_ONCE_MODES.keys(),
 ]);
 const EXPECTED_RANGE = 'bytes=0-131071';
@@ -423,6 +424,7 @@ server.on('stream', (stream, headers) =>
         return;
     }
     if (options.mode === 'multirange-500-overlap' ||
+        options.mode === 'multirange-500-repeat' ||
         options.mode === 'multirange-success')
     {
         const interval = MULTIRANGE_INTERVALS.get(range);
@@ -431,9 +433,13 @@ server.on('stream', (stream, headers) =>
             reject(stream, context, `unexpected multi-range interval ${range}`);
             return;
         }
-        const attempt = (rangeAttempts.get(range) ?? 0) + 1;
-        rangeAttempts.set(range, attempt);
-        const transientOnce = options.mode === 'multirange-500-overlap' &&
+        const attemptKey = options.mode === 'multirange-500-repeat'
+            ? `${context.session_id}:${range}` : range;
+        const attempt = (rangeAttempts.get(attemptKey) ?? 0) + 1;
+        rangeAttempts.set(attemptKey, attempt);
+        const transientOnce =
+            (options.mode === 'multirange-500-overlap' ||
+             options.mode === 'multirange-500-repeat') &&
             interval.transientOnce;
         const maximumAttempts = transientOnce ? 2 : 1;
         if (attempt > maximumAttempts)

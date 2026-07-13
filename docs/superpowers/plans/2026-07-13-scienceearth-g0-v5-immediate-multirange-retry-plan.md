@@ -39,7 +39,8 @@ macOS Mach-O/codesign packaging.
   `OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY=YES`. A global value alone must not activate it.
 - Metadata prefetch additionally requires a unique path-specific
   `OSGSOL_VSICURL_PREFETCH_OPERATION_ID` for the dataset-open lifetime. Same-token blocked probes
-  perform zero network I/O; a new token represents an independent operation.
+  perform zero network I/O across threads; a new or absent token represents an independent
+  operation and does not remove an earlier `(path, token)` block.
 - Ordinary immediate success is only HTTP 206 with one exact strict `Content-Range` and exact body
   length. HTTP 225 and missing, malformed, duplicate, spoofed, or wrong-range headers fail closed.
 - Retry delay conversion must reject non-finite, negative, integer-unrepresentable, and
@@ -48,6 +49,12 @@ macOS Mach-O/codesign packaging.
 - Baseline/optimized profiles and all unrelated application features retain upstream GDAL
   `ReadMultiRange()` behavior. The prefetch profile installs both path options only for its exact
   dataset lifetime.
+- The provider/test runner owns a process-wide keyed lease registry. Only the same exact object
+  path is serialized across the full three-option RAII lifetime; nested guards restore the prior
+  path-specific value, while different object paths remain concurrent.
+- A successful abandonment permanently sets a handler-wide atomic latch consulted by both custom
+  activations. A later path-enabled immediate read fails closed before multi-handle use, so the
+  first retained attached state is bounded and cannot repeat.
 - No Range widening, gap merge, extra successful Range, warm-up request, no-HEAD shortcut,
   threshold change, byte-ceiling change, or retry-policy broadening is allowed.
 - NVIDIA HQ and Hong Kong each require five complete proofs, median `<=3000 ms`, P95 `<=8000 ms`,
