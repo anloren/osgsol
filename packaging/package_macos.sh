@@ -1,116 +1,246 @@
 #!/bin/bash
-# 把 build/sdk_core 打包成可双击运行的 EarthExplorer.app（修 rpath / 写 Info.plist）
+# Package an installed EarthExplorer tree as the formal osgSol Earth product.
 set -euo pipefail
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDK="${OSGVERSE_SDK:-$REPO/build/sdk_core}"
-OSG_RUNTIME_SDK="${OSG_ROOT:-$REPO/build/sdk_core}"
-APP="$REPO/dist/EarthExplorer.app"
+DEFAULT_OSG_RUNTIME_SDK="$SDK"
+if command -v brew >/dev/null 2>&1; then
+    BREW_OSG_RUNTIME_SDK="$(brew --prefix open-scene-graph 2>/dev/null || true)"
+    if [ -n "$BREW_OSG_RUNTIME_SDK" ]; then
+        DEFAULT_OSG_RUNTIME_SDK="$BREW_OSG_RUNTIME_SDK"
+    fi
+fi
+OSG_RUNTIME_SDK="${OSG_RUNTIME_SDK:-${OSG_ROOT:-$DEFAULT_OSG_RUNTIME_SDK}}"
+APP="${OSGSOL_PACKAGE_OUTPUT:-$REPO/dist/osgSol Earth.app}"
+VERSION="${OSGSOL_PACKAGE_VERSION:-0.3.0}"
+BUILD_CHANNEL="${OSGSOL_BUILD_CHANNEL:-developer}"
+SOURCE_COMMIT="${OSGSOL_SOURCE_COMMIT:-$(git -C "$REPO" rev-parse HEAD)}"
+PRODUCT_EXECUTABLE="${OSGSOL_PACKAGE_EXECUTABLE:-osgSol_Earth}"
+SOURCE_EXECUTABLE="osgVerse_EarthExplorer"
 PLUGVER="osgPlugins-3.6.5"
+ALPHAEARTH_INDEX="${OSGSOL_ALPHAEARTH_INDEX:-$SDK/misc/science/alphaearth/alphaearth.sqlite}"
 
+fail()
+{
+    local code="$1"
+    shift
+    echo "[error] $*" >&2
+    exit "$code"
+}
+
+# Reject every invalid invocation before creating, deleting, or moving output.
 if [ -n "${EARTH_AI_KEY:-}" ]; then
-    echo "[error] Refusing to package while EARTH_AI_KEY is set; unset it and use per-user configuration." >&2
-    exit 64
+    fail 64 "Refusing to package while EARTH_AI_KEY is set; unset it and use per-user configuration."
+fi
+if [ "$(basename "$APP")" != "osgSol Earth.app" ]; then
+    fail 68 "Package output must use the fixed product name osgSol Earth.app"
+fi
+if [ "$APP" = "${HOME}/Desktop/osgSol Earth.app" ]; then
+    fail 68 "Refusing to package directly over the fixed Desktop app; use a staging path"
+fi
+if [[ ! "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]; then
+    fail 68 "Invalid package version: $VERSION"
+fi
+if [[ ! "$BUILD_CHANNEL" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
+    fail 68 "Invalid build channel: $BUILD_CHANNEL"
+fi
+if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+    fail 68 "Source commit must be an exact 40-character lowercase Git object id"
+fi
+if [[ ! "$PRODUCT_EXECUTABLE" =~ ^[0-9A-Za-z._-]+$ ]]; then
+    fail 68 "Invalid product executable name: $PRODUCT_EXECUTABLE"
+fi
+if [ ! -x "$SDK/bin/$SOURCE_EXECUTABLE" ]; then
+    fail 66 "Install SDK is incomplete: $SDK"
+fi
+if [ ! -f "$ALPHAEARTH_INDEX" ]; then
+    fail 66 "AlphaEarth index is required for the formal package: $ALPHAEARTH_INDEX"
+fi
+ALPHAEARTH_INDEX_SHA256="$(shasum -a 256 "$ALPHAEARTH_INDEX" | awk '{print $1}')"
+for directory in shaders skyboxes textures misc models; do
+    if [ ! -d "$SDK/$directory" ]; then
+        fail 66 "Install SDK is incomplete: missing $SDK/$directory"
+    fi
+done
+if [ ! -d "$SDK/lib" ]; then
+    fail 66 "Install SDK is incomplete: missing $SDK/lib"
 fi
 if [ ! -d "$OSG_RUNTIME_SDK/lib" ] ||
    [ -z "$(find "$OSG_RUNTIME_SDK/lib" -maxdepth 1 -name 'libOpenThreads*.dylib' -print -quit)" ] ||
    [ ! -d "$OSG_RUNTIME_SDK/lib/$PLUGVER" ] ||
-   [ -z "$(find "$OSG_RUNTIME_SDK/lib/$PLUGVER" -maxdepth 1 -name 'osgdb_*.so' -print -quit)" ]; then
-    echo "[error] OSG runtime SDK is incomplete: $OSG_RUNTIME_SDK" >&2
-    exit 66
+   [ -z "$(find -L "$OSG_RUNTIME_SDK/lib/$PLUGVER" -maxdepth 1 -name 'osgdb_*.so' -print -quit)" ]; then
+    fail 66 "OSG runtime SDK is incomplete: $OSG_RUNTIME_SDK"
 fi
 
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
-mkdir -p "$APP/Contents/lib/$PLUGVER"
-mkdir -p "$APP/Contents/bin"
+APP_PARENT="$(dirname "$APP")"
+mkdir -p "$APP_PARENT"
+APP_PARENT="$(cd "$APP_PARENT" && pwd)"
+APP="$APP_PARENT/osgSol Earth.app"
+BUILD_APP="$APP_PARENT/.osgSol Earth.app.packaging.$$"
+PREVIOUS_APP="$APP_PARENT/.osgSol Earth.app.previous.$$"
 
-# 1) 可执行文件
-cp "$SDK/bin/osgVerse_EarthExplorer" "$APP/Contents/MacOS/"
+cleanup()
+{
+    rm -rf "$BUILD_APP"
+    if [ -e "$PREVIOUS_APP" ] && [ ! -e "$APP" ]; then
+        mv "$PREVIOUS_APP" "$APP"
+    fi
+}
+trap cleanup EXIT
 
-# 2) 先复制外部 OSG 运行库，再用当前安装树中的 osgVerse 库覆盖
-# CMake install 不会重复安装 OSG_ROOT，因此 fresh install tree 需要合并两处运行库。
+rm -rf "$BUILD_APP" "$PREVIOUS_APP"
+mkdir -p "$BUILD_APP/Contents/MacOS"
+mkdir -p "$BUILD_APP/Contents/lib/$PLUGVER"
+mkdir -p "$BUILD_APP/Contents/bin"
+
+# Executable and all runtime libraries come only from the explicit install/runtime trees.
+cp "$SDK/bin/$SOURCE_EXECUTABLE" "$BUILD_APP/Contents/MacOS/$PRODUCT_EXECUTABLE"
 for lib_root in "$OSG_RUNTIME_SDK/lib" "$SDK/lib"; do
-    for f in "$lib_root/"*.dylib "$lib_root/"*.so; do
-        [ -e "$f" ] || continue
-        cp -a "$f" "$APP/Contents/lib/"
+    for file in "$lib_root/"*.dylib "$lib_root/"*.so; do
+        [ -e "$file" ] || continue
+        cp -a "$file" "$BUILD_APP/Contents/lib/"
     done
 done
 
-# 3) 同样合并 OSG 与 osgVerse 插件；并在 Contents/bin 建同名软链（代码按 BASE_DIR/bin/osgPlugins 搜索）
 for plugin_root in "$OSG_RUNTIME_SDK/lib/$PLUGVER" "$SDK/lib/$PLUGVER"; do
-    for f in "$plugin_root/"*.so; do
-        [ -e "$f" ] || continue
-        cp -a "$f" "$APP/Contents/lib/$PLUGVER/"
+    for file in "$plugin_root/"*.so; do
+        [ -e "$file" ] || continue
+        cp -a "$file" "$BUILD_APP/Contents/lib/$PLUGVER/"
     done
 done
-ln -s "../lib/$PLUGVER" "$APP/Contents/bin/$PLUGVER"
+ln -s "../lib/$PLUGVER" "$BUILD_APP/Contents/bin/$PLUGVER"
 
-# 4) 资源目录（代码按 BASE_DIR=".." 即 Contents 下查找）
-for d in shaders skyboxes textures misc models; do
-    cp -a "$SDK/$d" "$APP/Contents/$d"
+for directory in shaders skyboxes textures misc models; do
+    cp -a "$SDK/$directory" "$BUILD_APP/Contents/$directory"
+done
+mkdir -p "$BUILD_APP/Contents/misc/science/alphaearth"
+cp "$ALPHAEARTH_INDEX" \
+    "$BUILD_APP/Contents/misc/science/alphaearth/alphaearth.sqlite"
+
+# Make every packaged Mach-O resolve only against its bundle-local runtime closure.
+install_name_tool -delete_rpath '$ORIGIN:$ORIGIN/../lib' \
+    "$BUILD_APP/Contents/MacOS/$PRODUCT_EXECUTABLE" 2>/dev/null || true
+install_name_tool -delete_rpath '@executable_path/../lib' \
+    "$BUILD_APP/Contents/MacOS/$PRODUCT_EXECUTABLE" 2>/dev/null || true
+install_name_tool -add_rpath '@executable_path/../lib' \
+    "$BUILD_APP/Contents/MacOS/$PRODUCT_EXECUTABLE"
+
+for file in "$BUILD_APP/Contents/lib/"*.dylib "$BUILD_APP/Contents/lib/"*.so; do
+    [ -f "$file" ] || continue
+    install_name_tool -delete_rpath '$ORIGIN:$ORIGIN/../lib' "$file" 2>/dev/null || true
+    install_name_tool -delete_rpath "$OSG_RUNTIME_SDK/lib" "$file" 2>/dev/null || true
+    install_name_tool -delete_rpath "$SDK/lib" "$file" 2>/dev/null || true
+    install_name_tool -delete_rpath '@loader_path' "$file" 2>/dev/null || true
+    install_name_tool -add_rpath '@loader_path' "$file" 2>/dev/null || true
 done
 
-# 5) 可执行文件 rpath：删 Linux $ORIGIN，加 @executable_path/../lib
-install_name_tool -delete_rpath '$ORIGIN:$ORIGIN/../lib' "$APP/Contents/MacOS/osgVerse_EarthExplorer" 2>/dev/null || true
-install_name_tool -add_rpath '@executable_path/../lib' "$APP/Contents/MacOS/osgVerse_EarthExplorer"
-
-# Every direct @rpath dependency must exist before a successful package can be reported.
-while IFS= read -r dependency; do
-    case "$dependency" in
-        @rpath/*)
-            if [ ! -e "$APP/Contents/lib/${dependency#@rpath/}" ]; then
-                echo "[error] Missing bundled runtime dependency: $dependency" >&2
-                exit 67
-            fi
-            ;;
-    esac
-done < <(otool -L "$APP/Contents/MacOS/osgVerse_EarthExplorer" | awk 'NR > 1 {print $1}')
-
-# 6) Contents/lib 下每个 dylib/.so 加 @loader_path（同级互引用）
-for f in "$APP/Contents/lib/"*.dylib "$APP/Contents/lib/"*.so; do
-    [ -f "$f" ] || continue
-    install_name_tool -delete_rpath '$ORIGIN:$ORIGIN/../lib' "$f" 2>/dev/null || true
-    install_name_tool -delete_rpath "$OSG_RUNTIME_SDK/lib" "$f" 2>/dev/null || true
-    install_name_tool -delete_rpath "$SDK/lib" "$f" 2>/dev/null || true
-    install_name_tool -add_rpath '@loader_path' "$f" 2>/dev/null || true
+for file in "$BUILD_APP/Contents/lib/$PLUGVER/"*.so; do
+    [ -f "$file" ] || continue
+    install_name_tool -delete_rpath '$ORIGIN:$ORIGIN/../lib' "$file" 2>/dev/null || true
+    install_name_tool -delete_rpath "$OSG_RUNTIME_SDK/lib" "$file" 2>/dev/null || true
+    install_name_tool -delete_rpath "$SDK/lib" "$file" 2>/dev/null || true
+    install_name_tool -delete_rpath '@loader_path/..' "$file" 2>/dev/null || true
+    install_name_tool -add_rpath '@loader_path/..' "$file" 2>/dev/null || true
 done
 
-# 7) 插件（Contents/lib/osgPlugins-3.6.5）引用 @rpath/libosg* → 指向上一级 lib
-for f in "$APP/Contents/lib/$PLUGVER/"*.so; do
-    [ -f "$f" ] || continue
-    install_name_tool -delete_rpath '$ORIGIN:$ORIGIN/../lib' "$f" 2>/dev/null || true
-    install_name_tool -delete_rpath "$OSG_RUNTIME_SDK/lib" "$f" 2>/dev/null || true
-    install_name_tool -delete_rpath "$SDK/lib" "$f" 2>/dev/null || true
-    install_name_tool -add_rpath '@loader_path/..' "$f" 2>/dev/null || true
-done
+# A fresh CMake build may encode absolute Homebrew OSG paths while osgVerse libraries use @rpath.
+# Loading both identities creates two OSG runtimes in one process and corrupts GL dispatch. Rewrite
+# every dependency whose basename is already bundled to the single bundle-local @rpath identity.
+while IFS= read -r -d '' binary; do
+    if ! file -b "$binary" | grep -q 'Mach-O'; then
+        continue
+    fi
+    dylib_id="$(otool -D "$binary" 2>/dev/null | sed -n '2p')"
+    if [ -n "$dylib_id" ]; then
+        dylib_id_name="$(basename "$dylib_id")"
+        if [ -e "$BUILD_APP/Contents/lib/$dylib_id_name" ] &&
+           [ "$dylib_id" != "@rpath/$dylib_id_name" ]; then
+            install_name_tool -id "@rpath/$dylib_id_name" "$binary" 2>/dev/null
+        fi
+    fi
+    while IFS= read -r dependency; do
+        dependency_name="$(basename "$dependency")"
+        if [ -e "$BUILD_APP/Contents/lib/$dependency_name" ] &&
+           [ "$dependency" != "@rpath/$dependency_name" ]; then
+            install_name_tool -change "$dependency" "@rpath/$dependency_name" "$binary" \
+                2>/dev/null
+        fi
+    done < <(otool -L "$binary" | awk 'NR > 1 {print $1}')
+done < <(find "$BUILD_APP/Contents" -type f -print0)
 
-# 8) Info.plist
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+# Every relocated @rpath edge must resolve and no packaged Mach-O may retain an install-tree or
+# OSG-runtime-tree path. Python remains a separately recorded clean-machine distribution debt.
+while IFS= read -r -d '' binary; do
+    if ! file -b "$binary" | grep -q 'Mach-O'; then
+        continue
+    fi
+    dylib_id="$(otool -D "$binary" 2>/dev/null | sed -n '2p')"
+    while IFS= read -r dependency; do
+        if [ -n "$dylib_id" ] && [ "$dependency" = "$dylib_id" ]; then
+            continue
+        fi
+        case "$dependency" in
+            @rpath/*)
+                if [ ! -e "$BUILD_APP/Contents/lib/${dependency#@rpath/}" ]; then
+                    fail 67 "Missing bundled runtime dependency: $dependency in $binary"
+                fi
+                ;;
+        esac
+        if [[ "$dependency" == "$SDK"/* ]] ||
+           [[ "$dependency" == "$OSG_RUNTIME_SDK"/* ]]; then
+            fail 67 "Unrelocated SDK dependency: $dependency in $binary"
+        fi
+    done < <(otool -L "$binary" | awk 'NR > 1 {print $1}')
+done < <(find "$BUILD_APP/Contents" -type f -print0)
+
+cat > "$BUILD_APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>EarthExplorer</string>
-  <key>CFBundleDisplayName</key><string>osgVerse EarthExplorer</string>
-  <key>CFBundleIdentifier</key><string>com.osgverse.earthexplorer</string>
-  <key>CFBundleVersion</key><string>1.0.0</string>
-  <key>CFBundleShortVersionString</key><string>1.0.0</string>
+  <key>CFBundleName</key><string>osgSol Earth</string>
+  <key>CFBundleDisplayName</key><string>osgSol Earth</string>
+  <key>CFBundleIdentifier</key><string>com.anloren.osgsol.earth</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>osgVerse_EarthExplorer</string>
+  <key>CFBundleExecutable</key><string>$PRODUCT_EXECUTABLE</string>
+  <key>ScienceEarthBuildChannel</key><string>$BUILD_CHANNEL</string>
+  <key>ScienceEarthSourceCommit</key><string>$SOURCE_COMMIT</string>
+  <key>ScienceEarthIndexSha256</key><string>$ALPHAEARTH_INDEX_SHA256</string>
   <key>NSHighResolutionCapable</key><false/>
   <key>NSMinimumSystemVersion</key><string>11.0</string>
 </dict>
 </plist>
 PLIST
 
-# 9) 运行时配置不得写入待签名 bundle
-if find "$APP" -name imgui.ini -print -quit | grep -q .; then
-    echo "[error] Refusing to sign a bundle containing imgui.ini" >&2
-    exit 65
+if find "$BUILD_APP" -name imgui.ini -print -quit | grep -q .; then
+    fail 65 "Refusing to sign a bundle containing imgui.ini"
 fi
 
-# 10) ad-hoc 代码签名必须成功，并立即做严格验证
-codesign --force --deep --sign - "$APP"
-codesign --verify --deep --strict "$APP"
+# Copied Finder/resource metadata invalidates strict signatures. Clean the complete tree first.
+chmod -R u+w "$BUILD_APP"
+xattr -cr "$BUILD_APP"
 
-echo "Built and verified: $APP"
+# install_name_tool invalidates upstream signatures. Sign every loose Mach-O explicitly because
+# codesign --deep does not reliably discover dylibs/plugins that are not nested bundles.
+while IFS= read -r -d '' binary; do
+    if file -b "$binary" | grep -q 'Mach-O'; then
+        codesign --force --sign - "$binary" 2>/dev/null
+        codesign --verify --strict "$binary"
+    fi
+done < <(find "$BUILD_APP/Contents" -type f -print0)
+
+codesign --force --deep --sign - "$BUILD_APP"
+codesign --verify --deep --strict "$BUILD_APP"
+
+# Publish only the already verified staging bundle. A failed build leaves the previous output intact.
+if [ -e "$APP" ]; then
+    mv "$APP" "$PREVIOUS_APP"
+fi
+mv "$BUILD_APP" "$APP"
+rm -rf "$PREVIOUS_APP"
+trap - EXIT
+
+echo "Built and verified staging bundle: $APP"
