@@ -451,7 +451,9 @@ namespace
     HttpProof buildHttpProof(const DebugCapture& capture,
                              const std::string& statsJson,
                              AttributionMode mode,
-                             bool allowProtocolTerminatedFinalResponse = false);
+                             bool allowProtocolTerminatedFinalResponse = false,
+                             const std::vector<ScienceServerRequest>&
+                                serverRequests = {});
     AttributedTransportProof buildAttributedTransportProof(
         const DebugCapture& capture,
         const std::vector<ScienceServerRequest>& serverRequests = {},
@@ -1505,46 +1507,47 @@ namespace
                 "", true, "path", "", 1},
             {"range-504-once", true, false, "", "2TLS", 2,
                 "", true, "path", "", 1},
-            {"range-500-once", false, true, "head-503-invalid", "2TLS", 1,
-                "head-invalid", true, "path", "", 2, -1,
-                "head-invalid"},
-            {"range-500-once", false, true, "http1-invalid", "1.1", 1,
-                "head-protocol", false, "path", "", 2, -1,
+            {"range-500-once", true, false, "head-503-invalid", "2TLS", 2,
+                "", true, "path", "", 2, 1},
+            {"range-500-once", false, false, "http1-invalid", "1.1", 1,
+                "", false, "path", "", 2, -1,
                 "head-protocol"},
-            {"range-500-once", false, true, "connection-invalid", "2TLS", 1,
-                "range-connection", true, "path", "", 1, -1,
+            {"range-500-once", false, false, "connection-invalid", "2TLS", 1,
+                "", true, "path", "", 1, -1,
                 "range-connection", "connection"},
-            {"range-500-once", false, true, "redirect-invalid", "2TLS", 1,
-                "range-redirect", true, "path", "", 1, -1,
+            {"range-500-once", false, false, "redirect-invalid", "2TLS", 1,
+                "", true, "path", "", 1, -1,
                 "range-redirect", "redirect"},
-            {"range-500-once", false, true, "transport-initial", "2TLS", 1,
-                "range-transport", true, "path", "", 1, -1,
+            {"range-500-once", false, false, "transport-initial", "2TLS", 1,
+                "", true, "path", "", 1, -1,
                 "range-transport", "", 1},
-            {"range-500-twice", false, true, "transport-retry", "2TLS", 2,
-                "range-transport", true, "path", "", 1, -1,
+            {"range-500-twice", false, false, "transport-retry", "2TLS", 2,
+                "", true, "path", "", 1, -1,
                 "range-transport", "", 2},
-            {"range-500-once", false, true, "head-503-operation-scope",
-                "2TLS", 2, "head-invalid", true, "path", "", 3, 1,
-                "head-invalid", "", 0, true},
-            {"range-500-once", false, true, "head-503-cross-thread-scope",
-                "2TLS", 1, "head-invalid", true, "path", "", 2, 0,
-                "head-invalid", "", 0, false, "0.1", true},
-            {"range-500-once", false, true, "invalid-delay-nan",
-                "2TLS", 1, "retry-delay", true, "path", "", 1, 0,
+            {"range-500-once", false, false,
+                "connection-invalid-operation-scope", "2TLS", 2,
+                "", true, "path", "", 2, 1,
+                "range-connection", "connection", 0, true},
+            {"range-500-once", false, false,
+                "connection-invalid-cross-thread-scope", "2TLS", 1,
+                "", true, "path", "", 1, 0,
+                "range-connection", "connection", 0, false, "0.1", true},
+            {"range-500-once", false, false, "invalid-delay-nan",
+                "2TLS", 1, "", true, "path", "", 1, 0,
                 "", "", 0, false, "nan"},
-            {"range-500-once", false, true, "invalid-delay-huge",
-                "2TLS", 1, "retry-delay", true, "path", "", 1, 0,
+            {"range-500-once", false, false, "invalid-delay-huge",
+                "2TLS", 1, "", true, "path", "", 1, 0,
                 "", "", 0, false, "1e300"},
             {"range-503-exhaust", false, false, "", "2TLS", 3,
-                "", true, "path", "", 1},
+                "", true, "path", "", 1, 0},
             {"success", false, false, "range-404", "2TLS", 1,
                 "", true, "path", "", 1},
             {"range-200", false, false},
             {"range-200-body", false, false},
             {"short-range", false, false},
             {"size-mismatch", false, false},
-            {"success", true, true, "head-503", "2TLS", 2,
-                "head-invalid", true},
+            {"success", true, false, "head-503", "2TLS", 1,
+                "", true},
             {"success", true, true, "head-405", "2TLS", 2,
                 "head-invalid", true},
             {"success", true, true, "redirect-source", "2TLS", 4,
@@ -1565,16 +1568,16 @@ namespace
                 "", true, "path", "range-first"},
             {"success", true, false, "head-first", "2TLS", 1,
                 "", true, "path", "head-first"},
-            {"success", false, true, "head-503-exhaust", "2TLS", 1,
-                "head-invalid", true, "path", "", 3},
+            {"success", false, false, "head-503-exhaust", "2TLS", 1,
+                "", true, "path", "", 3, 0, "head-invalid"},
             {"success", true, true, "transport-interrupt", "2TLS", -1,
                 "transport", true, "path", "", 1},
             {"success", true, false, "default-off", "2TLS", 1,
                 "", false, "none", "", 1, 0},
             {"success", true, false, "global-only", "2TLS", 1,
                 "", false, "global", "", 1, 0},
-            {"success", true, true, "remove-retry", "2TLS", 2,
-                "detach", true},
+            {"success", true, false, "remove-retry", "2TLS", 1,
+                "", true},
             {"success", true, true, "remove-failure", "2TLS", 2,
                 "detach", true, "path", "", 2, 0},
         };
@@ -1829,7 +1832,11 @@ namespace
             if (transientOnce != transientOnceStatuses.end() &&
                 prefetchCase.blockedReason[0] == '\0' && !invalidRetryDelay)
             {
-                require(headCount == 1 && ranges.size() == 2 &&
+                const int expectedTransientHeadCount =
+                    prefetchCase.exactHeadCount >= 0
+                    ? prefetchCase.exactHeadCount : 1;
+                require(headCount == expectedTransientHeadCount &&
+                            ranges.size() == 2 &&
                             ranges[0]->range == "bytes=0-131071" &&
                             ranges[1]->range == "bytes=0-131071" &&
                             ranges[0]->status == transientOnce->second &&
@@ -1850,7 +1857,9 @@ namespace
                             parallelDebugSummary(capture));
 
                 require(networkStatsUnsigned(
-                            coordinatorStatsJson, "HEAD", "count") == 1 &&
+                            coordinatorStatsJson, "HEAD", "count") ==
+                            static_cast<std::uint64_t>(
+                                expectedTransientHeadCount) &&
                             networkStatsUnsigned(
                                 coordinatorStatsJson, "GET", "count") == 1 &&
                             networkStatsUnsigned(coordinatorStatsJson, "GET",
@@ -1863,60 +1872,87 @@ namespace
             }
             if (prefetchCase.blockedReason[0])
             {
-                const int expectedBlockedRangeCount =
-                    prefetchCase.verifyOperationScope ? 2 :
-                    prefetchCase.exactRangeCount;
-                const int expectedFailedRangeCount =
-                    prefetchCase.transportFaultOrdinal == 2 ? 2 : 1;
-                require(rangeCount == expectedBlockedRangeCount &&
-                            ranges.size() ==
-                                static_cast<std::size_t>(
-                                    expectedBlockedRangeCount) &&
-                            std::count_if(ranges.begin(), ranges.end(),
-                            [](const Http2StreamEvidence* range)
-                            {
-                                return range->status == 500 &&
-                                    range->range == "bytes=0-131071";
-                            }) == expectedFailedRangeCount,
-                        caseName + " emitted an unexpected blocked Range set");
-                require(countDebug(capture,
-                            "ParallelHeadRange: transient-retry range=") ==
-                            (prefetchCase.transportFaultOrdinal == 2 ? 1 : 0) &&
-                        countDebug(capture,
-                            "ParallelHeadRange: published") ==
-                            (prefetchCase.verifyOperationScope ? 1 : 0),
-                        caseName + " retried or published an invalid Range: " +
-                            parallelDebugSummary(capture));
-                std::vector<CoordinatorRetryBlockedEvidence> blocked;
-                for (const std::string& message : capture.messages)
+                const bool headRetryExhausted =
+                    std::string(prefetchCase.variant) == "head-503-exhaust";
+                if (headRetryExhausted)
                 {
-                    CoordinatorRetryBlockedEvidence evidence;
-                    if (parseCoordinatorRetryBlockedEvidence(message, evidence))
-                        blocked.push_back(evidence);
-                    else
-                    {
-                        require(message.find(
-                                    "ParallelHeadRange: transient-retry-blocked") ==
-                                    std::string::npos,
-                                caseName + " emitted a malformed blocked event");
-                    }
+                    require(rangeCount == 1 && ranges.size() == 1 &&
+                                ranges.front()->status == 206 &&
+                                ranges.front()->range == "bytes=0-131071" &&
+                                countDebug(capture,
+                                    "head-transient-retry context=") == 2 &&
+                                countDebug(capture,
+                                    "ParallelHeadRange: transient-retry "
+                                    "context=") == 0 &&
+                                countDebug(capture,
+                                    "ParallelHeadRange: published") == 0,
+                            caseName +
+                                " changed the successful overlapping Range "
+                                "or exhausted HEAD retry chain");
                 }
-                const bool hasExpectedBlockedConnection =
-                    std::string(prefetchCase.getInfoFault) == "connection"
-                    ? blocked.size() == 1 &&
-                        blocked.front().connectionId ==
-                            TEST_CONNECTION_ID_SENTINEL
-                    : blocked.size() == 1 &&
-                        blocked.front().connectionId >= 0;
-                require(blocked.size() == 1 &&
-                            blocked.front().range == "bytes=0-131071" &&
-                            blocked.front().code == 500 &&
-                            blocked.front().reason == prefetchCase.blockedReason &&
-                            hasExpectedBlockedConnection &&
-                            blocked.front().httpMajor ==
-                                (std::string(prefetchCase.httpVersion) == "1.1"
-                                    ? 1 : 2),
-                        caseName + " omitted its exact fail-closed retry event");
+                else
+                {
+                    const int expectedBlockedRangeCount =
+                        prefetchCase.verifyOperationScope ? 2 :
+                        prefetchCase.exactRangeCount;
+                    const int expectedFailedRangeCount =
+                        prefetchCase.transportFaultOrdinal == 2 ? 2 : 1;
+                    require(rangeCount == expectedBlockedRangeCount &&
+                                ranges.size() == static_cast<std::size_t>(
+                                    expectedBlockedRangeCount) &&
+                                std::count_if(ranges.begin(), ranges.end(),
+                                [](const Http2StreamEvidence* range)
+                                {
+                                    return range->status == 500 &&
+                                        range->range == "bytes=0-131071";
+                                }) == expectedFailedRangeCount,
+                            caseName +
+                                " emitted an unexpected blocked Range set");
+                    require(countDebug(capture,
+                                "ParallelHeadRange: transient-retry context=") ==
+                                (prefetchCase.transportFaultOrdinal == 2
+                                    ? 1 : 0) &&
+                            countDebug(capture,
+                                "ParallelHeadRange: published") ==
+                                (prefetchCase.verifyOperationScope ? 1 : 0),
+                            caseName +
+                                " retried or published an invalid Range: " +
+                                parallelDebugSummary(capture));
+                    std::vector<CoordinatorRetryBlockedEvidence> blocked;
+                    for (const std::string& message : capture.messages)
+                    {
+                        CoordinatorRetryBlockedEvidence evidence;
+                        if (parseCoordinatorRetryBlockedEvidence(
+                                message, evidence))
+                            blocked.push_back(evidence);
+                        else
+                        {
+                            require(message.find("ParallelHeadRange: "
+                                        "transient-retry-blocked") ==
+                                        std::string::npos,
+                                    caseName +
+                                        " emitted a malformed blocked event");
+                        }
+                    }
+                    const bool hasExpectedBlockedConnection =
+                        std::string(prefetchCase.getInfoFault) == "connection"
+                        ? blocked.size() == 1 &&
+                            blocked.front().connectionId ==
+                                TEST_CONNECTION_ID_SENTINEL
+                        : blocked.size() == 1 &&
+                            blocked.front().connectionId >= 0;
+                    require(blocked.size() == 1 &&
+                                blocked.front().range == "bytes=0-131071" &&
+                                blocked.front().code == 500 &&
+                                blocked.front().reason ==
+                                    prefetchCase.blockedReason &&
+                                hasExpectedBlockedConnection &&
+                                blocked.front().httpMajor ==
+                                    (std::string(prefetchCase.httpVersion) ==
+                                        "1.1" ? 1 : 2),
+                            caseName +
+                                " omitted its exact fail-closed retry event");
+                }
                 require(countDebug(capture,
                             "ParallelHeadRange: blocked-operation-marked") == 1 &&
                             countDebug(capture,
@@ -1958,7 +1994,7 @@ namespace
                             "range-503-exhaust retry stream changed");
                 }
                 require(countDebug(capture,
-                            "ParallelHeadRange: transient-retry") == 2 &&
+                            "ParallelHeadRange: transient-retry context=") == 2 &&
                             countDebug(capture,
                             "ParallelHeadRange: transient-fallback") == 1 &&
                             countDebug(capture,
@@ -1989,7 +2025,7 @@ namespace
                             countDebug(capture,
                                 "ParallelHeadRange: retry-delay-rejected") == 1 &&
                             countDebug(capture,
-                                "ParallelHeadRange: transient-retry range=") == 0 &&
+                                "ParallelHeadRange: transient-retry context=") == 0 &&
                             countDebug(capture,
                                 "ParallelHeadRange: blocked-operation-marked") == 1 &&
                             countDebug(capture,
@@ -2011,6 +2047,8 @@ namespace
                 prefetchCase.verifyOperationScope ||
                 (std::string(prefetchCase.mode) == "success" &&
                  (prefetchCase.variant[0] == '\0' ||
+                  std::string(prefetchCase.variant) == "head-503" ||
+                  std::string(prefetchCase.variant) == "remove-retry" ||
                   prefetchCase.completionOrder[0] != '\0')) ||
                 std::string(prefetchCase.mode) == "range-503" ||
                 (transientOnce != transientOnceStatuses.end() &&
@@ -2224,7 +2262,9 @@ namespace
             root.at("methods").get<picojson::object>();
         picojson::object& methodObject =
             methods.at(method).get<picojson::object>();
-        const double original = methodObject.at(name).get<double>();
+        const auto item = methodObject.find(name);
+        const double original = item == methodObject.end()
+            ? 0.0 : item->second.get<double>();
         methodObject[name] = picojson::value(original + 1.0);
         return value.serialize(true);
     }
@@ -2249,6 +2289,7 @@ namespace
             const char* faultValue = "";
             bool persistentDetach = false;
             bool retainsAttachedState = false;
+            bool verifiesDetachedState = false;
         };
         const HeadCase cases[] = {
             {"v6-head-429-once", "success", true, 2, 1, 1, 0, true},
@@ -2305,11 +2346,12 @@ namespace
                 "OSGSOL_TEST_FAIL_HEAD_RETRY_CURL_REMOVE", "2", true, true},
             {"v6-head-500-once-v6-head-add-fault", "success",
                 false, 1, 1, 1, 0, false, true, "0.1", "add",
-                "OSGSOL_TEST_FAIL_HEAD_RETRY_CURL_ADD", "1", false, true},
+                "OSGSOL_TEST_FAIL_HEAD_RETRY_CURL_ADD", "1", false, false,
+                true},
             {"v6-head-500-once-v6-head-perform-fault", "success",
                 false, 1, 1, 1, 0, false, true, "0.1", "perform",
                 "OSGSOL_TEST_FAIL_HEAD_RETRY_CURL_PERFORM", "1", false,
-                true},
+                false, true},
             {"v6-head-500-once-v6-size-mismatch", "size-mismatch",
                 false, 2, 1, 1, 0, false, true, "0.1",
                 "size-mismatch"},
@@ -2322,11 +2364,16 @@ namespace
         int executed = 0;
         for (const HeadCase& headCase : cases)
         {
+            if (selectedMode == nullptr && headCase.persistentDetach)
+                continue;
             if (selectedMode && std::string(selectedMode) != headCase.name)
                 continue;
             ++executed;
             if (headCase.faultName[0] && !curlFaultInterposerAvailable())
             {
+                require(selectedMode == nullptr,
+                        "selected v6 HEAD ownership fault requires the curl "
+                        "fault interposer");
                 std::cout << "ScienceV6HeadRecovery: mode="
                           << headCase.name
                           << " skipped=curl-fault-interposer-unavailable"
@@ -2358,7 +2405,8 @@ namespace
             bool opened = false;
             std::size_t retainedStateBefore = 0;
             std::size_t attachedStateBefore = 0;
-            if (headCase.retainsAttachedState)
+            if (headCase.retainsAttachedState ||
+                headCase.verifiesDetachedState)
             {
                 require(curlAttachedStateCount() != nullptr &&
                             (!headCase.persistentDetach ||
@@ -2420,6 +2468,16 @@ namespace
                             "ownership fault did not retain callback/context "
                             "state, latch before reuse, or avoid attached "
                             "cleanup");
+                }
+                else if (headCase.verifiesDetachedState)
+                {
+                    require(std::getenv(
+                                "OSGSOL_TEST_CLEANUP_WHILE_ATTACHED") ==
+                                nullptr &&
+                                curlAttachedStateCount()() ==
+                                    attachedStateBefore,
+                            "recoverable ownership fault retained or cleaned "
+                            "an attached handle");
                 }
             }
             const std::string statsJson = requireNetworkStatsEvidence();
@@ -2600,6 +2658,7 @@ namespace
             int expectedHeads = 1;
             int expectedGets = 1;
             bool requireDuplicateProtocolFailure = false;
+            int expectedHeadRetries = 0;
         };
         const InvalidHeadCase cases[] = {
             {"v6-head-500-once-v6-head-content-length-malformed"},
@@ -2608,13 +2667,14 @@ namespace
                 "OSGSOL_TEST_CURLMSG_TRANSPORT_ON_500", "1"},
             {"v6-head-500-once-v6-redirect-invalid", "h2",
                 "OSGSOL_TEST_CURLINFO_REDIRECT_COUNT_ONCE", "1"},
-            {"v6-head-http1", "http1"},
+            {"v6-head-500-once-v6-head-http1", "http1"},
             {"v6-head-500-once-v6-connection-different", "h2",
                 "OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", "922337203685477000"},
             {"v6-head-500-once-v6-connection-invalid", "h2",
                 "OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", "-1"},
             {"v6-head-500-once-v6-final-head-content-length-absent", "h2",
-                "", "", "head-invalid", "success", "head-blocked", 2, 1},
+                "", "", "head-invalid", "success", "head-blocked", 2, 1,
+                false, 1},
             {"v6-head-500-once-v6-range-transient-content-range-malformed",
                 "h2", "", "", "range-invalid", "range-500-once",
                 "range-blocked"},
@@ -2748,7 +2808,7 @@ namespace
                     capture, serverRequests, malformedHeadCase);
             const HttpProof httpProof = buildHttpProof(
                 capture, statsJson, AttributionMode::AttributedV6,
-                malformedHeadCase);
+                malformedHeadCase, serverRequests);
             const int serverHeads = static_cast<int>(std::count_if(
                 evidence.streams.begin(), evidence.streams.end(),
                 [](const Http2StreamEvidence& stream)
@@ -2864,12 +2924,14 @@ namespace
                                 ? "range-blocked" : "head-blocked") == 0 &&
                         exactBlockCount("property-blocked") == 1 &&
                         exactBlockCount("operation-blocked") == 1 &&
-                        proof.headRetries.empty() &&
+                        static_cast<int>(proof.headRetries.size()) ==
+                            item.expectedHeadRetries &&
                         proof.cachePublicationCount == 0 &&
                         proof.propertyPublicationCount == 0 &&
                         proof.fallbackCount == 0 && headerOnlyGets == 0 &&
                         countDebug(capture,
-                            "head-transient-retry context=") == 0 &&
+                            "head-transient-retry context=") ==
+                            item.expectedHeadRetries &&
                         countDebug(capture, "CanRetry=") == 0 &&
                         malformedHeadTransportObserved &&
                         malformedHeadOrderingObserved &&
@@ -2888,7 +2950,7 @@ namespace
                 {
                     static_cast<void>(buildHttpProof(
                         capture, mutated, AttributionMode::AttributedV6,
-                        malformedHeadCase));
+                        malformedHeadCase, serverRequests));
                     return false;
                 }
                 catch (const std::exception&)
@@ -3395,6 +3457,7 @@ namespace
 
         DebugCapture primaryCapture;
         std::string primaryStats;
+        std::size_t primaryOpenMessageCount = 0;
         require(curlAttachedStateCount() != nullptr,
                 "combined operation lacks physical ownership oracle");
         std::size_t attachedBefore = curlAttachedStateCount()();
@@ -3457,6 +3520,10 @@ namespace
                 datasetCondition.notify_all();
                 openThread.join();
                 std::rethrow_exception(openError);
+            }
+            {
+                const std::lock_guard<std::mutex> lock(primaryCapture.mutex);
+                primaryOpenMessageCount = primaryCapture.messages.size();
             }
 
             constexpr std::array<vsi_l_offset, 3> OFFSETS = {
@@ -3674,12 +3741,25 @@ namespace
         for (std::size_t index = 0;
              index < primaryCapture.messages.size(); ++index)
         {
+            if (index == primaryOpenMessageCount)
+            {
+                require(!ordinaryResponse,
+                        "ordinary fallback response crossed the open/multi "
+                        "phase boundary");
+                ordinaryAwaitingDownload = false;
+            }
             const std::string& message = primaryCapture.messages[index];
+            std::string loweredMessage = message;
+            std::transform(loweredMessage.begin(), loweredMessage.end(),
+                loweredMessage.begin(), [](unsigned char character)
+                {
+                    return static_cast<char>(std::tolower(character));
+                });
             if (!ordinaryResponse &&
                 message.rfind("CURL_INFO_HEADER_OUT: GET ", 0) == 0 &&
                 message.find("Range: bytes=0-131071") !=
                     std::string::npos &&
-                message.find("X-OSGSol-Science-Correlation:") ==
+                loweredMessage.find("x-osgsol-science-correlation:") ==
                     std::string::npos)
             {
                 ordinaryResponse = true;
@@ -3781,7 +3861,7 @@ namespace
             ? std::string() : *primaryContexts.begin();
         static const std::regex retainedPattern(
             R"(^VSICURL: ReadMultiRange: ownership-retained )"
-            R"(context=([0-9a-f]{32}) request=[1-9][0-9]* )"
+            R"(context=([0-9a-f]{32}) request=[1-9][0-9]* attempt=[1-4] )"
             R"(range=bytes=[0-9]+-[0-9]+ attached=1$)");
         const bool retainedOriginalContext = std::any_of(
             primaryCapture.messages.begin(), primaryCapture.messages.end(),
@@ -3801,6 +3881,20 @@ namespace
                     return completion.scope == scope;
                 }));
         };
+        std::ostringstream combinedScopeSummary;
+        combinedScopeSummary
+            << " independent-qualified=" << independentProof.qualified
+            << "/" << independentHttpProof.attributedTransportQualified
+            << " contexts=" << independentContexts.size() << "/"
+            << primaryContexts.size()
+            << " primary-qualified=" << primaryProof.qualified
+            << " fallback=" << primaryProof.fallbackCount
+            << " publications=" << primaryProof.cachePublicationCount
+            << "/" << primaryProof.propertyPublicationCount
+            << " scopes=" << scopeCount("coordinator") << "/"
+            << scopeCount("ordinary-head") << "/"
+            << scopeCount("multirange")
+            << " retained=" << retainedOriginalContext;
         require(independentProof.qualified &&
                     independentHttpProof.attributedTransportQualified &&
                     independentContexts.size() == 1 &&
@@ -3814,17 +3908,18 @@ namespace
                         {
                             return independentContexts.count(
                                 completion.context) != 0;
-                        }) &&
+                    }) &&
                     !primaryProof.qualified &&
-                    primaryProof.fallbackCount == 1 &&
+                    primaryProof.fallbackCount == 0 &&
                     primaryProof.cachePublicationCount == 0 &&
-                    primaryProof.propertyPublicationCount == 0 &&
+                    primaryProof.propertyPublicationCount == 1 &&
                     scopeCount("coordinator") == 2 &&
                     scopeCount("ordinary-head") == 1 &&
                     scopeCount("multirange") == 3 &&
                     retainedOriginalContext,
                 "combined live operation did not keep three scopes in one "
-                "context or isolate the other path/token proof");
+                "context or isolate the other path/token proof:" +
+                    combinedScopeSummary.str());
 
         int primaryHeads = 0;
         int primaryGets = 0;
@@ -6331,6 +6426,7 @@ namespace
         struct RawResponse
         {
             int status = 0;
+            bool connectResponse = false;
             std::vector<std::string> contentLengths;
             std::vector<std::string> contentRanges;
         };
@@ -6409,6 +6505,7 @@ namespace
         std::vector<Decision> decisions;
         RawResponse currentResponse;
         bool responseOpen = false;
+        int pendingConnectRequests = 0;
 
         for (std::size_t index = 0; index < capture.messages.size(); ++index)
         {
@@ -6454,6 +6551,10 @@ namespace
                     request.correlation = correlation->second;
                     rawRequests.push_back(request);
                 }
+                else
+                {
+                    ++pendingConnectRequests;
+                }
             }
             else if (message.rfind(inputPrefix, 0) == 0)
             {
@@ -6468,6 +6569,17 @@ namespace
                     std::istringstream status(line);
                     std::string version;
                     status >> version >> currentResponse.status;
+                    currentResponse.connectResponse =
+                        (version == "HTTP/1.0" || version == "HTTP/1.1") &&
+                        currentResponse.status == 200 &&
+                        lower(line).find(" 200 connection established") !=
+                            std::string::npos;
+                    if (currentResponse.connectResponse)
+                    {
+                        require(pendingConnectRequests > 0,
+                                "proxy tunnel response has no CONNECT request");
+                        --pendingConnectRequests;
+                    }
                 }
                 else if (line.empty())
                 {
@@ -6801,6 +6913,8 @@ namespace
             rawResponses.push_back(currentResponse);
             responseOpen = false;
         }
+        require(pendingConnectRequests == 0,
+                "proxy CONNECT request omitted its terminal response");
         require(!proof.completions.empty(),
                 "AttributedV6 requires response-v1 completion events");
 
@@ -6900,9 +7014,7 @@ namespace
         std::map<std::string, int> rawResponseMultiset;
         for (const RawResponse& response : rawResponses)
         {
-            if (response.status == 200 && response.contentLengths.empty() &&
-                response.contentRanges.empty())
-                continue;
+            if (response.connectResponse) continue;
             bool contentLengthValid = false;
             std::uint64_t declaredContentLength = 0;
             if (response.contentLengths.size() == 1)
@@ -7367,26 +7479,15 @@ namespace
         {
             int finalHeadStatus = 0;
             int successfulRangeCount = 0;
-            std::size_t lastCompletion = 0;
             for (const ScienceTransportCompletion& completion : proof.completions)
             {
                 if (completion.context != context) continue;
-                lastCompletion = std::max(lastCompletion,
-                                          completion.messageIndex);
                 if (completion.scope == "coordinator" &&
                     completion.role == "head")
                     finalHeadStatus = completion.status;
                 if (completion.scope == "coordinator" &&
                     completion.role == "range" && completion.status == 206)
                     ++successfulRangeCount;
-            }
-            for (const Decision& decision : decisions)
-            {
-                if (decision.context == context &&
-                    (decision.kind == "published" ||
-                     decision.kind == "property-published"))
-                    require(decision.messageIndex > lastCompletion,
-                            "science publication preceded a completion");
             }
             require(cachePublications[context] <= 1 &&
                         propertyPublications[context] <= 1,
@@ -7405,11 +7506,14 @@ namespace
 
     HttpProof buildAttributedHttpProof(const DebugCapture& capture,
                                        const std::string& statsJson,
-                                       bool allowProtocolTerminatedFinalResponse)
+                                       bool allowProtocolTerminatedFinalResponse,
+                                       const std::vector<ScienceServerRequest>&
+                                            serverRequests)
     {
         const AttributedTransportProof transport =
             buildAttributedTransportProof(
-                capture, {}, allowProtocolTerminatedFinalResponse);
+                capture, serverRequests,
+                allowProtocolTerminatedFinalResponse);
         HttpProof proof;
         proof.headRetries = transport.headRetries;
         proof.scienceTransportEvents = transport.events;
@@ -7550,9 +7654,11 @@ namespace
         proof.statsHeadCount = static_cast<int>(checkedJsonUnsigned(
             field(head, "count"), "VSINetworkStats HEAD count",
             static_cast<std::uint64_t>(std::numeric_limits<int>::max())));
-        const std::uint64_t statsBytes = checkedJsonUnsigned(
-            field(get, "downloaded_bytes"),
-            "VSINetworkStats downloaded bytes");
+        const auto downloadedBytes = get.find("downloaded_bytes");
+        const std::uint64_t statsBytes = downloadedBytes == get.end()
+            ? 0 : checkedJsonUnsigned(
+                downloadedBytes->second,
+                "VSINetworkStats downloaded bytes");
         require(proof.statsHeadCount == proof.actualHeadCount,
                 "attributed HEAD count disagrees with VSINetworkStats");
         require(statsBytes == proof.actualHttpBodyBytes,
@@ -7572,11 +7678,13 @@ namespace
 
     HttpProof buildHttpProof(
         const DebugCapture& capture, const std::string& statsJson,
-        AttributionMode mode, bool allowProtocolTerminatedFinalResponse)
+        AttributionMode mode, bool allowProtocolTerminatedFinalResponse,
+        const std::vector<ScienceServerRequest>& serverRequests)
     {
         if (mode == AttributionMode::AttributedV6)
             return buildAttributedHttpProof(
-                capture, statsJson, allowProtocolTerminatedFinalResponse);
+                capture, statsJson, allowProtocolTerminatedFinalResponse,
+                serverRequests);
         require(mode == AttributionMode::LegacyFrozen,
                 "HTTP proof attribution mode is invalid");
         struct Request
@@ -9514,6 +9622,24 @@ namespace
                     proof.headRetries.front().failedDeclaredContentLength == 17 &&
                     proof.headRetries.front().failedActualBodyBytes == 0,
                 "passing v6 replay lost authoritative HEAD retry attribution");
+
+        AttributedReplay proxied = copyAttributedReplay(passing);
+        const auto proxyTimestamp = std::chrono::steady_clock::now();
+        proxied.capture.messages.insert(proxied.capture.messages.begin(), {
+            "CURL_INFO_HEADER_OUT: CONNECT proxy.example:443 HTTP/1.1\r\n"
+                "Host: proxy.example:443\r\n\r\n",
+            "CURL_INFO_HEADER_IN: HTTP/1.1 200 Connection established",
+            "CURL_INFO_HEADER_IN: ",
+        });
+        proxied.capture.timestamps.insert(
+            proxied.capture.timestamps.begin(), 3, proxyTimestamp);
+        const AttributedTransportProof proxiedProof =
+            buildAttributedTransportProof(
+                proxied.capture, proxied.serverRequests);
+        require(proxiedProof.qualified &&
+                    proxiedProof.completions.size() == 3 &&
+                    proxiedProof.headRetries.size() == 1,
+                "proxy CONNECT response contaminated science attribution");
 
         AttributedReplay terminalAdd =
             terminalHeadRetryDispatchFailureReplay("add");

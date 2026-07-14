@@ -364,6 +364,12 @@ assert_contains "$tests_cmake" \
 assert_contains "$tests_cmake" \
     'OSGSOL_TEST_PREFETCH_CASE=blocked-operation-capacity' \
     "capacity CTest must select the actual 257-token handler regression"
+assert_contains "$tests_cmake" \
+    'osgVerse_Test_ScienceHttpRangesHeadRetryAbandonment' \
+    "persistent HEAD retry ownership must run in an independent CTest"
+assert_contains "$tests_cmake" \
+    'OSGSOL_TEST_PREFETCH_CASE=v6-head-500-once-v6-head-remove-persistent' \
+    "persistent HEAD retry CTest must select the handler-wide latch row"
 assert_contains "$network_test" \
     'std::map<std::string, std::weak_ptr<std::recursive_mutex>> leases' \
     "path-option leases must use a process-wide exact-path registry"

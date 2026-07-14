@@ -89,6 +89,8 @@ let violation = null;
 const sessions = new Set();
 const activeStreamFinalizers = new Set();
 const seenCorrelations = new Set();
+const firstCorrelationPaths = new Map();
+const redirectContinuations = new Set();
 let combinedPrimaryRangeCount = 0;
 
 function requestCorrelation(headers, path)
@@ -115,12 +117,24 @@ function requestCorrelation(headers, path)
         violation ??= 'missing science correlation header';
         return null;
     }
-    if (value !== null && seenCorrelations.has(value))
+    const redirectedContinuation = value !== null &&
+        path.includes('redirect-target') &&
+        firstCorrelationPaths.get(value) ===
+            path.replace('redirect-target', 'redirect-source') &&
+        !redirectContinuations.has(value);
+    if (value !== null && seenCorrelations.has(value) &&
+        !redirectedContinuation)
     {
         violation ??= `duplicate science correlation ${value}`;
         return value;
     }
-    if (value !== null) seenCorrelations.add(value);
+    if (redirectedContinuation)
+        redirectContinuations.add(value);
+    else if (value !== null)
+    {
+        seenCorrelations.add(value);
+        firstCorrelationPaths.set(value, path);
+    }
     return value;
 }
 
@@ -306,9 +320,13 @@ server.on('request', (request, response) =>
     {
         ++headCount;
         const head503 = path.includes('head-503') && headCount === 1;
-        setTimeout(() => send(head503 ? 503 : 200, {
+        const v6Once = path.match(/v6-head-(429|500|502|503|504)-once/);
+        const v6Transient = v6Once !== null && headCount === 1;
+        const status = v6Transient ? Number(v6Once[1]) : head503 ? 503 : 200;
+        setTimeout(() => send(status, {
             'accept-ranges': 'bytes',
-            'content-length': head503 ? '0' : String(fixture.length),
+            'content-length': v6Transient ? '17' :
+                head503 ? '0' : String(fixture.length),
         }), 200);
         return;
     }
