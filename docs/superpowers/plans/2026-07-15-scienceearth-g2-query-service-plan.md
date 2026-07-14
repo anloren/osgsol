@@ -230,7 +230,7 @@ git commit -m "feat(scienceearth): add isolated query contracts"
 - Create: `science/ScienceSourceRegistryTest.cpp`
 - Modify: `science/CMakeLists.txt`
 
-- [ ] **Step 1: Write a fake provider and failing registry cases**
+- [x] **Step 1: Write a fake provider and failing registry cases**
 
 The test fake records submit/cancel/clear calls and exposes a mutable provider snapshot. Test:
 
@@ -249,7 +249,7 @@ cmake --build build/science_g2 --target osgSol_Test_ScienceSourceRegistry -j4
 
 Expected: target is absent or fails before implementation.
 
-- [ ] **Step 2: Define the provider boundary**
+- [x] **Step 2: Define the provider boundary**
 
 In `ScienceProvider.h`, define:
 
@@ -277,7 +277,7 @@ public:
 
 No provider method receives a camera, layer, scene node, or UI object.
 
-- [ ] **Step 3: Implement the owning registry**
+- [x] **Step 3: Implement the owning registry**
 
 `ScienceSourceRegistry` owns `std::unique_ptr<IScienceProvider>` keyed by descriptor id. Expose:
 
@@ -291,7 +291,7 @@ std::vector<ScienceSourceDescriptor> listSources() const;
 Use ordered storage or explicit sorting so catalog order is deterministic. `listSources()` calls
 `descriptor()` at read time so provider health can change without starting data access.
 
-- [ ] **Step 4: Run the focused tests**
+- [x] **Step 4: Run the focused tests**
 
 ```bash
 cmake --build build/science_g2 --target osgSol_Test_ScienceSourceRegistry -j4
@@ -301,7 +301,7 @@ ctest --test-dir build/science_g2 --output-on-failure \
 
 Expected: all registry and type tests pass without GDAL/OSG linkage.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add science/ScienceProvider.h science/ScienceSourceRegistry.h \
@@ -309,6 +309,17 @@ git add science/ScienceProvider.h science/ScienceSourceRegistry.h \
   science/CMakeLists.txt
 git commit -m "feat(scienceearth): add provider registry"
 ```
+
+### Task 2 Evidence
+
+- RED: `osgSol_Test_ScienceSourceRegistry` failed because `ScienceProvider.h` did not exist.
+- GREEN: registry and generic-type tests passed `2/2`.
+- Ownership: null/empty/duplicate providers are rejected precisely, rejected ownership is released,
+  and accepted providers are destroyed exactly once with the registry.
+- Catalog: source descriptors are returned in stable id order and unavailable health remains
+  visible.
+- Isolation: the core archive contains only query-types and registry objects and still contains no
+  GDAL, OSG, UI, or Agent dependency.
 
 ## Task 3: Implement the single-active-job query service
 

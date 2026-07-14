@@ -1,6 +1,9 @@
 ADD_LIBRARY(osgSolScienceCore STATIC
+    ScienceProvider.h
     ScienceQueryTypes.cpp
-    ScienceQueryTypes.h)
+    ScienceQueryTypes.h
+    ScienceSourceRegistry.cpp
+    ScienceSourceRegistry.h)
 
 TARGET_COMPILE_FEATURES(osgSolScienceCore PUBLIC cxx_std_17)
 TARGET_INCLUDE_DIRECTORIES(osgSolScienceCore
@@ -61,6 +64,18 @@ IF(BUILD_TESTING)
     ADD_TEST(NAME osgSol_Test_ScienceQueryTypes
              COMMAND $<TARGET_FILE:osgSol_Test_ScienceQueryTypes>)
     SET_TESTS_PROPERTIES(osgSol_Test_ScienceQueryTypes PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_ScienceSourceRegistry
+        ScienceSourceRegistryTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceSourceRegistry
+        PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceSourceRegistry
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceSourceRegistry
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceSourceRegistry>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceSourceRegistry PROPERTIES
         LABELS "offline;scienceearth"
         TIMEOUT 10)
 
