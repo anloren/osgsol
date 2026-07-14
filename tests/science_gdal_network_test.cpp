@@ -6942,14 +6942,65 @@ namespace
                 if (completion.attempt == retry.scheduledAttempt)
                     scheduled = &completion;
             }
-            require(failed != nullptr && scheduled != nullptr &&
+            require(failed != nullptr &&
                         failed->scope == "coordinator" &&
                         failed->role == "head" &&
                         failed->method == "HEAD" &&
                         isExactFiveStatus(failed->status) &&
-                        failed->messageIndex < retry.messageIndex &&
-                        retry.messageIndex < scheduled->messageIndex,
-                    "HEAD retry does not bridge two ordered HEAD completions");
+                        failed->messageIndex < retry.messageIndex,
+                    "HEAD retry is not bound after its failed HEAD completion");
+            const auto retryKey = std::make_tuple(
+                retry.context, retry.request, retry.failedAttempt);
+            require(++headRetryByFailedAttempt[retryKey] == 1,
+                    "HEAD completion has duplicate retry transitions");
+            const Decision* terminalDispatchFailure = nullptr;
+            int terminalDispatchFailureCount = 0;
+            bool hasPublicationOrFallback = false;
+            for (const Decision& decision : decisions)
+            {
+                if (decision.context != retry.context) continue;
+                if (decision.kind == "fallback" ||
+                    decision.kind == "published" ||
+                    decision.kind == "property-published")
+                {
+                    hasPublicationOrFallback = true;
+                }
+                if (decision.kind == "head-blocked" &&
+                    decision.request == retry.request &&
+                    decision.attempt == retry.failedAttempt &&
+                    (decision.reason == "add" ||
+                     decision.reason == "perform"))
+                {
+                    terminalDispatchFailure = &decision;
+                    ++terminalDispatchFailureCount;
+                }
+            }
+            const bool hasLaterRequestCompletion = std::any_of(
+                proof.completions.begin(), proof.completions.end(),
+                [&](const ScienceTransportCompletion& completion)
+                {
+                    return completion.context == retry.context &&
+                        completion.request == retry.request &&
+                        completion.messageIndex > retry.messageIndex;
+                });
+            if (terminalDispatchFailureCount > 0)
+            {
+                require(terminalDispatchFailureCount == 1 &&
+                            terminalDispatchFailure != nullptr &&
+                            scheduled == nullptr &&
+                            retry.messageIndex <
+                                terminalDispatchFailure->messageIndex &&
+                            !hasLaterRequestCompletion &&
+                            !hasPublicationOrFallback,
+                        "add/perform terminal HEAD retry dispatch failure "
+                        "coexisted with retry transport or publication");
+            }
+            else
+            {
+                require(scheduled != nullptr &&
+                            retry.messageIndex < scheduled->messageIndex,
+                        "HEAD retry does not bridge two ordered HEAD completions");
+            }
             require(failed->status == retry.failedStatus &&
                         failed->connectionId == retry.failedConnectionId &&
                         failed->httpMajor == retry.failedHttpMajor &&
@@ -6958,8 +7009,6 @@ namespace
                         failed->actualBodyBytes ==
                             retry.failedActualBodyBytes,
                     "HEAD retry fields differ from its failed completion");
-            ++headRetryByFailedAttempt[{retry.context, retry.request,
-                                        retry.failedAttempt}];
         }
         for (const ScienceTransportCompletion& completion : proof.completions)
         {
@@ -8709,6 +8758,46 @@ namespace
         return replay;
     }
 
+    AttributedReplay terminalHeadRetryDispatchFailureReplay(
+        const std::string& reason)
+    {
+        require(reason == "add" || reason == "perform",
+                "terminal HEAD retry dispatch fixture reason is invalid");
+        const std::string context = reason == "add"
+            ? "abababababababababababababababab"
+            : "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+        AttributedReplay replay;
+        const auto head = coordinatorHeadCompletion(
+            context, 1, 1, 1, 500, 17);
+        const auto range = rangedCompletion(
+            context, 2, "coordinator", 2, 1, 206,
+            "bytes=0-131071", 131072, 1048576);
+        appendAttributedRequest(replay, head, "session-terminal", 1);
+        appendAttributedRequest(replay, range, "session-terminal", 3);
+        appendAttributedResponse(replay, range);
+        appendAttributedResponse(replay, head);
+        appendAttributedCompletion(replay, head);
+        appendAttributedCompletion(replay, range);
+        replay.capture.messages.push_back(
+            "VSICURL: ParallelHeadRange: head-transient-retry context=" +
+            context +
+            " retry=1 request=1 failed-attempt=1 scheduled-attempt=2 "
+            "status=500 delay-ms=100 connection=7 http=2 "
+            "declared-content-length=17 actual-body-bytes=0");
+        replay.capture.messages.push_back(
+            "VSICURL: ParallelHeadRange: head-transient-retry-blocked "
+            "context=" + context +
+            " request=1 attempt=1 status=500 reason=" + reason +
+            " connection=7 http=2");
+        replay.capture.messages.push_back(
+            "VSICURL: ParallelHeadRange: file-property-publication-blocked "
+            "context=" + context + " request=1 attempt=1 reason=" + reason);
+        replay.capture.messages.push_back(
+            "VSICURL: ParallelHeadRange: blocked-operation-marked context=" +
+            context + " request=1 attempt=1 reason=" + reason);
+        return replay;
+    }
+
     AttributedReplay passingRangeRecoveryMirrorReplay()
     {
         static const std::string context =
@@ -9014,6 +9103,21 @@ namespace
         fail("AttributedV6 accepted " + description);
     }
 
+    void requireAttributedParserRejected(const AttributedReplay& replay,
+                                         const std::string& description)
+    {
+        try
+        {
+            static_cast<void>(buildAttributedTransportProof(
+                replay.capture, replay.serverRequests));
+        }
+        catch (const std::exception&)
+        {
+            return;
+        }
+        fail("AttributedV6 parser accepted " + description);
+    }
+
     struct CompletionSinkRaceCapture
     {
         DebugCapture capture;
@@ -9267,6 +9371,115 @@ namespace
                     proof.headRetries.front().failedDeclaredContentLength == 17 &&
                     proof.headRetries.front().failedActualBodyBytes == 0,
                 "passing v6 replay lost authoritative HEAD retry attribution");
+
+        AttributedReplay terminalAdd =
+            terminalHeadRetryDispatchFailureReplay("add");
+        const AttributedTransportProof terminalAddProof =
+            buildAttributedTransportProof(
+                terminalAdd.capture, terminalAdd.serverRequests);
+        AttributedReplay terminalPerform =
+            terminalHeadRetryDispatchFailureReplay("perform");
+        const AttributedTransportProof terminalPerformProof =
+            buildAttributedTransportProof(
+                terminalPerform.capture, terminalPerform.serverRequests);
+        const auto isAuthenticTerminalDispatchFailure = [](
+                const AttributedTransportProof& candidate,
+                const std::string& reason)
+        {
+            return !candidate.qualified &&
+                candidate.completions.size() == 2 &&
+                candidate.headRetries.size() == 1 &&
+                std::count_if(candidate.events.begin(),
+                    candidate.events.end(), [&](const auto& event)
+                    {
+                        return event.kind == "head-blocked" &&
+                            event.request == 1 && event.attempt == 1 &&
+                            event.reason == reason;
+                    }) == 1;
+        };
+        require(isAuthenticTerminalDispatchFailure(
+                    terminalAddProof, "add") &&
+                    isAuthenticTerminalDispatchFailure(
+                    terminalPerformProof, "perform"),
+                "authentic add/perform terminal HEAD retry dispatch failure "
+                "became parser ERROR or semantic PASS");
+
+        AttributedReplay missingTerminal = copyAttributedReplay(terminalAdd);
+        missingTerminal.capture.messages.erase(
+            missingTerminal.capture.messages.begin() + replayMessageIndex(
+                missingTerminal.capture, "head-transient-retry-blocked "));
+        requireAttributedParserRejected(
+            missingTerminal, "a missing terminal HEAD retry block");
+
+        AttributedReplay wrongTerminal = copyAttributedReplay(terminalAdd);
+        const std::size_t wrongTerminalIndex = replayMessageIndex(
+            wrongTerminal.capture, "head-transient-retry-blocked ");
+        replaceAll(wrongTerminal.capture.messages[wrongTerminalIndex],
+                   "reason=add", "reason=detach");
+        requireAttributedParserRejected(
+            wrongTerminal, "a terminal HEAD retry block with the wrong reason");
+
+        AttributedReplay duplicateTerminal = copyAttributedReplay(terminalAdd);
+        const std::size_t duplicateTerminalIndex = replayMessageIndex(
+            duplicateTerminal.capture, "head-transient-retry-blocked ");
+        duplicateTerminal.capture.messages.insert(
+            duplicateTerminal.capture.messages.begin() +
+                duplicateTerminalIndex,
+            duplicateTerminal.capture.messages[duplicateTerminalIndex]);
+        requireAttributedParserRejected(
+            duplicateTerminal, "a duplicate terminal HEAD retry block");
+
+        AttributedReplay outOfOrderTerminal = copyAttributedReplay(terminalAdd);
+        const std::size_t outOfOrderBlock = replayMessageIndex(
+            outOfOrderTerminal.capture, "head-transient-retry-blocked ");
+        const std::string earlyBlock =
+            outOfOrderTerminal.capture.messages[outOfOrderBlock];
+        outOfOrderTerminal.capture.messages.erase(
+            outOfOrderTerminal.capture.messages.begin() + outOfOrderBlock);
+        const std::size_t retryDecision = replayMessageIndex(
+            outOfOrderTerminal.capture, "head-transient-retry context=");
+        outOfOrderTerminal.capture.messages.insert(
+            outOfOrderTerminal.capture.messages.begin() + retryDecision,
+            earlyBlock);
+        requireAttributedParserRejected(
+            outOfOrderTerminal, "a terminal block before its HEAD retry event");
+
+        AttributedReplay terminalWithScheduled =
+            copyAttributedReplay(terminalAdd);
+        AttributedReplay scheduledAttempt;
+        const auto headAttempt2 = coordinatorHeadCompletion(
+            "abababababababababababababababab", 3, 1, 2, 200, 1048576);
+        appendAttributedRequest(
+            scheduledAttempt, headAttempt2, "session-terminal", 5);
+        appendAttributedResponse(scheduledAttempt, headAttempt2);
+        appendAttributedCompletion(scheduledAttempt, headAttempt2);
+        const std::size_t terminalAfterScheduled = replayMessageIndex(
+            terminalWithScheduled.capture, "head-transient-retry-blocked ");
+        terminalWithScheduled.capture.messages.insert(
+            terminalWithScheduled.capture.messages.begin() +
+                terminalAfterScheduled,
+            scheduledAttempt.capture.messages.begin(),
+            scheduledAttempt.capture.messages.end());
+        terminalWithScheduled.serverRequests.insert(
+            terminalWithScheduled.serverRequests.end(),
+            scheduledAttempt.serverRequests.begin(),
+            scheduledAttempt.serverRequests.end());
+        requireAttributedParserRejected(
+            terminalWithScheduled,
+            "an add terminal chain followed by a scheduled HEAD completion");
+
+        AttributedReplay duplicateRetry = copyAttributedReplay(terminalAdd);
+        const std::size_t firstRetry = replayMessageIndex(
+            duplicateRetry.capture, "head-transient-retry context=");
+        std::string secondRetry = duplicateRetry.capture.messages[firstRetry];
+        replaceAll(secondRetry, "retry=1", "retry=2");
+        replaceAll(secondRetry, "delay-ms=100", "delay-ms=200");
+        duplicateRetry.capture.messages.insert(
+            duplicateRetry.capture.messages.begin() + firstRetry + 1,
+            secondRetry);
+        requireAttributedParserRejected(
+            duplicateRetry,
+            "duplicate HEAD retries bound to the same failed attempt");
 
         AttributedReplay unrelatedFallback = copyAttributedReplay(passing);
         const std::size_t missingHeadTransition = replayMessageIndex(
