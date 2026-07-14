@@ -58,6 +58,10 @@
 #error OSGSOL_SCIENCE_HTTP2_RANGE_SERVER must name the local HTTP/2 server
 #endif
 
+#ifndef OSGSOL_SCIENCE_FIXTURE_DIR
+#error OSGSOL_SCIENCE_FIXTURE_DIR must name the science replay fixture directory
+#endif
+
 #ifndef OSGSOL_SCIENCE_EVIDENCE_DIR
 #error OSGSOL_SCIENCE_EVIDENCE_DIR must name a build-tree evidence directory
 #endif
@@ -4806,8 +4810,7 @@ namespace
 
     void verifyPrefetchReplayRegression()
     {
-        const std::filesystem::path fixtureRoot =
-            std::filesystem::path(__FILE__).parent_path() / "data" / "science";
+        const std::filesystem::path fixtureRoot = OSGSOL_SCIENCE_FIXTURE_DIR;
         DebugCapture replay;
         loadReplayCapture(fixtureRoot / "prefetch_nvidia_partial_trace.log", replay);
         const std::string stats = loadReplayText(
@@ -4997,8 +5000,7 @@ namespace
 
     void verifyPrefetchTransientFallbackReplayRegression()
     {
-        const std::filesystem::path fixtureRoot =
-            std::filesystem::path(__FILE__).parent_path() / "data" / "science";
+        const std::filesystem::path fixtureRoot = OSGSOL_SCIENCE_FIXTURE_DIR;
         DebugCapture replay;
         loadReplayCapture(
             fixtureRoot / "prefetch_hong_kong_transient_trace.log", replay);
@@ -5148,8 +5150,7 @@ namespace
 
     void verifyPrefetchTransientRetryReplayRegression()
     {
-        const std::filesystem::path fixtureRoot =
-            std::filesystem::path(__FILE__).parent_path() / "data" / "science";
+        const std::filesystem::path fixtureRoot = OSGSOL_SCIENCE_FIXTURE_DIR;
         DebugCapture replay;
         loadReplayCapture(
             fixtureRoot / "prefetch_nvidia_transient_retry_trace.log", replay);

@@ -300,6 +300,7 @@ IF(BUILD_TESTING)
             OSGSOL_NODE="${OSGSOL_NODE_EXECUTABLE}"
             OSGSOL_SCIENCE_RANGE_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/science_http_range_server.py"
             OSGSOL_SCIENCE_HTTP2_RANGE_SERVER="${CMAKE_CURRENT_SOURCE_DIR}/science_http2_range_server.mjs"
+            OSGSOL_SCIENCE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/science"
             OSGSOL_SCIENCE_EVIDENCE_DIR="${CMAKE_BINARY_DIR}/science-network-evidence"
             OSGSOL_SCIENCE_BUILD_DIR="${CMAKE_BINARY_DIR}"
             OSGSOL_SCIENCE_PROTECTED_EVIDENCE_DIR="${PROJECT_SOURCE_DIR}/build/science_g0/science-network-evidence")
