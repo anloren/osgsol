@@ -890,7 +890,7 @@ Verified on 2026-07-15 from committed G2 consumer state `5db1117`:
 - Modify: `tests/package_macos_tests.sh`
 - Append evidence: this plan under `Task 9 Evidence`
 
-- [ ] **Step 1: Make the package contract fail against the current generic bundle script**
+- [x] **Step 1: Make the package contract fail against the current generic bundle script**
 
 Extend `tests/package_macos_tests.sh` to require the fixed product contract:
 
@@ -910,20 +910,20 @@ does not delete the existing Desktop app before staging passes, and produces no 
 version-suffixed Desktop app. Run the test and observe failure because the current generic script
 still writes `EarthExplorer.app`, `com.osgverse.earthexplorer`, and `1.0.0`.
 
-- [ ] **Step 2: Make packaging parameterized and staging-first**
+- [x] **Step 2: Make packaging parameterized and staging-first**
 
 Update `package_macos.sh` to accept explicit environment inputs for SDK, output staging path,
 candidate version, build channel, source commit, and product executable name. Defaults may support
 developer packaging, but the formal G2 command supplies every product field. Package and verify the
 staging bundle; the script itself must not overwrite the fixed Desktop app.
 
-- [ ] **Step 3: Build/install from the clean committed G2 head**
+- [x] **Step 3: Build/install from the clean committed G2 head**
 
 Require a clean working tree. Configure/install Release into a fresh G2 SDK using the verified v5
 prefix. Unset `EARTH_AI_KEY`. Record the exact source commit in the app metadata. Do not use a v6
 build directory or private prefix.
 
-- [ ] **Step 4: Package to staging, not directly over the Desktop baseline**
+- [x] **Step 4: Package to staging, not directly over the Desktop baseline**
 
 Package from the fresh SDK. Preserve bundle id `com.anloren.osgsol.earth`, formal app name
 `osgSol Earth`, version `0.3.0` until user acceptance authorizes a new release version, channel
@@ -937,7 +937,7 @@ codesign --force --deep --sign - '/path/to/osgSol Earth.app.staging'
 codesign --verify --deep --strict '/path/to/osgSol Earth.app.staging'
 ```
 
-- [ ] **Step 5: Run package and dependency audits**
+- [x] **Step 5: Run package and dependency audits**
 
 Require:
 
@@ -965,7 +965,7 @@ test -z "$(find '/Users/USER/Desktop/osgSol Earth.app' -name imgui.ini -print -q
 Do not run the finalized signed bundle again after the last strict verification; manual launch may
 create mutable UI state and must be followed by cleanup/re-sign before a release decision.
 
-- [ ] **Step 7: Rerun the package contract**
+- [x] **Step 7: Rerun the package contract**
 
 ```bash
 bash tests/package_macos_tests.sh
@@ -974,7 +974,7 @@ bash tests/package_macos_tests.sh
 Expected: staging/product identity, credential rejection, offscreen smoke, mutable-file exclusion,
 dependency closure, and strict signature checks all pass.
 
-- [ ] **Step 8: Record Task 9 evidence and commit**
+- [x] **Step 8: Record Task 9 evidence and commit**
 
 Append commit, package fingerprint, bundle metadata, signature/dependency/offscreen results,
 rollback location, and fixed Desktop path under `Task 9 Evidence`.
@@ -987,7 +987,52 @@ git commit -m "build(scienceearth): prepare G2 manual candidate"
 
 ### Task 9 Evidence
 
-Pending implementation.
+Recorded on 2026-07-15:
+
+- Packaged source commit: `243f00bd5a2bd7c5b96214579fd61f771fa609a6` on
+  `codex/scienceearth-g2-query-service`. The production C++ source was last changed in `784df3c`;
+  `243f00b` adds only the packaging absolute-`LC_RPATH` fix and its regression assertion.
+- Formal build: Release/GLCore against `/Users/USER/osgsol/build/sdk_core`, with the verified
+  private v5 prefix at `build/science-deps-g2-v5/prefix`, network tests disabled, and
+  `-ffile-prefix-map` applied to C/C++ source paths. No v6 prefix or runtime marker was used.
+- The first path-mapped test run exposed three replay fixtures coupled to `__FILE__`. Commit
+  `784df3c` moved those test-only paths to a CMake definition. Focused replay tests then passed
+  `3/3`, and the final science-enabled offline suite passed `33/33` in `35.48 s`.
+- The final package contract passed after proving its RED state against an absolute OSG SDK
+  `LC_RPATH`. Commit `243f00b` removes every absolute `LC_RPATH` and rejects any recurrence.
+- Staging bundle: `dist/osgSol Earth.app`; fixed Desktop bundle:
+  `/Users/USER/Desktop/osgSol Earth.app`; rollback:
+  `build/desktop-backups/pre-g2-243f00b/osgSol Earth.app`.
+- Bundle metadata: `osgSol Earth`, `com.anloren.osgsol.earth`, executable `osgSol_Earth`, version
+  `0.3.0`, channel `manual-test`, source commit `243f00b...`.
+- AlphaEarth production-index SHA-256:
+  `15875963d1bf4dd3f35a1f6c3ec6329378fef0fab6549fac677552f1d348f736`.
+- Staging bundle fingerprint:
+  `fff06a872e71cd1760604864417cbc3691de99114502d0255dc168b627fab064`;
+  executable SHA-256:
+  `cea6b7bd1bad7248938954082ea61f724fc921171ad9063aa689df56a4a0dfc2`.
+- Staging audit: 127 Mach-O files individually passed `codesign --verify --strict`; bundle
+  strict/deep verification passed; absolute `LC_RPATH` count was zero; current worktree/private
+  v5/v6 path markers were absent; no `imgui.ini` or packaged log was present.
+- Staging and package-contract offscreen runs passed at 1920x1080, produced non-empty PNG captures,
+  and contained no selected shader/OpenGL fatal marker. Evidence is under
+  `build/science_g2_candidate/audit/`.
+- Direct Homebrew Python 3.14 remains in the executable dependency list. This is still a declared
+  clean-machine distribution debt.
+- The immutable G0 v0.2 audit remains `STOP`: the candidate is 118,620,586 bytes larger than the
+  pre-ScienceEarth reference, exceeding the 62,914,560-byte stop, and the current static
+  GDAL/PROJ shape does not provide the old auditor's expected `osgdb_science.so`. Tier A was
+  `PASS`, unresolved dependencies were zero, but Tier B was `STOP`. This is not reported as a
+  passed formal G0 gate. Relative to the accepted v0.3.0 Desktop bundle, the staged candidate grew
+  by approximately 2,056 KiB.
+- The fixed Desktop bundle was transactionally replaced and the final strict/deep signature and
+  no-`imgui.ini` checks passed. Its automated post-copy offscreen launch did not reach application
+  code: macOS Desktop FileProvider reapplied quarantine and LaunchServices used App Translocation,
+  leaving the ad-hoc-signed executable at `dyld_start` with no Earth log or capture. Both test
+  processes were terminated. No `spctl` exception or trust bypass was installed. The exact staged
+  content already passed offscreen; the Desktop copy now waits for the user's first foreground
+  approval and the Task 10 matrix. Therefore Task 9 Step 6 remains open only for the Desktop-path
+  post-approval smoke/cleanup re-sign closure.
 
 ## Task 10: Human verification and release-decision handoff
 
@@ -996,7 +1041,7 @@ Pending implementation.
 - Append evidence: this plan under `Task 10 Evidence`
 - Modify later only after explicit user acceptance: release notes/version metadata/tag commands
 
-- [ ] **Step 1: Give the user the fixed app and exact test matrix**
+- [x] **Step 1: Give the user the fixed app and exact test matrix**
 
 Ask the user to verify in `/Users/USER/Desktop/osgSol Earth.app`:
 
@@ -1020,7 +1065,7 @@ For a defect, record exact location/year/height/action, current job state, visib
 and whether camera or another layer changed. Fix only the scoped defect, rerun Tasks 8-9, and issue
 the same fixed Desktop app path.
 
-- [ ] **Step 3: Stop at the release-decision boundary**
+- [x] **Step 3: Stop at the release-decision boundary**
 
 Manual acceptance permits a separate explicit version/tag/sync decision. It does not automatically
 authorize moving tags, merging, or publishing. Until the user explicitly requests release:
@@ -1033,7 +1078,9 @@ REMOTE_SYNC=NOT_PERFORMED
 
 ### Task 10 Evidence
 
-Pending user verification.
+The fixed Desktop app and rollback are installed. Human verification is pending. First launch must
+be performed by the user in the foreground; no automatic Gatekeeper exception was created. Record
+all twelve outcomes before changing the release-decision fields below.
 
 ## Plan Self-Review
 

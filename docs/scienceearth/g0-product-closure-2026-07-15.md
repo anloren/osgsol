@@ -173,7 +173,7 @@ The authoritative G2-1 design remains
 
 ## 8. G2-1 progress snapshot after full automated verification
 
-**Verified consumer state:** `5db1117`
+**Packaged manual-candidate state:** `243f00b`
 
 ```text
 G2_TASKS_1_TO_7=COMPLETE
@@ -182,8 +182,13 @@ G2_EARTHEXPLORER_COMPILE=PASS
 G2_FULL_OFFLINE_REGRESSION=SCIENCE_ON_33_OF_33_AND_OFF_20_OF_20_PASS
 G2_LOCAL_INDEX_SMOKE=2018_DATASET_7851_AND_2025_DATASET_9790_PASS
 G2_OFF_BUILD_ISOLATION=PASS
-G2_MANUAL_CANDIDATE=NOT_YET_BUILT
-DESKTOP_APP=UNCHANGED_V0_3_0_BASELINE
+G2_STAGING_PACKAGE=PASS
+G2_MANUAL_CANDIDATE=INSTALLED_UNTAGGED
+G2_DESKTOP_FINAL_SIGNATURE=PASS
+G2_DESKTOP_FIRST_FOREGROUND_APPROVAL=PENDING
+G2_DESKTOP_POST_APPROVAL_OFFSCREEN=PENDING
+G0_IMMUTABLE_V0_2_AUDIT=STOP_UNCHANGED
+DESKTOP_APP=UPDATED_IN_PLACE_WITH_ROLLBACK
 TAG_CREATED_OR_MOVED=NO
 REMOTE_PUSH=NO
 ```
@@ -206,24 +211,40 @@ Task 8 is now complete. Its exact commands, timings, index fingerprint, dataset 
 warnings are recorded in
 `docs/superpowers/plans/2026-07-15-scienceearth-g2-query-service-plan.md`.
 
-### Mandatory next work before the user can manually verify a candidate
+### Mandatory next work before the user can complete manual verification
 
-1. Complete Task 9 packaging work: parameterize the currently generic macOS packager for the fixed
-   `osgSol Earth.app` identity, remove extended attributes before signing, pass dependency/path,
-   offscreen render, launch, and strict/deep codesign audits, then create one untagged candidate.
-2. Preserve the currently installed Desktop v0.3.0 app until the candidate passes every automated
-   gate; update that same fixed app in place only after creating a rollback copy. Do not create a
-   second Desktop app.
-3. Run the Task 10 human matrix: catalog meaning, load, year change, replacement-failure retention,
+1. Perform the first foreground launch of `/Users/USER/Desktop/osgSol Earth.app` as the user.
+   The terminal must not install a Gatekeeper exception or other trust bypass. After approval,
+   repeat the Desktop-path offscreen smoke, clean mutable state, re-sign, and require strict/deep
+   verification again.
+2. Run the Task 10 human matrix: catalog meaning, load, year change, replacement-failure retention,
    cancel, hide/show/remove, panel scrolling, low-altitude placement, camera invariance, Agent
    research, photo regression, 3D Tiles regression, and Quit.
-4. Only after explicit human acceptance decide the next version/tag and remote synchronization.
+3. Only after explicit human acceptance decide the next version/tag and remote synchronization.
    Never move the protected `v0.3.0`, `ScienceEarth-v0.3.0`, `v0.2.0`, or `ScienceEarth` tags.
+
+The staging package, fixed identity, private-path/RPATH audits, package-contract offscreen run, and
+strict signatures passed. The rollback remains at
+`build/desktop-backups/pre-g2-243f00b/osgSol Earth.app`.
+
+### Mandatory before the next tagged ScienceEarth release
+
+- Resolve the immutable G0 audit mismatch. The current static GDAL/PROJ executable exceeds the
+  v0.2 hard size stop and does not match the audit policy's science-plugin ownership model. Either
+  restore a compliant isolated plugin/closure or formally approve and ratchet a replacement policy;
+  do not label the current result a formal G0 `GO`.
+- Remove, bundle, or make relocatable the direct Homebrew Python 3.14 dependency, then test on a
+  clean Mac without the development Homebrew tree.
+- Pin and validate the GLCore OSG runtime in the release profile. Formal packaging must continue to
+  use the accepted GLCore SDK and the offscreen shader/OpenGL assertion; a legacy Homebrew OSG
+  default must never be allowed to recreate the GLSL-130 failure.
+- Complete the twelve-item human matrix and the Desktop post-approval smoke/cleanup/re-sign gate.
+- Investigate the NASA GIBS dated-layer 404 warnings seen in offscreen logs if the same layer is
+  visibly missing during manual verification; add a last-available-date fallback before release if
+  reproducible.
 
 ### Required later, but not a blocker for this local manual candidate
 
-- Remove, bundle, or make relocatable the direct Homebrew Python 3.14 dependency before claiming
-  clean-machine distribution.
 - Add no second remote science provider until its latency/transfer/memory/cache/cancellation budget
   and complete provenance contract are defined and verified.
 - Keep the v6 WIP quarantined unless its two documented ownership failures and full verification
