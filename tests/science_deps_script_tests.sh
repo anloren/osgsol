@@ -45,6 +45,61 @@ assert_not_contains()
     fi
 }
 
+assert_contains_fixed()
+{
+    local file=$1
+    local text=$2
+    local description=$3
+    grep -Fq -- "$text" "$file" || fail "$description"
+}
+
+assert_patch_added_code_fixed()
+{
+    local file=$1
+    local text=$2
+    local description=$3
+    local added_code
+    added_code=$(awk '
+        /^\+\+\+/ { next }
+        !/^\+/ { next }
+        {
+            sub(/^\+/, "")
+            line = $0
+            while (1)
+            {
+                if (in_block_comment)
+                {
+                    end = index(line, "*/")
+                    if (!end) { line = ""; break }
+                    line = substr(line, end + 2)
+                    in_block_comment = 0
+                    continue
+                }
+                start = index(line, "/*")
+                slash = index(line, "//")
+                if (slash && (!start || slash < start))
+                {
+                    line = substr(line, 1, slash - 1)
+                    break
+                }
+                if (!start) break
+                prefix = substr(line, 1, start - 1)
+                rest = substr(line, start + 2)
+                end = index(rest, "*/")
+                if (!end)
+                {
+                    line = prefix
+                    in_block_comment = 1
+                    break
+                }
+                line = prefix substr(rest, end + 2)
+            }
+            if (line ~ /[^[:space:]]/) print line
+        }
+    ' "$file")
+    grep -Fq -- "$text" <<<"$added_code" || fail "$description"
+}
+
 [[ -f "$versions_file" ]] || fail "missing pinned versions file"
 [[ -f "$checksums_file" ]] || fail "missing checksum file"
 [[ -x "$builder" ]] || fail "missing executable dependency builder"
@@ -172,9 +227,6 @@ assert_not_contains "$prefetch_patch" 'PREFETCH_TEST_' \
 assert_contains "$prefetch_patch" 'AddRegion\(m_pszURL, 0, 131072' \
     "validated prefetch bytes must use the existing region cache"
 assert_contains "$prefetch_patch" \
-    'ParallelHeadRange: logical-get-complete bytes=%zu' \
-    "prefetch patch must expose one exact logical GET completion format"
-assert_contains "$prefetch_patch" \
     'static bool IsParallelHeadRangeTransientStatus\(long nStatus\)' \
     "prefetch patch must centralize coordinator transient status classification"
 classifier=$(sed -n \
@@ -218,14 +270,6 @@ assert_contains "$prefetch_patch" \
 assert_contains "$prefetch_patch" \
     'curl_multi_add_handle\(hMultiHandle, sRequest\.hCurlHandle\)' \
     "immediate retry must re-add the same easy handle to the same multi"
-assert_contains "$prefetch_patch" \
-    'ReadMultiRange: immediate-retry range=bytes=%s ' \
-    "immediate retry event must expose the exact range field"
-assert_contains "$prefetch_patch" \
-    'status=%ld bytes=%zu attempt=%d delay-ms=%lld ' \
-    "immediate retry event must expose status, bytes, attempt, and delay"
-assert_contains "$prefetch_patch" '"connection=" CPL_FRMT_GIB " http=2"' \
-    "immediate retry event must expose connection and HTTP version"
 assert_contains "$prefetch_patch" 'ParseExactContentRange' \
     "immediate HTTP success must use the strict shared Content-Range parser"
 assert_contains "$prefetch_patch" \
@@ -365,40 +409,231 @@ assert_contains "$prefetch_patch" \
     "blocked event must expose the exact range, status, and reason"
 assert_not_contains "$prefetch_patch" 'OSGSOL_TEST_|PREFETCH_TEST_' \
     "production patch must not contain test-only transport fault controls"
-assert_contains "$prefetch_patch" \
-    'ParallelHeadRange: transient-retry range=bytes=0-131071 ' \
-    "prefetch patch must emit the exact coordinator retry prefix"
-assert_contains "$prefetch_patch" \
-    'status=%ld bytes=%zu attempt=%d delay-ms=%lld ' \
-    "prefetch patch must emit exact coordinator retry numeric fields"
-assert_contains "$prefetch_patch" \
-    'range-connection=' \
-    "prefetch patch must emit coordinator retry connection evidence"
-assert_contains "$prefetch_patch" \
-    'ParallelHeadRange: transient-fallback ' \
-    "prefetch patch must retain the exact terminal fallback event"
-assert_contains "$prefetch_patch" \
-    'range=bytes=0-131071 status=%ld bytes=%zu' \
-    "terminal fallback must expose the exact range, status, and bytes"
-assert_contains "$prefetch_patch" \
+
+# v6 requires authoritative handle-labelled completion evidence and HEAD-first
+# exact-five ownership.  These are deliberately RED until the private patch is
+# updated in the following production-only task.
+for token in \
+    'ScienceTransport: response-v1' \
+    'head-transient-retry' \
+    'head-transient-retry-blocked' \
+    'CPLHTTPRetryContext oHeadRetryContext' \
+    'curl_multi_remove_handle' \
+    'curl_multi_add_handle' \
+    'GetValidatedRetryDelay' \
+    'EvidenceContext' \
+    'X-OSGSol-Science-Correlation'; do
+    assert_patch_added_code_fixed "$prefetch_patch" "$token" \
+        "v6 private patch is missing source contract: $token"
+done
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'head-transient-retry context=%s retry=%d request=' \
+    "HEAD retry event must begin with context/retry/request fields"
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'failed-attempt=%d scheduled-attempt=%d status=%ld delay-ms=%lld ' \
+    "HEAD retry event must bind failed/scheduled attempts and delay"
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'connection=' \
+    "HEAD retry event must bind the failed connection"
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'http=2 declared-content-length=' \
+    "HEAD retry event must bind HTTP and declared length"
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'actual-body-bytes=' \
+    "HEAD retry event must bind failed transport and byte fields"
+assert_patch_added_code_fixed "$prefetch_patch" 'headRecoveryOwned' \
+    "initial exact-five ownership must remain sticky"
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'const bool bHeadAdmissionValid' \
+    "HEAD retry must expose an immutable pre-CanRetry admission result"
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'else if (oHeadRetryContext.CanRetry' \
+    "invalid HEAD admission must structurally bypass CanRetry"
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'const bool bRangeAdmissionValid' \
+    "Range retry must expose an immutable pre-CanRetry admission result"
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'else if (oRangeRetryContext.CanRetry' \
+    "invalid Range admission must structurally bypass CanRetry"
+assert_patch_added_code_fixed "$prefetch_patch" 'retry-status' \
+    "a later non-exact-five HEAD must terminate inside the coordinator"
+assert_patch_added_code_fixed "$prefetch_patch" 'sWriteFuncHeaderData' \
+    "HEAD retry must reset its header buffer"
+assert_patch_added_code_fixed "$prefetch_patch" 'sHeadHeaderWriter' \
+    "HEAD retry must rebind its header callback storage"
+assert_patch_added_code_fixed "$prefetch_patch" 'CURLOPT_HEADERFUNCTION' \
+    "HEAD retry must explicitly rebind its header callback"
+assert_patch_added_code_fixed "$prefetch_patch" 'CURLOPT_WRITEFUNCTION' \
+    "HEAD retry must explicitly rebind its bounded writer callback"
+assert_patch_added_code_fixed "$prefetch_patch" 'CURLOPT_ERRORBUFFER' \
+    "HEAD retry must clear and rebind its curl error buffer"
+assert_patch_added_code_fixed "$prefetch_patch" 'oRangeRetryContext' \
+    "Range retry budget must remain independent from HEAD retry"
+assert_patch_added_code_fixed "$prefetch_patch" 'content-range-count=' \
+    "authoritative completion must expose Content-Range cardinality"
+assert_patch_added_code_fixed "$prefetch_patch" 'actual-body-bytes=' \
+    "authoritative completion must expose writer-owned body bytes"
+assert_patch_added_code_fixed "$prefetch_patch" 'context=%s' \
+    "completion/decision events must carry the operation context"
+completion_emitter=$(awk '
+    /^\+static void EmitScienceTransportResponse/ { active = 1 }
+    active {
+        line = $0
+        sub(/^\+/, "", line)
+        print line
+        opens = line
+        closes = line
+        gsub(/[^\{]/, "", opens)
+        gsub(/[^\}]/, "", closes)
+        depth += length(opens) - length(closes)
+        if (length(opens) > 0) opened = 1
+        if (opened && depth == 0) exit
+    }
+' "$prefetch_patch")
+[[ -n $completion_emitter ]] ||
+    fail "production patch must define EmitScienceTransportResponse"
+grep -Fq -- 'SerializeAndQueueScienceEvent' <<<"$completion_emitter" ||
+    fail "completion emitter must delegate to the fixed ordered queue helper"
+
+# Extract the complete added helper with brace depth.  A first/last-line grep
+# would accept a lock guard whose inner scope ended before ordinal allocation.
+completion_queue_helper=$(awk '
+    /^\+static void SerializeAndQueueScienceEvent/ { active = 1 }
+    active {
+        line = $0
+        sub(/^\+/, "", line)
+        print line
+        opens = line
+        closes = line
+        gsub(/[^\{]/, "", opens)
+        gsub(/[^\}]/, "", closes)
+        depth += length(opens) - length(closes)
+        if (length(opens) > 0) opened = 1
+        if (opened && depth == 0) exit
+    }
+' "$prefetch_patch")
+[[ -n $completion_queue_helper ]] ||
+    fail "production patch must define SerializeAndQueueScienceEvent"
+for token in \
+    'std::lock_guard<std::mutex> oEvidenceLock(oEvidenceMutex)' \
+    '++nCompletionOrdinal' \
+    'osSerializedLine' \
+    'aoPendingScienceTransportLines.push_back(osSerializedLine)'; do
+    grep -Fq -- "$token" <<<"$completion_queue_helper" ||
+        fail "ordered queue helper is missing fixed same-scope step: $token"
+done
+completion_lock_line=$(grep -n \
+    'std::lock_guard<std::mutex> oEvidenceLock(oEvidenceMutex)' \
+    <<<"$completion_queue_helper" | head -1 | cut -d: -f1)
+completion_ordinal_line=$(grep -n '\+\+nCompletionOrdinal' \
+    <<<"$completion_queue_helper" | head -1 | cut -d: -f1)
+completion_serialize_line=$(grep -n 'osSerializedLine' \
+    <<<"$completion_queue_helper" | head -1 | cut -d: -f1)
+completion_push_line=$(grep -n \
+    'aoPendingScienceTransportLines.push_back(osSerializedLine)' \
+    <<<"$completion_queue_helper" | head -1 | cut -d: -f1)
+[[ $completion_lock_line -lt $completion_ordinal_line &&
+   $completion_ordinal_line -lt $completion_serialize_line &&
+   $completion_serialize_line -lt $completion_push_line ]] ||
+    fail "queue helper must lock, allocate ordinal, serialize, then push"
+brace_depth_before()
+{
+    local target=$1
+    awk -v target="$target" '
+        NR == target { print depth; exit }
+        {
+            opens = $0
+            closes = $0
+            gsub(/[^\{]/, "", opens)
+            gsub(/[^\}]/, "", closes)
+            depth += length(opens) - length(closes)
+        }
+    ' <<<"$completion_queue_helper"
+}
+completion_lock_depth=$(brace_depth_before "$completion_lock_line")
+completion_ordinal_depth=$(brace_depth_before "$completion_ordinal_line")
+completion_serialize_depth=$(brace_depth_before "$completion_serialize_line")
+completion_push_depth=$(brace_depth_before "$completion_push_line")
+[[ $completion_lock_depth -gt 0 &&
+   $completion_lock_depth -eq $completion_ordinal_depth &&
+   $completion_lock_depth -eq $completion_serialize_depth &&
+   $completion_lock_depth -eq $completion_push_depth ]] ||
+    fail "evidence lock lifetime must cover ordinal, serialization, and push"
+completion_locked_region=$(sed -n \
+    "${completion_lock_line},${completion_push_line}p" \
+    <<<"$completion_queue_helper")
+if grep -Eiq \
+    'CPLDebug|curl_|callback|sleep|EnqueueScienceTransportLine|DrainScience' \
+    <<<"$completion_locked_region"; then
+    fail "ordered queue lock region contains a reentrant or blocking call"
+fi
+assert_not_contains "$prefetch_patch" 'CURLOPT_FRESH_CONNECT' \
+    "HEAD retry must preserve the existing multi connection pool"
+assert_not_contains "$prefetch_patch" 'case 408:' \
+    "v6 retry classifiers must never admit status 408"
+
+# Completion-before-decision chronology is runtime-locked by the attributed
+# parser against message indices.  Source grep intentionally checks schemas
+# only and never infers chronology from the first textual/comment occurrence.
+
+for token in \
+    'enum class AttributionMode' \
+    'AttributedV6' \
+    'LegacyFrozen' \
+    'ScienceTransportCompletion' \
+    'osgsol.scienceearth.v6-completion.v1' \
+    'candidate-completion.json' \
+    'formal-evidence-v6/live-completion.json' \
+    'O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC' \
+    'renameatx_np' \
+    'RENAME_EXCL' \
+    'UF_IMMUTABLE'; do
+    assert_contains_fixed "$network_test" "$token" \
+        "v6 test binary is missing completion/attribution contract: $token"
+done
+assert_not_contains "$prefetch_patch" \
+    'OSGSOL_TEST_FAIL_NEXT_CURL_(ADD|REMOVE|PERFORM)' \
+    "test interposer ownership faults must not enter production source"
+for schema in \
+    'ParallelHeadRange: transient-retry context=%s request=' \
+    'failed-attempt=%d scheduled-attempt=%d range=bytes=' \
+    'ReadMultiRange: immediate-retry context=%s request=' \
+    'ReadMultiRange: ownership-retained context=%s request=' \
+    'ParallelHeadRange: fallback context=%s request=' \
+    'ParallelHeadRange: head-transient-retry-blocked context=%s request=' \
+    'ParallelHeadRange: transient-retry-blocked context=%s request=' \
+    'ParallelHeadRange: logical-get-complete context=%s request=' \
+    'ParallelHeadRange: published context=%s request=' \
+    'ParallelHeadRange: file-property-published context=%s request=' \
+    'ParallelHeadRange: file-property-publication-blocked context=%s request=' \
+    'ParallelHeadRange: blocked-operation-marked context=%s request='; do
+    assert_patch_added_code_fixed "$prefetch_patch" "$schema" \
+        "v6 private patch is missing exact attributed schema: $schema"
+done
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'status=%ld bytes=%zu delay-ms=%lld connection=' \
+    "Range retry schema must bind status/bytes/delay/connection"
+assert_patch_added_code_fixed "$prefetch_patch" 'reason=retry-status' \
+    "terminal failure rows must expose exact retry-status admission"
+assert_patch_added_code_fixed "$prefetch_patch" 'CanRetry=0' \
+    "terminal failure rows must prove invalid retry admission"
+assert_patch_added_code_fixed "$prefetch_patch" \
     'ParallelHeadRange: transport head-connection=' \
     "prefetch patch must expose the role-labelled transport prefix"
-assert_contains "$prefetch_patch" \
+assert_patch_added_code_fixed "$prefetch_patch" \
     'range-connection=" CPL_FRMT_GIB' \
     "prefetch transport event must label the Range connection ID"
-assert_contains "$prefetch_patch" 'head-http=%d range-http=%d' \
+assert_patch_added_code_fixed "$prefetch_patch" 'head-http=%d range-http=%d' \
     "prefetch transport event must expose canonical HTTP majors"
-assert_contains "$prefetch_patch" 'CURL_HTTP_VERSION_1_0' \
+assert_patch_added_code_fixed "$prefetch_patch" 'CURL_HTTP_VERSION_1_0' \
     "prefetch transport event must canonicalize HTTP/1.0"
-assert_contains "$prefetch_patch" 'CURL_HTTP_VERSION_1_1' \
+assert_patch_added_code_fixed "$prefetch_patch" 'CURL_HTTP_VERSION_1_1' \
     "prefetch transport event must canonicalize HTTP/1.1"
-log_get_line=$(grep -n 'NetworkStatisticsLogger::LogGET(nCoordinatorDownloadedBytes)' \
-    "$prefetch_patch" | cut -d: -f1)
-logical_event_line=$(grep -n 'ParallelHeadRange: logical-get-complete bytes=%zu' \
-    "$prefetch_patch" | cut -d: -f1)
-[[ -n $log_get_line && -n $logical_event_line &&
-      $logical_event_line -eq $((log_get_line + 2)) ]] ||
-    fail "logical GET event must be adjacent to its NetworkStatisticsLogger call"
+assert_patch_added_code_fixed "$prefetch_patch" \
+    'NetworkStatisticsLogger::LogGET(nCoordinatorDownloadedBytes)' \
+    "coordinator logical GET must update VSINetworkStats"
+# Runtime attributed proofs, not textual first-occurrence order, bind the
+# logical GET event to its exact completion and VSINetworkStats aggregate.
 
 assert_contains "$prefetch_trace" \
     'https://data\.source\.coop/tge-labs/aef/v1/annual/2025/10N/' \
