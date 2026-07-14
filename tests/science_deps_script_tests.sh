@@ -404,9 +404,62 @@ coordinator_can_retry_line=$(grep -n 'oRangeRetryContext.CanRetry' \
 [[ -n $eligibility_line && -n $coordinator_can_retry_line &&
       $eligibility_line -lt $coordinator_can_retry_line ]] ||
     fail "HEAD and failed Range transport must be validated before coordinator CanRetry"
-assert_not_contains "$prefetch_patch" \
-    'sParallelResult\.eRangeCurlCode == CURLE_OK &&' \
-    "coordinator transient dispatch must not hide Range transport failures"
+coordinator_dispatch_start='+            while (!sParallelResult.bFallback &&'
+[[ $(grep -Fxc -- "$coordinator_dispatch_start" "$prefetch_patch") -eq 1 ]] ||
+    fail "coordinator transient dispatch guard must have one exact start"
+coordinator_dispatch_guard=$(awk -v start="$coordinator_dispatch_start" '
+    $0 == start { capture = 1 }
+    capture { print }
+    capture && $0 == "+            {" { exit }
+' "$prefetch_patch")
+[[ $(grep -Fxc -- "$coordinator_dispatch_start" \
+        <<<"$coordinator_dispatch_guard") -eq 1 &&
+   $(grep -Fc -- '+            {' <<<"$coordinator_dispatch_guard") -eq 1 &&
+   $(tail -n 1 <<<"$coordinator_dispatch_guard") == '+            {' ]] ||
+    fail "coordinator transient dispatch guard must terminate exactly once"
+coordinator_dispatch_code=$(awk '
+    {
+        sub(/^\+/, "")
+        line = $0
+        while (1)
+        {
+            if (in_block_comment)
+            {
+                end = index(line, "*/")
+                if (!end) { line = ""; break }
+                line = substr(line, end + 2)
+                in_block_comment = 0
+                continue
+            }
+            start = index(line, "/*")
+            slash = index(line, "//")
+            if (slash && (!start || slash < start))
+            {
+                line = substr(line, 1, slash - 1)
+                break
+            }
+            if (!start) break
+            prefix = substr(line, 1, start - 1)
+            rest = substr(line, start + 2)
+            end = index(rest, "*/")
+            if (!end)
+            {
+                line = prefix
+                in_block_comment = 1
+                break
+            }
+            line = prefix substr(rest, end + 2)
+        }
+        if (line ~ /[^[:space:]]/) print line
+    }
+' <<<"$coordinator_dispatch_guard" | tr -d '[:space:]')
+grep -Fq -- \
+    'IsParallelHeadRangeTransientStatus(sParallelResult.nRangeCode))' \
+    <<<"$coordinator_dispatch_code" ||
+    fail "coordinator transient dispatch must select the transient Range status"
+if grep -Fq -- 'eRangeCurlCode' <<<"$coordinator_dispatch_code"; then
+    fail "coordinator transient dispatch must not hide Range transport failures"
+fi
 assert_contains "$prefetch_patch" \
     'ParallelHeadRange: transient-retry-blocked ' \
     "prefetch patch must emit the exact fail-closed blocked event"
