@@ -1,5 +1,6 @@
 #include "science_ai_tools.h"
 
+#include <algorithm>
 #include <cmath>
 #include <SciencePreviewRuntime.h>
 #include <modeling/Math.h>
@@ -48,6 +49,10 @@ namespace
             artifact["south"] = picojson::value(snapshot.artifact.south);
             artifact["east"] = picojson::value(snapshot.artifact.east);
             artifact["north"] = picojson::value(snapshot.artifact.north);
+            artifact["source_resolution_m"] = picojson::value(
+                snapshot.artifact.sourceResolutionMeters);
+            artifact["display_resolution_m"] = picojson::value(
+                snapshot.artifact.displayResolutionMeters);
             result["artifact"] = picojson::value(artifact);
         }
         return picojson::value(result);
@@ -90,6 +95,10 @@ void registerScienceResearchTools(
         item["resolution_m"] = picojson::value(
             static_cast<double>(source.nativeResolutionMeters));
         item["bands"] = picojson::value(static_cast<double>(source.bandCount));
+        item["visualization"] = picojson::value(source.visualization);
+        item["red_band"] = picojson::value(source.redBand);
+        item["green_band"] = picojson::value(source.greenBand);
+        item["blue_band"] = picojson::value(source.blueBand);
         item["experimental"] = picojson::value(source.experimental);
         item["available"] = picojson::value(runtime->available());
         picojson::array sources; sources.push_back(picojson::value(item));
@@ -108,9 +117,11 @@ void registerScienceResearchTools(
         "\"year\":{\"type\":\"integer\",\"minimum\":2017,\"maximum\":2025}}}";
     start.execute = [runtime, layer, layers, manipulator](const picojson::value& args)
     {
-        const osg::Vec3d lla = manipulator->computeEyeLatLonHeight();
-        double lat = osg::RadiansToDegrees(lla[0]);
-        double lon = osg::RadiansToDegrees(lla[1]);
+        const osg::Vec3d targetLla =
+            manipulator->computeViewPointLatLonHeight();
+        const osg::Vec3d eyeLla = manipulator->computeEyeLatLonHeight();
+        double lat = osg::RadiansToDegrees(targetLla[0]);
+        double lon = osg::RadiansToDegrees(targetLla[1]);
         double yearValue = runtime->source().lastYear;
         if (!optionalNumber(args, "lat", lat) ||
             !optionalNumber(args, "lon", lon) ||
@@ -129,7 +140,9 @@ void registerScienceResearchTools(
         const int year = static_cast<int>(yearValue);
         layer->setVisible(true);
         layers->setEnabled("alphaearth", true);
-        runtime->queryPoint(lat, lon, year);
+        const double requestedSpanMeters = std::clamp(
+            eyeLla[2] * 0.85, 2560.0, 81920.0);
+        runtime->queryPoint(lat, lon, year, requestedSpanMeters);
         return snapshotJson(runtime->snapshot());
     };
     tools->add(start);

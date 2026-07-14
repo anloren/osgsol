@@ -339,26 +339,56 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     _scienceRuntime->source();
                 const earthscience::SciencePreviewSnapshot snapshot =
                     _scienceRuntime->snapshot();
-                const osg::Vec3d lla = _mani->computeEyeLatLonHeight();
-                const double latitude = osg::RadiansToDegrees(lla[0]);
-                const double longitude = osg::RadiansToDegrees(lla[1]);
-
-                ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f),
-                                   "AlphaEarth Foundations · Experimental");
-                ImGui::TextDisabled(u8"64 维 / 10 m / 年度嵌入 · 独立图层");
-                ImGui::Text(u8"当前中心: %.4f, %.4f", latitude, longitude);
-                ImGui::SliderInt(u8"年份 Year##science", &_scienceYear,
-                                 source.firstYear, source.lastYear);
-
-                const bool busy = snapshot.state == earthscience::PreviewState::Queued ||
-                                  snapshot.state == earthscience::PreviewState::Fetching;
-                if (!_scienceRuntime->available()) ImGui::BeginDisabled();
-                if (ImGui::Button(u8"载入当前视野 Load##science", ImVec2(-1.0f, 0.0f)))
+                const osg::Vec3d targetLla =
+                    _mani->computeViewPointLatLonHeight();
+                const osg::Vec3d eyeLla = _mani->computeEyeLatLonHeight();
+                const double latitude = osg::RadiansToDegrees(targetLla[0]);
+                const double longitude = osg::RadiansToDegrees(targetLla[1]);
+                const double requestedSpanMeters = std::clamp(
+                    eyeLla[2] * 0.85, 2560.0, 81920.0);
+                const auto requestPreview = [&]()
                 {
                     _scienceLayer->setVisible(true);
                     if (_layers) _layers->setEnabled("alphaearth", true);
-                    _scienceRuntime->queryPoint(latitude, longitude, _scienceYear);
-                }
+                    _scienceRuntime->queryPoint(
+                        latitude, longitude, _scienceYear,
+                        requestedSpanMeters);
+                };
+
+                ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f),
+                                   "AlphaEarth Foundations · Experimental");
+                ImGui::TextDisabled(u8"64 维 / 10 m 原始分辨率 / 年度嵌入 · 独立图层");
+                ImGui::Text(u8"屏幕中心: %.4f, %.4f", latitude, longitude);
+                ImGui::TextUnformatted(u8"年份 Year");
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::SliderInt("##science_year", &_scienceYear,
+                                 source.firstYear, source.lastYear, "%d");
+                const bool yearEditCommitted =
+                    ImGui::IsItemDeactivatedAfterEdit();
+
+                ImGui::TextUnformatted(u8"颜色：伪彩嵌入合成（不是自然影像）");
+                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+                                   "R = %s", source.redBand.c_str());
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.35f, 1.0f, 0.45f, 1.0f),
+                                   "G = %s", source.greenBand.c_str());
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f),
+                                   "B = %s", source.blueBand.c_str());
+                ImGui::TextDisabled(u8"亮度表示各嵌入维度在 %.1f…+%.1f 范围内的数值；"
+                                    u8"不代表温度、植被或海拔",
+                                    source.displayMinimum, source.displayMaximum);
+                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.18f, 1.0f),
+                                   u8"黄色边框 = 本次数据的真实地理覆盖范围");
+
+                const bool busy = snapshot.state == earthscience::PreviewState::Queued ||
+                                  snapshot.state == earthscience::PreviewState::Fetching;
+                if (yearEditCommitted && _scienceRuntime->available() &&
+                    (busy || snapshot.state == earthscience::PreviewState::Ready))
+                    requestPreview();
+                if (!_scienceRuntime->available()) ImGui::BeginDisabled();
+                if (ImGui::Button(u8"载入当前视野 Load##science", ImVec2(-1.0f, 0.0f)))
+                    requestPreview();
                 if (!_scienceRuntime->available()) ImGui::EndDisabled();
 
                 if (busy)
@@ -371,7 +401,21 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 else if (snapshot.state == earthscience::PreviewState::Ready)
                 {
                     ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.55f, 1.0f),
-                                       u8"已就绪 · %d · 预览 256×256", snapshot.artifact.year);
+                                       u8"已显示 %d · 屏显纹理 256×256", snapshot.artifact.year);
+                    const double midLatitude = 0.5 *
+                        (snapshot.artifact.south + snapshot.artifact.north);
+                    const double widthKm = std::abs(
+                        snapshot.artifact.east - snapshot.artifact.west) *
+                        111.32 * std::cos(osg::DegreesToRadians(midLatitude));
+                    const double heightKm = std::abs(
+                        snapshot.artifact.north - snapshot.artifact.south) * 110.57;
+                    ImGui::Text(u8"现实覆盖: 约 %.1f × %.1f km · 显示 %.0f m/像素",
+                                widthKm, heightKm,
+                                snapshot.artifact.displayResolutionMeters);
+                    ImGui::TextWrapped(
+                        u8"经纬范围: %.4f…%.4f E / %.4f…%.4f N",
+                        snapshot.artifact.west, snapshot.artifact.east,
+                        snapshot.artifact.south, snapshot.artifact.north);
                     if (ImGui::Button(_scienceLayer->isVisible()
                                       ? u8"隐藏图层 Hide##science"
                                       : u8"显示图层 Show##science"))
@@ -388,7 +432,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                         _scienceLayer->setVisible(false);
                         if (_layers) _layers->setEnabled("alphaearth", false);
                     }
-                    ImGui::TextWrapped("%s", snapshot.artifact.datasetId.c_str());
+                    ImGui::TextWrapped(u8"数据集: %s",
+                                       snapshot.artifact.datasetId.c_str());
                 }
                 else if (snapshot.state == earthscience::PreviewState::Failed ||
                          snapshot.state == earthscience::PreviewState::Unavailable)

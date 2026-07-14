@@ -21,6 +21,7 @@ namespace earthscience
 namespace
 {
     constexpr int PREVIEW_SIZE = 256;
+    constexpr int GROUND_GRID_SIZE = 33;
     constexpr int RGB_BANDS[] = {2, 17, 10};
     constexpr const char* RGB_NAMES[] = {"A01", "A16", "A09"};
 
@@ -63,6 +64,17 @@ namespace
     using SqlitePtr = std::unique_ptr<sqlite3, SqliteCloser>;
     using StatementPtr = std::unique_ptr<sqlite3_stmt, StatementCloser>;
     using DatasetPtr = std::unique_ptr<GDALDataset, DatasetCloser>;
+
+    struct PreviewReadResult
+    {
+        std::shared_ptr<const std::vector<unsigned char>> rgba;
+        std::shared_ptr<const ScienceGroundGrid> groundGrid;
+        ScienceRasterWindow window;
+        double west = 0.0;
+        double south = 0.0;
+        double east = 0.0;
+        double north = 0.0;
+    };
 
     std::string sqliteText(sqlite3_stmt* statement, int column)
     {
@@ -134,19 +146,11 @@ namespace
         return true;
     }
 
-    unsigned char displayValue(std::int8_t raw)
-    {
-        const double normalized = std::abs(static_cast<double>(raw)) / 127.5;
-        const double scientific = std::copysign(
-            normalized * normalized, static_cast<double>(raw));
-        const double display = std::clamp((scientific + 0.3) / 0.6,
-                                          0.0, 1.0);
-        return static_cast<unsigned char>(std::lround(display * 255.0));
-    }
-
     bool readPreview(const TileRecord& tile,
+                     double latitude, double longitude,
+                     double requestedSpanMeters,
                      const std::function<bool()>& cancelled,
-                     std::shared_ptr<const std::vector<unsigned char>>& output,
+                     PreviewReadResult& output,
                      std::string& sourceUrl, std::string& error)
     {
         static std::once_flag registration;
@@ -195,14 +199,54 @@ namespace
             }
         }
 
+        double geotransform[6] = {};
+        const char* sourceWkt = dataset->GetProjectionRef();
+        if (dataset->GetGeoTransform(geotransform) != CE_None ||
+            !sourceWkt || !*sourceWkt)
+        {
+            error = "AlphaEarth source georeference is missing";
+            return false;
+        }
+        output.window = derivePreviewWindow(
+            dataset->GetRasterXSize(), dataset->GetRasterYSize(),
+            geotransform, sourceWkt, latitude, longitude,
+            requestedSpanMeters, PREVIEW_SIZE, error);
+        if (!error.empty()) return false;
+
+        double windowTransform[6] = {};
+        std::copy(geotransform, geotransform + 6, windowTransform);
+        GDALApplyGeoTransform(geotransform, output.window.x, output.window.y,
+                              &windowTransform[0], &windowTransform[3]);
+        ScienceGroundGrid groundGrid = buildPreviewGroundGrid(
+            output.window.width, output.window.height, windowTransform,
+            sourceWkt, GROUND_GRID_SIZE, GROUND_GRID_SIZE, error);
+        if (!error.empty()) return false;
+        output.groundGrid = std::make_shared<const ScienceGroundGrid>(
+            std::move(groundGrid));
+        if (!output.groundGrid || output.groundGrid->points.empty())
+        {
+            error = "AlphaEarth ground grid is empty";
+            return false;
+        }
+        output.west = output.east = output.groundGrid->points.front().longitude;
+        output.south = output.north = output.groundGrid->points.front().latitude;
+        for (const ScienceGroundPoint& point : output.groundGrid->points)
+        {
+            output.west = std::min(output.west, point.longitude);
+            output.south = std::min(output.south, point.latitude);
+            output.east = std::max(output.east, point.longitude);
+            output.north = std::max(output.north, point.latitude);
+        }
+
         std::vector<std::int8_t> raw(PREVIEW_SIZE * PREVIEW_SIZE * 3);
         GDALRasterIOExtraArg extra;
         INIT_RASTERIO_EXTRA_ARG(extra);
         extra.eResampleAlg = GRIORA_NearestNeighbour;
         int bandMap[] = {RGB_BANDS[0], RGB_BANDS[1], RGB_BANDS[2]};
         if (dataset->RasterIO(
-                GF_Read, 0, 0, dataset->GetRasterXSize(),
-                dataset->GetRasterYSize(), raw.data(), PREVIEW_SIZE,
+                GF_Read, output.window.x, output.window.y,
+                output.window.width, output.window.height,
+                raw.data(), PREVIEW_SIZE,
                 PREVIEW_SIZE, GDT_Int8, 3, bandMap, 3,
                 PREVIEW_SIZE * 3, 1, &extra) != CE_None)
         {
@@ -221,7 +265,8 @@ namespace
             std::vector<unsigned char> channelMask(
                 PREVIEW_SIZE * PREVIEW_SIZE, 255);
             if (band->GetMaskBand()->RasterIO(
-                    GF_Read, 0, 0, band->GetXSize(), band->GetYSize(),
+                    GF_Read, output.window.x, output.window.y,
+                    output.window.width, output.window.height,
                     channelMask.data(), PREVIEW_SIZE, PREVIEW_SIZE, GDT_Byte,
                     0, 0, nullptr) != CE_None)
             {
@@ -232,28 +277,15 @@ namespace
                 masks[pixel * 3 + channel] = channelMask[pixel];
         }
 
-        auto rgba = std::make_shared<std::vector<unsigned char>>(
-            PREVIEW_SIZE * PREVIEW_SIZE * 4);
-        for (int y = 0; y < PREVIEW_SIZE; ++y)
+        std::vector<unsigned char> rgba = composePreviewRgba(
+            raw, masks, PREVIEW_SIZE, PREVIEW_SIZE);
+        if (rgba.empty())
         {
-            const int sourceY = PREVIEW_SIZE - 1 - y;
-            for (int x = 0; x < PREVIEW_SIZE; ++x)
-            {
-                const std::size_t source =
-                    static_cast<std::size_t>(sourceY * PREVIEW_SIZE + x) * 3;
-                const std::size_t destination =
-                    static_cast<std::size_t>(y * PREVIEW_SIZE + x) * 4;
-                bool valid = true;
-                for (int channel = 0; channel < 3; ++channel)
-                {
-                    (*rgba)[destination + channel] =
-                        displayValue(raw[source + channel]);
-                    valid = valid && masks[source + channel] != 0;
-                }
-                (*rgba)[destination + 3] = valid ? 230 : 0;
-            }
+            error = "AlphaEarth RGBA conversion failed";
+            return false;
         }
-        output = rgba;
+        output.rgba = std::make_shared<const std::vector<unsigned char>>(
+            std::move(rgba));
         return true;
     }
 }
@@ -266,6 +298,7 @@ struct SciencePreviewRuntime::Impl
         double latitude = 0.0;
         double longitude = 0.0;
         int year = 2025;
+        double requestedSpanMeters = 0.0;
     };
 
     explicit Impl(const std::string& path)
@@ -338,12 +371,13 @@ struct SciencePreviewRuntime::Impl
             update(request.generation, PreviewState::Fetching, 0.2f,
                    "Reading A01/A16/A09 preview");
 
-            std::shared_ptr<const std::vector<unsigned char>> rgba;
+            PreviewReadResult preview;
             std::string sourceUrl;
             const bool read = readPreview(
-                tile, [this, request]()
+                tile, request.latitude, request.longitude,
+                request.requestedSpanMeters, [this, request]()
                 { return isCancelled(request.generation); },
-                rgba, sourceUrl, error);
+                preview, sourceUrl, error);
             if (isCancelled(request.generation)) continue;
             if (!read)
             {
@@ -364,13 +398,20 @@ struct SciencePreviewRuntime::Impl
             state.artifact.sourceVersion = tile.version;
             state.artifact.attribution = descriptor.attribution;
             state.artifact.year = request.year;
-            state.artifact.west = tile.west;
-            state.artifact.south = tile.south;
-            state.artifact.east = tile.east;
-            state.artifact.north = tile.north;
+            state.artifact.west = preview.west;
+            state.artifact.south = preview.south;
+            state.artifact.east = preview.east;
+            state.artifact.north = preview.north;
             state.artifact.width = PREVIEW_SIZE;
             state.artifact.height = PREVIEW_SIZE;
-            state.artifact.rgba = rgba;
+            state.artifact.sourceWindowWidth = preview.window.width;
+            state.artifact.sourceWindowHeight = preview.window.height;
+            state.artifact.sourceResolutionMeters =
+                preview.window.sourceResolutionMeters;
+            state.artifact.displayResolutionMeters =
+                preview.window.displayResolutionMeters;
+            state.artifact.rgba = preview.rgba;
+            state.artifact.groundGrid = preview.groundGrid;
         }
     }
 
@@ -415,7 +456,7 @@ const ScienceSourceDescriptor& SciencePreviewRuntime::source() const
 }
 
 std::uint64_t SciencePreviewRuntime::queryPoint(
-    double latitude, double longitude, int year)
+    double latitude, double longitude, int year, double requestedSpanMeters)
 {
     std::lock_guard<std::mutex> lock(_impl->mutex);
     const std::uint64_t next = ++_impl->generation;
@@ -435,7 +476,8 @@ std::uint64_t SciencePreviewRuntime::queryPoint(
         latitude < -90.0 || latitude > 90.0 ||
         longitude < -180.0 || longitude > 180.0 ||
         year < _impl->descriptor.firstYear ||
-        year > _impl->descriptor.lastYear)
+        year > _impl->descriptor.lastYear ||
+        !std::isfinite(requestedSpanMeters) || requestedSpanMeters < 0.0)
     {
         _impl->state.state = PreviewState::Failed;
         _impl->state.message = "Invalid latitude, longitude, or year";
@@ -444,7 +486,8 @@ std::uint64_t SciencePreviewRuntime::queryPoint(
     _impl->state.state = PreviewState::Queued;
     _impl->state.progress = 0.0f;
     _impl->state.message = "Queued";
-    _impl->pending = Impl::Request{next, latitude, longitude, year};
+    _impl->pending = Impl::Request{
+        next, latitude, longitude, year, requestedSpanMeters};
     _impl->condition.notify_one();
     return next;
 }

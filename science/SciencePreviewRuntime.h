@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "SciencePreviewSupport.h"
+
 namespace earthscience
 {
     enum class PreviewState
@@ -31,6 +33,12 @@ namespace earthscience
         int nativeResolutionMeters = 10;
         int bandCount = 64;
         bool experimental = true;
+        std::string visualization = "false-color embedding composite";
+        std::string redBand = "A01";
+        std::string greenBand = "A16";
+        std::string blueBand = "A09";
+        double displayMinimum = -0.3;
+        double displayMaximum = 0.3;
     };
 
     struct SciencePreviewArtifact
@@ -47,7 +55,12 @@ namespace earthscience
         double north = 0.0;
         int width = 0;
         int height = 0;
+        int sourceWindowWidth = 0;
+        int sourceWindowHeight = 0;
+        double sourceResolutionMeters = 0.0;
+        double displayResolutionMeters = 0.0;
         std::shared_ptr<const std::vector<unsigned char>> rgba;
+        std::shared_ptr<const ScienceGroundGrid> groundGrid;
     };
 
     struct SciencePreviewSnapshot
@@ -73,7 +86,8 @@ namespace earthscience
 
         bool available() const;
         const ScienceSourceDescriptor& source() const;
-        std::uint64_t queryPoint(double latitude, double longitude, int year);
+        std::uint64_t queryPoint(double latitude, double longitude, int year,
+                                 double requestedSpanMeters = 0.0);
         void cancel();
         void clear();
         SciencePreviewSnapshot snapshot() const;
@@ -85,4 +99,3 @@ namespace earthscience
 }
 
 #endif
-

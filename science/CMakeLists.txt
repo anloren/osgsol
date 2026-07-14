@@ -1,4 +1,6 @@
 ADD_LIBRARY(osgSolSciencePreview STATIC
+    SciencePreviewSupport.cpp
+    SciencePreviewSupport.h
     SciencePreviewRuntime.cpp
     SciencePreviewRuntime.h)
 
@@ -38,6 +40,21 @@ INSTALL(TARGETS osgSolSciencePreview
         ARCHIVE DESTINATION ${INSTALL_LIBDIR})
 
 IF(BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_SciencePreviewRegression
+        SciencePreviewRegressionTest.cpp
+        "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_preview_layer.cpp")
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_SciencePreviewRegression
+        PRIVATE "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
+    TARGET_LINK_LIBRARIES(osgSol_Test_SciencePreviewRegression
+        osgSolSciencePreview osgVerseReaderWriter
+        osgVersePipeline osgVerseModeling)
+    LINK_OSG_LIBRARY(osgSol_Test_SciencePreviewRegression osg)
+    ADD_TEST(NAME osgSol_Test_SciencePreviewRegression
+             COMMAND $<TARGET_FILE:osgSol_Test_SciencePreviewRegression>)
+    SET_TESTS_PROPERTIES(osgSol_Test_SciencePreviewRegression PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 30)
+
     ADD_EXECUTABLE(osgSol_Test_ScienceSqliteRtree
         ScienceSqliteRtreeTest.cpp)
     TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceSqliteRtree

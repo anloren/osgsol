@@ -115,6 +115,18 @@ namespace osgVerse
             return osg::Vec3d(lat, lon, height);
         }
 
+        /** Compute the viewed ground target latitude, longitude and height.
+            Unlike computeEyeLatLonHeight(), this remains anchored to the screen
+            center when camera distance changes or the view is tilted. */
+        osg::Vec3d computeViewPointLatLonHeight() const
+        {
+            osg::Vec3d p = computeViewPoint() - _worldCenter;
+            double lat, lon, height;
+            _ellipsoid->convertXYZToLatLongHeight(
+                p[0], p[1], p[2], lat, lon, height);
+            return osg::Vec3d(lat, lon, height);
+        }
+
         /** Compute the view point */
         osg::Vec3d computeViewPoint() const
         {

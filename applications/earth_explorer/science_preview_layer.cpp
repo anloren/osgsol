@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <osg/BlendFunc>
+#include <osg/CullFace>
 #include <osg/Depth>
 #include <osg/Geode>
 #include <osg/Geometry>
@@ -14,7 +15,6 @@
 
 namespace
 {
-    constexpr int GRID_SIZE = 33;
     constexpr double PREVIEW_ALTITUDE_METERS = 650.0;
 
     const char* previewVertexShader =
@@ -33,7 +33,10 @@ namespace
         "#endif\n"
         "void main() {\n"
         "    vec4 sampleColor = VERSE_TEX2D(ScienceMap, scienceUv);\n"
-        "    if (sampleColor.a < 0.01) discard;\n"
+        "    float edge = min(min(scienceUv.x, scienceUv.y),\n"
+        "                     min(1.0 - scienceUv.x, 1.0 - scienceUv.y));\n"
+        "    if (edge < 0.006) sampleColor = vec4(1.0, 0.82, 0.18, 0.95);\n"
+        "    else if (sampleColor.a < 0.01) discard;\n"
         "#ifdef VERSE_GLES3\n"
         "    fragColor = sampleColor; fragOrigin = vec4(1.0);\n"
         "#else\n"
@@ -65,21 +68,29 @@ namespace
             new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
             osg::StateAttribute::ON);
         state->setAttributeAndModes(
-            new osg::Depth(osg::Depth::LEQUAL, 0.0, 1.0, false),
+            new osg::Depth(osg::Depth::ALWAYS, 0.0, 1.0, false),
+            osg::StateAttribute::ON);
+        state->setAttributeAndModes(
+            new osg::CullFace(osg::CullFace::BACK),
             osg::StateAttribute::ON);
         state->setMode(GL_BLEND, osg::StateAttribute::ON);
-        state->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
+        state->setMode(GL_CULL_FACE, osg::StateAttribute::ON);
         state->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
         state->setRenderBinDetails(12, "DepthSortedBin");
         return state;
     }
 
-    osg::Node* createArtifactNode(
+    osg::Node* createArtifactNodeImpl(
         const earthscience::SciencePreviewArtifact& artifact)
     {
-        if (!artifact.rgba || artifact.width <= 0 || artifact.height <= 0 ||
+        if (!artifact.rgba || !artifact.groundGrid ||
+            artifact.width <= 0 || artifact.height <= 0 ||
             artifact.rgba->size() !=
-                static_cast<std::size_t>(artifact.width * artifact.height * 4))
+                static_cast<std::size_t>(artifact.width * artifact.height * 4) ||
+            artifact.groundGrid->columns < 2 ||
+            artifact.groundGrid->rows < 2 ||
+            artifact.groundGrid->points.size() != static_cast<std::size_t>(
+                artifact.groundGrid->columns * artifact.groundGrid->rows))
             return nullptr;
 
         osg::ref_ptr<osg::Image> image = new osg::Image;
@@ -98,21 +109,21 @@ namespace
 
         osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
         osg::ref_ptr<osg::Vec2Array> texcoords = new osg::Vec2Array;
-        vertices->reserve(GRID_SIZE * GRID_SIZE);
-        texcoords->reserve(GRID_SIZE * GRID_SIZE);
-        for (int y = 0; y < GRID_SIZE; ++y)
+        const int columns = artifact.groundGrid->columns;
+        const int rows = artifact.groundGrid->rows;
+        vertices->reserve(columns * rows);
+        texcoords->reserve(columns * rows);
+        for (int y = 0; y < rows; ++y)
         {
-            const double v = static_cast<double>(y) / (GRID_SIZE - 1);
-            const double latitude = artifact.south +
-                (artifact.north - artifact.south) * v;
-            for (int x = 0; x < GRID_SIZE; ++x)
+            const double v = static_cast<double>(y) / (rows - 1);
+            for (int x = 0; x < columns; ++x)
             {
-                const double u = static_cast<double>(x) / (GRID_SIZE - 1);
-                const double longitude = artifact.west +
-                    (artifact.east - artifact.west) * u;
+                const double u = static_cast<double>(x) / (columns - 1);
+                const earthscience::ScienceGroundPoint& point =
+                    artifact.groundGrid->points[y * columns + x];
                 const osg::Vec3d ecef = osgVerse::Coordinate::convertLLAtoECEF(
-                    osg::Vec3d(osg::DegreesToRadians(latitude),
-                               osg::DegreesToRadians(longitude),
+                    osg::Vec3d(osg::DegreesToRadians(point.latitude),
+                               osg::DegreesToRadians(point.longitude),
                                PREVIEW_ALTITUDE_METERS));
                 vertices->push_back(osg::Vec3(ecef));
                 texcoords->push_back(osg::Vec2(static_cast<float>(u),
@@ -122,14 +133,14 @@ namespace
 
         osg::ref_ptr<osg::DrawElementsUInt> indices =
             new osg::DrawElementsUInt(GL_TRIANGLES);
-        indices->reserve((GRID_SIZE - 1) * (GRID_SIZE - 1) * 6);
-        for (int y = 0; y < GRID_SIZE - 1; ++y)
+        indices->reserve((columns - 1) * (rows - 1) * 6);
+        for (int y = 0; y < rows - 1; ++y)
         {
-            for (int x = 0; x < GRID_SIZE - 1; ++x)
+            for (int x = 0; x < columns - 1; ++x)
             {
-                const unsigned int a = y * GRID_SIZE + x;
+                const unsigned int a = y * columns + x;
                 const unsigned int b = a + 1;
-                const unsigned int c = a + GRID_SIZE;
+                const unsigned int c = a + columns;
                 const unsigned int d = c + 1;
                 indices->push_back(a); indices->push_back(b); indices->push_back(d);
                 indices->push_back(a); indices->push_back(d); indices->push_back(c);
@@ -150,6 +161,12 @@ namespace
         geode->addDrawable(geometry.get());
         return geode.release();
     }
+}
+
+osg::Node* createSciencePreviewArtifactNode(
+    const earthscience::SciencePreviewArtifact& artifact)
+{
+    return createArtifactNodeImpl(artifact);
 }
 
 class SciencePreviewLayer::SyncCallback : public osg::NodeCallback
@@ -224,7 +241,8 @@ void SciencePreviewLayer::syncFromRuntime()
         snapshot.artifact.generation == artifactGeneration())
         return;
 
-    osg::ref_ptr<osg::Node> artifact = createArtifactNode(snapshot.artifact);
+    osg::ref_ptr<osg::Node> artifact =
+        createSciencePreviewArtifactNode(snapshot.artifact);
     if (!artifact) return;
     _artifactRoot->removeChildren(0, _artifactRoot->getNumChildren());
     _artifactRoot->addChild(artifact.get());

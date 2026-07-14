@@ -6,6 +6,11 @@
 #include <osg/Group>
 
 namespace earthscience { class SciencePreviewRuntime; }
+namespace earthscience { struct SciencePreviewArtifact; }
+namespace osg { class Node; }
+
+osg::Node* createSciencePreviewArtifactNode(
+    const earthscience::SciencePreviewArtifact& artifact);
 
 // Dedicated AlphaEarth preview overlay. It is independent from the globe TMS,
 // elevation, 3D Tiles, camera, and photo paths: a completed science artifact is
