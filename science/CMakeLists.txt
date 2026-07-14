@@ -1,3 +1,14 @@
+ADD_LIBRARY(osgSolScienceCore STATIC
+    ScienceQueryTypes.cpp
+    ScienceQueryTypes.h)
+
+TARGET_COMPILE_FEATURES(osgSolScienceCore PUBLIC cxx_std_17)
+TARGET_INCLUDE_DIRECTORIES(osgSolScienceCore
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+SET_TARGET_PROPERTIES(osgSolScienceCore PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden)
+
 ADD_LIBRARY(osgSolSciencePreview STATIC
     SciencePreviewSupport.cpp
     SciencePreviewSupport.h
@@ -29,6 +40,8 @@ IF(NOT OSGSOL_SCIENCE_PREVIEW_XCRUN_RESULT EQUAL 0)
 ENDIF()
 
 TARGET_LINK_LIBRARIES(osgSolSciencePreview
+    PUBLIC osgSolScienceCore
+    PRIVATE
     "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libgdal.a"
     "${OSGSOL_SCIENCE_PREVIEW_SDK}/usr/lib/libcurl.tbd"
     "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libzstd.a"
@@ -36,10 +49,21 @@ TARGET_LINK_LIBRARIES(osgSolSciencePreview
     "${OSGSOL_SCIENCE_PREVIEW_SDK}/usr/lib/libsqlite3.tbd"
     m dl)
 
-INSTALL(TARGETS osgSolSciencePreview
+INSTALL(TARGETS osgSolScienceCore osgSolSciencePreview
         ARCHIVE DESTINATION ${INSTALL_LIBDIR})
 
 IF(BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_ScienceQueryTypes
+        ScienceQueryTypesTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceQueryTypes PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceQueryTypes
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceQueryTypes
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceQueryTypes>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceQueryTypes PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
     ADD_EXECUTABLE(osgSol_Test_SciencePreviewRegression
         SciencePreviewRegressionTest.cpp
         "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_preview_layer.cpp")

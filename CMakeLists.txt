@@ -816,7 +816,7 @@ IF(OSG_INCLUDE_DIR AND OSG_LIB_DIR)
         FILE(WRITE "${CMAKE_BINARY_DIR}/generated/ScienceEarthBuildContract.h"
             "#pragma once\n"
             "#define OSGSOL_BUILD_SCIENCE_VALUE ${_OSGSOL_BUILD_SCIENCE_VALUE}\n"
-            "#define OSGSOL_SCIENCE_PHASE_VALUE \"G0-G1\"\n"
+            "#define OSGSOL_SCIENCE_PHASE_VALUE \"G2-1\"\n"
             "#define OSGSOL_BUILD_TARGETS_VALUE \"${_OSGSOL_BUILD_TARGETS_VALUE}\"\n")
 
         UNSET(_OSGSOL_BUILD_SCIENCE_VALUE)

@@ -11,12 +11,17 @@
 
 int main()
 {
-    CHECK(OSGSOL_BUILD_SCIENCE_VALUE == 0);
-    CHECK(std::string(OSGSOL_SCIENCE_PHASE_VALUE) == "G0-G1");
+    CHECK(std::string(OSGSOL_SCIENCE_PHASE_VALUE) == "G2-1");
 
     const std::string targets = OSGSOL_BUILD_TARGETS_VALUE;
-    CHECK(targets.find("osgSolScienceCore") == std::string::npos);
-    CHECK(targets.find("osgdb_science") == std::string::npos);
+    if (OSGSOL_BUILD_SCIENCE_VALUE == 1)
+        CHECK(targets.find("osgSolScienceCore") != std::string::npos);
+    else
+    {
+        CHECK(OSGSOL_BUILD_SCIENCE_VALUE == 0);
+        CHECK(targets.find("osgSolScienceCore") == std::string::npos);
+        CHECK(targets.find("osgdb_science") == std::string::npos);
+    }
 
     std::ifstream rootCMakeFile(std::string(OSGSOL_SOURCE_DIR) + "/CMakeLists.txt");
     CHECK(rootCMakeFile.good());
@@ -24,6 +29,6 @@ int main()
     rootCMakeBuffer << rootCMakeFile.rdbuf();
     CHECK(rootCMakeBuffer.str().find("$<TARGET_EXISTS:") == std::string::npos);
 
-    std::cout << "[OK] ScienceEarth G0-G1 science-off build contract\n";
+    std::cout << "[OK] ScienceEarth G2-1 build contract\n";
     return 0;
 }

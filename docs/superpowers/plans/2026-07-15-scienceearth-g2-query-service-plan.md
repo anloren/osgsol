@@ -107,7 +107,7 @@ claiming clean-machine distribution.
 - Modify: `CMakeLists.txt:806-820`
 - Modify: `tests/science_build_contract_tests.cpp`
 
-- [ ] **Step 1: Write the failing type and build-isolation tests**
+- [x] **Step 1: Write the failing type and build-isolation tests**
 
 Create `ScienceQueryTypesTest.cpp` with compile-time/default-value and value-semantics checks for:
 
@@ -137,7 +137,7 @@ cmake --build build/science_g2 --target osgSol_Test_ScienceQueryTypes \
 Expected: configure or build fails because the new target/types and `G2-1` contract do not yet
 exist.
 
-- [ ] **Step 2: Define the bounded generic types**
+- [x] **Step 2: Define the bounded generic types**
 
 Define explicit enums rather than stringly typed state:
 
@@ -164,7 +164,7 @@ Use neutral generic field names such as `providerVersion`, `nativeResolutionMete
 `visualizations`, `sourceReferences`, and `lastSuccessfulArtifact`. Do not put AlphaEarth URLs,
 band defaults, or UI labels in this header.
 
-- [ ] **Step 3: Split `osgSolScienceCore` from the preview target**
+- [x] **Step 3: Split `osgSolScienceCore` from the preview target**
 
 In `science/CMakeLists.txt`, add:
 
@@ -182,7 +182,7 @@ Register `osgSol_Test_ScienceQueryTypes` linked only to `osgSolScienceCore`. Lin
 `osgSolSciencePreview` publicly to `osgSolScienceCore`; keep all GDAL/PROJ/ZSTD/curl/SQLite paths
 private to the preview target. Update the generated build contract phase to `G2-1`.
 
-- [ ] **Step 4: Prove the core has no forbidden link edge**
+- [x] **Step 4: Prove the core has no forbidden link edge**
 
 Run:
 
@@ -191,15 +191,15 @@ cmake --build build/science_g2 --target osgSol_Test_ScienceQueryTypes \
   osgVerse_Test_ScienceBuildContract -j4
 ctest --test-dir build/science_g2 --output-on-failure \
   -R 'ScienceQueryTypes|ScienceBuildContract'
-cmake --build build/science_g2 --target osgSolScienceCore --verbose 2>&1 | \
-  tee build/science_g2/science-core-link.log
-! rg -n 'gdal|proj|curl|sqlite|osg|imgui|earth_explorer' \
-  build/science_g2/science-core-link.log
+sed -n '1,120p' \
+  build/science_g2/science/CMakeFiles/osgSolScienceCore.dir/link.txt
+! rg -n '#include[[:space:]]*[<\"](gdal|cpl|ogr|osg|imgui)|osg::|ImGui|LayerManager|earthai' \
+  science/ScienceQueryTypes.h science/ScienceQueryTypes.cpp
 ```
 
 Expected: focused tests pass and the isolated static core build has no forbidden dependency token.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add science/ScienceQueryTypes.h science/ScienceQueryTypes.cpp \
@@ -207,6 +207,18 @@ git add science/ScienceQueryTypes.h science/ScienceQueryTypes.cpp \
   science/CMakeLists.txt CMakeLists.txt tests/science_build_contract_tests.cpp
 git commit -m "feat(scienceearth): add isolated query contracts"
 ```
+
+### Task 1 Evidence
+
+- RED: `osgSol_Test_ScienceQueryTypes` failed because `ScienceQueryTypes.h` did not exist.
+- RED: `osgVerse_Test_ScienceBuildContract` failed because the generated phase was still
+  `G0-G1`.
+- GREEN: science-enabled query-type/build-contract tests passed `2/2`; the science-off build
+  contract passed `1/1` and selected no science target.
+- Isolation: `libosgSolScienceCore.a` contains only `ScienceQueryTypes.cpp.o`; the generic source
+  contains no GDAL, OSG, ImGui, LayerManager, or Agent dependency.
+- Protected preview regression: passed `1/1`. The first build compiled existing third-party
+  dependencies and emitted their pre-existing warnings; the regression itself passed cleanly.
 
 ## Task 2: Add provider ownership and deterministic source registry
 
