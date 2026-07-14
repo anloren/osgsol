@@ -43,6 +43,12 @@ env -u EARTH_AI_KEY HOME="$HOME_DIR" EARTH_IME=0 \
     EARTH_OFFSCREEN=1 EARTH_AUTOCAP=100 \
     "$APP/Contents/MacOS/osgVerse_EarthExplorer" >"$LOG" 2>&1
 grep -q "\[Earth\] offscreen context" "$LOG"
+grep -q "\[Earth\] offscreen capture saved" "$LOG"
+if grep -Eq "glCompileShader .* FAILED|version '.*' is not supported|OpenGL error 'invalid operation'|Main earth scene is missing|Stack trace" "$LOG"; then
+    echo "FAIL: packaged render smoke logged a shader/OpenGL failure" >&2
+    exit 1
+fi
+test -s /tmp/earth_capture_0.png
 if find "$APP" -name imgui.ini -print -quit | grep -q .; then
     echo "FAIL: runtime wrote imgui.ini into signed bundle" >&2
     exit 1
