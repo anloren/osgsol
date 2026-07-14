@@ -100,6 +100,12 @@ std::map<CURL*, GetInfoState>& getInfoStates()
     return states;
 }
 
+std::map<CURL*, curl_off_t>& transferConnectionOverrides()
+{
+    static std::map<CURL*, curl_off_t> overrides;
+    return overrides;
+}
+
 std::map<CURL*, CURLM*>& attachedHandles()
 {
     static std::map<CURL*, CURLM*> handles;
@@ -264,6 +270,7 @@ void forwardCleanup(CleanupFunction realCleanup, CURL* easyHandle)
         attachedHandles().erase(easyHandle);
         logicallyAttachedAfterInjectedRemoveFailure().erase(easyHandle);
         getInfoStates().erase(easyHandle);
+        transferConnectionOverrides().erase(easyHandle);
         completedTransientHandles().erase(easyHandle);
         for (auto iterator = headRetryPerformHandles().begin();
              iterator != headRetryPerformHandles().end();)
@@ -344,6 +351,30 @@ CURLcode forwardGetInfo(GetInfoFunction realGetInfo, CURL* easyHandle,
 
     const std::lock_guard<std::mutex> lock(faultMutex());
     GetInfoState& state = getInfoStates()[easyHandle];
+    if (info == CURLINFO_CONN_ID)
+    {
+        const auto forced = transferConnectionOverrides().find(easyHandle);
+        if (forced != transferConnectionOverrides().end())
+        {
+            *static_cast<curl_off_t*>(output) = forced->second;
+        }
+        else if (state.stage == GetInfoState::Stage::None &&
+                 attachedHandles().count(easyHandle) == 1 &&
+                 completedTransientHandles().count(easyHandle) == 0)
+        {
+            long responseCode = 0;
+            curl_off_t replacement = 0;
+            if (realGetInfo(easyHandle, CURLINFO_HTTP_CODE, &responseCode) ==
+                    CURLE_OK &&
+                responseCode == 500 &&
+                consumeOverrideLocked(
+                    "OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", replacement))
+            {
+                transferConnectionOverrides()[easyHandle] = replacement;
+                *static_cast<curl_off_t*>(output) = replacement;
+            }
+        }
+    }
     if (info == CURLINFO_HTTP_CODE)
     {
         state.responseCode = *static_cast<long*>(output);
@@ -359,12 +390,6 @@ CURLcode forwardGetInfo(GetInfoFunction realGetInfo, CURL* easyHandle,
     else if (info == CURLINFO_CONN_ID &&
              state.stage == GetInfoState::Stage::HttpVersion)
     {
-        curl_off_t replacement = 0;
-        if (consumeOverrideLocked(
-                "OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", replacement))
-        {
-            *static_cast<curl_off_t*>(output) = replacement;
-        }
         state.stage = GetInfoState::Stage::Connection;
     }
     else if (info == CURLINFO_REDIRECT_COUNT &&
@@ -559,6 +584,78 @@ extern "C" int osgSolTestRunCurlFaultSelfTests()
     }
     unsetenv("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE");
     unsetenv(FAULT_PARSE_ERROR);
+
+    const auto transientGetInfo = [](CURL*, CURLINFO info, void* output)
+    {
+        if (output == nullptr) return CURLE_BAD_FUNCTION_ARGUMENT;
+        if (info == CURLINFO_HTTP_CODE)
+            *static_cast<long*>(output) = 500;
+        else if (info == CURLINFO_HTTP_VERSION)
+            *static_cast<long*>(output) = CURL_HTTP_VERSION_2_0;
+        else if (info == CURLINFO_CONN_ID)
+            *static_cast<curl_off_t*>(output) = 7;
+        else if (info == CURLINFO_REDIRECT_COUNT)
+            *static_cast<long*>(output) = 0;
+        return CURLE_OK;
+    };
+    curl_off_t transferConnection = 7;
+    if (forwardAdd(addOk, multi, easy) != CURLM_OK) return 30;
+    setenv("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", "-1", 1);
+    if (forwardGetInfo(transientGetInfo, easy, CURLINFO_CONN_ID,
+                       &transferConnection) != CURLE_OK ||
+        transferConnection != -1 ||
+        std::getenv("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE") != nullptr)
+        return 31;
+
+    transferConnection = 7;
+    if (forwardGetInfo(transientGetInfo, easy, CURLINFO_CONN_ID,
+                       &transferConnection) != CURLE_OK ||
+        transferConnection != -1)
+        return 32;
+    if (forwardRemove(removeOk, addOk, multi, easy) != CURLM_OK) return 33;
+    forwardCleanup(cleanup, easy);
+    {
+        const std::lock_guard<std::mutex> lock(faultMutex());
+        if (transferConnectionOverrides().count(easy) != 0 ||
+            getInfoStates().count(easy) != 0 ||
+            attachedHandles().count(easy) != 0)
+            return 34;
+    }
+
+    if (forwardAdd(addOk, multi, easy) != CURLM_OK) return 35;
+    transferConnection = -1;
+    if (forwardGetInfo(transientGetInfo, easy, CURLINFO_CONN_ID,
+                       &transferConnection) != CURLE_OK ||
+        transferConnection != 7)
+        return 36;
+    if (forwardRemove(removeOk, addOk, multi, easy) != CURLM_OK) return 37;
+    forwardCleanup(cleanup, easy);
+
+    if (forwardAdd(addOk, multi, easy) != CURLM_OK) return 38;
+    {
+        const std::lock_guard<std::mutex> lock(faultMutex());
+        completedTransientHandles().insert(easy);
+    }
+
+    long responseCode = 0;
+    long httpVersion = 0;
+    long redirectCount = 0;
+    curl_off_t completedConnection = -1;
+    setenv("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", "9", 1);
+    if (forwardGetInfo(transientGetInfo, easy, CURLINFO_HTTP_CODE,
+                       &responseCode) != CURLE_OK ||
+        forwardGetInfo(transientGetInfo, easy, CURLINFO_HTTP_VERSION,
+                       &httpVersion) != CURLE_OK ||
+        forwardGetInfo(transientGetInfo, easy, CURLINFO_CONN_ID,
+                       &completedConnection) != CURLE_OK ||
+        forwardGetInfo(transientGetInfo, easy, CURLINFO_REDIRECT_COUNT,
+                       &redirectCount) != CURLE_OK ||
+        completedConnection != 7 ||
+        !environmentEquals("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", "9"))
+        return 39;
+    unsetenv("OSGSOL_TEST_CURLINFO_CONN_ID_ONCE");
+    if (forwardRemove(removeOk, addOk, multi, easy) != CURLM_OK) return 40;
+    forwardCleanup(cleanup, easy);
 
     for (int reuse = 0; reuse < 2; ++reuse)
     {
