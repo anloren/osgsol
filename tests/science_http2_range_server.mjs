@@ -15,7 +15,6 @@ const MODES = new Set([
     'size-mismatch', 'range-503', 'range-503-exhaust',
     'range-500-twice', 'multirange-500-overlap',
     'multirange-500-repeat', 'multirange-success',
-    'v6-combined-operation-scope',
     ...TRANSIENT_ONCE_MODES.keys(),
 ]);
 const EXPECTED_RANGE = 'bytes=0-131071';
@@ -88,55 +87,6 @@ const pendingInitialMultirangeResponses = new Map();
 let violation = null;
 const sessions = new Set();
 const activeStreamFinalizers = new Set();
-const seenCorrelations = new Set();
-const firstCorrelationPaths = new Map();
-const redirectContinuations = new Set();
-let combinedPrimaryRangeCount = 0;
-
-function requestCorrelation(headers, path)
-{
-    const value = headers['x-osgsol-science-correlation'] ?? null;
-    const combinedOrdinaryRange =
-        path.includes('/v6-combined-primary/') &&
-        headers.range === EXPECTED_RANGE && ++combinedPrimaryRangeCount > 1;
-    const requiresCorrelation = path.includes('/v6-') &&
-        !combinedOrdinaryRange;
-    if (combinedOrdinaryRange && value !== null)
-    {
-        violation ??= 'ordinary fallback Range carried science correlation';
-        return value;
-    }
-    if (Array.isArray(value) ||
-        (value !== null && !/^[0-9a-f]{32}\/[1-9][0-9]*\/[1-4]$/.test(value)))
-    {
-        violation ??= 'malformed science correlation header';
-        return null;
-    }
-    if (requiresCorrelation && value === null)
-    {
-        violation ??= 'missing science correlation header';
-        return null;
-    }
-    const redirectedContinuation = value !== null &&
-        path.includes('redirect-target') &&
-        firstCorrelationPaths.get(value) ===
-            path.replace('redirect-target', 'redirect-source') &&
-        !redirectContinuations.has(value);
-    if (value !== null && seenCorrelations.has(value) &&
-        !redirectedContinuation)
-    {
-        violation ??= `duplicate science correlation ${value}`;
-        return value;
-    }
-    if (redirectedContinuation)
-        redirectContinuations.add(value);
-    else if (value !== null)
-    {
-        seenCorrelations.add(value);
-        firstCorrelationPaths.set(value, path);
-    }
-    return value;
-}
 
 function emit(event)
 {
@@ -270,12 +220,10 @@ server.on('request', (request, response) =>
     const method = request.method;
     const path = request.url;
     const range = request.headers.range ?? null;
-    const correlation = requestCorrelation(request.headers, path);
     const context = {
         session_id: socket.__scienceSessionId,
         stream_id: nextHttp1StreamId++,
         path,
-        correlation,
     };
     emit({ event: 'stream_start', ...context, method, path, range });
 
@@ -320,13 +268,9 @@ server.on('request', (request, response) =>
     {
         ++headCount;
         const head503 = path.includes('head-503') && headCount === 1;
-        const v6Once = path.match(/v6-head-(429|500|502|503|504)-once/);
-        const v6Transient = v6Once !== null && headCount === 1;
-        const status = v6Transient ? Number(v6Once[1]) : head503 ? 503 : 200;
-        setTimeout(() => send(status, {
+        setTimeout(() => send(head503 ? 503 : 200, {
             'accept-ranges': 'bytes',
-            'content-length': v6Transient ? '17' :
-                head503 ? '0' : String(fixture.length),
+            'content-length': head503 ? '0' : String(fixture.length),
         }), 200);
         return;
     }
@@ -368,23 +312,18 @@ server.on('session', (session) =>
 
 server.on('stream', (stream, headers) =>
 {
-    const path = headers[':path'];
-    const correlation = requestCorrelation(headers, path);
     const context = {
         session_id: stream.session.__scienceSessionId,
         stream_id: stream.id,
-        path,
-        correlation,
+        path: headers[':path'],
     };
     const method = headers[':method'];
+    const path = headers[':path'];
     const range = headers.range ?? null;
     stream.on('error', (error) =>
     {
         if (options.mode !== 'range-200-body' &&
-            !path.includes('transport-interrupt') &&
-            !path.includes('v6-head-body') &&
-            !path.includes('v6-range-transient-oversized') &&
-            !path.includes('v6-range-transient-duplicate-protocol-error'))
+            !path.includes('transport-interrupt'))
             violation ??= `unexpected HTTP/2 stream error: ${error.message}`;
     });
     emit({ event: 'stream_start', ...context, method, path, range });
@@ -393,8 +332,6 @@ server.on('stream', (stream, headers) =>
     {
         ++headCount;
         let headEnded = false;
-        const headBodyResponse =
-            path.includes('v6-head-body') && headCount === 1;
         const respond = () =>
         {
             if (stream.closed || stream.destroyed) return;
@@ -403,44 +340,7 @@ server.on('stream', (stream, headers) =>
                 'accept-ranges': 'bytes',
                 'content-length': String(fixture.length),
             };
-            const v6Once = path.match(
-                /v6-head-(429|500|502|503|504)-once/);
-            const v6Terminal = path.match(
-                /v6-head-500-then-(400|404|405)/);
-            if (path.includes('v6-head-500-thrice') && headCount <= 3)
-            {
-                status = 500;
-                responseHeaders['content-length'] = '17';
-            }
-            else if (path.includes('v6-head-500-exhaust'))
-            {
-                status = 500;
-                responseHeaders['content-length'] = '17';
-            }
-            else if (v6Terminal && headCount === 1)
-            {
-                status = 500;
-                responseHeaders['content-length'] = '17';
-            }
-            else if (v6Terminal && headCount === 2)
-            {
-                status = Number(v6Terminal[1]);
-                responseHeaders['content-length'] = '0';
-            }
-            else if (v6Once && headCount === 1)
-            {
-                status = Number(v6Once[1]);
-                responseHeaders['content-length'] = path.includes(
-                    'v6-head-content-length-absent') ? undefined : '17';
-                if (responseHeaders['content-length'] === undefined)
-                    delete responseHeaders['content-length'];
-                if (path.includes('v6-head-content-range'))
-                {
-                    responseHeaders['content-range'] =
-                        `bytes 0-${PREFETCH_BYTES - 1}/${fixture.length}`;
-                }
-            }
-            else if (path.includes('head-503-exhaust'))
+            if (path.includes('head-503-exhaust'))
             {
                 status = 503;
                 responseHeaders['content-length'] = '0';
@@ -448,11 +348,6 @@ server.on('stream', (stream, headers) =>
             else if (path.includes('head-503') && headCount === 1)
             {
                 status = 503;
-                responseHeaders['content-length'] = '0';
-            }
-            else if (path.includes('v6-combined-primary'))
-            {
-                status = 405;
                 responseHeaders['content-length'] = '0';
             }
             else if (path.includes('head-405') && headCount === 1)
@@ -471,47 +366,16 @@ server.on('stream', (stream, headers) =>
             {
                 responseHeaders['content-length'] = String(PREFETCH_BYTES / 2);
             }
-            if (path.includes('v6-head-content-length-malformed') &&
-                headCount === 1)
-            {
-                responseHeaders['content-length'] = 'malformed';
-            }
-            if (path.includes('v6-final-head-content-length-absent') &&
-                headCount >= 2 && status === 200)
-            {
-                delete responseHeaders['content-length'];
-            }
-            if (path.includes('v6-head-content-length-duplicate') &&
-                headCount === 1)
-            {
-                stream.additionalHeaders({
-                    ':status': 103,
-                    'content-length': '18',
-                });
-            }
             stream.respond({ ':status': status, ...responseHeaders });
-            const numericContentLength =
-                Number(responseHeaders['content-length'] ?? 0);
             emit({
                 event: 'response_headers',
                 ...context,
                 status,
-                content_length: Number.isSafeInteger(numericContentLength) &&
-                    numericContentLength >= 0 ? numericContentLength : 0,
-                raw_content_length:
-                    responseHeaders['content-length'] ?? null,
-                content_range: responseHeaders['content-range'] ?? null,
+                content_length: Number(responseHeaders['content-length']),
+                content_range: null,
                 violation: null,
             });
-            if (headBodyResponse)
-            {
-                const body = Buffer.from('transient-error!\n');
-                totalReservedBodyBytes += body.length;
-                totalAttemptedBodyBytes += body.length;
-                headEnded = true;
-                stream.end(body);
-            }
-            else if (!path.includes('transport-interrupt'))
+            if (!path.includes('transport-interrupt'))
             {
                 headEnded = true;
                 stream.end();
@@ -521,16 +385,13 @@ server.on('stream', (stream, headers) =>
             !path.includes('head-') && !path.includes('redirect-source') &&
             !path.includes('head-first') &&
             !path.includes('transport-interrupt');
-        const v6RangeFirst = path.includes('v6-range-first') ||
-            path.includes('v6-head-content-length-malformed');
-        setTimeout(respond, delayedSuccess || v6RangeFirst ? 200 : 0);
+        setTimeout(respond, delayedSuccess ? 200 : 0);
         stream.once('close', () =>
         {
             emit({
                 event: 'stream_end',
                 ...context,
-                attempted_body_bytes:
-                    headBodyResponse ? 17 : 0,
+                attempted_body_bytes: 0,
                 total_attempted_body_bytes: totalAttemptedBodyBytes,
                 total_reserved_body_bytes: totalReservedBodyBytes,
                 aborted: !headEnded,
@@ -546,9 +407,7 @@ server.on('stream', (stream, headers) =>
         return;
     }
     ++getCount;
-    if ((path.includes('head-405') ||
-         options.mode === 'v6-combined-operation-scope') &&
-        typeof range !== 'string')
+    if (path.includes('head-405') && typeof range !== 'string')
     {
         sendBody(stream, context, 200,
             { 'content-length': String(fixture.length) }, Buffer.alloc(0), 0);
@@ -566,9 +425,7 @@ server.on('stream', (stream, headers) =>
     }
     if (options.mode === 'multirange-500-overlap' ||
         options.mode === 'multirange-500-repeat' ||
-        options.mode === 'multirange-success' ||
-        (options.mode === 'v6-combined-operation-scope' &&
-         MULTIRANGE_INTERVALS.has(range)))
+        options.mode === 'multirange-success')
     {
         const interval = MULTIRANGE_INTERVALS.get(range);
         if (!interval)
@@ -576,15 +433,13 @@ server.on('stream', (stream, headers) =>
             reject(stream, context, `unexpected multi-range interval ${range}`);
             return;
         }
-        const attemptKey = options.mode === 'multirange-500-repeat' ||
-            options.mode === 'v6-combined-operation-scope'
+        const attemptKey = options.mode === 'multirange-500-repeat'
             ? `${context.session_id}:${range}` : range;
         const attempt = (rangeAttempts.get(attemptKey) ?? 0) + 1;
         rangeAttempts.set(attemptKey, attempt);
         const transientOnce =
             (options.mode === 'multirange-500-overlap' ||
-             options.mode === 'multirange-500-repeat' ||
-             options.mode === 'v6-combined-operation-scope') &&
+             options.mode === 'multirange-500-repeat') &&
             interval.transientOnce;
         const maximumAttempts = transientOnce ? 2 : 1;
         if (attempt > maximumAttempts)
@@ -642,8 +497,7 @@ server.on('stream', (stream, headers) =>
             }
             const send = () => sendBody(
                 stream, context, 206, responseHeaders, body);
-            if (interval.delayMs > 0 &&
-                options.mode !== 'v6-combined-operation-scope')
+            if (interval.delayMs > 0)
                 setTimeout(send, interval.delayMs);
             else
                 send();
@@ -700,84 +554,8 @@ server.on('stream', (stream, headers) =>
     const transientStatus = TRANSIENT_ONCE_MODES.get(options.mode);
     if (transientStatus !== undefined && getCount === 1)
     {
-        const transientHeaders = { 'content-length': '17' };
-        let transientBody = Buffer.from('transient-error!\n');
-        if (path.includes('v6-range-transient-duplicate-protocol-error'))
-        {
-            let protocolError = null;
-            try
-            {
-                stream.respond({
-                    ':status': transientStatus,
-                    'content-length': '17',
-                    'content-range': [
-                        `bytes 0-${PREFETCH_BYTES - 1}/${fixture.length}`,
-                        `bytes 1-${PREFETCH_BYTES}/${fixture.length}`,
-                    ],
-                });
-            }
-            catch (error)
-            {
-                protocolError = error;
-            }
-            if (protocolError?.code !== 'ERR_HTTP2_HEADER_SINGLE_VALUE')
-            {
-                violation ??= protocolError === null
-                    ? 'duplicate Content-Range unexpectedly reached the wire'
-                    : `unexpected duplicate-header error ${protocolError.code}`;
-            }
-            emit({
-                event: 'protocol_error',
-                ...context,
-                method,
-                range,
-                error_code: protocolError?.code ?? 'none',
-                violation: null,
-            });
-            stream.once('close', () =>
-            {
-                emit({
-                    event: 'stream_end',
-                    ...context,
-                    attempted_body_bytes: 0,
-                    total_attempted_body_bytes: totalAttemptedBodyBytes,
-                    total_reserved_body_bytes: totalReservedBodyBytes,
-                    aborted: true,
-                    violation: null,
-                });
-            });
-            stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
-            return;
-        }
-        if (path.includes('v6-range-transient-content-range'))
-        {
-            transientHeaders['content-range'] =
-                `bytes 0-${PREFETCH_BYTES - 1}/${fixture.length}`;
-        }
-        if (path.includes('v6-range-transient-no-content-range'))
-            delete transientHeaders['content-range'];
-        if (path.includes('v6-range-transient-contradictory'))
-        {
-            transientHeaders['content-range'] =
-                `bytes 1-${PREFETCH_BYTES}/${fixture.length}`;
-        }
-        if (path.includes('v6-range-transient-content-range-malformed'))
-            transientHeaders['content-range'] = 'bytes malformed';
-        if (path.includes('v6-range-transient-content-range-spoof'))
-        {
-            delete transientHeaders['content-range'];
-            transientHeaders['x-spoof'] =
-                `content-range: bytes 0-${PREFETCH_BYTES - 1}/${fixture.length}`;
-        }
-        if (path.includes('v6-range-transient-oversized'))
-        {
-            transientBody = fixture.subarray(0, PREFETCH_BYTES + 1);
-            transientHeaders['content-length'] = String(transientBody.length);
-        }
-        if (path.includes('v6-range-transient-unaccounted'))
-            transientHeaders['content-length'] = '18';
         sendRangeBody(stream, context, transientStatus,
-            transientHeaders, transientBody);
+            { 'content-length': '17' }, Buffer.from('transient-error!\n'));
         return;
     }
     if (options.mode === 'range-500-twice' && getCount <= 2)

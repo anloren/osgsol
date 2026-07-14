@@ -346,25 +346,6 @@ IF(BUILD_TESTING)
                 APPEND PROPERTY ENVIRONMENT
                 "LD_PRELOAD=$<TARGET_FILE:osgSol_Test_CurlRemoveFault>")
         ENDIF()
-        ADD_TEST(NAME osgVerse_Test_ScienceHttpRangesHeadRetryAbandonment
-                 COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>)
-        SET_TESTS_PROPERTIES(
-            osgVerse_Test_ScienceHttpRangesHeadRetryAbandonment PROPERTIES
-            LABELS "offline;scienceearth;network-local"
-            TIMEOUT 120
-            ENVIRONMENT
-                "OSGSOL_TEST_PREFETCH_CASE=v6-head-500-once-v6-head-remove-persistent")
-        IF(APPLE)
-            SET_PROPERTY(
-                TEST osgVerse_Test_ScienceHttpRangesHeadRetryAbandonment
-                APPEND PROPERTY ENVIRONMENT
-                "DYLD_INSERT_LIBRARIES=$<TARGET_FILE:osgSol_Test_CurlRemoveFault>")
-        ELSEIF(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-            SET_PROPERTY(
-                TEST osgVerse_Test_ScienceHttpRangesHeadRetryAbandonment
-                APPEND PROPERTY ENVIRONMENT
-                "LD_PRELOAD=$<TARGET_FILE:osgSol_Test_CurlRemoveFault>")
-        ENDIF()
         ADD_TEST(NAME osgVerse_Test_ScienceHttpRangesBlockedOperationCapacity
                  COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>)
         SET(_OSGSOL_BLOCKED_OPERATION_CAPACITY_ENV

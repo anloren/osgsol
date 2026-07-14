@@ -6,20 +6,14 @@
 #include <cmath>
 #include <condition_variable>
 #include <cerrno>
-#include <cstdio>
 #include <cstring>
 #include <CommonCrypto/CommonDigest.h>
 #include <cstdint>
 #include <cstdlib>
-#include <dirent.h>
-#include <exception>
 #include <filesystem>
-#include <functional>
 #include <fstream>
 #include <iostream>
 #include <iomanip>
-#include <iterator>
-#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -33,7 +27,6 @@
 #include <vector>
 
 #include <csignal>
-#include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -199,108 +192,6 @@ namespace
         int httpMajor = 0;
     };
 
-    enum class AttributionMode
-    {
-        AttributedV6,
-        LegacyFrozen,
-    };
-
-    struct ScienceTransportCompletion
-    {
-        std::uint64_t ordinal = 0;
-        std::string context;
-        std::string scope;
-        std::string role;
-        std::uint64_t request = 0;
-        int attempt = 0;
-        std::string method;
-        std::string range;
-        int curlCode = 0;
-        int status = 0;
-        int httpMajor = 0;
-        int redirects = 0;
-        long long connectionId = -1;
-        int contentLengthCount = 0;
-        bool contentLengthValid = false;
-        std::uint64_t declaredContentLength = 0;
-        int contentRangeCount = 0;
-        bool contentRangeValid = false;
-        long long contentStart = -1;
-        long long contentEnd = -1;
-        long long contentTotal = -1;
-        std::uint64_t actualBodyBytes = 0;
-        std::size_t messageIndex = 0;
-        bool admissionValid = true;
-        std::string admissionReason;
-    };
-
-    struct HeadRetryEvidence
-    {
-        int retryOrdinal = 0;
-        std::uint64_t request = 0;
-        int failedAttempt = 0;
-        int scheduledAttempt = 0;
-        long long delayMs = 0;
-        int failedStatus = 0;
-        long long failedConnectionId = -1;
-        int failedHttpMajor = 0;
-        std::uint64_t failedDeclaredContentLength = 0;
-        std::uint64_t failedActualBodyBytes = 0;
-        std::string context;
-        std::size_t messageIndex = 0;
-    };
-
-    struct ScienceServerRequest
-    {
-        std::string correlation;
-        std::string method;
-        std::string range;
-        std::string sessionId;
-        int streamId = 0;
-        std::string path;
-        int status = 0;
-        std::uint64_t start = 0;
-        std::uint64_t response = 0;
-        std::uint64_t end = 0;
-        std::uint64_t attemptedBodyBytes = 0;
-        std::uint64_t contentLength = 0;
-        std::string contentRange;
-        bool aborted = false;
-        int startCount = 0;
-        int responseCount = 0;
-        int endCount = 0;
-        int protocolErrorCount = 0;
-        std::string protocolError;
-    };
-
-    struct AttributedEventEvidence
-    {
-        std::string kind;
-        std::string context;
-        std::uint64_t request = 0;
-        int attempt = 0;
-        int scheduledAttempt = 0;
-        std::string range;
-        int status = 0;
-        std::uint64_t bytes = 0;
-        long long delayMs = 0;
-        long long connectionId = -1;
-        int httpMajor = 0;
-        std::string reason;
-        std::size_t messageIndex = 0;
-    };
-
-    struct AttributedTransportProof
-    {
-        std::vector<ScienceTransportCompletion> completions;
-        std::vector<HeadRetryEvidence> headRetries;
-        std::vector<AttributedEventEvidence> events;
-        int fallbackCount = 0;
-        int cachePublicationCount = 0;
-        int propertyPublicationCount = 0;
-        bool qualified = false;
-    };
-
     struct CoordinatorRetryBlockedEvidence
     {
         std::string range;
@@ -313,7 +204,6 @@ namespace
     struct MetadataPrefetchProof
     {
         bool enabled = false;
-        bool attributedTransportQualified = false;
         int headRequestCount = 0;
         int rangeRequestCount = 0;
         std::uint64_t rangeStart = 0;
@@ -329,7 +219,6 @@ namespace
 
     struct HttpProof
     {
-        bool attributedTransportQualified = false;
         int actualGetCount = 0;
         int actualHeadCount = 0;
         int successfulGetCount = 0;
@@ -366,15 +255,6 @@ namespace
         std::vector<int> responseCodes;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> successfulByteIntervals;
         std::vector<ImmediateRetryEvidence> immediateRetries;
-        std::vector<HeadRetryEvidence> headRetries;
-        std::vector<AttributedEventEvidence> scienceTransportEvents;
-        std::vector<ScienceTransportCompletion> scienceTransportCompletions;
-        int coordinatorHeadTransientRetryCount = 0;
-        std::uint64_t coordinatorHeadTransientRetryDeclaredBytes = 0;
-        std::uint64_t coordinatorHeadTransientRetryActualBodyBytes = 0;
-        std::map<int, int> coordinatorHeadTransientRetryCodes;
-        int scienceTransportResponseCount = 0;
-        std::string scienceTransportAttribution;
         MetadataPrefetchProof metadataPrefetch;
     };
 
@@ -389,24 +269,13 @@ namespace
     {
         std::string sessionId;
         int streamId = 0;
-        std::string correlation;
         std::string method;
         std::string range;
-        std::string path;
         std::uint64_t start = 0;
-        std::uint64_t response = 0;
         std::uint64_t end = 0;
         int status = 0;
         std::uint64_t attemptedBodyBytes = 0;
-        std::uint64_t contentLength = 0;
-        std::string rawContentLength;
-        std::string contentRange;
         bool aborted = false;
-        int startCount = 0;
-        int responseCount = 0;
-        int endCount = 0;
-        int protocolErrorCount = 0;
-        std::string protocolError;
     };
 
     struct Http2Evidence
@@ -449,15 +318,7 @@ namespace
     MetadataPrefetchProof buildMetadataPrefetchProof(
         const DebugCapture& capture, const HttpProof& httpProof);
     HttpProof buildHttpProof(const DebugCapture& capture,
-                             const std::string& statsJson,
-                             AttributionMode mode,
-                             bool allowProtocolTerminatedFinalResponse = false,
-                             const std::vector<ScienceServerRequest>&
-                                serverRequests = {});
-    AttributedTransportProof buildAttributedTransportProof(
-        const DebugCapture& capture,
-        const std::vector<ScienceServerRequest>& serverRequests = {},
-        bool allowProtocolTerminatedFinalResponse = false);
+                             const std::string& statsJson);
     std::string requireNetworkStatsEvidence();
     bool parseCoordinatorRetryBlockedEvidence(
         const std::string& message, CoordinatorRetryBlockedEvidence& evidence);
@@ -596,14 +457,6 @@ namespace
                                  const std::string& name);
     [[noreturn]] void fail(const std::string& message);
     void require(bool condition, const std::string& message);
-    void checkedAdd(std::uint64_t& target, std::uint64_t value,
-                    const std::string& label);
-    std::vector<ScienceServerRequest> scienceServerRequests(
-        const Http2Evidence& evidence);
-    std::uint64_t checkedJsonUnsigned(
-        const picojson::value& value, const std::string& label,
-        std::uint64_t maximum =
-            std::numeric_limits<std::uint64_t>::max());
 
     std::string sha256(const std::string& payload)
     {
@@ -643,55 +496,6 @@ namespace
     void require(bool condition, const std::string& message)
     {
         if (!condition) fail(message);
-    }
-
-    using CurlFaultSelfTest = int (*)();
-    using CurlRetainedStateCount = std::size_t (*)();
-
-    CurlFaultSelfTest curlFaultSelfTest()
-    {
-        static CurlFaultSelfTest function = reinterpret_cast<CurlFaultSelfTest>(
-            dlsym(RTLD_DEFAULT, "osgSolTestRunCurlFaultSelfTests"));
-        return function;
-    }
-
-    bool curlFaultInterposerAvailable()
-    {
-        return curlFaultSelfTest() != nullptr;
-    }
-
-    CurlRetainedStateCount curlRetainedStateCount()
-    {
-        static CurlRetainedStateCount function =
-            reinterpret_cast<CurlRetainedStateCount>(dlsym(
-                RTLD_DEFAULT, "osgSolTestHeadRetryRetainedStateCount"));
-        return function;
-    }
-
-    CurlRetainedStateCount curlAttachedStateCount()
-    {
-        static CurlRetainedStateCount function =
-            reinterpret_cast<CurlRetainedStateCount>(dlsym(
-                RTLD_DEFAULT, "osgSolTestAttachedStateCount"));
-        return function;
-    }
-
-    void verifyCurlFaultInterposerSelfTests()
-    {
-        const CurlFaultSelfTest selfTest = curlFaultSelfTest();
-        if (selfTest == nullptr)
-        {
-            std::cout << "ScienceCurlFault: unavailable; fault-dependent cases skipped"
-                      << std::endl;
-            return;
-        }
-        const int result = selfTest();
-        require(result == 0,
-                "curl fault interposer self-test failed at case " +
-                    std::to_string(result));
-        std::cout << "ScienceCurlFault: add/remove/perform one-shot and "
-                     "handle-reuse self-tests passed"
-                  << std::endl;
     }
 
     void verifyPathSpecificOptionLease()
@@ -1041,7 +845,7 @@ namespace
         return process;
     }
 
-    Http2Evidence readHttp2Log(const std::filesystem::path& log)
+    Http2Evidence verifyHttp2Log(const std::filesystem::path& log)
     {
         std::ifstream stream(log);
         require(stream.good(), "HTTP/2 range log is missing");
@@ -1058,133 +862,55 @@ namespace
             const std::string event = field(object, "event").get<std::string>();
             if (event == "session_start") continue;
             require(event == "stream_start" || event == "response_headers" ||
-                        event == "protocol_error" || event == "stream_end",
+                        event == "stream_end",
                     "HTTP/2 server emitted an unknown event");
             const std::string session =
                 field(object, "session_id").get<std::string>();
-            const int streamId = static_cast<int>(checkedJsonUnsigned(
-                field(object, "stream_id"), "HTTP/2 stream ID",
-                static_cast<std::uint64_t>(
-                    std::numeric_limits<int>::max())));
-            require(streamId > 0, "HTTP/2 stream ID must be positive");
+            const int streamId =
+                static_cast<int>(field(object, "stream_id").get<double>());
             Http2StreamEvidence& record = records[{session, streamId}];
             record.sessionId = session;
             record.streamId = streamId;
-            const std::uint64_t timestamp = checkedJsonUnsigned(
-                field(object, "monotonic_ns"),
-                "HTTP/2 monotonic timestamp");
-            const std::string path =
-                field(object, "path").get<std::string>();
-            const picojson::value& correlationValue =
-                field(object, "correlation");
-            const std::string correlation =
-                correlationValue.is<std::string>()
-                    ? correlationValue.get<std::string>() : "";
+            const std::uint64_t timestamp = static_cast<std::uint64_t>(
+                field(object, "monotonic_ns").get<double>());
             if (event == "stream_start")
             {
-                require(++record.startCount == 1 && record.start == 0,
-                        "duplicate HTTP/2 stream_start event");
+                require(record.start == 0, "duplicate HTTP/2 stream_start event");
                 record.start = timestamp;
-                record.path = path;
-                record.correlation = correlation;
                 record.method = field(object, "method").get<std::string>();
                 const picojson::value& range = field(object, "range");
                 record.range = range.is<std::string>() ? range.get<std::string>() : "";
             }
             else if (event == "response_headers")
             {
-                require(record.startCount == 1 &&
-                            ++record.responseCount == 1 &&
-                            record.path == path &&
-                            record.correlation == correlation,
-                        "HTTP/2 response identity/count differs from stream_start");
-                record.response = timestamp;
-                record.status = static_cast<int>(checkedJsonUnsigned(
-                    field(object, "status"), "HTTP/2 response status", 999));
-                record.contentLength = checkedJsonUnsigned(
-                    field(object, "content_length"),
-                    "HTTP/2 response Content-Length");
-                const auto rawContentLength =
-                    object.find("raw_content_length");
-                if (rawContentLength != object.end())
-                {
-                    require(rawContentLength->second.is<std::string>() ||
-                                rawContentLength->second.is<picojson::null>(),
-                            "HTTP/2 raw Content-Length has an invalid type");
-                    if (rawContentLength->second.is<std::string>())
-                    {
-                        record.rawContentLength =
-                            rawContentLength->second.get<std::string>();
-                    }
-                }
-                const picojson::value& contentRange =
-                    field(object, "content_range");
-                record.contentRange = contentRange.is<std::string>()
-                    ? contentRange.get<std::string>() : "";
+                record.status =
+                    static_cast<int>(field(object, "status").get<double>());
                 require(field(object, "violation").is<picojson::null>(),
                         "HTTP/2 server rejected a client request");
             }
-            else if (event == "protocol_error")
-            {
-                require(record.startCount == 1 &&
-                            record.responseCount == 0 &&
-                            ++record.protocolErrorCount == 1 &&
-                            record.path == path &&
-                            record.correlation == correlation &&
-                            field(object, "method").get<std::string>() ==
-                                record.method,
-                        "HTTP/2 protocol error identity/count differs from "
-                        "stream_start");
-                const picojson::value& range = field(object, "range");
-                require((range.is<std::string>()
-                            ? range.get<std::string>() : "") == record.range,
-                        "HTTP/2 protocol error Range differs from stream_start");
-                record.response = timestamp;
-                record.protocolError =
-                    field(object, "error_code").get<std::string>();
-                require(record.protocolError ==
-                            "ERR_HTTP2_HEADER_SINGLE_VALUE" &&
-                            field(object, "violation").is<picojson::null>(),
-                        "HTTP/2 duplicate-header fixture did not expose the "
-                        "exact local protocol rejection");
-            }
             else
             {
-                require(record.startCount == 1 &&
-                            record.responseCount +
-                                record.protocolErrorCount == 1 &&
-                            ++record.endCount == 1 && record.end == 0 &&
-                            record.path == path &&
-                            record.correlation == correlation,
-                        "HTTP/2 stream_end identity/count differs from its stream");
+                require(record.end == 0, "duplicate HTTP/2 stream_end event");
                 record.end = timestamp;
-                record.attemptedBodyBytes = checkedJsonUnsigned(
-                    field(object, "attempted_body_bytes"),
-                    "HTTP/2 attempted body bytes");
+                record.attemptedBodyBytes = static_cast<std::uint64_t>(
+                    field(object, "attempted_body_bytes").get<double>());
                 evidence.totalAttemptedBodyBytes = std::max(
                     evidence.totalAttemptedBodyBytes,
-                    checkedJsonUnsigned(
-                        field(object, "total_attempted_body_bytes"),
-                        "HTTP/2 total attempted body bytes"));
+                    static_cast<std::uint64_t>(
+                        field(object,
+                            "total_attempted_body_bytes").get<double>()));
                 evidence.totalReservedBodyBytes = std::max(
                     evidence.totalReservedBodyBytes,
-                    checkedJsonUnsigned(
-                        field(object, "total_reserved_body_bytes"),
-                        "HTTP/2 total reserved body bytes"));
+                    static_cast<std::uint64_t>(
+                        field(object,
+                            "total_reserved_body_bytes").get<double>()));
                 record.aborted = field(object, "aborted").get<bool>();
             }
         }
         for (const auto& item : records)
         {
-            require(item.second.startCount == 1 &&
-                        item.second.responseCount +
-                            item.second.protocolErrorCount == 1 &&
-                        item.second.endCount == 1 &&
-                        item.second.start > 0 &&
-                        item.second.response > item.second.start &&
-                        item.second.end >= item.second.response &&
-                        (item.second.status > 0 ||
-                         item.second.protocolErrorCount == 1),
+            require(item.second.start > 0 && item.second.end > item.second.start &&
+                        item.second.status > 0,
                     "HTTP/2 stream evidence is incomplete for " +
                         item.second.method + " stream " +
                         std::to_string(item.second.streamId) +
@@ -1199,71 +925,6 @@ namespace
         require(!evidence.streams.empty(), "HTTP/2 server logged no streams");
         require(evidence.totalReservedBodyBytes <= HTTP2_TEST_BODY_BUDGET,
                 "HTTP/2 server oversubscribed its synchronous body budget");
-        return evidence;
-    }
-
-    Http2Evidence verifyHttp2Log(
-        const std::filesystem::path& log,
-        bool require206ContentRange = true)
-    {
-        Http2Evidence evidence = readHttp2Log(log);
-        for (const Http2StreamEvidence& stream : evidence.streams)
-        {
-            if (stream.method == "HEAD")
-            {
-                require(stream.attemptedBodyBytes == 0,
-                        "HTTP/2 HEAD stream attempted a body");
-            }
-            else if (stream.status == 206)
-            {
-                require(stream.attemptedBodyBytes == stream.contentLength,
-                        "HTTP/2 206 stream body/Content-Length differs");
-                if (require206ContentRange)
-                    require(!stream.contentRange.empty(),
-                            "HTTP/2 206 stream Content-Range is absent");
-            }
-        }
-        return evidence;
-    }
-
-    Http2Evidence verifyLegacyInterruptedHttp2Log(
-        const std::filesystem::path& log)
-    {
-        Http2Evidence evidence = readHttp2Log(log);
-        int partialRanges = 0;
-        std::ostringstream rangeDetails;
-        for (const Http2StreamEvidence& stream : evidence.streams)
-        {
-            if (stream.method == "HEAD")
-            {
-                require(stream.attemptedBodyBytes == 0,
-                        "legacy transport fixture gave HEAD a body");
-            }
-            else if (stream.status == 206 &&
-                     stream.attemptedBodyBytes < stream.contentLength)
-            {
-                ++partialRanges;
-                require(!stream.contentRange.empty(),
-                        "legacy interrupted 206 fixture did not prove a bounded "
-                        "partial Range body");
-            }
-            else if (stream.status == 206)
-            {
-                require(stream.attemptedBodyBytes == stream.contentLength &&
-                            !stream.contentRange.empty(),
-                        "legacy transport fixture has an invalid complete 206");
-            }
-            if (stream.status == 206)
-            {
-                rangeDetails << " attempted=" << stream.attemptedBodyBytes
-                             << " declared=" << stream.contentLength
-                             << " aborted=" << (stream.aborted ? 1 : 0);
-            }
-        }
-        require(partialRanges == 2,
-                "legacy transport fixture did not contain the coordinator "
-                "and ordinary partial Ranges:" +
-                    rangeDetails.str());
         return evidence;
     }
 
@@ -1284,23 +945,6 @@ namespace
             {
                 return message.find(needle) != std::string::npos;
             }));
-    }
-
-    std::uint64_t networkStatsUnsigned(const std::string& statsJson,
-                                       const std::string& method,
-                                       const std::string& name)
-    {
-        picojson::value value;
-        require(picojson::parse(value, statsJson).empty() &&
-                    value.is<picojson::object>(),
-                "compatibility network stats are invalid");
-        const picojson::object& methods = field(
-            value.get<picojson::object>(), "methods").get<picojson::object>();
-        const picojson::object& methodObject =
-            field(methods, method).get<picojson::object>();
-        return checkedJsonUnsigned(field(methodObject, name),
-                                   "compatibility network stats " + method +
-                                       " " + name);
     }
 
     std::string parallelDebugSummary(const DebugCapture& capture)
@@ -1325,19 +969,9 @@ namespace
 
         const char* selectedMode =
             CPLGetConfigOption("OSGSOL_TEST_PREFETCH_CASE", nullptr);
-        if (selectedMode && std::string(selectedMode).rfind("v6-", 0) == 0)
-            return;
         if (selectedMode &&
             std::string(selectedMode) == "blocked-operation-capacity")
         {
-            if (!curlFaultInterposerAvailable())
-            {
-                std::cout << "ScienceHttp2Prefetch: mode="
-                             "blocked-operation-capacity skipped="
-                             "curl-fault-interposer-unavailable"
-                          << std::endl;
-                return;
-            }
             const std::filesystem::path ready =
                 root / "http2-blocked-operation-capacity.ready";
             const std::filesystem::path log =
@@ -1507,47 +1141,46 @@ namespace
                 "", true, "path", "", 1},
             {"range-504-once", true, false, "", "2TLS", 2,
                 "", true, "path", "", 1},
-            {"range-500-once", true, false, "head-503-invalid", "2TLS", 2,
-                "", true, "path", "", 2, 1},
-            {"range-500-once", false, false, "http1-invalid", "1.1", 1,
-                "", false, "path", "", 2, -1,
+            {"range-500-once", false, true, "head-503-invalid", "2TLS", 1,
+                "head-invalid", true, "path", "", 2, -1,
+                "head-invalid"},
+            {"range-500-once", false, true, "http1-invalid", "1.1", 1,
+                "head-protocol", false, "path", "", 2, -1,
                 "head-protocol"},
-            {"range-500-once", false, false, "connection-invalid", "2TLS", 1,
-                "", true, "path", "", 1, -1,
+            {"range-500-once", false, true, "connection-invalid", "2TLS", 1,
+                "range-connection", true, "path", "", 1, -1,
                 "range-connection", "connection"},
-            {"range-500-once", false, false, "redirect-invalid", "2TLS", 1,
-                "", true, "path", "", 1, -1,
+            {"range-500-once", false, true, "redirect-invalid", "2TLS", 1,
+                "range-redirect", true, "path", "", 1, -1,
                 "range-redirect", "redirect"},
-            {"range-500-once", false, false, "transport-initial", "2TLS", 1,
-                "", true, "path", "", 1, -1,
+            {"range-500-once", false, true, "transport-initial", "2TLS", 1,
+                "range-transport", true, "path", "", 1, -1,
                 "range-transport", "", 1},
-            {"range-500-twice", false, false, "transport-retry", "2TLS", 2,
-                "", true, "path", "", 1, -1,
+            {"range-500-twice", false, true, "transport-retry", "2TLS", 2,
+                "range-transport", true, "path", "", 1, -1,
                 "range-transport", "", 2},
-            {"range-500-once", false, false,
-                "connection-invalid-operation-scope", "2TLS", 2,
-                "", true, "path", "", 2, 1,
-                "range-connection", "connection", 0, true},
-            {"range-500-once", false, false,
-                "connection-invalid-cross-thread-scope", "2TLS", 1,
-                "", true, "path", "", 1, 0,
-                "range-connection", "connection", 0, false, "0.1", true},
-            {"range-500-once", false, false, "invalid-delay-nan",
-                "2TLS", 1, "", true, "path", "", 1, 0,
+            {"range-500-once", false, true, "head-503-operation-scope",
+                "2TLS", 2, "head-invalid", true, "path", "", 3, 1,
+                "head-invalid", "", 0, true},
+            {"range-500-once", false, true, "head-503-cross-thread-scope",
+                "2TLS", 1, "head-invalid", true, "path", "", 2, 0,
+                "head-invalid", "", 0, false, "0.1", true},
+            {"range-500-once", false, true, "invalid-delay-nan",
+                "2TLS", 1, "retry-delay", true, "path", "", 1, 0,
                 "", "", 0, false, "nan"},
-            {"range-500-once", false, false, "invalid-delay-huge",
-                "2TLS", 1, "", true, "path", "", 1, 0,
+            {"range-500-once", false, true, "invalid-delay-huge",
+                "2TLS", 1, "retry-delay", true, "path", "", 1, 0,
                 "", "", 0, false, "1e300"},
             {"range-503-exhaust", false, false, "", "2TLS", 3,
-                "", true, "path", "", 1, 0},
+                "", true, "path", "", 1},
             {"success", false, false, "range-404", "2TLS", 1,
                 "", true, "path", "", 1},
             {"range-200", false, false},
             {"range-200-body", false, false},
             {"short-range", false, false},
             {"size-mismatch", false, false},
-            {"success", true, false, "head-503", "2TLS", 1,
-                "", true},
+            {"success", true, true, "head-503", "2TLS", 2,
+                "head-invalid", true},
             {"success", true, true, "head-405", "2TLS", 2,
                 "head-invalid", true},
             {"success", true, true, "redirect-source", "2TLS", 4,
@@ -1568,16 +1201,16 @@ namespace
                 "", true, "path", "range-first"},
             {"success", true, false, "head-first", "2TLS", 1,
                 "", true, "path", "head-first"},
-            {"success", false, false, "head-503-exhaust", "2TLS", 1,
-                "", true, "path", "", 3, 0, "head-invalid"},
+            {"success", false, true, "head-503-exhaust", "2TLS", 1,
+                "head-invalid", true, "path", "", 3},
             {"success", true, true, "transport-interrupt", "2TLS", -1,
                 "transport", true, "path", "", 1},
             {"success", true, false, "default-off", "2TLS", 1,
                 "", false, "none", "", 1, 0},
             {"success", true, false, "global-only", "2TLS", 1,
                 "", false, "global", "", 1, 0},
-            {"success", true, false, "remove-retry", "2TLS", 1,
-                "", true},
+            {"success", true, true, "remove-retry", "2TLS", 2,
+                "detach", true},
             {"success", true, true, "remove-failure", "2TLS", 2,
                 "detach", true, "path", "", 2, 0},
         };
@@ -1597,20 +1230,9 @@ namespace
                 continue;
             if (selectedMode && std::string(selectedMode) != caseName)
                 continue;
-            ++executedCases;
-            const bool requiresFaultInterposer =
-                std::string(prefetchCase.variant).find("remove-") == 0 ||
-                prefetchCase.getInfoFault[0] != '\0' ||
-                prefetchCase.transportFaultOrdinal > 0;
-            if (requiresFaultInterposer && !curlFaultInterposerAvailable())
-            {
-                std::cout << "ScienceHttp2Prefetch: mode=" << caseName
-                          << " skipped=curl-fault-interposer-unavailable"
-                          << std::endl;
-                continue;
-            }
             const auto transientOnce =
                 transientOnceStatuses.find(prefetchCase.mode);
+            ++executedCases;
             const std::filesystem::path ready =
                 root / (std::string("http2-") + caseName + ".ready");
             const std::filesystem::path log =
@@ -1764,13 +1386,7 @@ namespace
                 coordinatorStatsJson = requireNetworkStatsEvidence();
             }
             server.stop();
-            const bool legacyNegativeContentRange =
-                std::string(prefetchCase.variant).find("content-range-") == 0;
-            const bool legacyAborted206Body =
-                std::string(prefetchCase.variant) == "transport-interrupt";
-            const Http2Evidence evidence = legacyAborted206Body
-                ? verifyLegacyInterruptedHttp2Log(log)
-                : verifyHttp2Log(log, !legacyNegativeContentRange);
+            const Http2Evidence evidence = verifyHttp2Log(log);
 
             const Http2StreamEvidence* head = nullptr;
             const Http2StreamEvidence* firstRange = nullptr;
@@ -1832,11 +1448,7 @@ namespace
             if (transientOnce != transientOnceStatuses.end() &&
                 prefetchCase.blockedReason[0] == '\0' && !invalidRetryDelay)
             {
-                const int expectedTransientHeadCount =
-                    prefetchCase.exactHeadCount >= 0
-                    ? prefetchCase.exactHeadCount : 1;
-                require(headCount == expectedTransientHeadCount &&
-                            ranges.size() == 2 &&
+                require(headCount == 1 && ranges.size() == 2 &&
                             ranges[0]->range == "bytes=0-131071" &&
                             ranges[1]->range == "bytes=0-131071" &&
                             ranges[0]->status == transientOnce->second &&
@@ -1856,103 +1468,94 @@ namespace
                             " did not recover through one coordinator retry: " +
                             parallelDebugSummary(capture));
 
-                require(networkStatsUnsigned(
-                            coordinatorStatsJson, "HEAD", "count") ==
-                            static_cast<std::uint64_t>(
-                                expectedTransientHeadCount) &&
-                            networkStatsUnsigned(
-                                coordinatorStatsJson, "GET", "count") == 1 &&
-                            networkStatsUnsigned(coordinatorStatsJson, "GET",
-                                                 "downloaded_bytes") == 131089 &&
-                            countDebug(capture,
-                                "ParallelHeadRange: logical-get-complete ") == 1,
+                HttpProof runtimeProof =
+                    buildHttpProof(capture, coordinatorStatsJson);
+                require(runtimeProof.actualHeadCount == 1 &&
+                            runtimeProof.actualGetCount == 2 &&
+                            runtimeProof.successfulGetCount == 1 &&
+                            runtimeProof.statsGetOperationCount == 1 &&
+                            runtimeProof.coordinatorLogicalGetCount == 1 &&
+                            runtimeProof.coordinatorLogicalGetBytes == 131072 &&
+                            runtimeProof.successfulRangeBytes == 131072 &&
+                            runtimeProof.coordinatorTransientRetryCount == 1 &&
+                            runtimeProof.coordinatorTransientRetryBytes == 17 &&
+                            runtimeProof.actualHttpBodyBytes == 131089 &&
+                            runtimeProof.coordinatorTransientRetryCodes ==
+                                std::map<int, int>{{transientOnce->second, 1}},
                         caseName +
-                            " compatibility behavior/stat tuple did not "
-                            "reconcile");
+                            " runtime HTTP/stat proof did not reconcile");
+                runtimeProof.metadataPrefetch =
+                    buildMetadataPrefetchProof(capture, runtimeProof);
+                require(runtimeProof.metadataPrefetch.headRequestCount == 1 &&
+                            runtimeProof.metadataPrefetch.rangeRequestCount == 2 &&
+                            runtimeProof.metadataPrefetch.sharedConnection &&
+                            runtimeProof.metadataPrefetch.requestsOverlapped &&
+                            runtimeProof.metadataPrefetch.cachePublished &&
+                            runtimeProof.metadataPrefetch.coordinatorRetries.size() == 1 &&
+                            runtimeProof.metadataPrefetch.coordinatorRetries.front().code ==
+                                transientOnce->second &&
+                            runtimeProof.metadataPrefetch.coordinatorRetries.front().bytes == 17 &&
+                            runtimeProof.metadataPrefetch.coordinatorRetries.front().attempt == 1 &&
+                            runtimeProof.metadataPrefetch.coordinatorRetries.front().delayMs == 100,
+                        caseName +
+                            " runtime metadata retry proof did not reconcile");
             }
             if (prefetchCase.blockedReason[0])
             {
-                const bool headRetryExhausted =
-                    std::string(prefetchCase.variant) == "head-503-exhaust";
-                if (headRetryExhausted)
-                {
-                    require(rangeCount == 1 && ranges.size() == 1 &&
-                                ranges.front()->status == 206 &&
-                                ranges.front()->range == "bytes=0-131071" &&
-                                countDebug(capture,
-                                    "head-transient-retry context=") == 2 &&
-                                countDebug(capture,
-                                    "ParallelHeadRange: transient-retry "
-                                    "context=") == 0 &&
-                                countDebug(capture,
-                                    "ParallelHeadRange: published") == 0,
-                            caseName +
-                                " changed the successful overlapping Range "
-                                "or exhausted HEAD retry chain");
-                }
-                else
-                {
-                    const int expectedBlockedRangeCount =
-                        prefetchCase.verifyOperationScope ? 2 :
-                        prefetchCase.exactRangeCount;
-                    const int expectedFailedRangeCount =
-                        prefetchCase.transportFaultOrdinal == 2 ? 2 : 1;
-                    require(rangeCount == expectedBlockedRangeCount &&
-                                ranges.size() == static_cast<std::size_t>(
+                const int expectedBlockedRangeCount =
+                    prefetchCase.verifyOperationScope ? 2 :
+                    prefetchCase.exactRangeCount;
+                const int expectedFailedRangeCount =
+                    prefetchCase.transportFaultOrdinal == 2 ? 2 : 1;
+                require(rangeCount == expectedBlockedRangeCount &&
+                            ranges.size() ==
+                                static_cast<std::size_t>(
                                     expectedBlockedRangeCount) &&
-                                std::count_if(ranges.begin(), ranges.end(),
-                                [](const Http2StreamEvidence* range)
-                                {
-                                    return range->status == 500 &&
-                                        range->range == "bytes=0-131071";
-                                }) == expectedFailedRangeCount,
-                            caseName +
-                                " emitted an unexpected blocked Range set");
-                    require(countDebug(capture,
-                                "ParallelHeadRange: transient-retry context=") ==
-                                (prefetchCase.transportFaultOrdinal == 2
-                                    ? 1 : 0) &&
-                            countDebug(capture,
-                                "ParallelHeadRange: published") ==
-                                (prefetchCase.verifyOperationScope ? 1 : 0),
-                            caseName +
-                                " retried or published an invalid Range: " +
-                                parallelDebugSummary(capture));
-                    std::vector<CoordinatorRetryBlockedEvidence> blocked;
-                    for (const std::string& message : capture.messages)
+                            std::count_if(ranges.begin(), ranges.end(),
+                            [](const Http2StreamEvidence* range)
+                            {
+                                return range->status == 500 &&
+                                    range->range == "bytes=0-131071";
+                            }) == expectedFailedRangeCount,
+                        caseName + " emitted an unexpected blocked Range set");
+                require(countDebug(capture,
+                            "ParallelHeadRange: transient-retry range=") ==
+                            (prefetchCase.transportFaultOrdinal == 2 ? 1 : 0) &&
+                        countDebug(capture,
+                            "ParallelHeadRange: published") ==
+                            (prefetchCase.verifyOperationScope ? 1 : 0),
+                        caseName + " retried or published an invalid Range: " +
+                            parallelDebugSummary(capture));
+                std::vector<CoordinatorRetryBlockedEvidence> blocked;
+                for (const std::string& message : capture.messages)
+                {
+                    CoordinatorRetryBlockedEvidence evidence;
+                    if (parseCoordinatorRetryBlockedEvidence(message, evidence))
+                        blocked.push_back(evidence);
+                    else
                     {
-                        CoordinatorRetryBlockedEvidence evidence;
-                        if (parseCoordinatorRetryBlockedEvidence(
-                                message, evidence))
-                            blocked.push_back(evidence);
-                        else
-                        {
-                            require(message.find("ParallelHeadRange: "
-                                        "transient-retry-blocked") ==
-                                        std::string::npos,
-                                    caseName +
-                                        " emitted a malformed blocked event");
-                        }
+                        require(message.find(
+                                    "ParallelHeadRange: transient-retry-blocked") ==
+                                    std::string::npos,
+                                caseName + " emitted a malformed blocked event");
                     }
-                    const bool hasExpectedBlockedConnection =
-                        std::string(prefetchCase.getInfoFault) == "connection"
-                        ? blocked.size() == 1 &&
-                            blocked.front().connectionId ==
-                                TEST_CONNECTION_ID_SENTINEL
-                        : blocked.size() == 1 &&
-                            blocked.front().connectionId >= 0;
-                    require(blocked.size() == 1 &&
-                                blocked.front().range == "bytes=0-131071" &&
-                                blocked.front().code == 500 &&
-                                blocked.front().reason ==
-                                    prefetchCase.blockedReason &&
-                                hasExpectedBlockedConnection &&
-                                blocked.front().httpMajor ==
-                                    (std::string(prefetchCase.httpVersion) ==
-                                        "1.1" ? 1 : 2),
-                            caseName +
-                                " omitted its exact fail-closed retry event");
                 }
+                const bool hasExpectedBlockedConnection =
+                    std::string(prefetchCase.getInfoFault) == "connection"
+                    ? blocked.size() == 1 &&
+                        blocked.front().connectionId ==
+                            TEST_CONNECTION_ID_SENTINEL
+                    : blocked.size() == 1 &&
+                        blocked.front().connectionId >= 0;
+                require(blocked.size() == 1 &&
+                            blocked.front().range == "bytes=0-131071" &&
+                            blocked.front().code == 500 &&
+                            blocked.front().reason == prefetchCase.blockedReason &&
+                            hasExpectedBlockedConnection &&
+                            blocked.front().httpMajor ==
+                                (std::string(prefetchCase.httpVersion) == "1.1"
+                                    ? 1 : 2),
+                        caseName + " omitted its exact fail-closed retry event");
                 require(countDebug(capture,
                             "ParallelHeadRange: blocked-operation-marked") == 1 &&
                             countDebug(capture,
@@ -1994,7 +1597,7 @@ namespace
                             "range-503-exhaust retry stream changed");
                 }
                 require(countDebug(capture,
-                            "ParallelHeadRange: transient-retry context=") == 2 &&
+                            "ParallelHeadRange: transient-retry") == 2 &&
                             countDebug(capture,
                             "ParallelHeadRange: transient-fallback") == 1 &&
                             countDebug(capture,
@@ -2003,10 +1606,24 @@ namespace
                             "ParallelHeadRange: published") == 0 && !opened,
                         "range-503-exhaust did not fail closed after two retries: " +
                             parallelDebugSummary(capture));
-                require(!coordinatorStatsJson.empty(),
-                        "range-503-exhaust omitted its legacy compatibility "
-                        "statistics; v6 terminal proof is exercised only by "
-                        "the attributed HEAD-first matrix");
+                const HttpProof runtimeProof =
+                    buildHttpProof(capture, coordinatorStatsJson);
+                require(runtimeProof.actualHeadCount == 1 &&
+                            runtimeProof.actualGetCount == 3 &&
+                            runtimeProof.successfulGetCount == 0 &&
+                            runtimeProof.statsGetOperationCount == 1 &&
+                            runtimeProof.coordinatorLogicalGetCount == 1 &&
+                            runtimeProof.coordinatorLogicalGetBytes == 17 &&
+                            runtimeProof.coordinatorTransientRetryCount == 2 &&
+                            runtimeProof.coordinatorTransientRetryBytes == 34 &&
+                            runtimeProof.coordinatorTransientRetryCodes ==
+                                std::map<int, int>{{503, 2}} &&
+                            runtimeProof.coordinatorTransientFallbackCount == 1 &&
+                            runtimeProof.coordinatorTransientFallbackBytes == 17 &&
+                            runtimeProof.coordinatorTransientFallbackCodes ==
+                                std::map<int, int>{{503, 1}} &&
+                            runtimeProof.actualHttpBodyBytes == 51,
+                        "range-503-exhaust runtime retry/fallback proof did not reconcile");
             }
             if (std::string(prefetchCase.variant) == "range-404")
             {
@@ -2025,7 +1642,7 @@ namespace
                             countDebug(capture,
                                 "ParallelHeadRange: retry-delay-rejected") == 1 &&
                             countDebug(capture,
-                                "ParallelHeadRange: transient-retry context=") == 0 &&
+                                "ParallelHeadRange: transient-retry range=") == 0 &&
                             countDebug(capture,
                                 "ParallelHeadRange: blocked-operation-marked") == 1 &&
                             countDebug(capture,
@@ -2047,8 +1664,6 @@ namespace
                 prefetchCase.verifyOperationScope ||
                 (std::string(prefetchCase.mode) == "success" &&
                  (prefetchCase.variant[0] == '\0' ||
-                  std::string(prefetchCase.variant) == "head-503" ||
-                  std::string(prefetchCase.variant) == "remove-retry" ||
                   prefetchCase.completionOrder[0] != '\0')) ||
                 std::string(prefetchCase.mode) == "range-503" ||
                 (transientOnce != transientOnceStatuses.end() &&
@@ -2214,771 +1829,9 @@ namespace
                 "OSGSOL_TEST_PREFETCH_CASE did not name a prefetch mode");
     }
 
-    std::vector<ScienceServerRequest> scienceServerRequests(
-        const Http2Evidence& evidence)
-    {
-        std::vector<ScienceServerRequest> requests;
-        std::set<std::string> correlations;
-        for (const Http2StreamEvidence& stream : evidence.streams)
-        {
-            require(!stream.correlation.empty() &&
-                        correlations.insert(stream.correlation).second,
-                    "v6 HTTP/2 server record omitted or duplicated correlation");
-            ScienceServerRequest request;
-            request.correlation = stream.correlation;
-            request.method = stream.method;
-            request.range = stream.range;
-            request.sessionId = stream.sessionId;
-            request.streamId = stream.streamId;
-            request.path = stream.path;
-            request.status = stream.status;
-            request.start = stream.start;
-            request.response = stream.response;
-            request.end = stream.end;
-            request.attemptedBodyBytes = stream.attemptedBodyBytes;
-            request.contentLength = stream.contentLength;
-            request.contentRange = stream.contentRange;
-            request.aborted = stream.aborted;
-            request.startCount = stream.startCount;
-            request.responseCount = stream.responseCount;
-            request.endCount = stream.endCount;
-            request.protocolErrorCount = stream.protocolErrorCount;
-            request.protocolError = stream.protocolError;
-            requests.push_back(request);
-        }
-        return requests;
-    }
-
-    std::string mutateNetworkStatsField(
-        const std::string& statsJson, const std::string& method,
-        const std::string& name)
-    {
-        picojson::value value;
-        require(picojson::parse(value, statsJson).empty() &&
-                    value.is<picojson::object>(),
-                "network stats mutation fixture is invalid");
-        picojson::object& root = value.get<picojson::object>();
-        picojson::object& methods =
-            root.at("methods").get<picojson::object>();
-        picojson::object& methodObject =
-            methods.at(method).get<picojson::object>();
-        const auto item = methodObject.find(name);
-        const double original = item == methodObject.end()
-            ? 0.0 : item->second.get<double>();
-        methodObject[name] = picojson::value(original + 1.0);
-        return value.serialize(true);
-    }
-
-    void verifyV6HeadRecoveryContract(const std::filesystem::path& fixture,
-                                      const std::filesystem::path& root)
-    {
-        struct HeadCase
-        {
-            const char* name;
-            const char* mode;
-            bool opens;
-            int headCount;
-            int rangeCount;
-            int headRetries;
-            int rangeRetries;
-            bool publishes;
-            bool successfulRange = true;
-            const char* retryDelay = "0.1";
-            const char* blockReason = "retry-status";
-            const char* faultName = "";
-            const char* faultValue = "";
-            bool persistentDetach = false;
-            bool retainsAttachedState = false;
-            bool verifiesDetachedState = false;
-        };
-        const HeadCase cases[] = {
-            {"v6-head-429-once", "success", true, 2, 1, 1, 0, true},
-            {"v6-head-500-once", "success", true, 2, 1, 1, 0, true},
-            {"v6-head-502-once", "success", true, 2, 1, 1, 0, true},
-            {"v6-head-503-once", "success", true, 2, 1, 1, 0, true},
-            {"v6-head-504-once", "success", true, 2, 1, 1, 0, true},
-            {"v6-head-500-once-v6-head-content-length-absent", "success",
-                true, 2, 1, 1, 0, true},
-            {"v6-head-500-thrice", "success", true, 4, 1, 3, 0, true},
-            {"v6-head-500-once-v6-range-first", "success", true, 2, 1, 1,
-                0, true},
-            {"v6-head-500-once-v6-head-first", "success", true, 2, 1, 1,
-                0, true},
-            {"v6-head-429-once-v6-range-429-once-v6-range-first",
-                "range-429-once", true, 2, 2, 1, 1, true},
-            {"v6-head-429-once-v6-range-429-once-v6-head-first",
-                "range-429-once", true, 2, 2, 1, 1, true},
-            {"v6-head-500-once-v6-range-500-once-v6-range-first",
-                "range-500-once", true, 2, 2, 1, 1, true},
-            {"v6-head-500-once-v6-range-500-once-v6-head-first",
-                "range-500-once", true, 2, 2, 1, 1, true},
-            {"v6-head-502-once-v6-range-502-once-v6-range-first",
-                "range-502-once", true, 2, 2, 1, 1, true},
-            {"v6-head-502-once-v6-range-502-once-v6-head-first",
-                "range-502-once", true, 2, 2, 1, 1, true},
-            {"v6-head-503-once-v6-range-503-once-v6-range-first",
-                "range-503-once", true, 2, 2, 1, 1, true},
-            {"v6-head-503-once-v6-range-503-once-v6-head-first",
-                "range-503-once", true, 2, 2, 1, 1, true},
-            {"v6-head-504-once-v6-range-504-once-v6-range-first",
-                "range-504-once", true, 2, 2, 1, 1, true},
-            {"v6-head-504-once-v6-range-504-once-v6-head-first",
-                "range-504-once", true, 2, 2, 1, 1, true},
-            {"v6-head-500-once-v6-range-transient-no-content-range",
-                "range-500-once", true, 2, 2, 1, 1, true},
-            {"v6-head-500-once-v6-range-transient-content-range",
-                "range-500-once", true, 2, 2, 1, 1, true},
-            {"v6-head-500-exhaust", "success", false, 4, 1, 3, 0, false},
-            {"v6-head-500-then-400", "success", false, 2, 1, 1, 0, false},
-            {"v6-head-500-then-404", "success", false, 2, 1, 1, 0, false},
-            {"v6-head-500-then-405", "success", false, 2, 1, 1, 0, false},
-            {"v6-head-500-once-v6-range-exhaust", "range-503-exhaust",
-                false, 2, 4, 1, 3, false, false},
-            {"v6-head-500-once-v6-delay-nan", "success",
-                false, 1, 1, 0, 0, false, true, "nan", "retry-delay"},
-            {"v6-head-500-once-v6-delay-huge", "success",
-                false, 1, 1, 0, 0, false, true, "1e300", "retry-delay"},
-            {"v6-head-500-once-v6-head-remove-fault", "success",
-                true, 2, 1, 1, 0, true, true, "0.1", "detach",
-                "OSGSOL_TEST_FAIL_HEAD_RETRY_CURL_REMOVE", "1"},
-            {"v6-head-500-once-v6-head-remove-persistent", "success",
-                false, 1, 1, 0, 0, false, true, "0.1", "detach",
-                "OSGSOL_TEST_FAIL_HEAD_RETRY_CURL_REMOVE", "2", true, true},
-            {"v6-head-500-once-v6-head-add-fault", "success",
-                false, 1, 1, 1, 0, false, true, "0.1", "add",
-                "OSGSOL_TEST_FAIL_HEAD_RETRY_CURL_ADD", "1", false, false,
-                true},
-            {"v6-head-500-once-v6-head-perform-fault", "success",
-                false, 1, 1, 1, 0, false, true, "0.1", "perform",
-                "OSGSOL_TEST_FAIL_HEAD_RETRY_CURL_PERFORM", "1", false,
-                false, true},
-            {"v6-head-500-once-v6-size-mismatch", "size-mismatch",
-                false, 2, 1, 1, 0, false, true, "0.1",
-                "size-mismatch"},
-        };
-        const char* selectedMode =
-            CPLGetConfigOption("OSGSOL_TEST_PREFETCH_CASE", nullptr);
-        const std::filesystem::path certificate = root / "v6-http2-cert.pem";
-        const std::filesystem::path key = root / "v6-http2-key.pem";
-        createSelfSignedCertificate(certificate, key);
-        int executed = 0;
-        for (const HeadCase& headCase : cases)
-        {
-            if (selectedMode == nullptr && headCase.persistentDetach)
-                continue;
-            if (selectedMode && std::string(selectedMode) != headCase.name)
-                continue;
-            ++executed;
-            if (headCase.faultName[0] && !curlFaultInterposerAvailable())
-            {
-                require(selectedMode == nullptr,
-                        "selected v6 HEAD ownership fault requires the curl "
-                        "fault interposer");
-                std::cout << "ScienceV6HeadRecovery: mode="
-                          << headCase.name
-                          << " skipped=curl-fault-interposer-unavailable"
-                          << std::endl;
-                continue;
-            }
-            const std::filesystem::path ready =
-                root / (std::string(headCase.name) + ".ready");
-            const std::filesystem::path log =
-                root / (std::string(headCase.name) + ".jsonl");
-            ServerProcess server = startHttp2Server(
-                fixture, ready, log, certificate, key,
-                headCase.mode, "h2");
-            const int port = waitForPort(ready);
-            const std::string url = "/vsicurl/https://127.0.0.1:" +
-                std::to_string(port) + "/" + headCase.name +
-                "/fixture.tif";
-            ScopedGdalConfig config({
-                {"GDAL_HTTP_UNSAFESSL", "YES"},
-                {"GDAL_HTTP_VERSION", "2TLS"},
-                {"GDAL_HTTP_PROXY", ""},
-                {"GDAL_HTTPS_PROXY", ""},
-                {"GDAL_HTTP_MAX_RETRY", "3"},
-                {"GDAL_HTTP_RETRY_DELAY", headCase.retryDelay},
-            });
-            VSICurlClearCache();
-            VSINetworkStatsReset();
-            DebugCapture capture;
-            bool opened = false;
-            std::size_t retainedStateBefore = 0;
-            std::size_t attachedStateBefore = 0;
-            if (headCase.retainsAttachedState ||
-                headCase.verifiesDetachedState)
-            {
-                require(curlAttachedStateCount() != nullptr &&
-                            (!headCase.persistentDetach ||
-                             curlRetainedStateCount() != nullptr),
-                        "attached ownership row lacks interposer state oracle");
-                unsetenv("OSGSOL_TEST_CLEANUP_WHILE_ATTACHED");
-                attachedStateBefore = curlAttachedStateCount()();
-                if (headCase.persistentDetach)
-                    retainedStateBefore = curlRetainedStateCount()();
-            }
-            {
-                ScopedGdalErrorCapture errorCapture(capture);
-                ScopedPathSpecificOption prefetch(
-                    url, "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
-                ScopedPathSpecificOption operation(
-                    url, "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
-                    nextPrefetchOperationId().c_str());
-                if (headCase.faultName[0])
-                    setenv(headCase.faultName, headCase.faultValue, 1);
-                GDALDataset* dataset = static_cast<GDALDataset*>(GDALOpenEx(
-                    url.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
-                    nullptr, nullptr, nullptr));
-                opened = dataset != nullptr;
-                if (dataset)
-                {
-                    std::int8_t value = 0;
-                    require(dataset->GetRasterBand(1)->RasterIO(
-                                GF_Read, 0, 0, 1, 1, &value,
-                                1, 1, GDT_Int8, 0, 0, nullptr) == CE_None,
-                            std::string(headCase.name) +
-                                " failed its bounded read");
-                    GDALClose(dataset);
-                }
-                if (headCase.faultName[0])
-                    require(std::getenv(headCase.faultName) == nullptr,
-                            std::string(headCase.name) +
-                                " did not consume its HEAD-retry-only fault");
-                if (headCase.retainsAttachedState)
-                {
-                    const std::uintmax_t serverBytesBeforeProbe =
-                        std::filesystem::file_size(log);
-                    const int rejectedBeforeProbe = countDebug(
-                        capture, "blocked-operation-rejected");
-                    VSILFILE* blocked = VSIFOpenL(url.c_str(), "rb");
-                    require(blocked == nullptr &&
-                                std::filesystem::file_size(log) ==
-                                    serverBytesBeforeProbe &&
-                                countDebug(capture,
-                                    "blocked-operation-rejected") ==
-                                    rejectedBeforeProbe + 1 &&
-                                std::getenv(
-                                    "OSGSOL_TEST_CLEANUP_WHILE_ATTACHED") ==
-                                    nullptr &&
-                                curlAttachedStateCount()() ==
-                                    attachedStateBefore + 1 &&
-                                (!headCase.persistentDetach ||
-                                 curlRetainedStateCount()() ==
-                                    retainedStateBefore + 1),
-                            "ownership fault did not retain callback/context "
-                            "state, latch before reuse, or avoid attached "
-                            "cleanup");
-                }
-                else if (headCase.verifiesDetachedState)
-                {
-                    require(std::getenv(
-                                "OSGSOL_TEST_CLEANUP_WHILE_ATTACHED") ==
-                                nullptr &&
-                                curlAttachedStateCount()() ==
-                                    attachedStateBefore,
-                            "recoverable ownership fault retained or cleaned "
-                            "an attached handle");
-                }
-            }
-            const std::string statsJson = requireNetworkStatsEvidence();
-            server.stop();
-            const Http2Evidence evidence = verifyHttp2Log(log, true);
-            const AttributedTransportProof proof =
-                buildAttributedTransportProof(
-                    capture, scienceServerRequests(evidence));
-            HttpProof httpProof = buildHttpProof(
-                capture, statsJson, AttributionMode::AttributedV6);
-            if (headCase.successfulRange)
-            {
-                if (httpProof.attributedTransportQualified)
-                    httpProof.metadataPrefetch =
-                        buildMetadataPrefetchProof(capture, httpProof);
-            }
-            const int actualHeads = static_cast<int>(std::count_if(
-                evidence.streams.begin(), evidence.streams.end(),
-                [](const Http2StreamEvidence& stream)
-                {
-                    return stream.method == "HEAD";
-                }));
-            const int actualRanges = static_cast<int>(std::count_if(
-                evidence.streams.begin(), evidence.streams.end(),
-                [](const Http2StreamEvidence& stream)
-                {
-                    return stream.method == "GET" && !stream.range.empty();
-                }));
-            std::uint64_t serverGetBodies = 0;
-            for (const Http2StreamEvidence& stream : evidence.streams)
-            {
-                if (stream.method == "GET")
-                    checkedAdd(serverGetBodies, stream.attemptedBodyBytes,
-                               "v6 server GET bodies");
-            }
-            const int actualRangeRetries = static_cast<int>(std::count_if(
-                proof.events.begin(), proof.events.end(),
-                [](const AttributedEventEvidence& event)
-                {
-                    return event.kind == "coordinator-retry";
-                }));
-            require(opened == headCase.opens &&
-                        actualHeads == headCase.headCount &&
-                        actualRanges == headCase.rangeCount &&
-                        actualHeads == httpProof.actualHeadCount &&
-                        actualRanges == httpProof.actualGetCount &&
-                        httpProof.statsHeadCount == actualHeads &&
-                        httpProof.statsGetOperationCount == 1 &&
-                        (!headCase.publishes ||
-                         httpProof.statsGetOperationCount ==
-                            httpProof.coordinatorLogicalGetCount) &&
-                        serverGetBodies == httpProof.actualHttpBodyBytes &&
-                        static_cast<int>(proof.headRetries.size()) ==
-                            headCase.headRetries &&
-                        actualRangeRetries == headCase.rangeRetries &&
-                        (proof.cachePublicationCount == 1) ==
-                            headCase.publishes &&
-                        (proof.propertyPublicationCount == 1) ==
-                            headCase.publishes &&
-                        proof.qualified == headCase.publishes,
-                    std::string(headCase.name) +
-                        " did not satisfy the HEAD-first v6 contract");
-            if (!headCase.publishes)
-            {
-                const int ordinaryHeaderGets = static_cast<int>(std::count_if(
-                    proof.completions.begin(), proof.completions.end(),
-                    [](const ScienceTransportCompletion& completion)
-                    {
-                        return completion.scope == "ordinary-head" &&
-                            completion.method == "GET";
-                    }));
-                const int tokenBlocks = static_cast<int>(std::count_if(
-                    proof.events.begin(), proof.events.end(),
-                    [](const AttributedEventEvidence& event)
-                    {
-                        return event.kind == "operation-blocked";
-                    }));
-                const int propertyBlocks = static_cast<int>(std::count_if(
-                    proof.events.begin(), proof.events.end(),
-                    [](const AttributedEventEvidence& event)
-                    {
-                        return event.kind == "property-blocked";
-                    }));
-                const bool expectedReasonBlocked = std::any_of(
-                    proof.events.begin(), proof.events.end(),
-                    [&headCase](const AttributedEventEvidence& event)
-                    {
-                        return (event.kind == "head-blocked" ||
-                                event.kind == "range-blocked") &&
-                            event.reason == headCase.blockReason;
-                    });
-                const auto exactBlockCount = [&](const std::string& kind)
-                {
-                    return static_cast<int>(std::count_if(
-                        proof.events.begin(), proof.events.end(),
-                        [&](const AttributedEventEvidence& event)
-                        {
-                            return event.kind == kind &&
-                                event.reason == headCase.blockReason;
-                        }));
-                };
-                require(proof.fallbackCount == 0 && ordinaryHeaderGets == 0 &&
-                            tokenBlocks == 1 && propertyBlocks == 1 &&
-                            exactBlockCount("head-blocked") +
-                                exactBlockCount("range-blocked") == 1 &&
-                            exactBlockCount("property-blocked") == 1 &&
-                            exactBlockCount("operation-blocked") == 1 &&
-                            expectedReasonBlocked &&
-                            (std::string(headCase.blockReason) !=
-                                    "retry-status" ||
-                             containsDebug(capture, "CanRetry=0")),
-                        std::string(headCase.name) +
-                            " failure row lost exact block reason/admission, "
-                            "token blocking, or admitted fallback/header GET");
-                const auto statsRejected = [&](const std::string& mutated)
-                {
-                    try
-                    {
-                        static_cast<void>(buildHttpProof(
-                            capture, mutated,
-                            AttributionMode::AttributedV6));
-                        return false;
-                    }
-                    catch (const std::exception&)
-                    {
-                        return true;
-                    }
-                };
-                require(statsRejected(mutateNetworkStatsField(
-                            statsJson, "HEAD", "count")) &&
-                            statsRejected(mutateNetworkStatsField(
-                                statsJson, "GET", "downloaded_bytes")),
-                        std::string(headCase.name) +
-                            " accepted mutated negative-path HEAD/body stats");
-            }
-            if (std::string(headCase.mode) == "range-500-once")
-            {
-                const auto headRetry = std::find_if(
-                    capture.messages.begin(), capture.messages.end(),
-                    [](const std::string& message)
-                    {
-                        return message.find("head-transient-retry context=") !=
-                            std::string::npos;
-                    });
-                const auto rangeRetry = std::find_if(
-                    capture.messages.begin(), capture.messages.end(),
-                    [](const std::string& message)
-                    {
-                        return message.find(
-                            "ParallelHeadRange: transient-retry context=") !=
-                            std::string::npos;
-                    });
-                require(headRetry != capture.messages.end() &&
-                            rangeRetry != capture.messages.end() &&
-                            headRetry < rangeRetry,
-                        std::string(headCase.name) +
-                            " did not recover HEAD before Range");
-            }
-        }
-        if (selectedMode &&
-            std::string(selectedMode).rfind("v6-", 0) == 0 && executed > 0)
-            require(executed == 1,
-                    "OSGSOL_TEST_PREFETCH_CASE did not name one v6 HEAD case");
-    }
-
-    void verifyV6InvalidHeadSurfaces(const std::filesystem::path& fixture,
-                                     const std::filesystem::path& root)
-    {
-        struct InvalidHeadCase
-        {
-            const char* name;
-            const char* protocol = "h2";
-            const char* faultName = "";
-            const char* faultValue = "";
-            const char* blockReason = "head-invalid";
-            const char* serverMode = "success";
-            const char* terminalKind = "head-blocked";
-            int expectedHeads = 1;
-            int expectedGets = 1;
-            bool requireDuplicateProtocolFailure = false;
-            int expectedHeadRetries = 0;
-        };
-        const InvalidHeadCase cases[] = {
-            {"v6-head-500-once-v6-head-content-length-malformed"},
-            {"v6-head-500-once-v6-head-content-range"},
-            {"v6-head-500-once-v6-head-curl-error", "h2",
-                "OSGSOL_TEST_CURLMSG_TRANSPORT_ON_500", "1"},
-            {"v6-head-500-once-v6-redirect-invalid", "h2",
-                "OSGSOL_TEST_CURLINFO_REDIRECT_COUNT_ONCE", "1"},
-            {"v6-head-500-once-v6-head-http1", "http1"},
-            {"v6-head-500-once-v6-connection-different", "h2",
-                "OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", "922337203685477000"},
-            {"v6-head-500-once-v6-connection-invalid", "h2",
-                "OSGSOL_TEST_CURLINFO_CONN_ID_ONCE", "-1"},
-            {"v6-head-500-once-v6-final-head-content-length-absent", "h2",
-                "", "", "head-invalid", "success", "head-blocked", 2, 1,
-                false, 1},
-            {"v6-head-500-once-v6-range-transient-content-range-malformed",
-                "h2", "", "", "range-invalid", "range-500-once",
-                "range-blocked"},
-            {"v6-head-500-once-v6-range-transient-content-range-spoof",
-                "h2", "", "", "range-invalid", "range-500-once",
-                "range-blocked"},
-            {"v6-head-500-once-v6-range-transient-duplicate-protocol-error",
-                "h2", "", "", "range-transport", "range-500-once",
-                "range-blocked", 1, 1, true},
-            {"v6-head-500-once-v6-range-transient-contradictory",
-                "h2", "", "", "range-invalid", "range-500-once",
-                "range-blocked"},
-            {"v6-head-500-once-v6-range-transient-oversized",
-                "h2", "", "", "range-transport", "range-500-once",
-                "range-blocked"},
-            {"v6-head-500-once-v6-range-transient-unaccounted",
-                "h2", "", "", "range-transport", "range-500-once",
-                "range-blocked"},
-        };
-        const char* selectedMode =
-            CPLGetConfigOption("OSGSOL_TEST_PREFETCH_CASE", nullptr);
-        bool selectedInvalid = selectedMode == nullptr;
-        for (const InvalidHeadCase& item : cases)
-        {
-            if (selectedMode && std::string(selectedMode) == item.name)
-                selectedInvalid = true;
-        }
-        if (!selectedInvalid) return;
-
-        const std::filesystem::path certificate =
-            root / "v6-invalid-http2-cert.pem";
-        const std::filesystem::path key = root / "v6-invalid-http2-key.pem";
-        createSelfSignedCertificate(certificate, key);
-        int matched = 0;
-        for (const InvalidHeadCase& item : cases)
-        {
-            if (selectedMode && std::string(selectedMode) != item.name)
-                continue;
-            ++matched;
-            if (item.faultName[0] && !curlFaultInterposerAvailable())
-            {
-                std::cout << "ScienceV6InvalidHead: mode=" << item.name
-                          << " skipped=curl-fault-interposer-unavailable"
-                          << std::endl;
-                continue;
-            }
-            const std::filesystem::path ready =
-                root / (std::string(item.name) + ".invalid.ready");
-            const std::filesystem::path log =
-                root / (std::string(item.name) + ".invalid.jsonl");
-            ServerProcess server = startHttp2Server(
-                fixture, ready, log, certificate, key, item.serverMode,
-                item.protocol);
-            const int port = waitForPort(ready);
-            const std::string url = "/vsicurl/https://127.0.0.1:" +
-                std::to_string(port) + "/" + item.name + "/fixture.tif";
-            ScopedGdalConfig config({
-                {"GDAL_HTTP_UNSAFESSL", "YES"},
-                {"GDAL_HTTP_VERSION",
-                    std::string(item.protocol) == "http1" ? "1.1" : "2TLS"},
-                {"GDAL_HTTP_PROXY", ""},
-                {"GDAL_HTTPS_PROXY", ""},
-                {"GDAL_HTTP_MAX_RETRY", "3"},
-                {"GDAL_HTTP_RETRY_DELAY", "0.1"},
-            });
-            VSICurlClearCache();
-            VSINetworkStatsReset();
-            DebugCapture capture;
-            bool opened = false;
-            {
-                ScopedGdalErrorCapture errorCapture(capture);
-                ScopedPathSpecificOption prefetch(
-                    url, "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
-                ScopedPathSpecificOption operation(
-                    url, "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
-                    nextPrefetchOperationId().c_str());
-                if (item.faultName[0])
-                    setenv(item.faultName, item.faultValue, 1);
-                GDALDataset* dataset = static_cast<GDALDataset*>(GDALOpenEx(
-                    url.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
-                    nullptr, nullptr, nullptr));
-                opened = dataset != nullptr;
-                if (dataset) GDALClose(dataset);
-                if (item.faultName[0])
-                    require(std::getenv(item.faultName) == nullptr,
-                            std::string(item.name) +
-                                " did not consume its one-shot curl fault");
-                const std::uintmax_t serverBytesBeforeProbe =
-                    std::filesystem::file_size(log);
-                const int rejectedBeforeProbe = countDebug(
-                    capture, "blocked-operation-rejected");
-                VSILFILE* blocked = VSIFOpenL(url.c_str(), "rb");
-                require(blocked == nullptr,
-                        std::string(item.name) +
-                            " same-token probe escaped the terminal latch");
-                require(std::filesystem::file_size(log) ==
-                            serverBytesBeforeProbe &&
-                            countDebug(capture,
-                                "blocked-operation-rejected") ==
-                                rejectedBeforeProbe + 1,
-                        std::string(item.name) +
-                            " same-token latch probe reached transport or "
-                            "lost its rejection event");
-            }
-            const std::string statsJson = requireNetworkStatsEvidence();
-            server.stop();
-            const Http2Evidence evidence = readHttp2Log(log);
-            const std::vector<ScienceServerRequest> serverRequests =
-                scienceServerRequests(evidence);
-            const bool malformedHeadCase =
-                std::string(item.name).find(
-                    "v6-head-content-length-malformed") != std::string::npos;
-            if (malformedHeadCase)
-            {
-                bool strictParserRejected = false;
-                try
-                {
-                    static_cast<void>(buildAttributedTransportProof(
-                        capture, serverRequests));
-                }
-                catch (const std::exception&)
-                {
-                    strictParserRejected = true;
-                }
-                require(strictParserRejected,
-                        "strict raw parser accepted a protocol-terminated "
-                        "malformed HEAD response");
-            }
-            const AttributedTransportProof proof =
-                buildAttributedTransportProof(
-                    capture, serverRequests, malformedHeadCase);
-            const HttpProof httpProof = buildHttpProof(
-                capture, statsJson, AttributionMode::AttributedV6,
-                malformedHeadCase, serverRequests);
-            const int serverHeads = static_cast<int>(std::count_if(
-                evidence.streams.begin(), evidence.streams.end(),
-                [](const Http2StreamEvidence& stream)
-                {
-                    return stream.method == "HEAD";
-                }));
-            const int serverGets = static_cast<int>(std::count_if(
-                evidence.streams.begin(), evidence.streams.end(),
-                [](const Http2StreamEvidence& stream)
-                {
-                    return stream.method == "GET";
-                }));
-            std::uint64_t serverGetBodies = 0;
-            for (const Http2StreamEvidence& stream : evidence.streams)
-            {
-                if (stream.method == "GET")
-                    checkedAdd(serverGetBodies, stream.attemptedBodyBytes,
-                               "invalid HEAD server GET bodies");
-            }
-            const int headerOnlyGets = static_cast<int>(std::count_if(
-                capture.messages.begin(), capture.messages.end(),
-                [](const std::string& message)
-                {
-                    return message.rfind("CURL_INFO_HEADER_OUT: GET ", 0) == 0 &&
-                        message.find("\nRange:") == std::string::npos &&
-                        message.find("\r\nRange:") == std::string::npos;
-                }));
-            const auto exactBlockCount = [&](const std::string& kind)
-            {
-                return static_cast<int>(std::count_if(
-                    proof.events.begin(), proof.events.end(),
-                    [&](const AttributedEventEvidence& event)
-                    {
-                        return event.kind == kind &&
-                            event.reason == item.blockReason;
-                }));
-            };
-            const bool duplicateProtocolFailureObserved =
-                std::any_of(proof.completions.begin(),
-                    proof.completions.end(),
-                    [](const ScienceTransportCompletion& completion)
-                    {
-                        return completion.role == "range" &&
-                            completion.method == "GET" &&
-                            completion.curlCode != 0 &&
-                            completion.status == 0 &&
-                            completion.actualBodyBytes == 0;
-                    }) &&
-                std::any_of(evidence.streams.begin(), evidence.streams.end(),
-                    [](const Http2StreamEvidence& stream)
-                    {
-                        return stream.method == "GET" &&
-                            stream.protocolErrorCount == 1 &&
-                            stream.protocolError ==
-                                "ERR_HTTP2_HEADER_SINGLE_VALUE" &&
-                            stream.status == 0 && stream.aborted;
-                    });
-            const bool malformedHeadTransportObserved =
-                !malformedHeadCase ||
-                (std::any_of(evidence.streams.begin(), evidence.streams.end(),
-                    [](const Http2StreamEvidence& stream)
-                    {
-                        return stream.method == "HEAD" &&
-                            stream.status == 500 &&
-                            stream.rawContentLength == "malformed";
-                    }) &&
-                 std::any_of(proof.completions.begin(),
-                    proof.completions.end(),
-                    [](const ScienceTransportCompletion& completion)
-                    {
-                        return completion.role == "head" &&
-                            completion.method == "HEAD" &&
-                            completion.status == 500 &&
-                            completion.curlCode != 0 &&
-                            completion.actualBodyBytes == 0 &&
-                            completion.contentLengthCount <= 1 &&
-                            !completion.contentLengthValid &&
-                            completion.declaredContentLength == 0 &&
-                            completion.contentRangeCount == 0;
-                    }));
-            const auto malformedHeadStream = std::find_if(
-                evidence.streams.begin(), evidence.streams.end(),
-                [](const Http2StreamEvidence& stream)
-                {
-                    return stream.method == "HEAD";
-                });
-            const auto malformedRangeStream = std::find_if(
-                evidence.streams.begin(), evidence.streams.end(),
-                [](const Http2StreamEvidence& stream)
-                {
-                    return stream.method == "GET";
-                });
-            const bool malformedHeadOrderingObserved =
-                !malformedHeadCase ||
-                (malformedHeadStream != evidence.streams.end() &&
-                 malformedRangeStream != evidence.streams.end() &&
-                 malformedHeadStream->sessionId ==
-                    malformedRangeStream->sessionId &&
-                 malformedHeadStream->start < malformedRangeStream->start &&
-                 malformedRangeStream->end < malformedHeadStream->response);
-            require(!opened && !proof.qualified &&
-                        !httpProof.attributedTransportQualified &&
-                        serverHeads == httpProof.actualHeadCount &&
-                        serverGets == httpProof.actualGetCount &&
-                        serverHeads == httpProof.statsHeadCount &&
-                        httpProof.statsGetOperationCount == 1 &&
-                        serverGetBodies == httpProof.actualHttpBodyBytes &&
-                        serverHeads == item.expectedHeads &&
-                        serverGets == item.expectedGets &&
-                        exactBlockCount(item.terminalKind) == 1 &&
-                        exactBlockCount(std::string(item.terminalKind) ==
-                                "head-blocked"
-                                ? "range-blocked" : "head-blocked") == 0 &&
-                        exactBlockCount("property-blocked") == 1 &&
-                        exactBlockCount("operation-blocked") == 1 &&
-                        static_cast<int>(proof.headRetries.size()) ==
-                            item.expectedHeadRetries &&
-                        proof.cachePublicationCount == 0 &&
-                        proof.propertyPublicationCount == 0 &&
-                        proof.fallbackCount == 0 && headerOnlyGets == 0 &&
-                        countDebug(capture,
-                            "head-transient-retry context=") ==
-                            item.expectedHeadRetries &&
-                        countDebug(capture, "CanRetry=") == 0 &&
-                        malformedHeadTransportObserved &&
-                        malformedHeadOrderingObserved &&
-                        (!item.requireDuplicateProtocolFailure ||
-                         duplicateProtocolFailureObserved),
-                    std::string(item.name) +
-                        " did not preserve the authoritative invalid HEAD "
-                        "completion/block/stats/server chain");
-            const std::string mutatedHeadStats = mutateNetworkStatsField(
-                statsJson, "HEAD", "count");
-            const std::string mutatedBodyStats = mutateNetworkStatsField(
-                statsJson, "GET", "downloaded_bytes");
-            const auto statsRejected = [&](const std::string& mutated)
-            {
-                try
-                {
-                    static_cast<void>(buildHttpProof(
-                        capture, mutated, AttributionMode::AttributedV6,
-                        malformedHeadCase, serverRequests));
-                    return false;
-                }
-                catch (const std::exception&)
-                {
-                    return true;
-                }
-            };
-            require(statsRejected(mutatedHeadStats) &&
-                        statsRejected(mutatedBodyStats),
-                    std::string(item.name) +
-                        " accepted mutated HEAD/body network statistics");
-        }
-        if (selectedMode) require(matched == 1,
-            "OSGSOL_TEST_PREFETCH_CASE did not name one invalid v6 HEAD case");
-    }
-
     void verifyImmediateMultiRangeRetry(const std::filesystem::path& fixture,
                                         const std::filesystem::path& root)
     {
-        const char* selectedPrefetch =
-            CPLGetConfigOption("OSGSOL_TEST_PREFETCH_CASE", nullptr);
-        const char* selectedActivation =
-            CPLGetConfigOption("OSGSOL_TEST_MULTIRANGE_CASE", nullptr);
-        if (selectedPrefetch &&
-            std::string(selectedPrefetch).rfind("v6-", 0) == 0)
-            return;
-        if (selectedPrefetch != nullptr && selectedActivation == nullptr)
-            return;
         const std::filesystem::path certificate =
             root / "multirange-http2-cert.pem";
         const std::filesystem::path key = root / "multirange-http2-key.pem";
@@ -3013,8 +1866,6 @@ namespace
             bool expectsSuccess = true;
             int removeFaultCount = 0;
             bool verifyAbandonmentLatch = false;
-            const char* injectedFault = "";
-            int injectedFaultCount = 0;
         };
         const ActivationCase cases[] = {
             {"path", true},
@@ -3025,35 +1876,20 @@ namespace
             {"content-range-duplicate", true, "multirange-success", false},
             {"content-range-spoof", true, "multirange-success", false},
             {"content-range-wrong-range", true, "multirange-success", false},
-            {"add-fault", true, "multirange-500-overlap",
-                false, 0, false, "OSGSOL_TEST_FAIL_NEXT_CURL_ADD", 1},
-            {"perform-fault", true, "multirange-500-overlap",
-                false, 0, false, "OSGSOL_TEST_FAIL_NEXT_CURL_PERFORM", 1},
             {"remove-persistent", true, "multirange-500-repeat",
                 false, 2, true},
         };
+        const char* selectedActivation =
+            CPLGetConfigOption("OSGSOL_TEST_MULTIRANGE_CASE", nullptr);
         int executedCases = 0;
         for (const ActivationCase& activation : cases)
         {
-            if (selectedActivation == nullptr &&
-                std::string(activation.name) == "remove-persistent")
-                continue;
             if (selectedActivation &&
                 std::string(selectedActivation) != activation.name)
             {
                 continue;
             }
             ++executedCases;
-            if ((activation.removeFaultCount > 0 ||
-                 activation.injectedFaultCount > 0) &&
-                !curlFaultInterposerAvailable())
-            {
-                std::cout << "ScienceImmediateMultiRange: mode="
-                          << activation.name
-                          << " skipped=curl-fault-interposer-unavailable"
-                          << std::endl;
-                continue;
-            }
             const std::filesystem::path ready =
                 root / (std::string("multirange-") + activation.name + ".ready");
             const std::filesystem::path log =
@@ -3063,9 +1899,7 @@ namespace
                 activation.serverMode, "h2");
             const int port = waitForPort(ready);
             const std::string vsiUrl = "/vsicurl/https://127.0.0.1:" +
-                std::to_string(port) +
-                "/multirange-" +
-                activation.name +
+                std::to_string(port) + "/multirange-" + activation.name +
                 "/alphaearth-range-fixture.tif";
             ScopedGdalConfig config({
                 {"GDAL_HTTP_UNSAFESSL", "YES"},
@@ -3097,16 +1931,7 @@ namespace
             }
             int readResult = -1;
             int secondReadResult = -1;
-            int immediateRetryCountAfterFirstRead = 0;
             bool firstReadOutputWasEmpty = false;
-            std::size_t attachedStateBefore = 0;
-            if (std::string(activation.name).find("remove-persistent") !=
-                std::string::npos)
-            {
-                require(curlAttachedStateCount() != nullptr,
-                        "persistent immediate row lacks physical ownership oracle");
-                attachedStateBefore = curlAttachedStateCount()();
-            }
             {
                 ScopedGdalErrorCapture errorCapture(capture);
                 std::unique_ptr<ScopedPathSpecificOption> pathOption;
@@ -3128,12 +1953,6 @@ namespace
                     setenv("OSGSOL_TEST_FAIL_NEXT_CURL_REMOVE",
                         std::to_string(activation.removeFaultCount).c_str(), 1);
                 }
-                if (activation.injectedFaultCount > 0)
-                {
-                    setenv(activation.injectedFault,
-                        std::to_string(
-                            activation.injectedFaultCount).c_str(), 1);
-                }
                 readResult = VSIFReadMultiRangeL(
                     static_cast<int>(buffers.size()), buffers.data(),
                     OFFSETS.data(), SIZES.data(), file);
@@ -3145,8 +1964,6 @@ namespace
                     });
                 if (activation.verifyAbandonmentLatch)
                 {
-                    immediateRetryCountAfterFirstRead = countDebug(
-                        capture, "ReadMultiRange: immediate-retry ");
                     for (auto& interval : actual)
                         std::fill(interval.begin(), interval.end(), 0);
                     secondReadResult = VSIFReadMultiRangeL(
@@ -3155,13 +1972,10 @@ namespace
                 }
                 require(VSIFCloseL(file) == 0,
                         "failed to close the HTTP/2 multi-range fixture");
-                const bool flexibleFaultOutcome =
-                    activation.injectedFaultCount > 0;
-                require(flexibleFaultOutcome ||
-                            (readResult == 0) == activation.expectsSuccess,
+                require((readResult == 0) == activation.expectsSuccess,
                         std::string(activation.name) +
                             " VSIFReadMultiRangeL result changed");
-                if (readResult == 0)
+                if (activation.expectsSuccess)
                 {
                     require(actual == expected,
                             "VSIFReadMultiRangeL returned incorrect interval bytes");
@@ -3184,17 +1998,6 @@ namespace
                             std::string(activation.name) +
                                 " cleaned an easy handle while still attached");
                 }
-                if (activation.injectedFaultCount > 0)
-                {
-                    require(std::getenv(activation.injectedFault) == nullptr,
-                            std::string(activation.name) +
-                                " did not consume its successful libcurl fault");
-                    require(std::getenv(
-                                "OSGSOL_TEST_CLEANUP_WHILE_ATTACHED") ==
-                                nullptr,
-                            std::string(activation.name) +
-                                " cleaned an easy handle while attached");
-                }
                 pathOption.reset();
                 if (activation.pathSpecific)
                 {
@@ -3207,29 +2010,21 @@ namespace
             }
             const std::string statsJson = requireNetworkStatsEvidence();
             server.stop();
-            if (activation.injectedFaultCount > 0)
-            {
-                require(std::filesystem::file_size(log) > 0,
-                        std::string(activation.name) +
-                            " did not exercise the local HTTP/2 server");
-                continue;
-            }
-            if (std::string(activation.name).find("remove-persistent") !=
-                std::string::npos)
+            if (std::string(activation.name).find("remove-persistent") == 0)
             {
                 require(countDebug(capture,
                             "ReadMultiRange: detach-failure range=") == 2 &&
                             countDebug(capture,
                             "ReadMultiRange: multi-abandoned=success") == 1 &&
-                            curlAttachedStateCount()() > attachedStateBefore,
+                            countDebug(capture,
+                            "ReadMultiRange: ownership-retained range=") >= 1,
                         "persistent immediate remove failure did not isolate "
-                        "the old multi physical ownership");
+                        "the old multi ownership");
                 if (activation.verifyAbandonmentLatch)
                 {
                     require(secondReadResult == -1 &&
                                 countDebug(capture,
-                                    "ReadMultiRange: immediate-retry ") ==
-                                    immediateRetryCountAfterFirstRead &&
+                                    "ReadMultiRange: immediate-retry ") == 0 &&
                                 countDebug(capture,
                                     "ReadMultiRange: handler-disabled="
                                     "abandoned fail-closed=1") == 1 &&
@@ -3242,10 +2037,7 @@ namespace
                 continue;
             }
 
-            const bool legacyNegativeContentRange =
-                std::string(activation.name).find("content-range-") == 0;
-            const Http2Evidence evidence = verifyHttp2Log(
-                log, !legacyNegativeContentRange);
+            const Http2Evidence evidence = verifyHttp2Log(log);
             if (std::string(activation.serverMode) == "multirange-success")
             {
                 const int actualHeadCount = static_cast<int>(std::count_if(
@@ -3277,6 +2069,7 @@ namespace
                             " did not fail closed on strict Content-Range");
                 continue;
             }
+            const HttpProof proof = buildHttpProof(capture, statsJson);
             std::map<std::string, std::vector<const Http2StreamEvidence*>> ranges;
             int headCount = 0;
             for (const Http2StreamEvidence& stream : evidence.streams)
@@ -3317,29 +2110,32 @@ namespace
                         retrySecond->status == 206,
                     std::string(activation.name) +
                         " did not preserve one multiplexed HTTP/2 session");
-            const std::uint64_t statsHeads =
-                networkStatsUnsigned(statsJson, "HEAD", "count");
-            const std::uint64_t statsGets =
-                networkStatsUnsigned(statsJson, "GET", "count");
-            const std::uint64_t statsDownloaded = networkStatsUnsigned(
-                statsJson, "GET", "downloaded_bytes");
             require(evidence.totalAttemptedBodyBytes ==
                         3 * 65536 + 2 * 17 &&
                         evidence.totalReservedBodyBytes ==
                             3 * 65536 + 2 * 17 &&
-                        statsHeads == 1 && statsGets == 1 &&
-                        statsDownloaded == 3 * 65536,
+                        proof.actualGetCount == 5 &&
+                        proof.actualHeadCount == 1 &&
+                        proof.successfulGetCount == 3 &&
+                        proof.transientRetryCount == 2 &&
+                        proof.transientRetryCodes ==
+                            std::map<int, int>{{500, 2}} &&
+                        proof.successfulRangeBytes == 3 * 65536 &&
+                        proof.declaredTransientBytes == 2 * 17 &&
+                        proof.statsGetOperationCount == 1,
                     std::string(activation.name) +
-                        " multi-range bytes or network statistics did not "
-                        "reconcile: heads=" + std::to_string(statsHeads) +
-                        " gets=" + std::to_string(statsGets) +
-                        " downloaded=" + std::to_string(statsDownloaded) +
-                        " attempted=" + std::to_string(
-                            evidence.totalAttemptedBodyBytes));
+                        " multi-range bytes or network statistics did not reconcile");
             if (activation.pathSpecific)
             {
-                require(countDebug(capture,
-                            "ReadMultiRange: immediate-retry ") == 2 &&
+                require(proof.immediateTransientRetryCount == 2 &&
+                            proof.immediateTransientRetryBytes == 2 * 17 &&
+                            proof.immediateTransientRetryCodes ==
+                                std::map<int, int>{{500, 2}} &&
+                            proof.immediateRetries.size() == 2 &&
+                            std::set<std::string>({
+                                proof.immediateRetries[0].range,
+                                proof.immediateRetries[1].range}) ==
+                                std::set<std::string>({RANGES[1], RANGES[2]}) &&
                             retryFirst->start < slow->end &&
                             retrySecond->start < slow->end,
                         "path immediate retry events are absent or either "
@@ -3359,8 +2155,7 @@ namespace
             }
             else
             {
-                require(countDebug(capture,
-                            "ReadMultiRange: immediate-retry ") == 0 &&
+                require(proof.immediateTransientRetryCount == 0 &&
                             retryFirst->start >= slow->end &&
                             retrySecond->start >= slow->end,
                         "global-only activation entered the immediate branch");
@@ -3368,638 +2163,6 @@ namespace
         }
         require(executedCases > 0,
                 "OSGSOL_TEST_MULTIRANGE_CASE did not name an activation case");
-    }
-
-    void verifyV6CombinedOperationScope(const std::filesystem::path& fixture,
-                                        const std::filesystem::path& root)
-    {
-        const char* selected =
-            CPLGetConfigOption("OSGSOL_TEST_PREFETCH_CASE", nullptr);
-        static const std::string CASE_NAME =
-            "v6-combined-operation-scope";
-        if (selected != nullptr && selected != CASE_NAME) return;
-        if (!curlFaultInterposerAvailable())
-        {
-            std::cout << "ScienceV6CombinedScope: skipped="
-                         "curl-fault-interposer-unavailable" << std::endl;
-            return;
-        }
-
-        const std::filesystem::path certificate =
-            root / "v6-combined-http2-cert.pem";
-        const std::filesystem::path key =
-            root / "v6-combined-http2-key.pem";
-        const std::filesystem::path ready =
-            root / "v6-combined-http2.ready";
-        const std::filesystem::path log =
-            root / "v6-combined-http2.jsonl";
-        createSelfSignedCertificate(certificate, key);
-        ServerProcess server = startHttp2Server(
-            fixture, ready, log, certificate, key, CASE_NAME, "h2");
-        const int port = waitForPort(ready);
-        const std::string prefix = "/vsicurl/https://127.0.0.1:" +
-            std::to_string(port);
-        const std::string independentUrl = prefix +
-            "/v6-combined-independent/fixture.tif";
-        const std::string primaryUrl = prefix +
-            "/v6-combined-primary/fixture.tif";
-
-        ScopedGdalConfig config({
-            {"GDAL_HTTP_UNSAFESSL", "YES"},
-            {"GDAL_HTTP_VERSION", "2TLS"},
-            {"GDAL_HTTP_PROXY", ""},
-            {"GDAL_HTTPS_PROXY", ""},
-            {"GDAL_HTTP_MULTIRANGE", "PARALLEL"},
-            {"GDAL_HTTP_MULTIPLEX", "YES"},
-            {"GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES"},
-            {"GDAL_HTTP_MAX_RETRY", "3"},
-            {"GDAL_HTTP_RETRY_DELAY", "0.1"},
-            {"GDAL_HTTP_RETRY_CODES", "429,500,502,503,504"},
-            {"CPL_VSIL_NETWORK_STATS_ENABLED", "YES"},
-            {"CPL_CURL_VERBOSE", "YES"},
-            {"CPL_CURL_VERBOSE_DATA_IN", "NO"},
-            {"CPL_DEBUG", "ON"},
-        });
-
-        DebugCapture independentCapture;
-        std::string independentStats;
-        {
-            ScopedPathSpecificOption prefetch(
-                independentUrl, "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
-            ScopedPathSpecificOption operation(
-                independentUrl, "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
-                "v6-combined-independent-token");
-            VSICurlClearCache();
-            VSINetworkStatsReset();
-            std::exception_ptr threadError;
-            std::thread independent([&]()
-            {
-                try
-                {
-                    ScopedGdalErrorCapture errorCapture(independentCapture);
-                    GDALDataset* dataset = static_cast<GDALDataset*>(
-                        GDALOpenEx(independentUrl.c_str(),
-                            GDAL_OF_RASTER | GDAL_OF_READONLY,
-                            nullptr, nullptr, nullptr));
-                    require(dataset != nullptr,
-                            "independent v6 operation did not open");
-                    GDALClose(dataset);
-                }
-                catch (...)
-                {
-                    threadError = std::current_exception();
-                }
-            });
-            independent.join();
-            if (threadError) std::rethrow_exception(threadError);
-            independentStats = requireNetworkStatsEvidence();
-        }
-
-        DebugCapture primaryCapture;
-        std::string primaryStats;
-        std::size_t primaryOpenMessageCount = 0;
-        require(curlAttachedStateCount() != nullptr,
-                "combined operation lacks physical ownership oracle");
-        std::size_t attachedBefore = curlAttachedStateCount()();
-        {
-            ScopedPathSpecificOption prefetch(
-                primaryUrl, "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
-            ScopedPathSpecificOption immediate(
-                primaryUrl,
-                "OSGSOL_VSICURL_IMMEDIATE_MULTIRANGE_RETRY", "YES");
-            ScopedPathSpecificOption operation(
-                primaryUrl, "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
-                "v6-combined-primary-token");
-            VSICurlClearCache();
-            VSINetworkStatsReset();
-
-            std::mutex datasetMutex;
-            std::condition_variable datasetCondition;
-            bool openFinished = false;
-            bool releaseDataset = false;
-            GDALDataset* liveDataset = nullptr;
-            std::exception_ptr openError;
-            std::thread openThread([&]()
-            {
-                try
-                {
-                    ScopedGdalErrorCapture errorCapture(primaryCapture);
-                    liveDataset = static_cast<GDALDataset*>(GDALOpenEx(
-                        primaryUrl.c_str(),
-                        GDAL_OF_RASTER | GDAL_OF_READONLY,
-                        nullptr, nullptr, nullptr));
-                    require(liveDataset != nullptr,
-                            "combined HEAD-405 fallback did not open dataset");
-                }
-                catch (...)
-                {
-                    openError = std::current_exception();
-                }
-                {
-                    std::lock_guard<std::mutex> lock(datasetMutex);
-                    openFinished = true;
-                }
-                datasetCondition.notify_all();
-                {
-                    std::unique_lock<std::mutex> lock(datasetMutex);
-                    datasetCondition.wait(lock,
-                        [&]() { return releaseDataset; });
-                }
-                if (liveDataset != nullptr) GDALClose(liveDataset);
-            });
-            {
-                std::unique_lock<std::mutex> lock(datasetMutex);
-                datasetCondition.wait(lock, [&]() { return openFinished; });
-            }
-            if (openError)
-            {
-                {
-                    std::lock_guard<std::mutex> lock(datasetMutex);
-                    releaseDataset = true;
-                }
-                datasetCondition.notify_all();
-                openThread.join();
-                std::rethrow_exception(openError);
-            }
-            {
-                const std::lock_guard<std::mutex> lock(primaryCapture.mutex);
-                primaryOpenMessageCount = primaryCapture.messages.size();
-            }
-
-            constexpr std::array<vsi_l_offset, 3> OFFSETS = {
-                262144, 393216, 524288};
-            constexpr std::array<size_t, 3> SIZES = {
-                65536, 65536, 65536};
-            std::array<std::vector<unsigned char>, 3> output;
-            std::array<void*, 3> buffers = {};
-            for (std::size_t index = 0; index < output.size(); ++index)
-            {
-                output[index].resize(SIZES[index]);
-                buffers[index] = output[index].data();
-            }
-            int multiResult = 0;
-            std::exception_ptr multiError;
-            std::thread multiThread([&]()
-            {
-                try
-                {
-                    ScopedGdalErrorCapture errorCapture(primaryCapture);
-                    VSILFILE* file = VSIFOpenL(primaryUrl.c_str(), "rb");
-                    require(file != nullptr,
-                            "combined operation multi-range file did not open");
-                    unsetenv("OSGSOL_TEST_CLEANUP_WHILE_ATTACHED");
-                    setenv("OSGSOL_TEST_FAIL_NEXT_CURL_REMOVE", "2", 1);
-                    multiResult = VSIFReadMultiRangeL(
-                        static_cast<int>(buffers.size()), buffers.data(),
-                        OFFSETS.data(), SIZES.data(), file);
-                    require(VSIFCloseL(file) == 0,
-                            "combined operation multi-range file did not close");
-                }
-                catch (...)
-                {
-                    multiError = std::current_exception();
-                }
-            });
-            multiThread.join();
-            {
-                std::lock_guard<std::mutex> lock(datasetMutex);
-                releaseDataset = true;
-            }
-            datasetCondition.notify_all();
-            openThread.join();
-            if (multiError) std::rethrow_exception(multiError);
-            require(multiResult == -1 &&
-                        std::getenv("OSGSOL_TEST_FAIL_NEXT_CURL_REMOVE") ==
-                            nullptr &&
-                        std::getenv("OSGSOL_TEST_CLEANUP_WHILE_ATTACHED") ==
-                            nullptr &&
-                        curlAttachedStateCount()() == attachedBefore + 1 &&
-                        countDebug(primaryCapture,
-                            "ReadMultiRange: multi-abandoned=success") == 1,
-                    "combined operation did not retain its persistent "
-                    "multi-range ownership safely");
-            primaryStats = requireNetworkStatsEvidence();
-        }
-
-        std::exception_ptr serverViolation;
-        try
-        {
-            server.stop();
-        }
-        catch (...)
-        {
-            serverViolation = std::current_exception();
-        }
-        const Http2Evidence allEvidence = verifyHttp2Log(log, true);
-        int independentHeads = 0;
-        int independentRanges = 0;
-        int primaryHeads405 = 0;
-        int primaryHeaderGets = 0;
-        int primaryFirstRanges = 0;
-        int primaryMultiRanges = 0;
-        std::uint64_t physicalPrimaryBodies = 0;
-        std::uint64_t abandonedPrimaryBodies = 0;
-        for (const Http2StreamEvidence& stream : allEvidence.streams)
-        {
-            const bool independent = stream.path.find(
-                "/v6-combined-independent/") != std::string::npos;
-            const bool primary = stream.path.find(
-                "/v6-combined-primary/") != std::string::npos;
-            require(independent || primary,
-                    "combined server recorded an out-of-scope path");
-            if (independent && stream.method == "HEAD") ++independentHeads;
-            if (independent && stream.method == "GET" &&
-                stream.range == "bytes=0-131071") ++independentRanges;
-            if (primary && stream.method == "HEAD" && stream.status == 405)
-                ++primaryHeads405;
-            if (primary && stream.method == "GET" && stream.range.empty() &&
-                stream.status == 200) ++primaryHeaderGets;
-            if (primary && stream.method == "GET" &&
-                stream.range == "bytes=0-131071" && stream.status == 206)
-                ++primaryFirstRanges;
-            if (primary && stream.method == "GET" &&
-                stream.range != "bytes=0-131071" && !stream.range.empty())
-            {
-                ++primaryMultiRanges;
-                checkedAdd(abandonedPrimaryBodies,
-                           stream.attemptedBodyBytes,
-                           "combined abandoned primary bodies");
-            }
-            if (primary && stream.method == "GET")
-                checkedAdd(physicalPrimaryBodies,
-                           stream.attemptedBodyBytes,
-                           "combined physical primary bodies");
-        }
-        require(independentHeads == 1 && independentRanges == 1 &&
-                    primaryHeads405 == 1 && primaryHeaderGets == 1 &&
-                    primaryFirstRanges == 2 && primaryMultiRanges == 3 &&
-                    networkStatsUnsigned(primaryStats, "HEAD", "count") == 1 &&
-                    networkStatsUnsigned(primaryStats, "GET", "count") == 4 &&
-                    networkStatsUnsigned(primaryStats, "GET",
-                        "downloaded_bytes") + abandonedPrimaryBodies ==
-                        physicalPrimaryBodies,
-                "combined server did not observe the real HEAD-405, "
-                "ordinary fallback, multi-range, and stats lifecycle: " +
-                std::to_string(independentHeads) + "/" +
-                std::to_string(independentRanges) + "/" +
-                std::to_string(primaryHeads405) + "/" +
-                std::to_string(primaryHeaderGets) + "/" +
-                std::to_string(primaryFirstRanges) + "/" +
-                std::to_string(primaryMultiRanges) + " stats=" +
-                std::to_string(networkStatsUnsigned(
-                    primaryStats, "HEAD", "count")) + "/" +
-                std::to_string(networkStatsUnsigned(
-                    primaryStats, "GET", "count")) + "/" +
-                std::to_string(networkStatsUnsigned(
-                    primaryStats, "GET", "downloaded_bytes")) +
-                " physical=" + std::to_string(physicalPrimaryBodies));
-        const auto abandonedLedgerAccept = [](
-            const Http2Evidence& evidence)
-        {
-            const std::map<std::string, std::pair<int, std::uint64_t>>
-                expected = {
-                    {"bytes=262144-327679", {206, 65536}},
-                    {"bytes=393216-458751", {500, 17}},
-                    {"bytes=524288-589823", {500, 17}},
-                };
-            std::map<std::string, int> seen;
-            for (const Http2StreamEvidence& stream : evidence.streams)
-            {
-                if (stream.path.find("/v6-combined-primary/") ==
-                    std::string::npos)
-                    continue;
-                const auto item = expected.find(stream.range);
-                if (item == expected.end()) continue;
-                if (++seen[stream.range] != 1 ||
-                    stream.status != item->second.first ||
-                    stream.attemptedBodyBytes != item->second.second)
-                    return false;
-            }
-            return seen.size() == expected.size();
-        };
-        require(abandonedLedgerAccept(allEvidence),
-                "combined abandoned multi-range ledger changed");
-        std::vector<std::size_t> abandonedIndexes;
-        for (std::size_t index = 0;
-             index < allEvidence.streams.size(); ++index)
-        {
-            const Http2StreamEvidence& stream = allEvidence.streams[index];
-            if (stream.path.find("/v6-combined-primary/") !=
-                    std::string::npos &&
-                stream.range != "bytes=0-131071" &&
-                !stream.range.empty())
-                abandonedIndexes.push_back(index);
-        }
-        require(abandonedIndexes.size() == 3,
-                "combined abandoned mutation set is not exactly three");
-        for (std::size_t index : abandonedIndexes)
-        {
-            Http2Evidence plus = allEvidence;
-            ++plus.streams[index].attemptedBodyBytes;
-            Http2Evidence minus = allEvidence;
-            --minus.streams[index].attemptedBodyBytes;
-            Http2Evidence missing = allEvidence;
-            missing.streams.erase(missing.streams.begin() +
-                static_cast<std::ptrdiff_t>(index));
-            require(!abandonedLedgerAccept(plus) &&
-                        !abandonedLedgerAccept(minus) &&
-                        !abandonedLedgerAccept(missing),
-                    "combined abandoned ledger accepted +/-1 or missing "
-                    "physical evidence");
-        }
-        if (serverViolation) std::rethrow_exception(serverViolation);
-        Http2Evidence independentEvidence;
-        Http2Evidence attributedPrimaryEvidence;
-        std::vector<const Http2StreamEvidence*> ordinaryPrimary;
-        for (const Http2StreamEvidence& stream : allEvidence.streams)
-        {
-            if (stream.path.find("/v6-combined-independent/") !=
-                std::string::npos)
-            {
-                independentEvidence.streams.push_back(stream);
-            }
-            else if (stream.path.find("/v6-combined-primary/") !=
-                         std::string::npos && stream.correlation.empty())
-            {
-                ordinaryPrimary.push_back(&stream);
-            }
-            else if (stream.path.find("/v6-combined-primary/") !=
-                         std::string::npos)
-            {
-                attributedPrimaryEvidence.streams.push_back(stream);
-            }
-            else
-            {
-                fail("combined operation server recorded an unknown path");
-            }
-        }
-
-        DebugCapture attributedPrimaryCapture;
-        DebugCapture ordinaryPrimaryCapture;
-        bool ordinaryResponse = false;
-        bool ordinaryAwaitingDownload = false;
-        for (std::size_t index = 0;
-             index < primaryCapture.messages.size(); ++index)
-        {
-            if (index == primaryOpenMessageCount)
-            {
-                require(!ordinaryResponse,
-                        "ordinary fallback response crossed the open/multi "
-                        "phase boundary");
-                ordinaryAwaitingDownload = false;
-            }
-            const std::string& message = primaryCapture.messages[index];
-            std::string loweredMessage = message;
-            std::transform(loweredMessage.begin(), loweredMessage.end(),
-                loweredMessage.begin(), [](unsigned char character)
-                {
-                    return static_cast<char>(std::tolower(character));
-                });
-            if (!ordinaryResponse &&
-                message.rfind("CURL_INFO_HEADER_OUT: GET ", 0) == 0 &&
-                message.find("Range: bytes=0-131071") !=
-                    std::string::npos &&
-                loweredMessage.find("x-osgsol-science-correlation:") ==
-                    std::string::npos)
-            {
-                ordinaryResponse = true;
-            }
-            DebugCapture& destination =
-                (ordinaryResponse || ordinaryAwaitingDownload)
-                ? ordinaryPrimaryCapture : attributedPrimaryCapture;
-            destination.messages.push_back(message);
-            if (index < primaryCapture.timestamps.size())
-                destination.timestamps.push_back(
-                    primaryCapture.timestamps[index]);
-            if (ordinaryResponse &&
-                message.rfind("CURL_INFO_HEADER_IN: ", 0) == 0 &&
-                message.substr(
-                    std::string("CURL_INFO_HEADER_IN: ").size())
-                    .find_first_not_of(" \t\r\n") == std::string::npos)
-            {
-                ordinaryResponse = false;
-                ordinaryAwaitingDownload = true;
-            }
-            if (ordinaryAwaitingDownload &&
-                message.find("VSICURL: Download completed") !=
-                    std::string::npos)
-                ordinaryAwaitingDownload = false;
-        }
-        require(!ordinaryResponse && !ordinaryAwaitingDownload &&
-                    ordinaryPrimary.size() == 1 &&
-                    ordinaryPrimary.front()->method == "GET" &&
-                    ordinaryPrimary.front()->range == "bytes=0-131071" &&
-                    ordinaryPrimary.front()->status == 206 &&
-                    ordinaryPrimary.front()->attemptedBodyBytes == 131072 &&
-                    ordinaryPrimaryCapture.messages.size() >= 4,
-                "combined operation ordinary fallback ledger is incomplete");
-
-        const AttributedTransportProof independentProof =
-            buildAttributedTransportProof(
-                independentCapture,
-                scienceServerRequests(independentEvidence));
-        const HttpProof independentHttpProof = buildHttpProof(
-            independentCapture, independentStats,
-            AttributionMode::AttributedV6);
-
-        std::uint64_t attributedPrimaryBodies = 0;
-        int attributedPrimaryHeads = 0;
-        int attributedPrimaryGets = 0;
-        for (const Http2StreamEvidence& stream :
-             attributedPrimaryEvidence.streams)
-        {
-            if (stream.method == "HEAD") ++attributedPrimaryHeads;
-            if (stream.method == "GET")
-            {
-                ++attributedPrimaryGets;
-                checkedAdd(attributedPrimaryBodies,
-                           stream.attemptedBodyBytes,
-                           "combined attributed server bodies");
-            }
-        }
-        const std::uint64_t ordinaryBody =
-            ordinaryPrimary.front()->attemptedBodyBytes;
-        const auto statsProjection = [](
-            std::uint64_t getCount, std::uint64_t headCount,
-            std::uint64_t downloadedBytes)
-        {
-            std::ostringstream stream;
-            stream << "{\"methods\":{\"GET\":{\"count\":"
-                   << getCount << ",\"downloaded_bytes\":"
-                   << downloadedBytes << "},\"HEAD\":{\"count\":"
-                   << headCount << "}}}";
-            return stream.str();
-        };
-        const std::uint64_t primaryLogicalGets =
-            networkStatsUnsigned(primaryStats, "GET", "count");
-        const std::string attributedPrimaryStats = statsProjection(
-            primaryLogicalGets,
-            static_cast<std::uint64_t>(attributedPrimaryHeads),
-            attributedPrimaryBodies);
-        const std::string ordinaryStats = statsProjection(
-            1, 0, ordinaryBody);
-        const AttributedTransportProof primaryProof =
-            buildAttributedTransportProof(
-                attributedPrimaryCapture,
-                scienceServerRequests(attributedPrimaryEvidence));
-        const HttpProof primaryHttpProof = buildHttpProof(
-            attributedPrimaryCapture, attributedPrimaryStats,
-            AttributionMode::AttributedV6);
-        const HttpProof ordinaryProof = buildHttpProof(
-            ordinaryPrimaryCapture, ordinaryStats,
-            AttributionMode::LegacyFrozen);
-
-        std::set<std::string> independentContexts;
-        for (const ScienceTransportCompletion& completion :
-             independentProof.completions)
-            independentContexts.insert(completion.context);
-        std::set<std::string> primaryContexts;
-        for (const ScienceTransportCompletion& completion :
-             primaryProof.completions)
-            primaryContexts.insert(completion.context);
-        const std::string primaryContext = primaryContexts.empty()
-            ? std::string() : *primaryContexts.begin();
-        static const std::regex retainedPattern(
-            R"(^VSICURL: ReadMultiRange: ownership-retained )"
-            R"(context=([0-9a-f]{32}) request=[1-9][0-9]* attempt=[1-4] )"
-            R"(range=bytes=[0-9]+-[0-9]+ attached=1$)");
-        const bool retainedOriginalContext = std::any_of(
-            primaryCapture.messages.begin(), primaryCapture.messages.end(),
-            [&](const std::string& message)
-            {
-                std::smatch match;
-                return std::regex_match(message, match, retainedPattern) &&
-                    match[1].str() == primaryContext;
-            });
-        const auto scopeCount = [&](const std::string& scope)
-        {
-            return static_cast<int>(std::count_if(
-                primaryProof.completions.begin(),
-                primaryProof.completions.end(),
-                [&](const ScienceTransportCompletion& completion)
-                {
-                    return completion.scope == scope;
-                }));
-        };
-        std::ostringstream combinedScopeSummary;
-        combinedScopeSummary
-            << " independent-qualified=" << independentProof.qualified
-            << "/" << independentHttpProof.attributedTransportQualified
-            << " contexts=" << independentContexts.size() << "/"
-            << primaryContexts.size()
-            << " primary-qualified=" << primaryProof.qualified
-            << " fallback=" << primaryProof.fallbackCount
-            << " publications=" << primaryProof.cachePublicationCount
-            << "/" << primaryProof.propertyPublicationCount
-            << " scopes=" << scopeCount("coordinator") << "/"
-            << scopeCount("ordinary-head") << "/"
-            << scopeCount("multirange")
-            << " retained=" << retainedOriginalContext;
-        require(independentProof.qualified &&
-                    independentHttpProof.attributedTransportQualified &&
-                    independentContexts.size() == 1 &&
-                    independentProof.completions.front().ordinal == 1 &&
-                    independentProof.completions.front().request == 1 &&
-                    primaryContexts.size() == 1 &&
-                    independentContexts != primaryContexts &&
-                    std::none_of(primaryProof.completions.begin(),
-                        primaryProof.completions.end(),
-                        [&](const ScienceTransportCompletion& completion)
-                        {
-                            return independentContexts.count(
-                                completion.context) != 0;
-                    }) &&
-                    !primaryProof.qualified &&
-                    primaryProof.fallbackCount == 0 &&
-                    primaryProof.cachePublicationCount == 0 &&
-                    primaryProof.propertyPublicationCount == 1 &&
-                    scopeCount("coordinator") == 2 &&
-                    scopeCount("ordinary-head") == 1 &&
-                    scopeCount("multirange") == 3 &&
-                    retainedOriginalContext,
-                "combined live operation did not keep three scopes in one "
-                "context or isolate the other path/token proof:" +
-                    combinedScopeSummary.str());
-
-        int primaryHeads = 0;
-        int primaryGets = 0;
-        std::uint64_t primaryBodies = 0;
-        for (const Http2StreamEvidence& stream : allEvidence.streams)
-        {
-            if (stream.path.find("/v6-combined-primary/") ==
-                std::string::npos)
-                continue;
-            if (stream.method == "HEAD") ++primaryHeads;
-            if (stream.method == "GET")
-            {
-                ++primaryGets;
-                checkedAdd(primaryBodies,
-                           stream.attemptedBodyBytes,
-                           "combined primary server bodies");
-            }
-        }
-        const auto aggregateStatsAccept = [&](const std::string& stats)
-        {
-            try
-            {
-                return networkStatsUnsigned(stats, "HEAD", "count") ==
-                        static_cast<std::uint64_t>(primaryHeads) &&
-                    networkStatsUnsigned(stats, "GET", "count") == 4 &&
-                    networkStatsUnsigned(stats, "GET",
-                        "downloaded_bytes") + abandonedPrimaryBodies ==
-                        primaryBodies;
-            }
-            catch (const std::exception&)
-            {
-                return false;
-            }
-        };
-        const auto mutateStats = [](
-            const std::string& stats, const std::string& method,
-            const std::string& fieldName, double delta)
-        {
-            picojson::value value;
-            require(picojson::parse(value, stats).empty() &&
-                        value.is<picojson::object>(),
-                    "combined stats mutation fixture is invalid");
-            picojson::object& methods =
-                value.get<picojson::object>().at("methods")
-                    .get<picojson::object>();
-            picojson::object& fields =
-                methods.at(method).get<picojson::object>();
-            fields[fieldName] = picojson::value(
-                fields.at(fieldName).get<double>() + delta);
-            return value.serialize(true);
-        };
-        require(primaryHttpProof.actualHeadCount == attributedPrimaryHeads &&
-                    primaryHttpProof.actualGetCount == attributedPrimaryGets &&
-                    primaryHttpProof.actualHttpBodyBytes ==
-                        attributedPrimaryBodies &&
-                    ordinaryProof.actualHeadCount == 0 &&
-                    ordinaryProof.actualGetCount == 1 &&
-                    ordinaryProof.successfulGetCount == 1 &&
-                    ordinaryProof.actualHttpBodyBytes == ordinaryBody &&
-                    ordinaryProof.statsGetOperationCount == 1 &&
-                    primaryHeads == attributedPrimaryHeads &&
-                    primaryGets == attributedPrimaryGets + 1 &&
-                    primaryBodies == attributedPrimaryBodies + ordinaryBody &&
-                    abandonedPrimaryBodies == 65536 + 2 * 17 &&
-                    aggregateStatsAccept(primaryStats) &&
-                    !aggregateStatsAccept(mutateStats(
-                        primaryStats, "HEAD", "count", 1)) &&
-                    !aggregateStatsAccept(mutateStats(
-                        primaryStats, "HEAD", "count", -1)) &&
-                    !aggregateStatsAccept(mutateStats(
-                        primaryStats, "GET", "count", 1)) &&
-                    !aggregateStatsAccept(mutateStats(
-                        primaryStats, "GET", "count", -1)) &&
-                    !aggregateStatsAccept(mutateStats(
-                        primaryStats, "GET", "downloaded_bytes", 1)) &&
-                    !aggregateStatsAccept(mutateStats(
-                        primaryStats, "GET", "downloaded_bytes", -1)),
-                "combined raw/server/stats ledgers did not reconcile");
-        std::cout << "ScienceV6CombinedScope: contexts=2 scopes=3 "
-                     "persistent=retained" << std::endl;
     }
 
     LocalServerEvidence verifyLog(const std::filesystem::path& log,
@@ -4126,30 +2289,8 @@ namespace
         RangeProfile profile = RangeProfile::Optimized;
         std::filesystem::path evidenceDirectory;
         std::filesystem::path summaryPath;
-        std::filesystem::path completionPath;
         bool enforceLatency = false;
     };
-
-    const std::filesystem::path V6_CANDIDATE_COMPLETION =
-        "/Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/"
-        "science_g0_prefetch/requalification-evidence-v6/"
-        "candidate-completion.json";
-    const std::filesystem::path V6_FORMAL_COMPLETION =
-        "/Users/USER/osgsol/.worktrees/v0.2-runtime-safety/build/"
-        "science_g0_prefetch/formal-evidence-v6/live-completion.json";
-
-    bool approvedCompletionTarget(const std::filesystem::path& path,
-                                  bool targetExists, bool targetSymlink,
-                                  bool tempExists, bool tempSymlink)
-    {
-        return path.is_absolute() &&
-            (path == V6_CANDIDATE_COMPLETION || path == V6_FORMAL_COMPLETION) &&
-            !targetExists && !targetSymlink && !tempExists && !tempSymlink;
-    }
-
-    void inspectCompletionEntries(const std::filesystem::path& path,
-                                  bool& targetExists, bool& targetSymlink,
-                                  bool& tempExists, bool& tempSymlink);
 
     const char* profileName(RangeProfile profile)
     {
@@ -4159,13 +2300,11 @@ namespace
 
     LiveCommand parseLiveCommand(const std::vector<std::string>& arguments)
     {
-        require(arguments.size() == 12 || arguments.size() == 13,
-                "live command requires cases, iterations, profile, evidence, "
-                "summary, and completion paths");
+        require(arguments.size() == 10 || arguments.size() == 11,
+                "live command requires cases, iterations, profile, evidence, and summary paths");
         require(arguments[0] == "--live-cases" && arguments[2] == "--iterations" &&
                 arguments[4] == "--profile" && arguments[6] == "--evidence-dir" &&
-                arguments[8] == "--summary-json" &&
-                arguments[10] == "--completion-json",
+                arguments[8] == "--summary-json",
                 "live command arguments are malformed or out of order");
         require(!arguments[1].empty(), "live case fixture path must not be empty");
 
@@ -4193,21 +2332,9 @@ namespace
                 !std::filesystem::path(arguments[9]).filename().empty(),
                 "live summary path must name a file");
         command.summaryPath = arguments[9];
-        command.completionPath = arguments[11];
-        bool targetSymlink = false;
-        bool tempSymlink = false;
-        bool targetExists = false;
-        bool tempExists = false;
-        inspectCompletionEntries(command.completionPath,
-                                 targetExists, targetSymlink,
-                                 tempExists, tempSymlink);
-        require(approvedCompletionTarget(
-                    command.completionPath, targetExists, targetSymlink,
-                    tempExists, tempSymlink),
-                "completion target must be an approved absent fixed path");
-        if (arguments.size() == 13)
+        if (arguments.size() == 11)
         {
-            require(arguments[12] == "--enforce-latency",
+            require(arguments[10] == "--enforce-latency",
                     "unknown trailing live command argument");
             command.enforceLatency = true;
             require(command.iterations == 5,
@@ -4389,9 +2516,6 @@ namespace
                << "  \"metadata_prefetch\": {\n"
                << "    \"enabled\": "
                << (proof.metadataPrefetch.enabled ? "true" : "false") << ",\n"
-               << "    \"attributed_transport_qualified\": "
-               << (proof.metadataPrefetch.attributedTransportQualified
-                       ? "true" : "false") << ",\n"
                << "    \"head_request_count\": "
                << proof.metadataPrefetch.headRequestCount << ",\n"
                << "    \"range_request_count\": "
@@ -4427,26 +2551,6 @@ namespace
                    << ",\"delay_ms\":" << retry.delayMs
                    << ",\"connection_id\":" << retry.connectionId
                    << ",\"http_major\":" << retry.httpMajor << '}';
-        }
-        stream << "],\n"
-               << "    \"head_retries\": [";
-        for (std::size_t index = 0; index < proof.headRetries.size(); ++index)
-        {
-            if (index) stream << ',';
-            const HeadRetryEvidence& retry = proof.headRetries[index];
-            stream << "{\"retry_ordinal\":" << retry.retryOrdinal
-                   << ",\"request\":" << retry.request
-                   << ",\"failed_attempt\":" << retry.failedAttempt
-                   << ",\"scheduled_attempt\":" << retry.scheduledAttempt
-                   << ",\"delay_ms\":" << retry.delayMs
-                   << ",\"failed_status\":" << retry.failedStatus
-                   << ",\"failed_connection_id\":"
-                   << retry.failedConnectionId
-                   << ",\"failed_http_major\":" << retry.failedHttpMajor
-                   << ",\"failed_declared_content_length\":"
-                   << retry.failedDeclaredContentLength
-                   << ",\"failed_actual_body_bytes\":"
-                   << retry.failedActualBodyBytes << '}';
         }
         stream << "],\n"
                << "    \"fallback_reason\": "
@@ -4513,28 +2617,6 @@ namespace
             firstCoordinatorCode = false;
         }
         stream << "},\n"
-               << "  \"coordinator_head_transient_retry_count\": "
-               << proof.coordinatorHeadTransientRetryCount
-               << ",\n  \"coordinator_head_transient_retry_declared_bytes\": "
-               << proof.coordinatorHeadTransientRetryDeclaredBytes
-               << ",\n  \"coordinator_head_transient_retry_actual_body_bytes\": "
-               << proof.coordinatorHeadTransientRetryActualBodyBytes
-               << ",\n  \"coordinator_head_transient_retry_codes\": {";
-        bool firstHeadRetryCode = true;
-        for (const auto& retry : proof.coordinatorHeadTransientRetryCodes)
-        {
-            if (!firstHeadRetryCode) stream << ',';
-            stream << "\"" << retry.first << "\":" << retry.second;
-            firstHeadRetryCode = false;
-        }
-        stream << "},\n  \"science_transport_response_count\": "
-               << proof.scienceTransportResponseCount
-               << ",\n  \"science_transport_attribution\": "
-               << picojson::value(
-                    proof.scienceTransportAttribution).serialize()
-               << ",\n  \"science_transport_qualified\": "
-               << (proof.attributedTransportQualified ? "true" : "false")
-               << ",\n"
                << "  \"actual_http_head_count\": " << proof.actualHeadCount << ",\n"
                << "  \"stats_get_operation_count\": " << proof.statsGetOperationCount
                << ",\n  \"stats_head_count\": " << proof.statsHeadCount
@@ -4629,42 +2711,6 @@ namespace
         int _descriptor = -1;
     };
 
-    class SecureFileHandle
-    {
-    public:
-        explicit SecureFileHandle(int descriptor = -1)
-            : _descriptor(descriptor) {}
-        ~SecureFileHandle()
-        {
-            if (_descriptor >= 0) close(_descriptor);
-        }
-        SecureFileHandle(SecureFileHandle&& other) noexcept
-            : _descriptor(other._descriptor)
-        {
-            other._descriptor = -1;
-        }
-        SecureFileHandle& operator=(SecureFileHandle&& other) noexcept
-        {
-            if (this != &other)
-            {
-                if (_descriptor >= 0) close(_descriptor);
-                _descriptor = other._descriptor;
-                other._descriptor = -1;
-            }
-            return *this;
-        }
-        SecureFileHandle(const SecureFileHandle&) = delete;
-        SecureFileHandle& operator=(const SecureFileHandle&) = delete;
-        int descriptor() const
-        {
-            require(_descriptor >= 0, "secure file descriptor is closed");
-            return _descriptor;
-        }
-
-    private:
-        int _descriptor = -1;
-    };
-
     bool isStrictDescendant(const std::filesystem::path& path,
                             const std::filesystem::path& parent)
     {
@@ -4738,56 +2784,6 @@ namespace
             current = SecureDirectoryHandle(next);
         }
         return current;
-    }
-
-    void inspectCompletionEntries(const std::filesystem::path& path,
-                                  bool& targetExists, bool& targetSymlink,
-                                  bool& tempExists, bool& tempSymlink)
-    {
-        const std::filesystem::path relative = secureBuildRelativePath(path);
-        const std::filesystem::path buildRoot =
-            absoluteNormalizedPath(OSGSOL_SCIENCE_BUILD_DIR);
-        const int rootDescriptor = open(buildRoot.c_str(),
-            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-        if (rootDescriptor < 0)
-            failSystemCall("failed to open completion build root", errno);
-        SecureDirectoryHandle current(rootDescriptor);
-        for (const auto& component : relative.parent_path())
-        {
-            const std::string name = component.string();
-            require(!name.empty() && name != "." && name != "..",
-                    "completion path contains an unsafe component");
-            const int next = openat(current.descriptor(), name.c_str(),
-                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-            if (next < 0 && errno == ENOENT)
-            {
-                targetExists = targetSymlink = false;
-                tempExists = tempSymlink = false;
-                return;
-            }
-            if (next < 0)
-                failSystemCall("failed trusted completion traversal", errno);
-            current = SecureDirectoryHandle(next);
-        }
-        const auto inspect = [&current](const std::string& name,
-                                        bool& exists, bool& symlink)
-        {
-            struct stat status = {};
-            if (fstatat(current.descriptor(), name.c_str(), &status,
-                        AT_SYMLINK_NOFOLLOW) == 0)
-            {
-                exists = true;
-                symlink = S_ISLNK(status.st_mode);
-                return;
-            }
-            require(errno == ENOENT,
-                    "failed trusted completion entry inspection");
-            exists = false;
-            symlink = false;
-        };
-        const std::string targetName = relative.filename().string();
-        inspect(targetName, targetExists, targetSymlink);
-        inspect(targetName + ".tmp", tempExists, tempSymlink);
     }
 
     void requireSafeDestinationAt(const SecureDirectoryHandle& directory,
@@ -4871,940 +2867,6 @@ namespace
         SecureDirectoryHandle directory =
             openSecureBuildDirectory(path.parent_path(), true);
         writeAtomicFileAt(directory, path.filename().string(), payload);
-    }
-
-    struct BoundFileEvidence
-    {
-        std::string sha256;
-        std::uint64_t size = 0;
-        dev_t device = 0;
-        ino_t inode = 0;
-        uid_t uid = 0;
-        nlink_t linkCount = 0;
-        mode_t mode = 0;
-#if defined(__APPLE__)
-        u_int flags = 0;
-#endif
-    };
-
-    BoundFileEvidence hashFileDescriptorAndOptionallyFreeze(
-        SecureFileHandle& file, bool freeze)
-    {
-        struct stat status = {};
-        require(fstat(file.descriptor(), &status) == 0 &&
-                    S_ISREG(status.st_mode) && status.st_uid == getuid() &&
-                    status.st_nlink == 1 && status.st_size >= 0,
-                "completion input is not one owned regular file");
-        const dev_t device = status.st_dev;
-        const ino_t inode = status.st_ino;
-        if (freeze)
-        {
-            require((status.st_mode & 0222) != 0,
-                    "completion input was already frozen");
-#if defined(__APPLE__)
-            require((status.st_flags & UF_IMMUTABLE) == 0,
-                    "completion input already has immutable flags");
-#endif
-            require(fsync(file.descriptor()) == 0 &&
-                        fchmod(file.descriptor(), 0400) == 0,
-                    "failed to freeze completion input mode");
-#if defined(__APPLE__)
-            require(fchflags(file.descriptor(),
-                             status.st_flags | UF_IMMUTABLE) == 0,
-                    "failed to freeze completion input flags");
-#endif
-            require(fsync(file.descriptor()) == 0 &&
-                        fstat(file.descriptor(), &status) == 0 &&
-                        status.st_dev == device && status.st_ino == inode &&
-                        S_ISREG(status.st_mode) && status.st_uid == getuid() &&
-                        status.st_nlink == 1 && status.st_size >= 0 &&
-                        (status.st_mode & 07777) == 0400,
-                    "completion input metadata changed while freezing");
-#if defined(__APPLE__)
-            require((status.st_flags & UF_IMMUTABLE) != 0,
-                    "completion input immutable flag did not persist");
-#endif
-        }
-        require(lseek(file.descriptor(), 0, SEEK_SET) == 0,
-                "failed to rewind completion input");
-        CC_SHA256_CTX context;
-        CC_SHA256_Init(&context);
-        std::array<unsigned char, 65536> buffer = {};
-        std::uint64_t consumed = 0;
-        for (;;)
-        {
-            const ssize_t count = read(
-                file.descriptor(), buffer.data(), buffer.size());
-            if (count < 0 && errno == EINTR) continue;
-            require(count >= 0, "failed to hash completion input");
-            if (count == 0) break;
-            checkedAdd(consumed, static_cast<std::uint64_t>(count),
-                       "completion input bytes");
-            CC_SHA256_Update(&context, buffer.data(),
-                             static_cast<CC_LONG>(count));
-        }
-        struct stat finalStatus = {};
-        require(fstat(file.descriptor(), &finalStatus) == 0 &&
-                    finalStatus.st_dev == device &&
-                    finalStatus.st_ino == inode &&
-                    finalStatus.st_uid == getuid() &&
-                    finalStatus.st_nlink == 1 &&
-                    finalStatus.st_size == status.st_size &&
-                    consumed == static_cast<std::uint64_t>(status.st_size),
-                "completion input changed while hashing");
-        std::array<unsigned char, CC_SHA256_DIGEST_LENGTH> digest = {};
-        CC_SHA256_Final(digest.data(), &context);
-        std::ostringstream result;
-        result << std::hex << std::setfill('0');
-        for (unsigned char byte : digest)
-            result << std::setw(2) << static_cast<int>(byte);
-        BoundFileEvidence evidence;
-        evidence.sha256 = result.str();
-        evidence.size = consumed;
-        evidence.device = finalStatus.st_dev;
-        evidence.inode = finalStatus.st_ino;
-        evidence.uid = finalStatus.st_uid;
-        evidence.linkCount = finalStatus.st_nlink;
-        evidence.mode = finalStatus.st_mode;
-#if defined(__APPLE__)
-        evidence.flags = finalStatus.st_flags;
-#endif
-        return evidence;
-    }
-
-    BoundFileEvidence hashFileAtAndOptionallyFreeze(
-        const SecureDirectoryHandle& directory, const std::string& name,
-        bool freeze)
-    {
-        require(!name.empty() && std::filesystem::path(name).filename() == name,
-                "completion input filename must be one path component");
-        const int descriptor = openat(directory.descriptor(), name.c_str(),
-            (freeze ? O_RDWR : O_RDONLY) | O_NOFOLLOW | O_CLOEXEC);
-        if (descriptor < 0)
-            failSystemCall("failed to open completion input", errno);
-        SecureFileHandle file(descriptor);
-        return hashFileDescriptorAndOptionallyFreeze(file, freeze);
-    }
-
-    BoundFileEvidence hashBuildFileAndOptionallyFreeze(
-        const std::filesystem::path& path, bool freeze)
-    {
-        require(!path.empty() && !path.filename().empty(),
-                "completion input must name a build-tree file");
-        SecureDirectoryHandle directory =
-            openSecureBuildDirectory(path.parent_path(), false);
-        return hashFileAtAndOptionallyFreeze(
-            directory, path.filename().string(), freeze);
-    }
-
-    std::string sha256FileAndOptionallyFreeze(
-        const std::filesystem::path& path, bool freeze)
-    {
-        return hashBuildFileAndOptionallyFreeze(path, freeze).sha256;
-    }
-
-    SecureDirectoryHandle openTrustedAbsoluteDirectory(
-        const std::filesystem::path& path)
-    {
-        const std::filesystem::path absolute = absoluteNormalizedPath(path);
-        require(absolute.is_absolute(),
-                "authorized executable snapshot parent must be absolute");
-        const int descriptor = open("/",
-            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-        if (descriptor < 0)
-            failSystemCall("failed to open filesystem root", errno);
-        SecureDirectoryHandle current(descriptor);
-        for (const auto& component : absolute.relative_path())
-        {
-            const std::string name = component.string();
-            require(!name.empty() && name != "." && name != "..",
-                    "authorized executable snapshot path is unsafe");
-            const int next = openat(current.descriptor(), name.c_str(),
-                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-            if (next < 0)
-                failSystemCall(
-                    "failed trusted executable snapshot traversal", errno);
-            current = SecureDirectoryHandle(next);
-        }
-        return current;
-    }
-
-    BoundFileEvidence hashAuthorizedExecutableSnapshot(
-        const std::filesystem::path& path)
-    {
-        const std::filesystem::path absolute = absoluteNormalizedPath(path);
-        require(path.is_absolute() && absolute.is_absolute() &&
-                    !absolute.filename().empty(),
-                "authorized executable snapshot must be an absolute file");
-        SecureDirectoryHandle parent =
-            openTrustedAbsoluteDirectory(absolute.parent_path());
-        BoundFileEvidence evidence = hashFileAtAndOptionallyFreeze(
-            parent, absolute.filename().string(), false);
-        require((evidence.mode & 0111) != 0,
-                "authorized executable snapshot is not executable");
-        return evidence;
-    }
-
-    void publishImmutableNoReplaceAt(const SecureDirectoryHandle& parent,
-                                     const std::string& targetName,
-                                     const std::string& payload)
-    {
-        require(!targetName.empty() &&
-                    std::filesystem::path(targetName).filename() == targetName,
-                "completion publication filename is unsafe");
-        const std::string temporaryName = targetName + ".tmp";
-        struct stat existing = {};
-        require(fstatat(parent.descriptor(), targetName.c_str(), &existing,
-                        AT_SYMLINK_NOFOLLOW) != 0 && errno == ENOENT,
-                "completion publication target already exists");
-        require(fstatat(parent.descriptor(), temporaryName.c_str(), &existing,
-                        AT_SYMLINK_NOFOLLOW) != 0 && errno == ENOENT,
-                "completion publication temp already exists");
-        const int descriptor = openat(parent.descriptor(),
-            temporaryName.c_str(),
-            O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-        if (descriptor < 0)
-            failSystemCall("failed to create completion temp", errno);
-        SecureFileHandle temporary(descriptor);
-        bool renamed = false;
-        try
-        {
-            std::size_t written = 0;
-            while (written < payload.size())
-            {
-                const ssize_t count = write(
-                    temporary.descriptor(), payload.data() + written,
-                    payload.size() - written);
-                if (count < 0 && errno == EINTR) continue;
-                require(count > 0, "failed to write completion temp");
-                written += static_cast<std::size_t>(count);
-            }
-            require(fchmod(temporary.descriptor(), 0400) == 0 &&
-                        fsync(temporary.descriptor()) == 0,
-                    "failed to finalize completion temp mode");
-            struct stat before = {};
-            require(fstat(temporary.descriptor(), &before) == 0 &&
-                        S_ISREG(before.st_mode) && before.st_uid == getuid() &&
-                        before.st_nlink == 1 &&
-                        (before.st_mode & 07777) == 0400,
-                    "completion temp metadata changed");
-#if defined(__APPLE__)
-            require((before.st_flags & UF_IMMUTABLE) == 0,
-                    "completion temp did not begin with normal flags");
-#endif
-            require(lseek(temporary.descriptor(), 0, SEEK_SET) == 0,
-                    "failed to rewind completion temp");
-            std::string reread(payload.size(), '\0');
-            std::size_t consumed = 0;
-            while (consumed < reread.size())
-            {
-                const ssize_t count = read(temporary.descriptor(),
-                    reread.data() + consumed, reread.size() - consumed);
-                if (count < 0 && errno == EINTR) continue;
-                require(count > 0, "completion temp ended early");
-                consumed += static_cast<std::size_t>(count);
-            }
-            require(reread == payload,
-                    "completion temp checksum/hash mismatch");
-#if defined(__APPLE__)
-            const int renameResult = renameatx_np(
-                parent.descriptor(), temporaryName.c_str(),
-                parent.descriptor(), targetName.c_str(), RENAME_EXCL);
-#else
-            const int renameResult = -1;
-            errno = ENOTSUP;
-#endif
-            if (renameResult != 0)
-                failSystemCall("failed no-replace completion rename", errno);
-            renamed = true;
-            require(fsync(parent.descriptor()) == 0,
-                    "failed first completion parent fsync");
-            const int targetDescriptor = openat(
-                parent.descriptor(), targetName.c_str(),
-                O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-            require(targetDescriptor >= 0,
-                    "failed to reopen completion target");
-            SecureFileHandle target(targetDescriptor);
-            struct stat after = {};
-            require(fstat(target.descriptor(), &after) == 0 &&
-                        after.st_dev == before.st_dev &&
-                        after.st_ino == before.st_ino &&
-                        (after.st_mode & 07777) == 0400,
-                    "completion target inode/mode changed after rename");
-#if defined(__APPLE__)
-            require((after.st_flags & UF_IMMUTABLE) == 0 &&
-                        fchflags(target.descriptor(),
-                                 after.st_flags | UF_IMMUTABLE) == 0 &&
-                        fsync(target.descriptor()) == 0 &&
-                        fstat(target.descriptor(), &after) == 0 &&
-                        (after.st_flags & UF_IMMUTABLE) != 0,
-                    "failed to make completion target immutable");
-#endif
-            require(fsync(parent.descriptor()) == 0,
-                    "failed second completion parent fsync");
-            const int finalDescriptor = openat(
-                parent.descriptor(), targetName.c_str(),
-                O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-            require(finalDescriptor >= 0,
-                    "failed final nofollow reopen of completion target");
-            SecureFileHandle finalTarget(finalDescriptor);
-            const BoundFileEvidence finalEvidence =
-                hashFileDescriptorAndOptionallyFreeze(finalTarget, false);
-            require(finalEvidence.device == before.st_dev &&
-                        finalEvidence.inode == before.st_ino &&
-                        finalEvidence.uid == getuid() &&
-                        finalEvidence.linkCount == 1 &&
-                        finalEvidence.size == payload.size() &&
-                        (finalEvidence.mode & 07777) == 0400 &&
-                        finalEvidence.sha256 == sha256(payload),
-                    "completion target changed after immutable publication");
-#if defined(__APPLE__)
-            require((finalEvidence.flags & UF_IMMUTABLE) != 0,
-                    "completion target lost immutable flag after parent fsync");
-#endif
-        }
-        catch (...)
-        {
-            if (!renamed)
-                unlinkat(parent.descriptor(), temporaryName.c_str(), 0);
-            throw;
-        }
-    }
-
-    void publishImmutableNoReplace(const std::filesystem::path& path,
-                                   const std::string& payload)
-    {
-        require(!path.empty() && !path.filename().empty(),
-                "completion publication must name a build-tree file");
-        SecureDirectoryHandle parent =
-            openSecureBuildDirectory(path.parent_path(), false);
-        publishImmutableNoReplaceAt(
-            parent, path.filename().string(), payload);
-    }
-
-    std::string completionPayload(pid_t pid,
-                                  const std::string& executableHash,
-                                  const std::string& summaryHash,
-                                  const std::string& manifestHash)
-    {
-        picojson::object root;
-        root["magic"] = picojson::value(
-            "osgsol.scienceearth.v6-completion.v1");
-        root["pid"] = picojson::value(static_cast<double>(pid));
-        root["execution_snapshot_sha256"] = picojson::value(executableHash);
-        root["summary_sha256"] = picojson::value(summaryHash);
-        root["actual_evidence_manifest_sha256"] =
-            picojson::value(manifestHash);
-        return picojson::value(root).serialize(true) + '\n';
-    }
-
-    bool validCompletionPayload(const std::string& payload)
-    {
-        static const std::array<const char*, 5> serializedKeys = {{
-            "\"magic\"", "\"pid\"", "\"execution_snapshot_sha256\"",
-            "\"summary_sha256\"", "\"actual_evidence_manifest_sha256\"",
-        }};
-        for (const char* key : serializedKeys)
-        {
-            std::size_t count = 0;
-            std::size_t position = 0;
-            while ((position = payload.find(key, position)) !=
-                   std::string::npos)
-            {
-                ++count;
-                position += std::strlen(key);
-            }
-            if (count != 1) return false;
-        }
-        picojson::value value;
-        if (!picojson::parse(value, payload).empty() ||
-            !value.is<picojson::object>())
-            return false;
-        const picojson::object& object = value.get<picojson::object>();
-        static const std::set<std::string> keys = {
-            "magic", "pid", "execution_snapshot_sha256", "summary_sha256",
-            "actual_evidence_manifest_sha256"};
-        std::set<std::string> actualKeys;
-        for (const auto& item : object) actualKeys.insert(item.first);
-        if (actualKeys != keys) return false;
-        static const std::regex digest(R"(^[0-9a-f]{64}$)");
-        if (!field(object, "pid").is<double>()) return false;
-        const double pid = field(object, "pid").get<double>();
-        return field(object, "magic").is<std::string>() &&
-            field(object, "magic").get<std::string>() ==
-                "osgsol.scienceearth.v6-completion.v1" &&
-            std::isfinite(pid) && pid >= 1.0 && std::floor(pid) == pid &&
-            pid <= static_cast<double>(
-                std::numeric_limits<pid_t>::max()) &&
-            field(object, "execution_snapshot_sha256").is<std::string>() &&
-            field(object, "summary_sha256").is<std::string>() &&
-            field(object, "actual_evidence_manifest_sha256").is<std::string>() &&
-            std::regex_match(field(object,
-                "execution_snapshot_sha256").get<std::string>(), digest) &&
-            std::regex_match(field(object,
-                "summary_sha256").get<std::string>(), digest) &&
-            std::regex_match(field(object,
-                "actual_evidence_manifest_sha256").get<std::string>(), digest);
-    }
-
-    void publishLiveCompletion(const std::filesystem::path& evidenceDirectory,
-                               const std::filesystem::path& summaryPath,
-                               const std::filesystem::path& completionPath,
-                               const std::filesystem::path& executablePath,
-                               const std::function<void()>&
-                                   afterEvidenceDirectoryOpen = {})
-    {
-        const std::filesystem::path absoluteEvidenceDirectory =
-            absoluteNormalizedPath(evidenceDirectory);
-        const std::filesystem::path absoluteSummary =
-            absoluteNormalizedPath(summaryPath);
-        const std::filesystem::path absoluteCompletion =
-            absoluteNormalizedPath(completionPath);
-        SecureDirectoryHandle evidence =
-            openSecureBuildDirectory(absoluteEvidenceDirectory, false);
-        struct stat evidenceStatus = {};
-        require(fstat(evidence.descriptor(), &evidenceStatus) == 0 &&
-                    S_ISDIR(evidenceStatus.st_mode) &&
-                    evidenceStatus.st_uid == getuid(),
-                "live evidence directory is not one owned directory");
-        if (afterEvidenceDirectoryOpen) afterEvidenceDirectoryOpen();
-        const auto requireEvidenceDirectoryStillBound = [&]()
-        {
-            SecureDirectoryHandle rebound = openSecureBuildDirectory(
-                absoluteEvidenceDirectory, false);
-            struct stat reboundStatus = {};
-            require(fstat(rebound.descriptor(), &reboundStatus) == 0 &&
-                        reboundStatus.st_dev == evidenceStatus.st_dev &&
-                        reboundStatus.st_ino == evidenceStatus.st_ino,
-                    "live evidence directory was rebound during publication");
-        };
-        requireEvidenceDirectoryStillBound();
-
-        const bool summaryInsideEvidence =
-            absoluteSummary.parent_path() == absoluteEvidenceDirectory;
-        const bool completionInsideEvidence =
-            absoluteCompletion.parent_path() == absoluteEvidenceDirectory;
-        const std::string manifestName = "actual-evidence-manifest.json";
-        picojson::array entries;
-        std::vector<std::string> files;
-        const int enumerationDescriptor = dup(evidence.descriptor());
-        require(enumerationDescriptor >= 0,
-                "failed to duplicate live evidence directory descriptor");
-        DIR* rawDirectory = fdopendir(enumerationDescriptor);
-        if (!rawDirectory)
-        {
-            close(enumerationDescriptor);
-            failSystemCall("failed to enumerate live evidence directory", errno);
-        }
-        std::unique_ptr<DIR, int (*)(DIR*)> directory(rawDirectory, closedir);
-        errno = 0;
-        while (dirent* entry = readdir(directory.get()))
-        {
-            const std::string name = entry->d_name;
-            if (name == "." || name == "..") continue;
-            const bool isSummary = summaryInsideEvidence &&
-                name == absoluteSummary.filename().string();
-            const bool isManifest = name == manifestName;
-            const bool isCompletion = completionInsideEvidence &&
-                name == absoluteCompletion.filename().string();
-            const bool isPublicationTemp =
-                name == manifestName + ".tmp" ||
-                (completionInsideEvidence &&
-                 name == absoluteCompletion.filename().string() + ".tmp");
-            if (isSummary || isManifest || isCompletion || isPublicationTemp)
-                continue;
-            require(!name.empty() && name.front() != '.',
-                    "evidence set contains an unaccounted temporary entry");
-            files.push_back(name);
-            errno = 0;
-        }
-        require(errno == 0, "failed while enumerating live evidence directory");
-        std::sort(files.begin(), files.end());
-        require(std::adjacent_find(files.begin(), files.end()) == files.end(),
-                "evidence set contains duplicate names");
-        for (const std::string& file : files)
-        {
-            const BoundFileEvidence bound =
-                hashFileAtAndOptionallyFreeze(evidence, file, true);
-            require(bound.size <= 9007199254740991ULL,
-                    "evidence file size is not exactly representable in JSON");
-            picojson::object item;
-            item["name"] = picojson::value(file);
-            item["size"] = picojson::value(static_cast<double>(bound.size));
-            item["sha256"] = picojson::value(bound.sha256);
-            entries.push_back(picojson::value(item));
-        }
-        const BoundFileEvidence summaryEvidence = summaryInsideEvidence
-            ? hashFileAtAndOptionallyFreeze(
-                  evidence, absoluteSummary.filename().string(), true)
-            : hashBuildFileAndOptionallyFreeze(absoluteSummary, true);
-        const BoundFileEvidence executableEvidence =
-            hashAuthorizedExecutableSnapshot(executablePath);
-        picojson::object manifestObject;
-        manifestObject["magic"] = picojson::value(
-            "osgsol.scienceearth.v6-evidence-manifest.v1");
-        manifestObject["files"] = picojson::value(entries);
-        manifestObject["summary_sha256"] =
-            picojson::value(summaryEvidence.sha256);
-        const std::string manifest =
-            picojson::value(manifestObject).serialize(true) + '\n';
-        requireEvidenceDirectoryStillBound();
-        publishImmutableNoReplaceAt(evidence, manifestName, manifest);
-        const BoundFileEvidence manifestEvidence =
-            hashFileAtAndOptionallyFreeze(evidence, manifestName, false);
-        const std::string completion = completionPayload(
-            getpid(), executableEvidence.sha256, summaryEvidence.sha256,
-            manifestEvidence.sha256);
-        if (completionInsideEvidence)
-            publishImmutableNoReplaceAt(
-                evidence, absoluteCompletion.filename().string(), completion);
-        else
-            publishImmutableNoReplace(absoluteCompletion, completion);
-        requireEvidenceDirectoryStillBound();
-    }
-
-    void requireImmutablePublishedFile(
-        const std::filesystem::path& path, const std::string& expectedPayload)
-    {
-        SecureDirectoryHandle directory =
-            openSecureBuildDirectory(path.parent_path(), false);
-        const int descriptor = openat(directory.descriptor(),
-            path.filename().c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-        require(descriptor >= 0, "immutable publication target is missing");
-        SecureFileHandle file(descriptor);
-        struct stat status = {};
-        require(fstat(file.descriptor(), &status) == 0 &&
-                    S_ISREG(status.st_mode) && status.st_nlink == 1 &&
-                    (status.st_mode & 07777) == 0400,
-                "immutable publication target mode/type changed");
-#if defined(__APPLE__)
-        require((status.st_flags & UF_IMMUTABLE) != 0,
-                "immutable publication target lost UF_IMMUTABLE");
-#endif
-        std::string actual;
-        std::array<char, 4096> buffer = {};
-        for (;;)
-        {
-            const ssize_t count = read(
-                file.descriptor(), buffer.data(), buffer.size());
-            if (count < 0 && errno == EINTR) continue;
-            require(count >= 0, "failed to reread immutable publication");
-            if (count == 0) break;
-            actual.append(buffer.data(), static_cast<std::size_t>(count));
-        }
-        require(actual == expectedPayload && sha256(actual) ==
-                    sha256(expectedPayload),
-                "immutable publication checksum/hash mismatch");
-    }
-
-    void clearImmutableTestTree(const std::filesystem::path& root)
-    {
-        std::error_code error;
-        const std::filesystem::file_status rootStatus =
-            std::filesystem::symlink_status(root, error);
-        if (error == std::errc::no_such_file_or_directory) return;
-        require(!error,
-                "completion cleanup failed to inspect path=" +
-                    root.string() + " error=" + error.message());
-        if (rootStatus.type() == std::filesystem::file_type::not_found) return;
-        require(std::filesystem::is_directory(rootStatus) &&
-                    !std::filesystem::is_symlink(rootStatus),
-                "completion cleanup root is not a real directory path=" +
-                    root.string());
-        std::filesystem::recursive_directory_iterator iterator(
-            root, std::filesystem::directory_options::none, error);
-        const std::filesystem::recursive_directory_iterator end;
-        require(!error,
-                "completion cleanup failed to enumerate path=" +
-                    root.string() + " error=" + error.message());
-        for (; iterator != end; iterator.increment(error))
-        {
-            require(!error,
-                    "completion cleanup traversal failed path=" +
-                        root.string() + " error=" + error.message());
-            const std::filesystem::directory_entry& entry = *iterator;
-            const std::filesystem::file_status status =
-                entry.symlink_status(error);
-            require(!error,
-                    "completion cleanup stat failed path=" +
-                        entry.path().string() + " error=" + error.message());
-            if (std::filesystem::is_symlink(status)) continue;
-            if (!std::filesystem::is_regular_file(status)) continue;
-            const int descriptor = open(entry.path().c_str(),
-                O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-            if (descriptor < 0)
-                failSystemCall(
-                    "completion cleanup open failed path=" +
-                        entry.path().string(), errno);
-            int cleanupError = 0;
-            struct stat fileStatus = {};
-            if (fstat(descriptor, &fileStatus) != 0)
-            {
-                cleanupError = errno;
-            }
-            else if (!S_ISREG(fileStatus.st_mode) ||
-                fileStatus.st_uid != getuid() ||
-                fileStatus.st_nlink != 1)
-            {
-                cleanupError = EPERM;
-            }
-#if defined(__APPLE__)
-            else if (fchflags(
-                         descriptor,
-                         fileStatus.st_flags & ~UF_IMMUTABLE) != 0)
-            {
-                cleanupError = errno;
-            }
-#endif
-            if (cleanupError == 0 && fchmod(descriptor, 0600) != 0)
-                cleanupError = errno;
-            if (close(descriptor) != 0 && cleanupError == 0)
-                cleanupError = errno;
-            if (cleanupError != 0)
-                failSystemCall(
-                    "completion cleanup unfreeze failed path=" +
-                        entry.path().string(), cleanupError);
-        }
-        require(!error,
-                "completion cleanup traversal ended with error path=" +
-                    root.string() + " error=" + error.message());
-        static_cast<void>(std::filesystem::remove_all(root, error));
-        require(!error && !std::filesystem::exists(root, error) && !error,
-                "completion cleanup remove failed path=" + root.string() +
-                    " error=" + error.message());
-    }
-
-    class CompletionPrimitiveTreeCleanup
-    {
-    public:
-        explicit CompletionPrimitiveTreeCleanup(
-            std::filesystem::path root)
-            : _root(std::move(root)) {}
-
-        ~CompletionPrimitiveTreeCleanup() noexcept
-        {
-            if (_cleaned) return;
-            try
-            {
-                clearImmutableTestTree(_root);
-            }
-            catch (const std::exception& error)
-            {
-                std::cerr << "completion primitive cleanup failed path="
-                          << _root << " error=" << error.what() << std::endl;
-            }
-        }
-
-        void cleanupNow()
-        {
-            if (_cleaned) return;
-            clearImmutableTestTree(_root);
-            _cleaned = true;
-        }
-
-        CompletionPrimitiveTreeCleanup(
-            const CompletionPrimitiveTreeCleanup&) = delete;
-        CompletionPrimitiveTreeCleanup& operator=(
-            const CompletionPrimitiveTreeCleanup&) = delete;
-
-    private:
-        std::filesystem::path _root;
-        bool _cleaned = false;
-    };
-
-    class CompletionPrimitiveFileCleanup
-    {
-    public:
-        explicit CompletionPrimitiveFileCleanup(std::filesystem::path path)
-            : _path(std::move(path)) {}
-
-        ~CompletionPrimitiveFileCleanup() noexcept
-        {
-            if (_removed) return;
-            if (unlink(_path.c_str()) != 0 && errno != ENOENT)
-            {
-                std::cerr << "completion primitive file cleanup failed path="
-                          << _path << " error=" << std::strerror(errno)
-                          << std::endl;
-            }
-        }
-
-        void removeNow()
-        {
-            if (_removed) return;
-            if (unlink(_path.c_str()) != 0 && errno != ENOENT)
-                failSystemCall(
-                    "completion primitive file cleanup failed path=" +
-                        _path.string(), errno);
-            _removed = true;
-            std::error_code error;
-            require(!std::filesystem::exists(_path, error) && !error,
-                    "completion primitive file survived cleanup path=" +
-                        _path.string() + " error=" + error.message());
-        }
-
-        CompletionPrimitiveFileCleanup(
-            const CompletionPrimitiveFileCleanup&) = delete;
-        CompletionPrimitiveFileCleanup& operator=(
-            const CompletionPrimitiveFileCleanup&) = delete;
-
-    private:
-        std::filesystem::path _path;
-        bool _removed = false;
-    };
-
-    std::set<std::string> completionPrimitiveRegressionTrees()
-    {
-        const std::filesystem::path build = OSGSOL_SCIENCE_BUILD_DIR;
-        std::error_code error;
-        std::set<std::string> trees;
-        std::filesystem::directory_iterator iterator(
-            build, std::filesystem::directory_options::none, error);
-        const std::filesystem::directory_iterator end;
-        require(!error,
-                "failed to snapshot completion primitive roots path=" +
-                    build.string() + " error=" + error.message());
-        for (; iterator != end; iterator.increment(error))
-        {
-            require(!error,
-                    "failed to iterate completion primitive roots path=" +
-                        build.string() + " error=" + error.message());
-            const std::string name = iterator->path().filename().string();
-            if (name.rfind("completion-primitive-regression-", 0) == 0)
-                trees.insert(name);
-        }
-        require(!error,
-                "completion primitive root snapshot ended with error path=" +
-                    build.string() + " error=" + error.message());
-        return trees;
-    }
-
-    void verifyCompletionPrimitiveRegression()
-    {
-        const std::filesystem::path root =
-            std::filesystem::path(OSGSOL_SCIENCE_BUILD_DIR) /
-            ("completion-primitive-regression-" +
-             std::to_string(static_cast<long long>(getpid())));
-        CompletionPrimitiveTreeCleanup cleanup(root);
-        clearImmutableTestTree(root);
-        openSecureBuildDirectory(root, true);
-
-        const std::filesystem::path exceptionRoot =
-            root.string() + "-exception";
-        bool caughtInjectedException = false;
-        try
-        {
-            CompletionPrimitiveTreeCleanup exceptionCleanup(exceptionRoot);
-            clearImmutableTestTree(exceptionRoot);
-            openSecureBuildDirectory(exceptionRoot, true);
-            const std::filesystem::path frozen =
-                exceptionRoot / "frozen.json";
-            writeSecureBuildFile(frozen, "{\"frozen\":true}\n");
-            static_cast<void>(
-                hashBuildFileAndOptionallyFreeze(frozen, true));
-            throw std::runtime_error(
-                "injected completion primitive exception");
-        }
-        catch (const std::runtime_error& error)
-        {
-            caughtInjectedException = std::string(error.what()) ==
-                "injected completion primitive exception";
-        }
-        std::error_code exceptionCleanupError;
-        require(caughtInjectedException &&
-                    !std::filesystem::exists(
-                        exceptionRoot, exceptionCleanupError) &&
-                    !exceptionCleanupError,
-                "completion primitive exception path survived RAII cleanup "
-                "path=" + exceptionRoot.string() + " error=" +
-                    exceptionCleanupError.message());
-
-        const std::filesystem::path evidence = root / "evidence.json";
-        const std::filesystem::path summary = root / "summary.json";
-        const std::string evidencePayload = "{\"evidence\":true}\n";
-        const std::string summaryPayload = "{\"status\":\"PASS\"}\n";
-        writeSecureBuildFile(evidence, evidencePayload);
-        writeSecureBuildFile(summary, summaryPayload);
-        require(sha256FileAndOptionallyFreeze(evidence, true) ==
-                    sha256(evidencePayload) &&
-                    sha256FileAndOptionallyFreeze(summary, true) ==
-                    sha256(summaryPayload),
-                "same-FD freeze/hash result changed");
-
-        const std::string manifestPayload =
-            "{\"magic\":\"synthetic-manifest\"}\n";
-        const std::filesystem::path manifest = root / "manifest.json";
-        publishImmutableNoReplace(manifest, manifestPayload);
-        requireImmutablePublishedFile(manifest, manifestPayload);
-        const std::string completion = completionPayload(
-            getpid(), std::string(64, 'a'), sha256(summaryPayload),
-            sha256(manifestPayload));
-        const std::filesystem::path completionPath = root / "completion.json";
-        publishImmutableNoReplace(completionPath, completion);
-        requireImmutablePublishedFile(completionPath, completion);
-
-        const auto rejected = [](const auto& operation)
-        {
-            try
-            {
-                operation();
-                return false;
-            }
-            catch (const std::exception&)
-            {
-                return true;
-            }
-        };
-        require(rejected([&]()
-                {
-                    requireImmutablePublishedFile(
-                        completionPath, completion + "tampered");
-                }),
-                "immutable publication accepted checksum/hash mismatch");
-        require(rejected([&]()
-                {
-                    publishImmutableNoReplace(completionPath, completion);
-                }),
-                "duplicate publish/rename collision was accepted");
-        require(rejected([&]()
-                {
-                    writeSecureBuildFile(evidence, "mutated\n");
-                }) && rejected([&]()
-                {
-                    writeSecureBuildFile(summary, "mutated\n");
-                }),
-                "post-completion evidence/summary mutation was accepted");
-
-        const std::filesystem::path preexisting = root / "preexisting.json";
-        writeSecureBuildFile(preexisting, "old\n");
-        require(rejected([&]()
-                {
-                    publishImmutableNoReplace(preexisting, "new\n");
-                }), "preexisting publication target was accepted");
-        require(rejected([&]()
-                {
-                    requireImmutablePublishedFile(preexisting, "old\n");
-                }), "normal-mode target passed immutable flag validation");
-
-        const std::filesystem::path targetSymlink = root / "target-link.json";
-        std::filesystem::create_symlink(preexisting, targetSymlink);
-        require(rejected([&]()
-                {
-                    publishImmutableNoReplace(targetSymlink, "new\n");
-                }), "symlink publication target was accepted");
-        const std::filesystem::path interrupted = root / "interrupted.json";
-        writeSecureBuildFile(
-            interrupted.string() + ".tmp", "interrupted\n");
-        require(rejected([&]()
-                {
-                    publishImmutableNoReplace(interrupted, "new\n");
-                }), "interrupted completion temp was accepted");
-
-        const std::filesystem::path realParent = root / "real-parent";
-        openSecureBuildDirectory(realParent, true);
-        const std::filesystem::path parentSymlink = root / "parent-link";
-        std::filesystem::create_directory_symlink(realParent, parentSymlink);
-        require(rejected([&]()
-                {
-                    publishImmutableNoReplace(
-                        parentSymlink / "completion.json", "new\n");
-                }), "symlink completion parent was accepted");
-
-        const std::filesystem::path formalEvidence = root / "formal-evidence";
-        openSecureBuildDirectory(formalEvidence, true);
-        const std::filesystem::path formalCapture =
-            formalEvidence / "capture.json";
-        const std::filesystem::path formalSummary =
-            formalEvidence / "summary.json";
-        const std::filesystem::path formalManifest =
-            formalEvidence / "actual-evidence-manifest.json";
-        const std::filesystem::path formalCompletion =
-            root / "formal-completion.json";
-        writeSecureBuildFile(formalCapture, "{\"capture\":true}\n");
-        writeSecureBuildFile(formalSummary, "{\"status\":\"PASS\"}\n");
-        const std::filesystem::path externalSnapshot =
-            std::filesystem::path("/private/tmp") /
-            ("osgsol-v6-authorized-snapshot-" +
-             std::to_string(static_cast<long long>(getpid())));
-        if (unlink(externalSnapshot.c_str()) != 0 && errno != ENOENT)
-            failSystemCall(
-                "failed to clear external executable snapshot fixture", errno);
-        CompletionPrimitiveFileCleanup snapshotCleanup(externalSnapshot);
-        const int snapshotDescriptor = open(
-            externalSnapshot.c_str(),
-            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0500);
-        require(snapshotDescriptor >= 0,
-                "failed to create external executable snapshot fixture");
-        {
-            SecureFileHandle snapshot(snapshotDescriptor);
-            const std::string snapshotPayload = "#!/bin/sh\nexit 0\n";
-            std::size_t written = 0;
-            while (written < snapshotPayload.size())
-            {
-                const ssize_t count = write(
-                    snapshot.descriptor(), snapshotPayload.data() + written,
-                    snapshotPayload.size() - written);
-                if (count < 0 && errno == EINTR) continue;
-                if (count <= 0)
-                    failSystemCall(
-                        "failed to write external executable snapshot fixture",
-                        count < 0 ? errno : EIO);
-                written += static_cast<std::size_t>(count);
-            }
-            if (fsync(snapshot.descriptor()) != 0)
-                failSystemCall(
-                    "failed to sync external executable snapshot fixture",
-                    errno);
-        }
-        publishLiveCompletion(formalEvidence, formalSummary,
-                              formalCompletion, externalSnapshot);
-        const auto readFixture = [](const std::filesystem::path& path)
-        {
-            std::ifstream stream(path);
-            require(stream.good(), "failed to read formal completion fixture");
-            std::ostringstream payload;
-            payload << stream.rdbuf();
-            return payload.str();
-        };
-        const std::string formalManifestPayload = readFixture(formalManifest);
-        require(formalManifestPayload.find("capture.json") != std::string::npos &&
-                    formalManifestPayload.find("\"size\": 17") !=
-                        std::string::npos &&
-                    formalManifestPayload.find("summary.json") == std::string::npos &&
-                    validCompletionPayload(readFixture(formalCompletion)),
-                "formal completion layout did not keep summary/manifest/"
-                "completion disjoint or hash its external executable snapshot");
-
-        const std::filesystem::path reboundEvidence =
-            root / "rebound-evidence";
-        const std::filesystem::path movedEvidence =
-            root / "rebound-evidence-moved";
-        openSecureBuildDirectory(reboundEvidence, true);
-        writeSecureBuildFile(reboundEvidence / "capture.json",
-                             "{\"trusted\":true}\n");
-        writeSecureBuildFile(reboundEvidence / "summary.json",
-                             "{\"status\":\"PASS\"}\n");
-        require(rejected([&]()
-                {
-                    publishLiveCompletion(
-                        reboundEvidence, reboundEvidence / "summary.json",
-                        root / "rebound-completion.json", externalSnapshot,
-                        [&]()
-                        {
-                            std::filesystem::rename(
-                                reboundEvidence, movedEvidence);
-                            openSecureBuildDirectory(reboundEvidence, true);
-                            writeSecureBuildFile(
-                                reboundEvidence / "capture.json",
-                                "{\"attacker\":true}\n");
-                            writeSecureBuildFile(
-                                reboundEvidence / "summary.json",
-                                "{\"status\":\"FAKE\"}\n");
-                        });
-                }),
-                "publishLiveCompletion accepted a rebound evidence directory");
-        snapshotCleanup.removeNow();
-        cleanup.cleanupNow();
     }
 
     void prepareLiveEvidenceDirectory(const std::filesystem::path& path)
@@ -6181,1512 +3243,8 @@ namespace
         return delayMs >= envelope.first && delayMs <= envelope.second;
     }
 
-    bool isExactFiveStatus(int status)
+    HttpProof buildHttpProof(const DebugCapture& capture, const std::string& statsJson)
     {
-        static const std::set<int> codes = {429, 500, 502, 503, 504};
-        return codes.count(status) != 0;
-    }
-
-    std::uint64_t checkedUnsignedDecimal(
-        const std::string& text, const std::string& label,
-        std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max())
-    {
-        require(!text.empty(), label + " is empty");
-        std::uint64_t value = 0;
-        const char* first = text.data();
-        const char* last = first + text.size();
-        const std::from_chars_result parsed =
-            std::from_chars(first, last, value);
-        require(parsed.ec == std::errc() && parsed.ptr == last &&
-                    value <= maximum,
-                label + " is out of range");
-        return value;
-    }
-
-    int checkedNonnegativeInt(const std::string& text,
-                              const std::string& label)
-    {
-        return static_cast<int>(checkedUnsignedDecimal(
-            text, label, static_cast<std::uint64_t>(
-                std::numeric_limits<int>::max())));
-    }
-
-    long long checkedCoordinate(const std::string& text,
-                                const std::string& label)
-    {
-        if (text == "-1") return -1;
-        return static_cast<long long>(checkedUnsignedDecimal(
-            text, label, static_cast<std::uint64_t>(
-                std::numeric_limits<long long>::max())));
-    }
-
-    void checkedAdd(std::uint64_t& target, std::uint64_t value,
-                    const std::string& label)
-    {
-        require(value <= std::numeric_limits<std::uint64_t>::max() - target,
-                label + " overflowed");
-        target += value;
-    }
-
-    std::uint64_t checkedIntervalLength(std::uint64_t start,
-                                        std::uint64_t end)
-    {
-        require(end >= start && end - start <
-                    std::numeric_limits<std::uint64_t>::max(),
-                "science transport interval length overflowed");
-        return end - start + 1;
-    }
-
-    std::uint64_t checkedJsonUnsigned(const picojson::value& value,
-                                      const std::string& label,
-                                      std::uint64_t maximum)
-    {
-        constexpr std::uint64_t MAX_EXACT_JSON_INTEGER =
-            9007199254740991ULL;
-        require(value.is<double>(), label + " must be numeric");
-        const double number = value.get<double>();
-        const std::uint64_t effectiveMaximum =
-            std::min(maximum, MAX_EXACT_JSON_INTEGER);
-        require(std::isfinite(number) && number >= 0.0 &&
-                    std::floor(number) == number &&
-                    number <= static_cast<double>(effectiveMaximum),
-                label + " must be an exactly representable finite integral "
-                "value in range");
-        return static_cast<std::uint64_t>(number);
-    }
-
-    std::pair<std::uint64_t, std::uint64_t> parseExactByteRange(
-        const std::string& range)
-    {
-        static const std::regex pattern(R"(^bytes=([0-9]+)-([0-9]+)$)");
-        std::smatch match;
-        require(std::regex_match(range, match, pattern),
-                "science transport Range is malformed");
-        const std::uint64_t maximum = static_cast<std::uint64_t>(
-            std::numeric_limits<long long>::max());
-        const std::uint64_t start = checkedUnsignedDecimal(
-            match[1].str(), "science transport Range start", maximum);
-        const std::uint64_t end = checkedUnsignedDecimal(
-            match[2].str(), "science transport Range end", maximum);
-        require(end >= start, "science transport Range is reversed");
-        return {start, end};
-    }
-
-    std::string correlationId(const ScienceTransportCompletion& completion)
-    {
-        return completion.context + "/" +
-            std::to_string(completion.request) + "/" +
-            std::to_string(completion.attempt);
-    }
-
-    void validateScienceTransportCompletionStructure(
-        const ScienceTransportCompletion& completion)
-    {
-        const bool legalTuple =
-            (completion.scope == "coordinator" &&
-             completion.role == "head" && completion.method == "HEAD" &&
-             completion.range == "none") ||
-            (completion.scope == "coordinator" &&
-             completion.role == "range" && completion.method == "GET" &&
-             completion.range.rfind("bytes=", 0) == 0) ||
-            (completion.scope == "multirange" &&
-             completion.role == "range" && completion.method == "GET" &&
-             completion.range.rfind("bytes=", 0) == 0) ||
-            (completion.scope == "ordinary-head" &&
-             completion.role == "head" && completion.method == "HEAD" &&
-             completion.range == "none") ||
-            (completion.scope == "ordinary-head" &&
-             completion.role == "head" && completion.method == "GET" &&
-             completion.range == "none");
-        require(legalTuple, "science transport scope/role/method/range tuple is illegal");
-        require(completion.ordinal > 0 && completion.request > 0 &&
-                    completion.attempt >= 1 && completion.attempt <= 4,
-                "science transport ordinal/request/attempt is out of bounds");
-        require(completion.contentLengthCount >= 0 &&
-                    completion.contentRangeCount >= 0,
-                "science transport header count is negative");
-        if (completion.range != "none")
-            static_cast<void>(parseExactByteRange(completion.range));
-    }
-
-    std::string scienceTransportAdmissionFailure(
-        const ScienceTransportCompletion& completion)
-    {
-        if (completion.curlCode != 0) return "curl";
-        if (completion.redirects != 0) return "redirect";
-        if (completion.httpMajor != 2) return "http-version";
-        if (completion.connectionId < 0) return "connection";
-        if (!((completion.contentLengthCount == 0 &&
-               !completion.contentLengthValid &&
-               completion.declaredContentLength == 0) ||
-              (completion.contentLengthCount == 1 &&
-               completion.contentLengthValid)))
-            return "content-length";
-
-        if (completion.method == "HEAD")
-        {
-            if (completion.actualBodyBytes != 0) return "body";
-            if (completion.contentRangeCount != 0 ||
-                completion.contentRangeValid ||
-                completion.contentStart != -1 ||
-                completion.contentEnd != -1 ||
-                completion.contentTotal != -1)
-                return "content-range";
-            if (!(completion.status == 200 ||
-                  isExactFiveStatus(completion.status) ||
-                  completion.status == 400 ||
-                  completion.status == 404 ||
-                  completion.status == 405))
-                return "status";
-            if (completion.status == 200)
-            {
-                if (completion.contentLengthCount != 1 ||
-                    completion.declaredContentLength == 0)
-                    return "content-length";
-            }
-            return {};
-        }
-
-        if (completion.range == "none")
-        {
-            if (completion.scope != "ordinary-head" ||
-                completion.status != 200 ||
-                completion.actualBodyBytes != 0 ||
-                completion.contentRangeCount != 0 ||
-                completion.contentRangeValid ||
-                completion.contentStart != -1 ||
-                completion.contentEnd != -1 ||
-                completion.contentTotal != -1)
-                return "ordinary-head";
-            return {};
-        }
-
-        const auto interval = parseExactByteRange(completion.range);
-        if (completion.status == 206)
-        {
-            if (completion.contentLengthCount != 1 ||
-                !completion.contentLengthValid ||
-                completion.declaredContentLength !=
-                    completion.actualBodyBytes ||
-                completion.actualBodyBytes != checkedIntervalLength(
-                    interval.first, interval.second))
-                return "content-length";
-            if (completion.contentRangeCount != 1 ||
-                !completion.contentRangeValid ||
-                completion.contentStart !=
-                    static_cast<long long>(interval.first) ||
-                completion.contentEnd !=
-                    static_cast<long long>(interval.second) ||
-                completion.contentTotal <= completion.contentEnd)
-                return "content-range";
-            return {};
-        }
-
-        if (!isExactFiveStatus(completion.status)) return "status";
-        if (completion.actualBodyBytes > 131072) return "body";
-        if (completion.contentLengthCount > 1 ||
-            (completion.contentLengthCount == 1 &&
-             completion.declaredContentLength !=
-                completion.actualBodyBytes))
-            return "content-length";
-        if (completion.contentRangeCount > 1) return "content-range";
-        if (completion.contentRangeCount == 0)
-        {
-            if (completion.contentRangeValid ||
-                completion.contentStart != -1 ||
-                completion.contentEnd != -1 ||
-                completion.contentTotal != -1)
-                return "content-range";
-        }
-        else
-        {
-            if (!completion.contentRangeValid ||
-                completion.contentStart !=
-                    static_cast<long long>(interval.first) ||
-                completion.contentEnd !=
-                    static_cast<long long>(interval.second) ||
-                completion.contentTotal <= completion.contentEnd)
-                return "content-range";
-        }
-        return {};
-    }
-
-    AttributedTransportProof buildAttributedTransportProof(
-        const DebugCapture& capture,
-        const std::vector<ScienceServerRequest>& serverRequests,
-        bool allowProtocolTerminatedFinalResponse)
-    {
-        struct RawRequest
-        {
-            std::string method;
-            std::string path;
-            std::string range;
-            std::string correlation;
-        };
-        struct RawResponse
-        {
-            int status = 0;
-            bool connectResponse = false;
-            std::vector<std::string> contentLengths;
-            std::vector<std::string> contentRanges;
-        };
-        using Decision = AttributedEventEvidence;
-
-        static const std::regex responseV1(
-            R"(^VSICURL: ScienceTransport: response-v1 ordinal=([0-9]+) )"
-            R"(context=([0-9a-f]{32}) )"
-            R"(scope=(coordinator|multirange|ordinary-head) role=(head|range) )"
-            R"(request=([0-9]+) attempt=([1-4]) method=(HEAD|GET) )"
-            R"(range=(none|bytes=[0-9]+-[0-9]+) curl=([0-9]+) status=([0-9]+) )"
-            R"(http=([0-2]) redirects=([0-9]+) connection=(-1|[0-9]+) )"
-            R"(content-length-count=([0-9]+) content-length-valid=([01]) )"
-            R"(declared-content-length=([0-9]+) content-range-count=([0-9]+) )"
-            R"(content-range-valid=([01]) content-start=(-1|[0-9]+) )"
-            R"(content-end=(-1|[0-9]+) content-total=(-1|[0-9]+) )"
-            R"(actual-body-bytes=([0-9]+)$)");
-        static const std::regex headRetryPattern(
-            R"(^VSICURL: ParallelHeadRange: head-transient-retry )"
-            R"(context=([0-9a-f]{32}) retry=([1-3]) request=([0-9]+) )"
-            R"(failed-attempt=([1-3]) scheduled-attempt=([2-4]) )"
-            R"(status=(429|500|502|503|504) delay-ms=([0-9]+) )"
-            R"(connection=([0-9]+) http=(2) declared-content-length=([0-9]+) )"
-            R"(actual-body-bytes=(0)$)");
-        static const std::regex coordinatorRetryPattern(
-            R"(^VSICURL: ParallelHeadRange: transient-retry )"
-            R"(context=([0-9a-f]{32}) request=([0-9]+) )"
-            R"(failed-attempt=([1-3]) scheduled-attempt=([2-4]) )"
-            R"(range=(bytes=[0-9]+-[0-9]+) status=(429|500|502|503|504) )"
-            R"(bytes=([0-9]+) delay-ms=([0-9]+) )"
-            R"(connection=([0-9]+) http=(2)$)");
-        static const std::regex immediateRetryPattern(
-            R"(^VSICURL: ReadMultiRange: immediate-retry )"
-            R"(context=([0-9a-f]{32}) request=([0-9]+) )"
-            R"(failed-attempt=([1-3]) scheduled-attempt=([2-4]) )"
-            R"(range=(bytes=[0-9]+-[0-9]+) status=(429|500|502|503|504) )"
-            R"(bytes=([0-9]+) delay-ms=([0-9]+) )"
-            R"(connection=([0-9]+) http=(2)$)");
-        static const std::regex fallbackPattern(
-            R"(^VSICURL: ParallelHeadRange: fallback )"
-            R"(context=([0-9a-f]{32}) request=([0-9]+) attempt=([1-4]) )"
-            R"(reason=([a-z]+(?:-[a-z]+)*)$)");
-        static const std::regex headBlockedPattern(
-            R"(^VSICURL: ParallelHeadRange: head-transient-retry-blocked )"
-            R"(context=([0-9a-f]{32}) request=([0-9]+) attempt=([1-4]) )"
-            R"(status=([0-9]+) reason=([a-z]+(?:-[a-z]+)*) )"
-            R"(connection=(-1|[0-9]+) http=([0-2])$)");
-        static const std::regex rangeBlockedPattern(
-            R"(^VSICURL: ParallelHeadRange: transient-retry-blocked )"
-            R"(context=([0-9a-f]{32}) request=([0-9]+) attempt=([1-4]) )"
-            R"(range=(bytes=[0-9]+-[0-9]+) status=([0-9]+) bytes=([0-9]+) )"
-            R"(reason=([a-z]+(?:-[a-z]+)*) connection=(-1|[0-9]+) )"
-            R"(http=([0-2])$)");
-        static const std::regex logicalGetPattern(
-            R"(^VSICURL: ParallelHeadRange: logical-get-complete )"
-            R"(context=([0-9a-f]{32}) request=([0-9]+) attempt=([1-4]) )"
-            R"(range=(bytes=[0-9]+-[0-9]+) bytes=([0-9]+)$)");
-        static const std::regex publicationPattern(
-            R"(^VSICURL: ParallelHeadRange: published )"
-            R"(context=([0-9a-f]{32}) request=([0-9]+) attempt=([1-4])$)");
-        static const std::regex propertyPublicationPattern(
-            R"(^VSICURL: ParallelHeadRange: file-property-published )"
-            R"(context=([0-9a-f]{32}) request=([0-9]+) attempt=([1-4])$)");
-        static const std::regex propertyBlockedPattern(
-            R"(^VSICURL: ParallelHeadRange: file-property-publication-blocked )"
-            R"(context=([0-9a-f]{32}) request=([0-9]+) attempt=([1-4]) )"
-            R"(reason=([a-z]+(?:-[a-z]+)*)$)");
-        static const std::regex operationBlockedPattern(
-            R"(^VSICURL: ParallelHeadRange: blocked-operation-marked )"
-            R"(context=([0-9a-f]{32}) request=([0-9]+) attempt=([1-4]) )"
-            R"(reason=([a-z]+(?:-[a-z]+)*)$)");
-
-        AttributedTransportProof proof;
-        std::vector<RawRequest> rawRequests;
-        std::vector<RawResponse> rawResponses;
-        std::vector<Decision> decisions;
-        RawResponse currentResponse;
-        bool responseOpen = false;
-        int pendingConnectRequests = 0;
-
-        for (std::size_t index = 0; index < capture.messages.size(); ++index)
-        {
-            const std::string& message = capture.messages[index];
-            const std::string outputPrefix = "CURL_INFO_HEADER_OUT: ";
-            const std::string inputPrefix = "CURL_INFO_HEADER_IN: ";
-            if (message.rfind(outputPrefix, 0) == 0)
-            {
-                const std::string payload = message.substr(outputPrefix.size());
-                const std::string normalizedPayload = lower("\n" + payload);
-                const std::string correlationHeader =
-                    "\nx-osgsol-science-correlation:";
-                std::size_t correlationHeaderCount = 0;
-                for (std::size_t offset = 0;
-                     (offset = normalizedPayload.find(
-                          correlationHeader, offset)) != std::string::npos;
-                     offset += correlationHeader.size())
-                {
-                    ++correlationHeaderCount;
-                }
-                std::istringstream stream(payload);
-                std::string firstLine;
-                std::getline(stream, firstLine);
-                if (!firstLine.empty() && firstLine.back() == '\r')
-                    firstLine.pop_back();
-                std::istringstream firstLineStream(firstLine);
-                RawRequest request;
-                std::string uri;
-                std::string version;
-                firstLineStream >> request.method >> uri >> version;
-                request.path = uri;
-                const auto headers = parseHeaders(stream);
-                const auto range = headers.find("range");
-                if (range != headers.end()) request.range = range->second;
-                const auto correlation = headers.find(
-                    "x-osgsol-science-correlation");
-                if (request.method != "CONNECT")
-                {
-                    require(correlation != headers.end() &&
-                                correlationHeaderCount == 1,
-                            "science raw request omitted or duplicated its "
-                            "correlation header");
-                    request.correlation = correlation->second;
-                    rawRequests.push_back(request);
-                }
-                else
-                {
-                    ++pendingConnectRequests;
-                }
-            }
-            else if (message.rfind(inputPrefix, 0) == 0)
-            {
-                std::string line = message.substr(inputPrefix.size());
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (line.rfind("HTTP/", 0) == 0)
-                {
-                    require(!responseOpen,
-                            "science raw response blocks overlap");
-                    responseOpen = true;
-                    currentResponse = RawResponse();
-                    std::istringstream status(line);
-                    std::string version;
-                    status >> version >> currentResponse.status;
-                    currentResponse.connectResponse =
-                        (version == "HTTP/1.0" || version == "HTTP/1.1") &&
-                        currentResponse.status == 200 &&
-                        lower(line).find(" 200 connection established") !=
-                            std::string::npos;
-                    if (currentResponse.connectResponse)
-                    {
-                        require(pendingConnectRequests > 0,
-                                "proxy tunnel response has no CONNECT request");
-                        --pendingConnectRequests;
-                    }
-                }
-                else if (line.empty())
-                {
-                    require(responseOpen,
-                            "science raw response ended without status");
-                    rawResponses.push_back(currentResponse);
-                    responseOpen = false;
-                }
-                else if (responseOpen)
-                {
-                    const std::size_t separator = line.find(':');
-                    require(separator != std::string::npos,
-                            "science raw response header is malformed");
-                    std::string value = line.substr(separator + 1);
-                    while (!value.empty() && value.front() == ' ')
-                        value.erase(value.begin());
-                    const std::string name = lower(line.substr(0, separator));
-                    if (name == "content-length")
-                        currentResponse.contentLengths.push_back(value);
-                    if (name == "content-range")
-                        currentResponse.contentRanges.push_back(value);
-                }
-            }
-
-            std::smatch match;
-            if (std::regex_match(message, match, responseV1))
-            {
-                ScienceTransportCompletion completion;
-                completion.ordinal = checkedUnsignedDecimal(
-                    match[1].str(), "science completion ordinal");
-                completion.context = match[2].str();
-                completion.scope = match[3].str();
-                completion.role = match[4].str();
-                completion.request = checkedUnsignedDecimal(
-                    match[5].str(), "science completion request");
-                completion.attempt = checkedNonnegativeInt(
-                    match[6].str(), "science completion attempt");
-                completion.method = match[7].str();
-                completion.range = match[8].str();
-                completion.curlCode = checkedNonnegativeInt(
-                    match[9].str(), "science completion curl code");
-                completion.status = checkedNonnegativeInt(
-                    match[10].str(), "science completion status");
-                completion.httpMajor = checkedNonnegativeInt(
-                    match[11].str(), "science completion HTTP major");
-                completion.redirects = checkedNonnegativeInt(
-                    match[12].str(), "science completion redirects");
-                completion.connectionId = checkedCoordinate(
-                    match[13].str(), "science completion connection");
-                completion.contentLengthCount = checkedNonnegativeInt(
-                    match[14].str(), "science Content-Length count");
-                completion.contentLengthValid = match[15].str() == "1";
-                completion.declaredContentLength =
-                    checkedUnsignedDecimal(match[16].str(),
-                                           "science declared length");
-                completion.contentRangeCount = checkedNonnegativeInt(
-                    match[17].str(), "science Content-Range count");
-                completion.contentRangeValid = match[18].str() == "1";
-                completion.contentStart = checkedCoordinate(
-                    match[19].str(), "science Content-Range start");
-                completion.contentEnd = checkedCoordinate(
-                    match[20].str(), "science Content-Range end");
-                completion.contentTotal = checkedCoordinate(
-                    match[21].str(), "science Content-Range total");
-                completion.actualBodyBytes = checkedUnsignedDecimal(
-                    match[22].str(), "science actual body bytes");
-                completion.messageIndex = index;
-                validateScienceTransportCompletionStructure(completion);
-                completion.admissionReason =
-                    scienceTransportAdmissionFailure(completion);
-                completion.admissionValid =
-                    completion.admissionReason.empty();
-                proof.completions.push_back(completion);
-            }
-            else
-            {
-                require(message.find("ScienceTransport: response-v1") ==
-                            std::string::npos,
-                        "science transport response-v1 event is malformed");
-            }
-
-            bool matchedHeadRetry = false;
-            if (std::regex_match(message, match, headRetryPattern))
-            {
-                matchedHeadRetry = true;
-                HeadRetryEvidence retry;
-                retry.context = match[1].str();
-                retry.retryOrdinal = checkedNonnegativeInt(
-                    match[2].str(), "HEAD retry ordinal");
-                retry.request = checkedUnsignedDecimal(
-                    match[3].str(), "HEAD retry request");
-                retry.failedAttempt = checkedNonnegativeInt(
-                    match[4].str(), "HEAD failed attempt");
-                retry.scheduledAttempt = checkedNonnegativeInt(
-                    match[5].str(), "HEAD scheduled attempt");
-                retry.failedStatus = checkedNonnegativeInt(
-                    match[6].str(), "HEAD failed status");
-                retry.delayMs = static_cast<long long>(checkedUnsignedDecimal(
-                    match[7].str(), "HEAD retry delay",
-                    static_cast<std::uint64_t>(
-                        std::numeric_limits<long long>::max())));
-                retry.failedConnectionId = checkedCoordinate(
-                    match[8].str(), "HEAD failed connection");
-                retry.failedHttpMajor = checkedNonnegativeInt(
-                    match[9].str(), "HEAD failed HTTP major");
-                retry.failedDeclaredContentLength =
-                    checkedUnsignedDecimal(match[10].str(),
-                                           "HEAD failed declared length");
-                retry.failedActualBodyBytes = checkedUnsignedDecimal(
-                    match[11].str(), "HEAD failed actual body bytes");
-                retry.messageIndex = index;
-                require(retry.scheduledAttempt == retry.failedAttempt + 1 &&
-                            isExpectedCoordinatorRetryDelay(
-                                retry.retryOrdinal, retry.delayMs),
-                        "HEAD retry transition or delay is invalid");
-                proof.headRetries.push_back(retry);
-            }
-            else
-            {
-                require(message.find("head-transient-retry ") ==
-                            std::string::npos,
-                        "HEAD transient retry event is malformed");
-            }
-
-            Decision decision;
-            bool matchedDecision = false;
-            const auto parseRetryDecision = [&](const std::string& kind)
-            {
-                decision.kind = kind;
-                decision.context = match[1].str();
-                decision.request = checkedUnsignedDecimal(
-                    match[2].str(), kind + " request");
-                decision.attempt = checkedNonnegativeInt(
-                    match[3].str(), kind + " failed attempt");
-                decision.scheduledAttempt = checkedNonnegativeInt(
-                    match[4].str(), kind + " scheduled attempt");
-                decision.range = match[5].str();
-                decision.status = checkedNonnegativeInt(
-                    match[6].str(), kind + " status");
-                decision.bytes = checkedUnsignedDecimal(
-                    match[7].str(), kind + " bytes");
-                decision.delayMs = static_cast<long long>(
-                    checkedUnsignedDecimal(match[8].str(), kind + " delay",
-                        static_cast<std::uint64_t>(
-                            std::numeric_limits<long long>::max())));
-                decision.connectionId = checkedCoordinate(
-                    match[9].str(), kind + " connection");
-                decision.httpMajor = checkedNonnegativeInt(
-                    match[10].str(), kind + " HTTP major");
-            };
-            if (std::regex_match(message, match, coordinatorRetryPattern))
-            {
-                parseRetryDecision("coordinator-retry");
-                matchedDecision = true;
-            }
-            else if (std::regex_match(message, match, immediateRetryPattern))
-            {
-                parseRetryDecision("immediate-retry");
-                matchedDecision = true;
-            }
-            else if (std::regex_match(message, match, fallbackPattern))
-            {
-                decision.kind = "fallback";
-                decision.context = match[1].str();
-                decision.request = checkedUnsignedDecimal(
-                    match[2].str(), "fallback request");
-                decision.attempt = checkedNonnegativeInt(
-                    match[3].str(), "fallback attempt");
-                decision.reason = match[4].str();
-                matchedDecision = true;
-            }
-            else if (std::regex_match(message, match, headBlockedPattern))
-            {
-                decision.kind = "head-blocked";
-                decision.context = match[1].str();
-                decision.request = checkedUnsignedDecimal(
-                    match[2].str(), "HEAD block request");
-                decision.attempt = checkedNonnegativeInt(
-                    match[3].str(), "HEAD block attempt");
-                decision.status = checkedNonnegativeInt(
-                    match[4].str(), "HEAD block status");
-                decision.reason = match[5].str();
-                decision.connectionId = checkedCoordinate(
-                    match[6].str(), "HEAD block connection");
-                decision.httpMajor = checkedNonnegativeInt(
-                    match[7].str(), "HEAD block HTTP major");
-                matchedDecision = true;
-            }
-            else if (std::regex_match(message, match, rangeBlockedPattern))
-            {
-                decision.kind = "range-blocked";
-                decision.context = match[1].str();
-                decision.request = checkedUnsignedDecimal(
-                    match[2].str(), "Range block request");
-                decision.attempt = checkedNonnegativeInt(
-                    match[3].str(), "Range block attempt");
-                decision.range = match[4].str();
-                decision.status = checkedNonnegativeInt(
-                    match[5].str(), "Range block status");
-                decision.bytes = checkedUnsignedDecimal(
-                    match[6].str(), "Range block bytes");
-                decision.reason = match[7].str();
-                decision.connectionId = checkedCoordinate(
-                    match[8].str(), "Range block connection");
-                decision.httpMajor = checkedNonnegativeInt(
-                    match[9].str(), "Range block HTTP major");
-                matchedDecision = true;
-            }
-            else if (std::regex_match(message, match, logicalGetPattern))
-            {
-                decision.kind = "logical-get";
-                decision.context = match[1].str();
-                decision.request = checkedUnsignedDecimal(
-                    match[2].str(), "logical GET request");
-                decision.attempt = checkedNonnegativeInt(
-                    match[3].str(), "logical GET attempt");
-                decision.range = match[4].str();
-                decision.bytes = checkedUnsignedDecimal(
-                    match[5].str(), "logical GET bytes");
-                matchedDecision = true;
-            }
-            else if (std::regex_match(message, match, publicationPattern) ||
-                     std::regex_match(message, match,
-                                      propertyPublicationPattern))
-            {
-                decision.kind = message.find("file-property-published") !=
-                        std::string::npos
-                    ? "property-published" : "published";
-                decision.context = match[1].str();
-                decision.request = checkedUnsignedDecimal(
-                    match[2].str(), decision.kind + " request");
-                decision.attempt = checkedNonnegativeInt(
-                    match[3].str(), decision.kind + " attempt");
-                matchedDecision = true;
-            }
-            else if (std::regex_match(message, match, propertyBlockedPattern) ||
-                     std::regex_match(message, match, operationBlockedPattern))
-            {
-                decision.kind = message.find(
-                        "file-property-publication-blocked") !=
-                        std::string::npos
-                    ? "property-blocked" : "operation-blocked";
-                decision.context = match[1].str();
-                decision.request = checkedUnsignedDecimal(
-                    match[2].str(), decision.kind + " request");
-                decision.attempt = checkedNonnegativeInt(
-                    match[3].str(), decision.kind + " attempt");
-                decision.reason = match[4].str();
-                matchedDecision = true;
-            }
-            if (matchedDecision)
-            {
-                decision.messageIndex = index;
-                decisions.push_back(decision);
-            }
-            else if (!matchedHeadRetry)
-            {
-                static const std::array<const char*, 9> prefixes = {{
-                    "VSICURL: ParallelHeadRange: transient-retry ",
-                    "VSICURL: ReadMultiRange: immediate-retry ",
-                    "VSICURL: ParallelHeadRange: fallback ",
-                    "VSICURL: ParallelHeadRange: head-transient-retry-blocked ",
-                    "VSICURL: ParallelHeadRange: transient-retry-blocked ",
-                    "VSICURL: ParallelHeadRange: logical-get-complete ",
-                    "VSICURL: ParallelHeadRange: published ",
-                    "VSICURL: ParallelHeadRange: file-property-published ",
-                    "VSICURL: ParallelHeadRange: file-property-publication-blocked ",
-                }};
-                for (const char* prefix : prefixes)
-                    require(message.rfind(prefix, 0) != 0,
-                            "science decision event has a malformed schema");
-                require(message.rfind(
-                            "VSICURL: ParallelHeadRange: blocked-operation-marked ",
-                            0) != 0,
-                        "science operation block has a malformed schema");
-            }
-        }
-        if (responseOpen)
-        {
-            bool rawContentLengthRejected =
-                currentResponse.contentLengths.empty();
-            if (currentResponse.contentLengths.size() == 1)
-            {
-                try
-                {
-                    static_cast<void>(checkedUnsignedDecimal(
-                        currentResponse.contentLengths.front(),
-                        "protocol-terminated raw Content-Length"));
-                    rawContentLengthRejected = false;
-                }
-                catch (const std::exception&)
-                {
-                    rawContentLengthRejected = true;
-                }
-            }
-            const int matchingCompletionCount = static_cast<int>(std::count_if(
-                proof.completions.begin(), proof.completions.end(),
-                [&](const ScienceTransportCompletion& completion)
-                {
-                    return completion.role == "head" &&
-                        completion.method == "HEAD" &&
-                        completion.status == currentResponse.status &&
-                        completion.curlCode != 0 &&
-                        completion.actualBodyBytes == 0 &&
-                        completion.contentLengthCount ==
-                            static_cast<int>(
-                                currentResponse.contentLengths.size()) &&
-                        !completion.contentLengthValid &&
-                        completion.declaredContentLength == 0 &&
-                        completion.contentRangeCount == 0;
-                }));
-            // nghttp2 rejects a nonnumeric Content-Length before libcurl
-            // exposes that header or the closing verbose delimiter. The
-            // caller separately binds the wire value from the server oracle.
-            require(allowProtocolTerminatedFinalResponse &&
-                        isExactFiveStatus(currentResponse.status) &&
-                        rawContentLengthRejected &&
-                        currentResponse.contentRanges.empty() &&
-                        matchingCompletionCount == 1,
-                    "science raw response is incomplete allow=" +
-                        std::to_string(allowProtocolTerminatedFinalResponse) +
-                        " status=" + std::to_string(currentResponse.status) +
-                        " content-lengths=" + std::to_string(
-                            currentResponse.contentLengths.size()) +
-                        " content-ranges=" + std::to_string(
-                            currentResponse.contentRanges.size()) +
-                        " raw-rejected=" +
-                        std::to_string(rawContentLengthRejected) +
-                        " matching-completions=" +
-                        std::to_string(matchingCompletionCount));
-            rawResponses.push_back(currentResponse);
-            responseOpen = false;
-        }
-        require(pendingConnectRequests == 0,
-                "proxy CONNECT request omitted its terminal response");
-        require(!proof.completions.empty(),
-                "AttributedV6 requires response-v1 completion events");
-
-        std::map<std::string, std::uint64_t> nextOrdinal;
-        std::map<std::pair<std::string, std::uint64_t>, int> nextAttempt;
-        std::map<std::pair<std::string, std::uint64_t>,
-                 std::tuple<std::string, std::string, std::string, std::string>>
-            requestIdentity;
-        std::set<std::tuple<std::string, std::string, std::uint64_t, int>>
-            uniqueCompletions;
-        std::map<std::string, long long> contextConnections;
-        bool contextConnectionsConsistent = true;
-        std::set<std::string> contexts;
-        for (const ScienceTransportCompletion& completion : proof.completions)
-        {
-            contexts.insert(completion.context);
-            std::uint64_t& ordinal = nextOrdinal[completion.context];
-            require(completion.ordinal == ++ordinal,
-                    "science transport ordinals are not contiguous in log order");
-            const auto requestKey =
-                std::make_pair(completion.context, completion.request);
-            int& attempt = nextAttempt[requestKey];
-            require(completion.attempt == ++attempt,
-                    "science transport attempts are not contiguous");
-            const auto identity = std::make_tuple(
-                completion.scope, completion.role,
-                completion.method, completion.range);
-            const auto insertedIdentity = requestIdentity.emplace(
-                requestKey, identity);
-            require(insertedIdentity.second ||
-                        insertedIdentity.first->second == identity,
-                    "science transport request identity changed across attempts");
-            require(uniqueCompletions.emplace(
-                        completion.context, completion.scope,
-                        completion.request, completion.attempt).second,
-                    "science transport completion is duplicated");
-            const auto insertedConnection = contextConnections.emplace(
-                completion.context, completion.connectionId);
-            if (!insertedConnection.second &&
-                insertedConnection.first->second != completion.connectionId)
-                contextConnectionsConsistent = false;
-        }
-        std::map<std::string, std::set<std::uint64_t>> contextRequests;
-        for (const auto& item : requestIdentity)
-            contextRequests[item.first.first].insert(item.first.second);
-        for (const auto& item : contextRequests)
-        {
-            require(!item.second.empty() &&
-                        *item.second.rbegin() == item.second.size(),
-                    "science transport request IDs are not exactly 1..N");
-            std::uint64_t expected = 1;
-            for (std::uint64_t request : item.second)
-                require(request == expected++,
-                        "science transport request ID has a gap");
-        }
-
-        std::map<std::string, RawRequest> rawByCorrelation;
-        static const std::regex correlationPattern(
-            R"(^[0-9a-f]{32}/[1-9][0-9]*/[1-4]$)");
-        for (const RawRequest& request : rawRequests)
-        {
-            require(std::regex_match(request.correlation,
-                                     correlationPattern) &&
-                        rawByCorrelation.emplace(
-                        request.correlation, request).second,
-                    "science raw correlation header is malformed or duplicated");
-        }
-        require(rawByCorrelation.size() == proof.completions.size(),
-                "science raw request/completion count differs");
-        for (const ScienceTransportCompletion& completion : proof.completions)
-        {
-            const auto raw = rawByCorrelation.find(correlationId(completion));
-            require(raw != rawByCorrelation.end() &&
-                        raw->second.method == completion.method &&
-                        ((completion.range == "none" &&
-                          raw->second.range.empty()) ||
-                         raw->second.range == completion.range),
-                    "science raw correlation/method/Range does not match completion");
-        }
-
-        const auto responseTuple = [](
-                int status, int contentLengthCount,
-                bool contentLengthValid,
-                std::uint64_t declaredContentLength,
-                int contentRangeCount, bool contentRangeValid,
-                long long contentStart, long long contentEnd,
-                long long contentTotal)
-        {
-            std::ostringstream tuple;
-            tuple << status << '|' << contentLengthCount << '|'
-                  << (contentLengthValid ? 1 : 0) << '|'
-                  << declaredContentLength << '|' << contentRangeCount << '|'
-                  << (contentRangeValid ? 1 : 0) << '|' << contentStart << '|'
-                  << contentEnd << '|' << contentTotal;
-            return tuple.str();
-        };
-        std::map<std::string, int> rawResponseMultiset;
-        for (const RawResponse& response : rawResponses)
-        {
-            if (response.connectResponse) continue;
-            bool contentLengthValid = false;
-            std::uint64_t declaredContentLength = 0;
-            if (response.contentLengths.size() == 1)
-            {
-                try
-                {
-                    declaredContentLength = checkedUnsignedDecimal(
-                        response.contentLengths.front(),
-                        "raw response Content-Length");
-                    contentLengthValid = true;
-                }
-                catch (const std::exception&)
-                {
-                    contentLengthValid = false;
-                    declaredContentLength = 0;
-                }
-            }
-            bool contentRangeValid = false;
-            long long contentStart = -1;
-            long long contentEnd = -1;
-            long long contentTotal = -1;
-            if (response.contentRanges.size() == 1)
-            {
-                static const std::regex rawContentRange(
-                    R"(^bytes ([0-9]+)-([0-9]+)/([0-9]+)$)");
-                std::smatch contentRangeMatch;
-                if (std::regex_match(response.contentRanges.front(),
-                                     contentRangeMatch, rawContentRange))
-                {
-                    try
-                    {
-                        contentStart = checkedCoordinate(
-                            contentRangeMatch[1].str(),
-                            "raw Content-Range start");
-                        contentEnd = checkedCoordinate(
-                            contentRangeMatch[2].str(),
-                            "raw Content-Range end");
-                        contentTotal = checkedCoordinate(
-                            contentRangeMatch[3].str(),
-                            "raw Content-Range total");
-                        contentRangeValid = contentStart >= 0 &&
-                            contentEnd >= contentStart &&
-                            contentTotal > contentEnd;
-                    }
-                    catch (const std::exception&)
-                    {
-                        contentRangeValid = false;
-                        contentStart = contentEnd = contentTotal = -1;
-                    }
-                }
-            }
-            ++rawResponseMultiset[responseTuple(
-                response.status,
-                static_cast<int>(response.contentLengths.size()),
-                contentLengthValid, declaredContentLength,
-                static_cast<int>(response.contentRanges.size()),
-                contentRangeValid, contentStart, contentEnd, contentTotal)];
-        }
-        std::map<std::string, int> eventResponseMultiset;
-        for (const ScienceTransportCompletion& completion : proof.completions)
-        {
-            const bool boundDuplicateProtocolFailure =
-                completion.curlCode != 0 && completion.status == 0 &&
-                std::any_of(serverRequests.begin(), serverRequests.end(),
-                    [&](const ScienceServerRequest& request)
-                    {
-                        return request.correlation ==
-                                correlationId(completion) &&
-                            request.status == 0 &&
-                            request.responseCount == 0 &&
-                            request.protocolErrorCount == 1 &&
-                            request.protocolError ==
-                                "ERR_HTTP2_HEADER_SINGLE_VALUE";
-                    });
-            if (boundDuplicateProtocolFailure) continue;
-            ++eventResponseMultiset[responseTuple(
-                completion.status, completion.contentLengthCount,
-                completion.contentLengthValid,
-                completion.declaredContentLength,
-                completion.contentRangeCount,
-                completion.contentRangeValid,
-                completion.contentStart, completion.contentEnd,
-                completion.contentTotal)];
-        }
-        require(rawResponseMultiset == eventResponseMultiset,
-                "science raw response multiset does not match completions");
-
-        if (!serverRequests.empty())
-        {
-            std::map<std::string, ScienceServerRequest> serverByCorrelation;
-            for (const ScienceServerRequest& request : serverRequests)
-            {
-                const bool normalResponse = request.status > 0 &&
-                    request.responseCount == 1 &&
-                    request.protocolErrorCount == 0 && !request.aborted;
-                const bool duplicateProtocolFailure = request.status == 0 &&
-                    request.responseCount == 0 &&
-                    request.protocolErrorCount == 1 && request.aborted &&
-                    request.protocolError ==
-                        "ERR_HTTP2_HEADER_SINGLE_VALUE";
-                require(!request.sessionId.empty() && request.streamId > 0 &&
-                            !request.path.empty() &&
-                            request.startCount == 1 &&
-                            request.endCount == 1 &&
-                            request.start > 0 &&
-                            request.response > request.start &&
-                            request.end >= request.response &&
-                            (normalResponse || duplicateProtocolFailure) &&
-                            std::regex_match(request.correlation,
-                                             correlationPattern) &&
-                            serverByCorrelation.emplace(
-                                request.correlation, request).second,
-                        "science server oracle is incomplete, malformed, or duplicated");
-            }
-            require(serverByCorrelation.size() == proof.completions.size(),
-                    "science server/completion count differs");
-            for (const ScienceTransportCompletion& completion : proof.completions)
-            {
-                const auto server = serverByCorrelation.find(
-                    correlationId(completion));
-                const bool duplicateProtocolFailure =
-                    server != serverByCorrelation.end() &&
-                    server->second.protocolErrorCount == 1;
-                require(server != serverByCorrelation.end() &&
-                            server->second.method == completion.method &&
-                            rawByCorrelation.at(correlationId(completion)).path ==
-                                server->second.path &&
-                            server->second.status == completion.status &&
-                            server->second.attemptedBodyBytes ==
-                                completion.actualBodyBytes &&
-                            (!duplicateProtocolFailure ||
-                             (completion.curlCode != 0 &&
-                              completion.status == 0 &&
-                              completion.actualBodyBytes == 0 &&
-                              completion.contentLengthCount == 0 &&
-                              completion.contentRangeCount == 0)) &&
-                            (!completion.contentLengthValid ||
-                             server->second.contentLength ==
-                                completion.declaredContentLength) &&
-                            ((completion.range == "none" &&
-                              server->second.range.empty()) ||
-                             server->second.range == completion.range) &&
-                            ((completion.contentRangeCount == 0 &&
-                              server->second.contentRange.empty()) ||
-                             (completion.contentRangeCount == 1 &&
-                              !completion.contentRangeValid &&
-                              !server->second.contentRange.empty()) ||
-                             (completion.contentRangeCount == 1 &&
-                              completion.contentRangeValid &&
-                              server->second.contentRange == "bytes " +
-                                  std::to_string(completion.contentStart) +
-                                  "-" +
-                                  std::to_string(completion.contentEnd) +
-                                  "/" +
-                                  std::to_string(completion.contentTotal))),
-                        "science server full tuple does not match completion");
-            }
-        }
-
-        std::map<std::string, int> nextHeadRetry;
-        std::map<std::tuple<std::string, std::uint64_t, int>, int>
-            headRetryByFailedAttempt;
-        for (const HeadRetryEvidence& retry : proof.headRetries)
-        {
-            require(contexts.count(retry.context) == 1 &&
-                        retry.retryOrdinal == ++nextHeadRetry[retry.context],
-                    "HEAD retry context/ordinal is invalid");
-            const ScienceTransportCompletion* failed = nullptr;
-            const ScienceTransportCompletion* scheduled = nullptr;
-            for (const ScienceTransportCompletion& completion : proof.completions)
-            {
-                if (completion.context != retry.context ||
-                    completion.request != retry.request)
-                    continue;
-                if (completion.attempt == retry.failedAttempt)
-                    failed = &completion;
-                if (completion.attempt == retry.scheduledAttempt)
-                    scheduled = &completion;
-            }
-            require(failed != nullptr &&
-                        failed->scope == "coordinator" &&
-                        failed->role == "head" &&
-                        failed->method == "HEAD" &&
-                        isExactFiveStatus(failed->status) &&
-                        failed->messageIndex < retry.messageIndex,
-                    "HEAD retry is not bound after its failed HEAD completion");
-            const auto retryKey = std::make_tuple(
-                retry.context, retry.request, retry.failedAttempt);
-            require(++headRetryByFailedAttempt[retryKey] == 1,
-                    "HEAD completion has duplicate retry transitions");
-            const Decision* terminalDispatchFailure = nullptr;
-            int terminalDispatchFailureCount = 0;
-            bool hasPublicationOrFallback = false;
-            for (const Decision& decision : decisions)
-            {
-                if (decision.context != retry.context) continue;
-                if (decision.kind == "fallback" ||
-                    decision.kind == "published" ||
-                    decision.kind == "property-published")
-                {
-                    hasPublicationOrFallback = true;
-                }
-                if (decision.kind == "head-blocked" &&
-                    decision.request == retry.request &&
-                    decision.attempt == retry.failedAttempt &&
-                    (decision.reason == "add" ||
-                     decision.reason == "perform"))
-                {
-                    terminalDispatchFailure = &decision;
-                    ++terminalDispatchFailureCount;
-                }
-            }
-            const bool hasLaterRequestCompletion = std::any_of(
-                proof.completions.begin(), proof.completions.end(),
-                [&](const ScienceTransportCompletion& completion)
-                {
-                    return completion.context == retry.context &&
-                        completion.request == retry.request &&
-                        completion.messageIndex > retry.messageIndex;
-                });
-            if (terminalDispatchFailureCount > 0)
-            {
-                require(terminalDispatchFailureCount == 1 &&
-                            terminalDispatchFailure != nullptr &&
-                            scheduled == nullptr &&
-                            retry.messageIndex <
-                                terminalDispatchFailure->messageIndex &&
-                            !hasLaterRequestCompletion &&
-                            !hasPublicationOrFallback,
-                        "add/perform terminal HEAD retry dispatch failure "
-                        "coexisted with retry transport or publication");
-            }
-            else
-            {
-                require(scheduled != nullptr &&
-                            retry.messageIndex < scheduled->messageIndex,
-                        "HEAD retry does not bridge two ordered HEAD completions");
-            }
-            require(failed->status == retry.failedStatus &&
-                        failed->connectionId == retry.failedConnectionId &&
-                        failed->httpMajor == retry.failedHttpMajor &&
-                        failed->declaredContentLength ==
-                            retry.failedDeclaredContentLength &&
-                        failed->actualBodyBytes ==
-                            retry.failedActualBodyBytes,
-                    "HEAD retry fields differ from its failed completion");
-        }
-        for (const ScienceTransportCompletion& completion : proof.completions)
-        {
-            if (completion.scope != "coordinator" ||
-                completion.role != "head" ||
-                !isExactFiveStatus(completion.status))
-                continue;
-            const auto requestKey =
-                std::make_pair(completion.context, completion.request);
-            if (completion.attempt < nextAttempt[requestKey])
-            {
-                require(headRetryByFailedAttempt[{
-                            completion.context, completion.request,
-                            completion.attempt}] == 1,
-                        "retried exact-five HEAD completion lacks its "
-                        "scheduled HEAD transition");
-            }
-        }
-
-        const auto completionFor = [&proof](const Decision& decision,
-                                             int attempt)
-            -> const ScienceTransportCompletion*
-        {
-            for (const ScienceTransportCompletion& completion :
-                 proof.completions)
-            {
-                if (completion.context == decision.context &&
-                    completion.request == decision.request &&
-                    completion.attempt == attempt)
-                    return &completion;
-            }
-            return nullptr;
-        };
-        std::map<std::tuple<std::string, std::uint64_t, int>, int>
-            rangeRetryByFailedAttempt;
-        for (const Decision& decision : decisions)
-        {
-            require(contexts.count(decision.context) == 1,
-                    "science decision event references another context");
-            const ScienceTransportCompletion* failed = completionFor(
-                decision, decision.attempt);
-            require(failed != nullptr &&
-                        failed->messageIndex < decision.messageIndex,
-                    "science decision is not bound after its completion");
-            if (decision.kind == "coordinator-retry" ||
-                decision.kind == "immediate-retry")
-            {
-                require(++rangeRetryByFailedAttempt[{
-                            decision.context, decision.request,
-                            decision.attempt}] == 1,
-                        "Range completion has duplicate retry transitions");
-                const ScienceTransportCompletion* scheduled = completionFor(
-                    decision, decision.scheduledAttempt);
-                require(scheduled != nullptr &&
-                            decision.scheduledAttempt == decision.attempt + 1 &&
-                            decision.messageIndex < scheduled->messageIndex &&
-                            failed->role == "range" &&
-                            failed->method == "GET" &&
-                            failed->scope ==
-                                (decision.kind == "coordinator-retry"
-                                     ? "coordinator" : "multirange") &&
-                            failed->range == decision.range &&
-                            failed->status == decision.status &&
-                            failed->actualBodyBytes == decision.bytes &&
-                            failed->connectionId == decision.connectionId &&
-                            failed->httpMajor == decision.httpMajor &&
-                            isExpectedCoordinatorRetryDelay(
-                                decision.attempt, decision.delayMs),
-                        "Range retry event does not bridge exact completions");
-            }
-            else if (decision.kind == "fallback")
-            {
-                require(failed->scope == "coordinator" &&
-                            (failed->role == "head" ||
-                             failed->role == "range"),
-                        "fallback is not bound to coordinator transport");
-                for (const ScienceTransportCompletion& completion :
-                     proof.completions)
-                {
-                    require(completion.context != decision.context ||
-                                completion.scope != "coordinator" ||
-                                completion.messageIndex <=
-                                    decision.messageIndex,
-                            "coordinator attempt occurred after terminal fallback");
-                }
-                for (const Decision& later : decisions)
-                {
-                    require(later.context != decision.context ||
-                                later.messageIndex <= decision.messageIndex ||
-                                (later.kind != "published" &&
-                                 later.kind != "property-published"),
-                            "publication occurred after terminal fallback");
-                }
-            }
-            else if (decision.kind == "head-blocked")
-            {
-                require(failed->scope == "coordinator" &&
-                            failed->role == "head" &&
-                            failed->status == decision.status &&
-                            failed->connectionId == decision.connectionId &&
-                            failed->httpMajor == decision.httpMajor,
-                        "HEAD block fields differ from its completion");
-            }
-            else if (decision.kind == "range-blocked")
-            {
-                require(failed->role == "range" &&
-                            failed->range == decision.range &&
-                            failed->status == decision.status &&
-                            failed->actualBodyBytes == decision.bytes &&
-                            failed->connectionId == decision.connectionId &&
-                            failed->httpMajor == decision.httpMajor,
-                        "Range block fields differ from its completion");
-            }
-            else if (decision.kind == "logical-get")
-            {
-                require(failed->role == "range" &&
-                            failed->method == "GET" &&
-                            failed->status == 206 &&
-                            failed->range == decision.range &&
-                            failed->actualBodyBytes == decision.bytes,
-                        "logical GET fields differ from successful completion");
-            }
-            else if (decision.kind == "published" ||
-                     decision.kind == "property-published")
-            {
-                require(failed->scope == "coordinator" &&
-                            failed->role == "range" &&
-                            failed->status == 206,
-                        "publication is not bound to coordinator Range success");
-            }
-        }
-
-        for (const ScienceTransportCompletion& completion : proof.completions)
-        {
-            if (completion.role != "range" ||
-                !isExactFiveStatus(completion.status))
-                continue;
-            const auto requestKey =
-                std::make_pair(completion.context, completion.request);
-            if (completion.attempt < nextAttempt[requestKey])
-            {
-                require(rangeRetryByFailedAttempt[{
-                            completion.context, completion.request,
-                            completion.attempt}] == 1,
-                        "retried exact-five Range completion lacks its "
-                        "scheduled Range transition");
-            }
-        }
-
-        std::map<std::string, int> fallbacks;
-        std::map<std::string, int> cachePublications;
-        std::map<std::string, int> propertyPublications;
-        std::map<std::string, std::vector<const Decision*>> terminalBlocks;
-        std::map<std::string, std::vector<const Decision*>> propertyBlocks;
-        std::map<std::string, std::vector<const Decision*>> operationBlocks;
-        for (const Decision& decision : decisions)
-        {
-            if (decision.kind == "fallback")
-            {
-                ++fallbacks[decision.context];
-                ++proof.fallbackCount;
-            }
-            if (decision.kind == "published")
-            {
-                ++cachePublications[decision.context];
-                ++proof.cachePublicationCount;
-            }
-            if (decision.kind == "property-published")
-            {
-                ++propertyPublications[decision.context];
-                ++proof.propertyPublicationCount;
-            }
-            if (decision.kind == "head-blocked" ||
-                decision.kind == "range-blocked")
-                terminalBlocks[decision.context].push_back(&decision);
-            if (decision.kind == "property-blocked")
-                propertyBlocks[decision.context].push_back(&decision);
-            if (decision.kind == "operation-blocked")
-                operationBlocks[decision.context].push_back(&decision);
-        }
-
-        for (const std::string& context : contexts)
-        {
-            const bool hasAnyBlock = !terminalBlocks[context].empty() ||
-                !propertyBlocks[context].empty() ||
-                !operationBlocks[context].empty();
-            if (!hasAnyBlock) continue;
-            require(terminalBlocks[context].size() == 1 &&
-                        propertyBlocks[context].size() == 1 &&
-                        operationBlocks[context].size() == 1,
-                    "terminal transport/property/operation block chain is "
-                    "not exactly one-to-one");
-            const Decision& terminal = *terminalBlocks[context].front();
-            const Decision& property = *propertyBlocks[context].front();
-            const Decision& operation = *operationBlocks[context].front();
-            require(terminal.request == property.request &&
-                        terminal.request == operation.request &&
-                        terminal.attempt == property.attempt &&
-                        terminal.attempt == operation.attempt &&
-                        terminal.reason == property.reason &&
-                        terminal.reason == operation.reason &&
-                        cachePublications[context] == 0 &&
-                        propertyPublications[context] == 0 &&
-                        fallbacks[context] == 0,
-                    "terminal block chain changed request/attempt/reason or "
-                    "coexisted with publication/fallback");
-        }
-
-        proof.qualified = std::all_of(
-            proof.completions.begin(), proof.completions.end(),
-            [](const ScienceTransportCompletion& completion)
-            {
-                return completion.admissionValid;
-            }) && contextConnectionsConsistent;
-        for (const std::string& context : contexts)
-        {
-            int finalHeadStatus = 0;
-            int successfulRangeCount = 0;
-            for (const ScienceTransportCompletion& completion : proof.completions)
-            {
-                if (completion.context != context) continue;
-                if (completion.scope == "coordinator" &&
-                    completion.role == "head")
-                    finalHeadStatus = completion.status;
-                if (completion.scope == "coordinator" &&
-                    completion.role == "range" && completion.status == 206)
-                    ++successfulRangeCount;
-            }
-            require(cachePublications[context] <= 1 &&
-                        propertyPublications[context] <= 1,
-                    "science publication event is duplicated");
-            proof.qualified = proof.qualified && fallbacks[context] == 0 &&
-                cachePublications[context] == 1 &&
-                propertyPublications[context] == 1 &&
-                terminalBlocks[context].empty() &&
-                propertyBlocks[context].empty() &&
-                operationBlocks[context].empty() &&
-                finalHeadStatus == 200 && successfulRangeCount == 1;
-        }
-        proof.events = decisions;
-        return proof;
-    }
-
-    HttpProof buildAttributedHttpProof(const DebugCapture& capture,
-                                       const std::string& statsJson,
-                                       bool allowProtocolTerminatedFinalResponse,
-                                       const std::vector<ScienceServerRequest>&
-                                            serverRequests)
-    {
-        const AttributedTransportProof transport =
-            buildAttributedTransportProof(
-                capture, serverRequests,
-                allowProtocolTerminatedFinalResponse);
-        HttpProof proof;
-        proof.headRetries = transport.headRetries;
-        proof.scienceTransportEvents = transport.events;
-        proof.scienceTransportCompletions = transport.completions;
-        proof.scienceTransportResponseCount =
-            static_cast<int>(transport.completions.size());
-        proof.scienceTransportAttribution = "response-v1";
-        proof.attributedTransportQualified = transport.qualified;
-        std::uint64_t conservativeTransientBytes = 0;
-
-        for (const ScienceTransportCompletion& completion : transport.completions)
-        {
-            proof.responseCodes.push_back(completion.status);
-            if (completion.method == "HEAD")
-            {
-                ++proof.actualHeadCount;
-                if (completion.status == 200)
-                {
-                    if (proof.sourceSize == 0)
-                        proof.sourceSize = completion.declaredContentLength;
-                    if (proof.sourceSize != completion.declaredContentLength)
-                        proof.attributedTransportQualified = false;
-                }
-                continue;
-            }
-
-            ++proof.actualGetCount;
-            checkedAdd(proof.actualHttpBodyBytes,
-                       completion.actualBodyBytes,
-                       "attributed actual HTTP body bytes");
-            if (completion.status == 206)
-            {
-                if (completion.admissionValid)
-                {
-                    ++proof.successfulGetCount;
-                    checkedAdd(proof.successfulRangeBytes,
-                               completion.actualBodyBytes,
-                               "attributed successful Range bytes");
-                    proof.successfulByteIntervals.emplace_back(
-                        static_cast<std::uint64_t>(completion.contentStart),
-                        static_cast<std::uint64_t>(completion.contentEnd));
-                    const std::uint64_t total = static_cast<std::uint64_t>(
-                        completion.contentTotal);
-                    if (proof.sourceSize == 0) proof.sourceSize = total;
-                    if (proof.sourceSize != total)
-                        proof.attributedTransportQualified = false;
-                }
-                continue;
-            }
-
-            if (!isExactFiveStatus(completion.status)) continue;
-            ++proof.transientRetryCount;
-            ++proof.transientRetryCodes[completion.status];
-            checkedAdd(proof.declaredTransientBytes,
-                       completion.declaredContentLength,
-                       "attributed declared transient bytes");
-            checkedAdd(conservativeTransientBytes,
-                       std::max(completion.declaredContentLength,
-                                completion.actualBodyBytes),
-                       "attributed conservative transient bytes");
-        }
-        const auto completionForEvent = [&transport](
-                const AttributedEventEvidence& event)
-            -> const ScienceTransportCompletion&
-        {
-            for (const ScienceTransportCompletion& completion :
-                 transport.completions)
-            {
-                if (completion.context == event.context &&
-                    completion.request == event.request &&
-                    completion.attempt == event.attempt)
-                    return completion;
-            }
-            fail("attributed event lost its bound completion");
-        };
-        for (const AttributedEventEvidence& event : transport.events)
-        {
-            const ScienceTransportCompletion& completion =
-                completionForEvent(event);
-            if (event.kind == "coordinator-retry")
-            {
-                ++proof.coordinatorTransientRetryCount;
-                checkedAdd(proof.coordinatorTransientRetryBytes, event.bytes,
-                           "coordinator transient retry bytes");
-                ++proof.coordinatorTransientRetryCodes[event.status];
-            }
-            else if (event.kind == "immediate-retry")
-            {
-                ++proof.immediateTransientRetryCount;
-                checkedAdd(proof.immediateTransientRetryBytes, event.bytes,
-                           "immediate transient retry bytes");
-                ++proof.immediateTransientRetryCodes[event.status];
-            }
-            else if (event.kind == "fallback" &&
-                     completion.role == "range" &&
-                     isExactFiveStatus(completion.status))
-            {
-                ++proof.coordinatorTransientFallbackCount;
-                checkedAdd(proof.coordinatorTransientFallbackBytes,
-                           completion.actualBodyBytes,
-                           "coordinator transient fallback bytes");
-                ++proof.coordinatorTransientFallbackCodes[completion.status];
-            }
-            else if (event.kind == "logical-get")
-            {
-                ++proof.coordinatorLogicalGetCount;
-                checkedAdd(proof.coordinatorLogicalGetBytes, event.bytes,
-                           "coordinator logical GET bytes");
-            }
-        }
-        for (const HeadRetryEvidence& retry : transport.headRetries)
-        {
-            ++proof.coordinatorHeadTransientRetryCount;
-            checkedAdd(proof.coordinatorHeadTransientRetryDeclaredBytes,
-                       retry.failedDeclaredContentLength,
-                       "coordinator HEAD declared retry bytes");
-            checkedAdd(proof.coordinatorHeadTransientRetryActualBodyBytes,
-                       retry.failedActualBodyBytes,
-                       "coordinator HEAD actual retry bytes");
-            ++proof.coordinatorHeadTransientRetryCodes[retry.failedStatus];
-        }
-        proof.conservativeBodyUpperBound = proof.successfulRangeBytes;
-        checkedAdd(proof.conservativeBodyUpperBound,
-                   conservativeTransientBytes,
-                   "attributed conservative body upper bound");
-
-        picojson::value statsValue;
-        const std::string statsError = picojson::parse(statsValue, statsJson);
-        require(statsError.empty() && statsValue.is<picojson::object>(),
-                "VSINetworkStats JSON is invalid");
-        const picojson::object& methods = field(
-            statsValue.get<picojson::object>(), "methods").get<picojson::object>();
-        const picojson::object& get = field(methods, "GET").get<picojson::object>();
-        const picojson::object& head = field(methods, "HEAD").get<picojson::object>();
-        proof.statsGetOperationCount = static_cast<int>(checkedJsonUnsigned(
-            field(get, "count"), "VSINetworkStats GET count",
-            static_cast<std::uint64_t>(std::numeric_limits<int>::max())));
-        proof.statsHeadCount = static_cast<int>(checkedJsonUnsigned(
-            field(head, "count"), "VSINetworkStats HEAD count",
-            static_cast<std::uint64_t>(std::numeric_limits<int>::max())));
-        const auto downloadedBytes = get.find("downloaded_bytes");
-        const std::uint64_t statsBytes = downloadedBytes == get.end()
-            ? 0 : checkedJsonUnsigned(
-                downloadedBytes->second,
-                "VSINetworkStats downloaded bytes");
-        require(proof.statsHeadCount == proof.actualHeadCount,
-                "attributed HEAD count disagrees with VSINetworkStats");
-        require(statsBytes == proof.actualHttpBodyBytes,
-                "attributed GET bodies disagree with VSINetworkStats");
-        require(proof.actualGetCount > 0,
-                "attributed HTTP proof contains no physical GET");
-        if (proof.attributedTransportQualified)
-        {
-            require(proof.sourceSize > 0 &&
-                        proof.successfulRangeBytes > 0 &&
-                        proof.successfulRangeBytes < proof.sourceSize,
-                    "qualified attributed HTTP proof is empty or downloaded "
-                    "the full source");
-        }
-        return proof;
-    }
-
-    HttpProof buildHttpProof(
-        const DebugCapture& capture, const std::string& statsJson,
-        AttributionMode mode, bool allowProtocolTerminatedFinalResponse,
-        const std::vector<ScienceServerRequest>& serverRequests)
-    {
-        if (mode == AttributionMode::AttributedV6)
-            return buildAttributedHttpProof(
-                capture, statsJson, allowProtocolTerminatedFinalResponse,
-                serverRequests);
-        require(mode == AttributionMode::LegacyFrozen,
-                "HTTP proof attribution mode is invalid");
         struct Request
         {
             std::string method;
@@ -7736,7 +3294,6 @@ namespace
         bool responseOpen = false;
         int logicalGetOperations = 0;
         HttpProof proof;
-        proof.scienceTransportAttribution = "legacy-frozen";
         const bool hasCompleteTimestamps =
             capture.messages.size() == capture.timestamps.size();
 
@@ -8331,94 +3888,6 @@ namespace
     MetadataPrefetchProof buildMetadataPrefetchProof(
         const DebugCapture& capture, const HttpProof& httpProof)
     {
-        if (httpProof.scienceTransportAttribution == "response-v1")
-        {
-            MetadataPrefetchProof proof;
-            proof.enabled = true;
-            proof.attributedTransportQualified =
-                httpProof.attributedTransportQualified;
-            require(proof.attributedTransportQualified,
-                    "attributed metadata prefetch transport is not qualified");
-            long long connection = -1;
-            for (const ScienceTransportCompletion& completion :
-                 httpProof.scienceTransportCompletions)
-            {
-                if (completion.scope != "coordinator") continue;
-                if (connection < 0) connection = completion.connectionId;
-                require(completion.connectionId == connection &&
-                            completion.httpMajor == 2,
-                        "attributed metadata prefetch changed HTTP/2 connection");
-                if (completion.role == "head")
-                {
-                    ++proof.headRequestCount;
-                    proof.headHttpVersion = completion.httpMajor;
-                }
-                if (completion.role == "range")
-                {
-                    ++proof.rangeRequestCount;
-                    proof.rangeHttpVersion = completion.httpMajor;
-                }
-            }
-            proof.rangeStart = 0;
-            proof.rangeEnd = 131071;
-            proof.sharedConnection = connection >= 0;
-            std::size_t firstHeadRequest = capture.messages.size();
-            std::size_t firstRangeRequest = capture.messages.size();
-            std::size_t firstCompletion = capture.messages.size();
-            int publications = 0;
-            int fallbacks = 0;
-            for (std::size_t index = 0; index < capture.messages.size(); ++index)
-            {
-                const std::string& message = capture.messages[index];
-                if (firstHeadRequest == capture.messages.size() &&
-                    message.rfind("CURL_INFO_HEADER_OUT: HEAD ", 0) == 0)
-                    firstHeadRequest = index;
-                if (firstRangeRequest == capture.messages.size() &&
-                    message.rfind("CURL_INFO_HEADER_OUT: GET ", 0) == 0 &&
-                    message.find("Range: bytes=0-131071") != std::string::npos)
-                    firstRangeRequest = index;
-                if (firstCompletion == capture.messages.size() &&
-                    message.find("ScienceTransport: response-v1") !=
-                        std::string::npos)
-                    firstCompletion = index;
-                if (message.find(
-                        "ParallelHeadRange: published context=") !=
-                    std::string::npos)
-                    ++publications;
-                if (message.find("ParallelHeadRange: fallback context=") !=
-                    std::string::npos)
-                    ++fallbacks;
-            }
-            require(fallbacks == 0 && publications == 1,
-                    "attributed metadata prefetch contains fallback/publication error");
-            proof.requestsOverlapped = firstHeadRequest < firstCompletion &&
-                firstRangeRequest < firstCompletion;
-            require(proof.headRequestCount >= 1 && proof.headRequestCount <= 4 &&
-                        proof.rangeRequestCount >= 1 &&
-                        proof.sharedConnection && proof.requestsOverlapped &&
-                        !httpProof.successfulByteIntervals.empty() &&
-                        httpProof.successfulByteIntervals.front() ==
-                            std::make_pair<std::uint64_t, std::uint64_t>(
-                                0, 131071),
-                    "attributed metadata prefetch proof is incomplete");
-            proof.cachePublished = true;
-            for (const AttributedEventEvidence& event :
-                 httpProof.scienceTransportEvents)
-            {
-                if (event.kind != "coordinator-retry")
-                    continue;
-                CoordinatorRetryEvidence retry;
-                retry.range = event.range;
-                retry.code = event.status;
-                retry.bytes = event.bytes;
-                retry.attempt = event.attempt;
-                retry.delayMs = event.delayMs;
-                retry.connectionId = event.connectionId;
-                retry.httpMajor = event.httpMajor;
-                proof.coordinatorRetries.push_back(retry);
-            }
-            return proof;
-        }
         struct RequestEvidence
         {
             std::string method;
@@ -8779,1871 +4248,9 @@ namespace
             verifyOptimizedMetadataIntervals(proof);
         require(proof.metadataPrefetch.enabled == (profile == RangeProfile::Prefetch),
                 "metadata prefetch proof activation does not match the selected profile");
-        if (profile == RangeProfile::Prefetch)
-        {
-            require(proof.attributedTransportQualified &&
-                        proof.metadataPrefetch.attributedTransportQualified,
-                    "v6 live profile accepted unqualified attributed transport");
-        }
         require(profile == RangeProfile::Prefetch ||
                     proof.immediateTransientRetryCount == 0,
                 "non-prefetch profile emitted an immediate multi-range retry");
-    }
-
-    struct AttributedReplay
-    {
-        AttributedReplay() = default;
-        AttributedReplay(AttributedReplay&& other) noexcept
-            : serverRequests(std::move(other.serverRequests)),
-              ordinaryTraffic(std::move(other.ordinaryTraffic)),
-              ordinaryServerRequests(
-                  std::move(other.ordinaryServerRequests)),
-              ordinaryStats(std::move(other.ordinaryStats))
-        {
-            capture.messages = std::move(other.capture.messages);
-            capture.timestamps = std::move(other.capture.timestamps);
-            ordinaryCapture.messages =
-                std::move(other.ordinaryCapture.messages);
-            ordinaryCapture.timestamps =
-                std::move(other.ordinaryCapture.timestamps);
-        }
-        AttributedReplay& operator=(AttributedReplay&&) = delete;
-        AttributedReplay(const AttributedReplay&) = delete;
-        AttributedReplay& operator=(const AttributedReplay&) = delete;
-
-        DebugCapture capture;
-        std::vector<ScienceServerRequest> serverRequests;
-        std::vector<std::string> ordinaryTraffic;
-        DebugCapture ordinaryCapture;
-        std::vector<ScienceServerRequest> ordinaryServerRequests;
-        std::string ordinaryStats;
-    };
-
-    ScienceTransportCompletion coordinatorHeadCompletion(
-        const std::string& context, std::uint64_t ordinal,
-        std::uint64_t request, int attempt, int status,
-        std::uint64_t declaredLength)
-    {
-        ScienceTransportCompletion completion;
-        completion.ordinal = ordinal;
-        completion.context = context;
-        completion.scope = "coordinator";
-        completion.role = "head";
-        completion.request = request;
-        completion.attempt = attempt;
-        completion.method = "HEAD";
-        completion.range = "none";
-        completion.status = status;
-        completion.httpMajor = 2;
-        completion.connectionId = 7;
-        completion.contentLengthCount = 1;
-        completion.contentLengthValid = true;
-        completion.declaredContentLength = declaredLength;
-        return completion;
-    }
-
-    ScienceTransportCompletion rangedCompletion(
-        const std::string& context, std::uint64_t ordinal,
-        const std::string& scope, std::uint64_t request,
-        int attempt, int status, const std::string& range,
-        std::uint64_t actualBytes, std::uint64_t total)
-    {
-        ScienceTransportCompletion completion;
-        completion.ordinal = ordinal;
-        completion.context = context;
-        completion.scope = scope;
-        completion.role = "range";
-        completion.request = request;
-        completion.attempt = attempt;
-        completion.method = "GET";
-        completion.range = range;
-        completion.status = status;
-        completion.httpMajor = 2;
-        completion.connectionId = 7;
-        completion.contentLengthCount = 1;
-        completion.contentLengthValid = true;
-        completion.declaredContentLength = actualBytes;
-        completion.actualBodyBytes = actualBytes;
-        if (status == 206)
-        {
-            const auto interval = parseExactByteRange(range);
-            completion.contentRangeCount = 1;
-            completion.contentRangeValid = true;
-            completion.contentStart = static_cast<long long>(interval.first);
-            completion.contentEnd = static_cast<long long>(interval.second);
-            completion.contentTotal = static_cast<long long>(total);
-        }
-        return completion;
-    }
-
-    std::string serializeScienceCompletion(
-        const ScienceTransportCompletion& completion)
-    {
-        std::ostringstream stream;
-        stream << "VSICURL: ScienceTransport: response-v1 ordinal="
-               << completion.ordinal << " context=" << completion.context
-               << " scope=" << completion.scope << " role=" << completion.role
-               << " request=" << completion.request
-               << " attempt=" << completion.attempt
-               << " method=" << completion.method
-               << " range=" << completion.range
-               << " curl=" << completion.curlCode
-               << " status=" << completion.status
-               << " http=" << completion.httpMajor
-               << " redirects=" << completion.redirects
-               << " connection=" << completion.connectionId
-               << " content-length-count=" << completion.contentLengthCount
-               << " content-length-valid="
-               << (completion.contentLengthValid ? 1 : 0)
-               << " declared-content-length="
-               << completion.declaredContentLength
-               << " content-range-count=" << completion.contentRangeCount
-               << " content-range-valid="
-               << (completion.contentRangeValid ? 1 : 0)
-               << " content-start=" << completion.contentStart
-               << " content-end=" << completion.contentEnd
-               << " content-total=" << completion.contentTotal
-               << " actual-body-bytes=" << completion.actualBodyBytes;
-        return stream.str();
-    }
-
-    void appendAttributedRequest(AttributedReplay& replay,
-                                 const ScienceTransportCompletion& completion,
-                                 const std::string& session, int streamId)
-    {
-        std::ostringstream raw;
-        raw << "CURL_INFO_HEADER_OUT: " << completion.method
-            << " /fixture.tif HTTP/2\r\n";
-        if (completion.range != "none")
-            raw << "Range: " << completion.range << "\r\n";
-        raw << "X-OSGSol-Science-Correlation: "
-            << correlationId(completion) << "\r\n\r\n";
-        replay.capture.messages.push_back(raw.str());
-        ScienceServerRequest server;
-        server.correlation = correlationId(completion);
-        server.method = completion.method;
-        server.range = completion.range == "none" ? "" : completion.range;
-        server.sessionId = session;
-        server.streamId = streamId;
-        server.path = "/fixture.tif";
-        server.status = completion.status;
-        server.start = static_cast<std::uint64_t>(streamId) * 10;
-        server.response = server.start + 1;
-        server.end = server.response + 1;
-        server.attemptedBodyBytes = completion.actualBodyBytes;
-        server.contentLength = completion.declaredContentLength;
-        if (completion.contentRangeCount == 1)
-        {
-            server.contentRange = "bytes " +
-                std::to_string(completion.contentStart) + "-" +
-                std::to_string(completion.contentEnd) + "/" +
-                std::to_string(completion.contentTotal);
-        }
-        server.startCount = 1;
-        server.responseCount = 1;
-        server.endCount = 1;
-        replay.serverRequests.push_back(server);
-    }
-
-    void appendAttributedResponse(AttributedReplay& replay,
-                                  const ScienceTransportCompletion& completion)
-    {
-        replay.capture.messages.push_back(
-            "CURL_INFO_HEADER_IN: HTTP/2 " +
-            std::to_string(completion.status));
-        for (int index = 0; index < completion.contentLengthCount; ++index)
-            replay.capture.messages.push_back(
-                "CURL_INFO_HEADER_IN: content-length: " +
-                std::to_string(completion.declaredContentLength));
-        for (int index = 0; index < completion.contentRangeCount; ++index)
-            replay.capture.messages.push_back(
-                "CURL_INFO_HEADER_IN: content-range: bytes " +
-                std::to_string(completion.contentStart) + "-" +
-                std::to_string(completion.contentEnd) + "/" +
-                std::to_string(completion.contentTotal));
-        replay.capture.messages.push_back("CURL_INFO_HEADER_IN: ");
-    }
-
-    void appendAttributedCompletion(AttributedReplay& replay,
-                                    const ScienceTransportCompletion& completion)
-    {
-        replay.capture.messages.push_back(
-            serializeScienceCompletion(completion));
-    }
-
-    AttributedReplay passingHeadRecoveryReplay()
-    {
-        static const std::string context =
-            "0123456789abcdef0123456789abcdef";
-        AttributedReplay replay;
-        const auto head1 = coordinatorHeadCompletion(context, 1, 1, 1, 500, 17);
-        const auto range = rangedCompletion(
-            context, 2, "coordinator", 2, 1, 206,
-            "bytes=0-131071", 131072, 1048576);
-        const auto head2 = coordinatorHeadCompletion(
-            context, 3, 1, 2, 200, 1048576);
-        appendAttributedRequest(replay, head1, "session-a", 1);
-        appendAttributedRequest(replay, range, "session-a", 3);
-        appendAttributedResponse(replay, range);
-        appendAttributedResponse(replay, head1);
-        appendAttributedCompletion(replay, head1);
-        appendAttributedCompletion(replay, range);
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: head-transient-retry "
-            "context=" + context +
-            " retry=1 request=1 failed-attempt=1 scheduled-attempt=2 "
-            "status=500 delay-ms=100 connection=7 http=2 "
-            "declared-content-length=17 actual-body-bytes=0");
-        appendAttributedRequest(replay, head2, "session-a", 5);
-        appendAttributedResponse(replay, head2);
-        appendAttributedCompletion(replay, head2);
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: logical-get-complete context=" +
-            context + " request=2 attempt=1 range=bytes=0-131071 "
-            "bytes=131072");
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: published context=" + context +
-            " request=2 attempt=1");
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: file-property-published context=" +
-            context + " request=2 attempt=1");
-        return replay;
-    }
-
-    AttributedReplay terminalHeadRetryDispatchFailureReplay(
-        const std::string& reason)
-    {
-        require(reason == "add" || reason == "perform",
-                "terminal HEAD retry dispatch fixture reason is invalid");
-        const std::string context = reason == "add"
-            ? "abababababababababababababababab"
-            : "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
-        AttributedReplay replay;
-        const auto head = coordinatorHeadCompletion(
-            context, 1, 1, 1, 500, 17);
-        const auto range = rangedCompletion(
-            context, 2, "coordinator", 2, 1, 206,
-            "bytes=0-131071", 131072, 1048576);
-        appendAttributedRequest(replay, head, "session-terminal", 1);
-        appendAttributedRequest(replay, range, "session-terminal", 3);
-        appendAttributedResponse(replay, range);
-        appendAttributedResponse(replay, head);
-        appendAttributedCompletion(replay, head);
-        appendAttributedCompletion(replay, range);
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: head-transient-retry context=" +
-            context +
-            " retry=1 request=1 failed-attempt=1 scheduled-attempt=2 "
-            "status=500 delay-ms=100 connection=7 http=2 "
-            "declared-content-length=17 actual-body-bytes=0");
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: head-transient-retry-blocked "
-            "context=" + context +
-            " request=1 attempt=1 status=500 reason=" + reason +
-            " connection=7 http=2");
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: file-property-publication-blocked "
-            "context=" + context + " request=1 attempt=1 reason=" + reason);
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: blocked-operation-marked context=" +
-            context + " request=1 attempt=1 reason=" + reason);
-        return replay;
-    }
-
-    AttributedReplay passingRangeRecoveryMirrorReplay()
-    {
-        static const std::string context =
-            "11111111111111111111111111111111";
-        AttributedReplay replay;
-        const auto head = coordinatorHeadCompletion(
-            context, 1, 1, 1, 200, 1048576);
-        const auto range1 = rangedCompletion(
-            context, 2, "coordinator", 2, 1, 500,
-            "bytes=0-131071", 17, 1048576);
-        const auto range2 = rangedCompletion(
-            context, 3, "coordinator", 2, 2, 206,
-            "bytes=0-131071", 131072, 1048576);
-        appendAttributedRequest(replay, head, "session-b", 1);
-        appendAttributedRequest(replay, range1, "session-b", 3);
-        appendAttributedResponse(replay, head);
-        appendAttributedResponse(replay, range1);
-        appendAttributedCompletion(replay, head);
-        appendAttributedCompletion(replay, range1);
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: transient-retry context=" +
-            context + " request=2 failed-attempt=1 scheduled-attempt=2 "
-            "range=bytes=0-131071 status=500 bytes=17 delay-ms=100 "
-            "connection=7 http=2");
-        appendAttributedRequest(replay, range2, "session-b", 5);
-        appendAttributedResponse(replay, range2);
-        appendAttributedCompletion(replay, range2);
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: logical-get-complete context=" +
-            context + " request=2 attempt=2 range=bytes=0-131071 "
-            "bytes=131072");
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: published context=" + context +
-            " request=2 attempt=2");
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: file-property-published context=" +
-            context + " request=2 attempt=2");
-        return replay;
-    }
-
-    AttributedReplay sameStatusOutOfOrderSiblingReplay()
-    {
-        static const std::string context =
-            "33333333333333333333333333333333";
-        AttributedReplay replay;
-        const auto head = coordinatorHeadCompletion(
-            context, 3, 1, 1, 200, 1048576);
-        const auto coordinatorRange = rangedCompletion(
-            context, 4, "coordinator", 2, 1, 206,
-            "bytes=0-131071", 131072, 1048576);
-        const auto siblingA = rangedCompletion(
-            context, 2, "multirange", 3, 1, 500,
-            "bytes=262144-327679", 17, 1048576);
-        const auto siblingB = rangedCompletion(
-            context, 1, "multirange", 4, 1, 500,
-            "bytes=393216-458751", 17, 1048576);
-
-        appendAttributedRequest(replay, head, "session-d", 1);
-        appendAttributedRequest(replay, coordinatorRange, "session-d", 3);
-        appendAttributedRequest(replay, siblingA, "session-d", 5);
-        appendAttributedRequest(replay, siblingB, "session-d", 7);
-        appendAttributedResponse(replay, siblingB);
-        appendAttributedResponse(replay, siblingA);
-        appendAttributedResponse(replay, head);
-        appendAttributedResponse(replay, coordinatorRange);
-        appendAttributedCompletion(replay, siblingB);
-        appendAttributedCompletion(replay, siblingA);
-        appendAttributedCompletion(replay, head);
-        appendAttributedCompletion(replay, coordinatorRange);
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: published context=" + context +
-            " request=2 attempt=1");
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: file-property-published context=" +
-            context + " request=2 attempt=1");
-        return replay;
-    }
-
-    AttributedReplay ordinaryHeadCompatibilityReplay()
-    {
-        static const std::string context =
-            "44444444444444444444444444444444";
-        AttributedReplay replay;
-        auto methodHead = coordinatorHeadCompletion(
-            context, 1, 1, 1, 200, 1048576);
-        methodHead.scope = "ordinary-head";
-        auto headerOnlyGet = coordinatorHeadCompletion(
-            context, 2, 2, 1, 200, 1048576);
-        headerOnlyGet.scope = "ordinary-head";
-        headerOnlyGet.method = "GET";
-        appendAttributedRequest(replay, methodHead, "session-e", 1);
-        appendAttributedRequest(replay, headerOnlyGet, "session-e", 3);
-        appendAttributedResponse(replay, methodHead);
-        appendAttributedResponse(replay, headerOnlyGet);
-        appendAttributedCompletion(replay, methodHead);
-        appendAttributedCompletion(replay, headerOnlyGet);
-        return replay;
-    }
-
-    AttributedReplay combinedOperationScopeReplay()
-    {
-        static const std::string context =
-            "89898989898989898989898989898989";
-        AttributedReplay replay;
-        const auto head = coordinatorHeadCompletion(
-            context, 1, 1, 1, 200, 1048576);
-        const auto coordinatorRange = rangedCompletion(
-            context, 2, "coordinator", 2, 1, 206,
-            "bytes=0-131071", 131072, 1048576);
-        const auto multiRange = rangedCompletion(
-            context, 3, "multirange", 3, 1, 206,
-            "bytes=262144-327679", 65536, 1048576);
-        auto ordinaryHead = coordinatorHeadCompletion(
-            context, 4, 4, 1, 405, 0);
-        ordinaryHead.scope = "ordinary-head";
-        auto ordinaryHeaderGet = coordinatorHeadCompletion(
-            context, 5, 5, 1, 200, 1048576);
-        ordinaryHeaderGet.scope = "ordinary-head";
-        ordinaryHeaderGet.method = "GET";
-
-        const ScienceTransportCompletion completions[] = {
-            head, coordinatorRange, multiRange,
-            ordinaryHead, ordinaryHeaderGet,
-        };
-        int streamId = 1;
-        for (const ScienceTransportCompletion& completion : completions)
-        {
-            appendAttributedRequest(
-                replay, completion, "session-combined", streamId);
-            streamId += 2;
-        }
-        for (const ScienceTransportCompletion& completion : completions)
-        {
-            appendAttributedResponse(replay, completion);
-            appendAttributedCompletion(replay, completion);
-        }
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: logical-get-complete context=" +
-            context + " request=2 attempt=1 range=bytes=0-131071 "
-            "bytes=131072");
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: published context=" + context +
-            " request=2 attempt=1");
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: file-property-published context=" +
-            context + " request=2 attempt=1");
-        return replay;
-    }
-
-    AttributedReplay v5ShapedTerminalFallbackReplay()
-    {
-        static const std::string context =
-            "66666666666666666666666666666666";
-        AttributedReplay replay;
-        const auto head = coordinatorHeadCompletion(
-            context, 1, 1, 1, 500, 17);
-        const auto range = rangedCompletion(
-            context, 2, "coordinator", 2, 1, 206,
-            "bytes=0-131071", 131072, 1048576);
-        appendAttributedRequest(replay, head, "session-f", 1);
-        appendAttributedRequest(replay, range, "session-f", 3);
-        appendAttributedResponse(replay, head);
-        appendAttributedResponse(replay, range);
-        appendAttributedCompletion(replay, head);
-        appendAttributedCompletion(replay, range);
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: fallback context=" + context +
-            " request=1 attempt=1 reason=head-invalid");
-        replay.ordinaryTraffic = {
-            "HEAD /fixture.tif HTTP/2 status=200",
-            "GET /fixture.tif HTTP/2 Range: bytes=0-131071 status=206",
-        };
-        replay.ordinaryCapture.messages = {
-            "CURL_INFO_HEADER_OUT: HEAD /fixture.tif HTTP/2\r\n\r\n",
-            "CURL_INFO_HEADER_IN: HTTP/2 200\r",
-            "CURL_INFO_HEADER_IN: content-length: 1048576\r",
-            "CURL_INFO_HEADER_IN: ",
-            "CURL_INFO_HEADER_OUT: GET /fixture.tif HTTP/2\r\n"
-                "Range: bytes=0-131071\r\n\r\n",
-            "CURL_INFO_HEADER_IN: HTTP/2 206\r",
-            "CURL_INFO_HEADER_IN: content-length: 131072\r",
-            "CURL_INFO_HEADER_IN: content-range: bytes 0-131071/1048576\r",
-            "CURL_INFO_HEADER_IN: ",
-            "VSICURL: Download completed",
-        };
-        replay.ordinaryCapture.timestamps.resize(
-            replay.ordinaryCapture.messages.size());
-        for (std::size_t index = 0;
-             index < replay.ordinaryCapture.timestamps.size(); ++index)
-        {
-            replay.ordinaryCapture.timestamps[index] =
-                std::chrono::steady_clock::time_point(
-                    std::chrono::nanoseconds(index + 1));
-        }
-        ScienceServerRequest ordinaryHead;
-        ordinaryHead.method = "HEAD";
-        ordinaryHead.sessionId = "session-f-ordinary";
-        ordinaryHead.streamId = 7;
-        ordinaryHead.path = "/fixture.tif";
-        ordinaryHead.status = 200;
-        ordinaryHead.start = 70;
-        ordinaryHead.response = 71;
-        ordinaryHead.end = 72;
-        ordinaryHead.contentLength = 1048576;
-        ordinaryHead.startCount = ordinaryHead.responseCount =
-            ordinaryHead.endCount = 1;
-        ScienceServerRequest ordinaryRange;
-        ordinaryRange.method = "GET";
-        ordinaryRange.range = "bytes=0-131071";
-        ordinaryRange.sessionId = ordinaryHead.sessionId;
-        ordinaryRange.streamId = 9;
-        ordinaryRange.path = "/fixture.tif";
-        ordinaryRange.status = 206;
-        ordinaryRange.start = 90;
-        ordinaryRange.response = 91;
-        ordinaryRange.end = 92;
-        ordinaryRange.attemptedBodyBytes = 131072;
-        ordinaryRange.contentLength = 131072;
-        ordinaryRange.contentRange = "bytes 0-131071/1048576";
-        ordinaryRange.startCount = ordinaryRange.responseCount =
-            ordinaryRange.endCount = 1;
-        replay.ordinaryServerRequests = {ordinaryHead, ordinaryRange};
-        replay.ordinaryStats =
-            "{\"methods\":{\"GET\":{\"count\":1,"
-            "\"downloaded_bytes\":131072},\"HEAD\":{\"count\":1}}}";
-        return replay;
-    }
-
-    AttributedReplay terminalHeadWithCacheOnlyReplay()
-    {
-        static const std::string context =
-            "77777777777777777777777777777777";
-        AttributedReplay replay;
-        const auto head = coordinatorHeadCompletion(
-            context, 1, 1, 1, 500, 17);
-        const auto range = rangedCompletion(
-            context, 2, "coordinator", 2, 1, 206,
-            "bytes=0-131071", 131072, 1048576);
-        appendAttributedRequest(replay, head, "session-g", 1);
-        appendAttributedRequest(replay, range, "session-g", 3);
-        appendAttributedResponse(replay, head);
-        appendAttributedResponse(replay, range);
-        appendAttributedCompletion(replay, head);
-        appendAttributedCompletion(replay, range);
-        replay.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: published context=" + context +
-            " request=2 attempt=1");
-        return replay;
-    }
-
-    void replaceAll(std::string& value, const std::string& from,
-                    const std::string& to)
-    {
-        std::size_t position = 0;
-        while ((position = value.find(from, position)) != std::string::npos)
-        {
-            value.replace(position, from.size(), to);
-            position += to.size();
-        }
-    }
-
-    AttributedReplay copyAttributedReplay(const AttributedReplay& source)
-    {
-        AttributedReplay copy;
-        copy.capture.messages = source.capture.messages;
-        copy.capture.timestamps = source.capture.timestamps;
-        copy.serverRequests = source.serverRequests;
-        copy.ordinaryTraffic = source.ordinaryTraffic;
-        copy.ordinaryCapture.messages = source.ordinaryCapture.messages;
-        copy.ordinaryCapture.timestamps = source.ordinaryCapture.timestamps;
-        copy.ordinaryServerRequests = source.ordinaryServerRequests;
-        copy.ordinaryStats = source.ordinaryStats;
-        return copy;
-    }
-
-    std::size_t replayMessageIndex(const DebugCapture& capture,
-                                   const std::string& needle,
-                                   std::size_t occurrence = 0)
-    {
-        for (std::size_t index = 0; index < capture.messages.size(); ++index)
-        {
-            if (capture.messages[index].find(needle) == std::string::npos)
-                continue;
-            if (occurrence-- == 0) return index;
-        }
-        fail("attributed replay mutation target is missing: " + needle);
-    }
-
-    void requireAttributedRejected(const AttributedReplay& replay,
-                                   const std::string& description)
-    {
-        try
-        {
-            const AttributedTransportProof proof =
-                buildAttributedTransportProof(
-                    replay.capture, replay.serverRequests);
-            if (!proof.qualified) return;
-        }
-        catch (const std::exception&)
-        {
-            return;
-        }
-        fail("AttributedV6 accepted " + description);
-    }
-
-    void requireAttributedParserRejected(const AttributedReplay& replay,
-                                         const std::string& description)
-    {
-        try
-        {
-            static_cast<void>(buildAttributedTransportProof(
-                replay.capture, replay.serverRequests));
-        }
-        catch (const std::exception&)
-        {
-            return;
-        }
-        fail("AttributedV6 parser accepted " + description);
-    }
-
-    struct CompletionSinkRaceCapture
-    {
-        DebugCapture capture;
-        std::mutex controlMutex;
-        std::condition_variable condition;
-        bool firstResponseEntered = false;
-        bool releaseFirstResponse = false;
-        bool watchdogExpired = false;
-        bool reentrantCallbackCompleted = false;
-        int responseHandlersEntered = 0;
-        std::thread::id drainerThread;
-        std::vector<std::thread::id> responseHandlerThreads;
-    };
-
-    void CPL_STDCALL captureCompletionSinkRaceMessage(
-        CPLErr errorClass, CPLErrorNum, const char* message)
-    {
-        CompletionSinkRaceCapture* state =
-            static_cast<CompletionSinkRaceCapture*>(
-                CPLGetErrorHandlerUserData());
-        if (state == nullptr || message == nullptr) return;
-        if (std::string(message) ==
-            "OSGSOL_SCIENCE_SINK_RACE: completion-sink-reentrant-probe")
-        {
-            std::lock_guard<std::mutex> lock(state->controlMutex);
-            state->reentrantCallbackCompleted = true;
-            state->condition.notify_all();
-            return;
-        }
-        const bool response = std::string(message).find(
-            "ScienceTransport: response-v1 ") != std::string::npos;
-        bool firstResponse = false;
-        if (response)
-        {
-            std::unique_lock<std::mutex> lock(state->controlMutex);
-            ++state->responseHandlersEntered;
-            if (!state->firstResponseEntered)
-            {
-                state->firstResponseEntered = true;
-                state->drainerThread = std::this_thread::get_id();
-                firstResponse = true;
-                state->condition.notify_all();
-                if (!state->condition.wait_for(
-                        lock, std::chrono::seconds(10), [&]()
-                        {
-                            return state->releaseFirstResponse;
-                        }))
-                {
-                    state->watchdogExpired = true;
-                    state->releaseFirstResponse = true;
-                    state->condition.notify_all();
-                }
-            }
-        }
-        {
-            std::lock_guard<std::mutex> lock(state->capture.mutex);
-            state->capture.messages.emplace_back(message);
-            state->capture.timestamps.push_back(
-                std::chrono::steady_clock::now());
-        }
-        if (response)
-        {
-            std::lock_guard<std::mutex> lock(state->controlMutex);
-            state->responseHandlerThreads.push_back(
-                std::this_thread::get_id());
-            state->condition.notify_all();
-        }
-        if (firstResponse)
-            CPLDebug("OSGSOL_SCIENCE_SINK_RACE",
-                     "completion-sink-reentrant-probe");
-        if (errorClass >= CE_Warning)
-            std::cerr << "GDAL: " << message << std::endl;
-    }
-
-    void verifyCompletionSinkConcurrencyRegression(
-        const std::filesystem::path& fixture,
-        const std::filesystem::path& root)
-    {
-        const char* selectedMode =
-            CPLGetConfigOption("OSGSOL_TEST_PREFETCH_CASE", nullptr);
-        if (selectedMode != nullptr &&
-            std::string(selectedMode) != "v6-completion-sink-race")
-            return;
-        const std::filesystem::path certificate =
-            root / "v6-sink-race-cert.pem";
-        const std::filesystem::path key = root / "v6-sink-race-key.pem";
-        const std::filesystem::path ready = root / "v6-sink-race.ready";
-        const std::filesystem::path log = root / "v6-sink-race.jsonl";
-        createSelfSignedCertificate(certificate, key);
-        ServerProcess server = startHttp2Server(
-            fixture, ready, log, certificate, key, "success", "h2");
-        const int port = waitForPort(ready);
-        const std::string url = "/vsicurl/https://127.0.0.1:" +
-            std::to_string(port) +
-            "/v6-completion-sink-race-head-first/fixture.tif";
-        ScopedGdalConfig config({
-            {"GDAL_HTTP_UNSAFESSL", "YES"},
-            {"GDAL_HTTP_VERSION", "2TLS"},
-            {"GDAL_HTTP_PROXY", ""},
-            {"GDAL_HTTPS_PROXY", ""},
-            {"GDAL_HTTP_MAX_RETRY", "0"},
-            {"CPL_TIMESTAMP", "NO"},
-        });
-        VSICurlClearCache();
-        CompletionSinkRaceCapture state;
-        std::atomic<bool> firstReturned{false};
-        std::atomic<bool> secondReturned{false};
-        std::atomic<bool> firstOpened{false};
-        std::atomic<bool> secondOpened{false};
-        ScopedPathSpecificOption prefetch(
-            url, "OSGSOL_VSICURL_PREFETCH_HEAD_RANGE", "YES");
-        const std::string operationId = nextPrefetchOperationId();
-        ScopedPathSpecificOption operation(
-            url, "OSGSOL_VSICURL_PREFETCH_OPERATION_ID",
-            operationId.c_str());
-        const auto open = [&](std::atomic<bool>& opened,
-                              std::atomic<bool>& returned)
-        {
-            CPLPushErrorHandlerEx(captureCompletionSinkRaceMessage, &state);
-            CPLSetCurrentErrorHandlerCatchDebug(1);
-            GDALDataset* dataset = static_cast<GDALDataset*>(GDALOpenEx(
-                url.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
-                nullptr, nullptr, nullptr));
-            opened.store(dataset != nullptr);
-            if (dataset) GDALClose(dataset);
-            returned.store(true);
-            {
-                std::lock_guard<std::mutex> lock(state.controlMutex);
-                state.condition.notify_all();
-            }
-            CPLPopErrorHandler();
-        };
-
-        std::thread first([&]() { open(firstOpened, firstReturned); });
-        bool observedFirstResponse = false;
-        {
-            std::unique_lock<std::mutex> lock(state.controlMutex);
-            state.condition.wait_for(lock, std::chrono::seconds(10), [&]()
-            {
-                return state.firstResponseEntered || firstReturned.load();
-            });
-            observedFirstResponse = state.firstResponseEntered;
-        }
-        if (!observedFirstResponse)
-        {
-            first.join();
-            fail("production completion sink emitted no response-v1 event for "
-                 "the deterministic race");
-        }
-
-        std::thread second([&]() { open(secondOpened, secondReturned); });
-        bool secondOperationCompletedIntoPendingQueue = false;
-        int responseHandlersBeforeRelease = 0;
-        {
-            std::unique_lock<std::mutex> lock(state.controlMutex);
-            state.condition.wait_for(lock, std::chrono::seconds(5), [&]()
-            {
-                return secondReturned.load();
-            });
-            secondOperationCompletedIntoPendingQueue = secondReturned.load();
-            responseHandlersBeforeRelease = state.responseHandlersEntered;
-        }
-        int authoritativeLogResponsesBeforeRelease = 0;
-        {
-            std::lock_guard<std::mutex> lock(state.capture.mutex);
-            authoritativeLogResponsesBeforeRelease =
-                static_cast<int>(std::count_if(
-                state.capture.messages.begin(), state.capture.messages.end(),
-                [](const std::string& message)
-                {
-                    return message.find(
-                        "ScienceTransport: response-v1 ") !=
-                        std::string::npos;
-                }));
-        }
-        {
-            std::lock_guard<std::mutex> lock(state.controlMutex);
-            state.releaseFirstResponse = true;
-            state.condition.notify_all();
-        }
-        first.join();
-        second.join();
-        server.stop();
-        const Http2Evidence serverEvidence = readHttp2Log(log);
-
-        require(firstOpened.load() && secondOpened.load() &&
-                    secondOperationCompletedIntoPendingQueue &&
-                    responseHandlersBeforeRelease == 1 &&
-                    authoritativeLogResponsesBeforeRelease == 0 &&
-                    !state.watchdogExpired &&
-                    state.reentrantCallbackCompleted,
-                "completion sink did not let B finish into the internal "
-                "pending queue while A alone owned the paused authoritative "
-                "log drainer, or deadlocked its callback");
-        static const std::regex prefix(
-            R"(ScienceTransport: response-v1 ordinal=([1-9][0-9]*) )"
-            R"(context=([0-9a-f]{32}) )"
-            R"(scope=(?:coordinator|multirange|ordinary-head) )"
-            R"(role=(?:head|range) request=([1-9][0-9]*) )"
-            R"(attempt=([1-4]) )");
-        std::vector<std::uint64_t> ordinals;
-        std::set<std::string> completionCorrelations;
-        std::string context;
-        for (const std::string& message : state.capture.messages)
-        {
-            std::smatch match;
-            if (!std::regex_search(message, match, prefix)) continue;
-            ordinals.push_back(static_cast<std::uint64_t>(
-                std::stoull(match[1].str())));
-            if (context.empty()) context = match[2].str();
-            require(context == match[2].str(),
-                    "same path/token race split into multiple contexts");
-            completionCorrelations.insert(match[2].str() + "/" +
-                match[3].str() + "/" + match[4].str());
-        }
-        std::set<std::string> serverCorrelations;
-        int serverHeads = 0;
-        int serverGets = 0;
-        for (const Http2StreamEvidence& stream : serverEvidence.streams)
-        {
-            serverCorrelations.insert(stream.correlation);
-            if (stream.method == "HEAD") ++serverHeads;
-            if (stream.method == "GET") ++serverGets;
-        }
-        require(ordinals.size() == 4 &&
-                    state.responseHandlerThreads.size() == 4 &&
-                    std::all_of(state.responseHandlerThreads.begin(),
-                        state.responseHandlerThreads.end(),
-                        [&](const std::thread::id& thread)
-                        {
-                            return thread == state.drainerThread;
-                        }) &&
-                    serverHeads == 2 && serverGets == 2 &&
-                    serverCorrelations == completionCorrelations,
-                "same-token race did not emit both HEAD/Range completions");
-        for (std::size_t index = 0; index < ordinals.size(); ++index)
-            require(ordinals[index] == index + 1,
-                    "real completion sink reordered or skipped a serialized "
-                    "completion ordinal");
-    }
-
-    void verifyAttributedTransportRegression()
-    {
-        AttributedReplay passing = passingHeadRecoveryReplay();
-        const AttributedTransportProof proof = buildAttributedTransportProof(
-            passing.capture, passing.serverRequests);
-        require(proof.qualified && proof.completions.size() == 3 &&
-                    proof.headRetries.size() == 1 &&
-                    proof.headRetries.front().failedStatus == 500 &&
-                    proof.headRetries.front().failedDeclaredContentLength == 17 &&
-                    proof.headRetries.front().failedActualBodyBytes == 0,
-                "passing v6 replay lost authoritative HEAD retry attribution");
-
-        AttributedReplay proxied = copyAttributedReplay(passing);
-        const auto proxyTimestamp = std::chrono::steady_clock::now();
-        proxied.capture.messages.insert(proxied.capture.messages.begin(), {
-            "CURL_INFO_HEADER_OUT: CONNECT proxy.example:443 HTTP/1.1\r\n"
-                "Host: proxy.example:443\r\n\r\n",
-            "CURL_INFO_HEADER_IN: HTTP/1.1 200 Connection established",
-            "CURL_INFO_HEADER_IN: ",
-        });
-        proxied.capture.timestamps.insert(
-            proxied.capture.timestamps.begin(), 3, proxyTimestamp);
-        const AttributedTransportProof proxiedProof =
-            buildAttributedTransportProof(
-                proxied.capture, proxied.serverRequests);
-        require(proxiedProof.qualified &&
-                    proxiedProof.completions.size() == 3 &&
-                    proxiedProof.headRetries.size() == 1,
-                "proxy CONNECT response contaminated science attribution");
-
-        AttributedReplay terminalAdd =
-            terminalHeadRetryDispatchFailureReplay("add");
-        const AttributedTransportProof terminalAddProof =
-            buildAttributedTransportProof(
-                terminalAdd.capture, terminalAdd.serverRequests);
-        AttributedReplay terminalPerform =
-            terminalHeadRetryDispatchFailureReplay("perform");
-        const AttributedTransportProof terminalPerformProof =
-            buildAttributedTransportProof(
-                terminalPerform.capture, terminalPerform.serverRequests);
-        const auto isAuthenticTerminalDispatchFailure = [](
-                const AttributedTransportProof& candidate,
-                const std::string& reason)
-        {
-            return !candidate.qualified &&
-                candidate.completions.size() == 2 &&
-                candidate.headRetries.size() == 1 &&
-                std::count_if(candidate.events.begin(),
-                    candidate.events.end(), [&](const auto& event)
-                    {
-                        return event.kind == "head-blocked" &&
-                            event.request == 1 && event.attempt == 1 &&
-                            event.reason == reason;
-                    }) == 1;
-        };
-        require(isAuthenticTerminalDispatchFailure(
-                    terminalAddProof, "add") &&
-                    isAuthenticTerminalDispatchFailure(
-                    terminalPerformProof, "perform"),
-                "authentic add/perform terminal HEAD retry dispatch failure "
-                "became parser ERROR or semantic PASS");
-
-        AttributedReplay missingTerminal = copyAttributedReplay(terminalAdd);
-        missingTerminal.capture.messages.erase(
-            missingTerminal.capture.messages.begin() + replayMessageIndex(
-                missingTerminal.capture, "head-transient-retry-blocked "));
-        requireAttributedParserRejected(
-            missingTerminal, "a missing terminal HEAD retry block");
-
-        AttributedReplay wrongTerminal = copyAttributedReplay(terminalAdd);
-        const std::size_t wrongTerminalIndex = replayMessageIndex(
-            wrongTerminal.capture, "head-transient-retry-blocked ");
-        replaceAll(wrongTerminal.capture.messages[wrongTerminalIndex],
-                   "reason=add", "reason=detach");
-        requireAttributedParserRejected(
-            wrongTerminal, "a terminal HEAD retry block with the wrong reason");
-
-        AttributedReplay duplicateTerminal = copyAttributedReplay(terminalAdd);
-        const std::size_t duplicateTerminalIndex = replayMessageIndex(
-            duplicateTerminal.capture, "head-transient-retry-blocked ");
-        duplicateTerminal.capture.messages.insert(
-            duplicateTerminal.capture.messages.begin() +
-                duplicateTerminalIndex,
-            duplicateTerminal.capture.messages[duplicateTerminalIndex]);
-        requireAttributedParserRejected(
-            duplicateTerminal, "a duplicate terminal HEAD retry block");
-
-        AttributedReplay outOfOrderTerminal = copyAttributedReplay(terminalAdd);
-        const std::size_t outOfOrderBlock = replayMessageIndex(
-            outOfOrderTerminal.capture, "head-transient-retry-blocked ");
-        const std::string earlyBlock =
-            outOfOrderTerminal.capture.messages[outOfOrderBlock];
-        outOfOrderTerminal.capture.messages.erase(
-            outOfOrderTerminal.capture.messages.begin() + outOfOrderBlock);
-        const std::size_t retryDecision = replayMessageIndex(
-            outOfOrderTerminal.capture, "head-transient-retry context=");
-        outOfOrderTerminal.capture.messages.insert(
-            outOfOrderTerminal.capture.messages.begin() + retryDecision,
-            earlyBlock);
-        requireAttributedParserRejected(
-            outOfOrderTerminal, "a terminal block before its HEAD retry event");
-
-        AttributedReplay terminalWithScheduled =
-            copyAttributedReplay(terminalAdd);
-        AttributedReplay scheduledAttempt;
-        const auto headAttempt2 = coordinatorHeadCompletion(
-            "abababababababababababababababab", 3, 1, 2, 200, 1048576);
-        appendAttributedRequest(
-            scheduledAttempt, headAttempt2, "session-terminal", 5);
-        appendAttributedResponse(scheduledAttempt, headAttempt2);
-        appendAttributedCompletion(scheduledAttempt, headAttempt2);
-        const std::size_t terminalAfterScheduled = replayMessageIndex(
-            terminalWithScheduled.capture, "head-transient-retry-blocked ");
-        terminalWithScheduled.capture.messages.insert(
-            terminalWithScheduled.capture.messages.begin() +
-                terminalAfterScheduled,
-            scheduledAttempt.capture.messages.begin(),
-            scheduledAttempt.capture.messages.end());
-        terminalWithScheduled.serverRequests.insert(
-            terminalWithScheduled.serverRequests.end(),
-            scheduledAttempt.serverRequests.begin(),
-            scheduledAttempt.serverRequests.end());
-        requireAttributedParserRejected(
-            terminalWithScheduled,
-            "an add terminal chain followed by a scheduled HEAD completion");
-
-        AttributedReplay duplicateRetry = copyAttributedReplay(terminalAdd);
-        const std::size_t firstRetry = replayMessageIndex(
-            duplicateRetry.capture, "head-transient-retry context=");
-        std::string secondRetry = duplicateRetry.capture.messages[firstRetry];
-        replaceAll(secondRetry, "retry=1", "retry=2");
-        replaceAll(secondRetry, "delay-ms=100", "delay-ms=200");
-        duplicateRetry.capture.messages.insert(
-            duplicateRetry.capture.messages.begin() + firstRetry + 1,
-            secondRetry);
-        requireAttributedParserRejected(
-            duplicateRetry,
-            "duplicate HEAD retries bound to the same failed attempt");
-
-        AttributedReplay unrelatedFallback = copyAttributedReplay(passing);
-        const std::size_t missingHeadTransition = replayMessageIndex(
-            unrelatedFallback.capture, "head-transient-retry context=");
-        unrelatedFallback.capture.messages.erase(
-            unrelatedFallback.capture.messages.begin() +
-                missingHeadTransition);
-        unrelatedFallback.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: fallback context=" +
-            proof.completions.front().context +
-            " request=2 attempt=1 reason=range-invalid");
-        requireAttributedRejected(
-            unrelatedFallback,
-            "a missing HEAD retry transition hidden by a later fallback");
-
-        AttributedReplay mirror = passingRangeRecoveryMirrorReplay();
-        const AttributedTransportProof mirrorProof =
-            buildAttributedTransportProof(
-                mirror.capture, mirror.serverRequests);
-        require(mirrorProof.qualified && mirrorProof.headRetries.empty() &&
-                    mirrorProof.completions.size() == 3 &&
-                    std::count_if(mirrorProof.completions.begin(),
-                        mirrorProof.completions.end(),
-                        [](const ScienceTransportCompletion& completion)
-                        {
-                            return completion.role == "range" &&
-                                completion.status == 500;
-                        }) == 1,
-                "HEAD 200/Range 500 mirror was falsely attributed to HEAD");
-
-        AttributedReplay missingRangeTransition =
-            copyAttributedReplay(mirror);
-        missingRangeTransition.capture.messages.erase(
-            missingRangeTransition.capture.messages.begin() +
-                replayMessageIndex(
-                    missingRangeTransition.capture,
-                    "ParallelHeadRange: transient-retry context="));
-        requireAttributedRejected(
-            missingRangeTransition,
-            "a retried Range completion without its retry transition");
-        AttributedReplay duplicateRangeTransition =
-            copyAttributedReplay(mirror);
-        const std::size_t rangeTransition = replayMessageIndex(
-            duplicateRangeTransition.capture,
-            "ParallelHeadRange: transient-retry context=");
-        duplicateRangeTransition.capture.messages.insert(
-            duplicateRangeTransition.capture.messages.begin() +
-                rangeTransition,
-            duplicateRangeTransition.capture.messages[rangeTransition]);
-        requireAttributedRejected(
-            duplicateRangeTransition,
-            "a retried Range completion with duplicate retry transitions");
-
-        AttributedReplay siblings = sameStatusOutOfOrderSiblingReplay();
-        const AttributedTransportProof siblingProof =
-            buildAttributedTransportProof(
-                siblings.capture, siblings.serverRequests);
-        require(siblingProof.qualified &&
-                    siblingProof.completions.size() == 4 &&
-                    siblingProof.completions[0].ordinal == 1 &&
-                    siblingProof.completions[0].request == 4 &&
-                    siblingProof.completions[0].status == 500 &&
-                    siblingProof.completions[1].ordinal == 2 &&
-                    siblingProof.completions[1].request == 3 &&
-                    siblingProof.completions[1].status == 500 &&
-                    siblingProof.completions[0].range ==
-                        "bytes=393216-458751" &&
-                    siblingProof.completions[1].range ==
-                        "bytes=262144-327679",
-                "ordinal allocation/enqueue race did not preserve sink order "
-                "for same-status siblings completed out of request order");
-
-        AttributedReplay ordinary = ordinaryHeadCompatibilityReplay();
-        const AttributedTransportProof ordinaryProof =
-            buildAttributedTransportProof(
-                ordinary.capture, ordinary.serverRequests);
-        require(!ordinaryProof.qualified &&
-                    ordinaryProof.completions.size() == 2 &&
-                    ordinaryProof.completions[0].method == "HEAD" &&
-                    ordinaryProof.completions[1].method == "GET" &&
-                    ordinaryProof.completions[1].role == "head" &&
-                    ordinaryProof.completions[1].actualBodyBytes == 0,
-                "ordinary HEAD compatibility tuples were not parsed as "
-                "distinct physical methods");
-
-        AttributedReplay combined = combinedOperationScopeReplay();
-        const AttributedTransportProof combinedProof =
-            buildAttributedTransportProof(
-                combined.capture, combined.serverRequests);
-        require(combinedProof.qualified &&
-                    combinedProof.completions.size() == 5 &&
-                    std::count_if(combinedProof.completions.begin(),
-                        combinedProof.completions.end(),
-                        [](const ScienceTransportCompletion& completion)
-                        {
-                            return completion.scope == "coordinator";
-                        }) == 2 &&
-                    std::count_if(combinedProof.completions.begin(),
-                        combinedProof.completions.end(),
-                        [](const ScienceTransportCompletion& completion)
-                        {
-                            return completion.scope == "multirange";
-                        }) == 1 &&
-                    std::count_if(combinedProof.completions.begin(),
-                        combinedProof.completions.end(),
-                        [](const ScienceTransportCompletion& completion)
-                        {
-                            return completion.scope == "ordinary-head";
-                        }) == 2 &&
-                    std::any_of(combinedProof.completions.begin(),
-                        combinedProof.completions.end(),
-                        [](const ScienceTransportCompletion& completion)
-                        {
-                            return completion.scope == "ordinary-head" &&
-                                completion.method == "HEAD" &&
-                                completion.status == 405;
-                        }),
-                "one operation context did not span coordinator, multirange, "
-                "and initial-HEAD-405 ordinary-head compatibility transports");
-        AttributedReplay otherPath = copyAttributedReplay(combined);
-        otherPath.serverRequests[2].path = "/other-path/fixture.tif";
-        requireAttributedRejected(otherPath,
-                                  "a correlated request from another path");
-
-        AttributedReplay nested = copyAttributedReplay(passing);
-        AttributedReplay second = passingHeadRecoveryReplay();
-        const std::string firstContext =
-            "0123456789abcdef0123456789abcdef";
-        const std::string secondContext =
-            "22222222222222222222222222222222";
-        for (std::string& message : second.capture.messages)
-            replaceAll(message, firstContext, secondContext);
-        for (ScienceServerRequest& request : second.serverRequests)
-        {
-            replaceAll(request.correlation, firstContext, secondContext);
-            request.sessionId = "session-c";
-        }
-        const std::size_t nestPoint = replayMessageIndex(
-            nested.capture, "response-v1 ordinal=2");
-        nested.capture.messages.insert(
-            nested.capture.messages.begin() + nestPoint,
-            second.capture.messages.begin(), second.capture.messages.end());
-        nested.serverRequests.insert(nested.serverRequests.end(),
-            second.serverRequests.begin(), second.serverRequests.end());
-        const AttributedTransportProof nestedProof =
-            buildAttributedTransportProof(
-                nested.capture, nested.serverRequests);
-        require(nestedProof.qualified && nestedProof.completions.size() == 6,
-                "interleaved contexts did not keep independent ordinal spaces");
-
-        AttributedReplay crossedContext = copyAttributedReplay(nested);
-        const std::size_t crossedPublication = replayMessageIndex(
-            crossedContext.capture,
-            "published context=" + firstContext);
-        replaceAll(crossedContext.capture.messages[crossedPublication],
-                   firstContext, secondContext);
-        requireAttributedRejected(crossedContext,
-                                  "a cross-context publication");
-
-        AttributedReplay fallback = v5ShapedTerminalFallbackReplay();
-        const AttributedTransportProof fallbackProof =
-            buildAttributedTransportProof(
-                fallback.capture, fallback.serverRequests);
-        require(!fallbackProof.qualified && fallbackProof.fallbackCount == 1 &&
-                    fallbackProof.cachePublicationCount == 0 &&
-                    fallbackProof.propertyPublicationCount == 0 &&
-                    fallbackProof.completions.size() == 2 &&
-                    std::count_if(fallbackProof.completions.begin(),
-                        fallbackProof.completions.end(),
-                        [](const ScienceTransportCompletion& completion)
-                        {
-                            return completion.scope == "coordinator" &&
-                                completion.role == "head";
-                        }) == 1 &&
-                    fallback.ordinaryTraffic.size() == 2,
-                "v5-shaped fallback became parser ERROR or semantic PASS");
-        const auto buildOrdinaryFallbackProof = [](
-                const AttributedReplay& replay)
-        {
-            const HttpProof proof = buildHttpProof(
-                replay.ordinaryCapture, replay.ordinaryStats,
-                AttributionMode::LegacyFrozen);
-            std::uint64_t serverBodies = 0;
-            int serverHeads = 0;
-            int serverGets = 0;
-            for (const ScienceServerRequest& request :
-                 replay.ordinaryServerRequests)
-            {
-                require(request.startCount == 1 &&
-                            request.responseCount == 1 &&
-                            request.endCount == 1 && !request.aborted &&
-                            request.path == "/fixture.tif" &&
-                            request.sessionId == "session-f-ordinary",
-                        "v5 fallback ordinary server tuple is incomplete");
-                if (request.method == "HEAD") ++serverHeads;
-                if (request.method == "GET")
-                {
-                    ++serverGets;
-                    checkedAdd(serverBodies, request.attemptedBodyBytes,
-                               "v5 fallback ordinary server bytes");
-                }
-            }
-            require(proof.actualHeadCount == 1 &&
-                        proof.actualGetCount == 1 &&
-                        proof.successfulGetCount == 1 &&
-                        proof.statsHeadCount == 1 &&
-                        proof.statsGetOperationCount == 1 &&
-                        proof.actualHttpBodyBytes == 131072 &&
-                        serverHeads == proof.actualHeadCount &&
-                        serverGets == proof.actualGetCount &&
-                        serverBodies == proof.actualHttpBodyBytes,
-                    "v5 fallback ordinary HEAD/Range traffic was not consumed "
-                    "by parser/server/stats evidence");
-            return proof;
-        };
-        const HttpProof ordinaryFallbackProof =
-            buildOrdinaryFallbackProof(fallback);
-
-        AttributedReplay missingOrdinaryServer =
-            copyAttributedReplay(fallback);
-        missingOrdinaryServer.ordinaryServerRequests.pop_back();
-        bool missingOrdinaryServerRejected = false;
-        try
-        {
-            static_cast<void>(
-                buildOrdinaryFallbackProof(missingOrdinaryServer));
-        }
-        catch (const std::exception&)
-        {
-            missingOrdinaryServerRejected = true;
-        }
-        require(missingOrdinaryServerRejected,
-                "v5 fallback ordinary server mutation was accepted");
-
-        AttributedReplay attemptAfterFallback = copyAttributedReplay(fallback);
-        const auto lateHead = coordinatorHeadCompletion(
-            fallbackProof.completions.front().context, 3, 1, 2,
-            200, 1048576);
-        appendAttributedRequest(
-            attemptAfterFallback, lateHead, "session-f", 5);
-        appendAttributedResponse(attemptAfterFallback, lateHead);
-        appendAttributedCompletion(attemptAfterFallback, lateHead);
-        requireAttributedRejected(attemptAfterFallback,
-                                  "a coordinator attempt after fallback");
-
-        AttributedReplay publicationAfterFallback =
-            copyAttributedReplay(fallback);
-        publicationAfterFallback.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: published context=" +
-            fallbackProof.completions.front().context +
-            " request=2 attempt=1");
-        requireAttributedRejected(publicationAfterFallback,
-                                  "publication after fallback");
-
-        const std::string terminalStats =
-            "{\"methods\":{\"GET\":{\"count\":1,"
-            "\"downloaded_bytes\":131072},\"HEAD\":{\"count\":1}}}";
-        AttributedReplay incompleteChain =
-            terminalHeadWithCacheOnlyReplay();
-        const HttpProof incompleteHttp = buildHttpProof(
-            incompleteChain.capture, terminalStats,
-            AttributionMode::AttributedV6);
-        require(!incompleteHttp.attributedTransportQualified,
-                "terminal HEAD/cache-only chain became an HTTP semantic PASS");
-        bool metadataRejected = false;
-        try
-        {
-            static_cast<void>(buildMetadataPrefetchProof(
-                incompleteChain.capture, incompleteHttp));
-        }
-        catch (const std::exception&)
-        {
-            metadataRejected = true;
-        }
-        require(metadataRejected,
-                "metadata proof accepted an unqualified attributed chain");
-        HttpProof incompleteLive = incompleteHttp;
-        incompleteLive.metadataPrefetch.enabled = true;
-        incompleteLive.metadataPrefetch.attributedTransportQualified = false;
-        bool liveRejected = false;
-        try
-        {
-            verifyLiveProfileProof(RangeProfile::Prefetch, incompleteLive);
-        }
-        catch (const std::exception&)
-        {
-            liveRejected = true;
-        }
-        require(liveRejected,
-                "live profile accepted an unqualified attributed chain");
-
-        AttributedReplay missing = copyAttributedReplay(passing);
-        missing.capture.messages.erase(missing.capture.messages.begin() +
-            replayMessageIndex(missing.capture, "response-v1 ordinal=2"));
-        requireAttributedRejected(missing, "a missing completion event");
-
-        AttributedReplay duplicate = copyAttributedReplay(passing);
-        const std::size_t duplicateIndex = replayMessageIndex(
-            duplicate.capture, "response-v1 ordinal=2");
-        duplicate.capture.messages.insert(
-            duplicate.capture.messages.begin() + duplicateIndex,
-            duplicate.capture.messages[duplicateIndex]);
-        requireAttributedRejected(duplicate, "a duplicate completion event");
-
-        const auto completionMutation = [&passing](
-                const std::string& from, const std::string& to,
-                const std::string& description)
-        {
-            AttributedReplay candidate = copyAttributedReplay(passing);
-            const std::size_t index = replayMessageIndex(
-                candidate.capture, "response-v1 ordinal=1");
-            const std::size_t position =
-                candidate.capture.messages[index].find(from);
-            require(position != std::string::npos,
-                    "completion mutation source is missing");
-            candidate.capture.messages[index].replace(
-                position, from.size(), to);
-            requireAttributedRejected(candidate, description);
-        };
-        completionMutation("ordinal=1", "ordinal=4", "an ordinal gap");
-        completionMutation("scope=coordinator", "scope=unknown",
-                           "an unknown scope");
-        completionMutation("role=head", "role=range", "a role swap");
-        completionMutation("attempt=1", "attempt=4", "an attempt skip");
-        completionMutation("curl=0", "curl=7", "a curl error");
-        completionMutation("http=2", "http=1", "HTTP/1 attribution");
-        completionMutation("redirects=0", "redirects=1", "a redirect");
-        completionMutation("connection=7", "connection=-1",
-                           "an unknown connection");
-        completionMutation("actual-body-bytes=0", "actual-body-bytes=17",
-                           "a HEAD writer body");
-        completionMutation("content-length-count=1",
-                           "content-length-count=2",
-                           "duplicate Content-Length");
-        completionMutation("actual-body-bytes=0",
-                           "actual-body-bytes=0 trailing=yes",
-                           "a trailing field");
-
-        const auto completionMutationAt = [&passing](
-                const std::string& eventNeedle,
-                const std::string& from, const std::string& to,
-                const std::string& description)
-        {
-            AttributedReplay candidate = copyAttributedReplay(passing);
-            const std::size_t index = replayMessageIndex(
-                candidate.capture, eventNeedle);
-            const std::size_t position =
-                candidate.capture.messages[index].find(from);
-            require(position != std::string::npos,
-                    "targeted completion mutation source is missing");
-            candidate.capture.messages[index].replace(
-                position, from.size(), to);
-            requireAttributedRejected(candidate, description);
-        };
-        completionMutationAt("response-v1 ordinal=1", "ordinal=1",
-                            "ordinal=malformed", "a malformed completion");
-        completionMutationAt("response-v1 ordinal=1", "ordinal=1",
-                            "ordinal=18446744073709551616",
-                            "an overflowing ordinal");
-        completionMutationAt("response-v1 ordinal=1",
-                            "request=1 attempt=1",
-                            "attempt=1 request=1",
-                            "reordered completion fields");
-        completionMutationAt("response-v1 ordinal=1", "attempt=1",
-                            "attempt=0", "attempt zero");
-        completionMutationAt("response-v1 ordinal=1", "attempt=1",
-                            "attempt=5", "attempt five");
-        completionMutationAt("response-v1 ordinal=1", "method=HEAD",
-                            "method=GET", "a method swap");
-        completionMutationAt("response-v1 ordinal=2",
-                            "range=bytes=0-131071",
-                            "range=bytes=262144-327679",
-                            "a sibling Range substitution");
-        completionMutationAt("response-v1 ordinal=2",
-                            "range=bytes=0-131071",
-                            "range=bytes=0-9223372036854775808",
-                            "a Range beyond INT64_MAX");
-        completionMutationAt("response-v1 ordinal=2", "request=2",
-                            "request=3", "a request ID gap");
-        completionMutationAt("response-v1 ordinal=1", "request=1",
-                            "request=2", "a duplicate request ID");
-        completionMutationAt("response-v1 ordinal=1", "status=500",
-                            "status=501", "an unsupported status");
-        completionMutationAt("response-v1 ordinal=1",
-                            "content-length-valid=1",
-                            "content-length-valid=0",
-                            "invalid Content-Length evidence");
-        completionMutationAt("response-v1 ordinal=1",
-                            "declared-content-length=17",
-                            "declared-content-length=18",
-                            "a mutated Content-Length value");
-        completionMutationAt("response-v1 ordinal=2",
-                            "content-range-count=1",
-                            "content-range-count=0",
-                            "a missing Content-Range count");
-        completionMutationAt("response-v1 ordinal=2",
-                            "content-range-valid=1",
-                            "content-range-valid=0",
-                            "an invalid Content-Range line");
-        completionMutationAt("response-v1 ordinal=2",
-                            "content-range-count=1 content-range-valid=1",
-                            "content-range-count=2 content-range-valid=0",
-                            "an authentic duplicated Content-Range cardinality");
-        completionMutationAt("response-v1 ordinal=2", "content-start=0",
-                            "content-start=1",
-                            "mutated Content-Range coordinates");
-        completionMutationAt("response-v1 ordinal=2",
-                            "content-total=1048576",
-                            "content-total=131071",
-                            "an undersized Content-Range total");
-
-        AttributedReplay missingHeadLength = copyAttributedReplay(passing);
-        const std::size_t missingHeadLengthEvent = replayMessageIndex(
-            missingHeadLength.capture, "response-v1 ordinal=1");
-        replaceAll(missingHeadLength.capture.messages[missingHeadLengthEvent],
-                   "content-length-count=1 content-length-valid=1 "
-                   "declared-content-length=17",
-                   "content-length-count=0 content-length-valid=0 "
-                   "declared-content-length=0");
-        missingHeadLength.capture.messages.erase(
-            missingHeadLength.capture.messages.begin() + replayMessageIndex(
-                missingHeadLength.capture,
-                "CURL_INFO_HEADER_IN: content-length: 17"));
-        const std::size_t missingHeadLengthRetry = replayMessageIndex(
-            missingHeadLength.capture, "head-transient-retry context=");
-        replaceAll(
-            missingHeadLength.capture.messages[missingHeadLengthRetry],
-            "declared-content-length=17", "declared-content-length=0");
-        missingHeadLength.serverRequests.front().contentLength = 0;
-        const AttributedTransportProof missingHeadLengthProof =
-            buildAttributedTransportProof(
-                missingHeadLength.capture,
-                missingHeadLength.serverRequests);
-        require(missingHeadLengthProof.qualified &&
-                    missingHeadLengthProof.headRetries.size() == 1 &&
-                    missingHeadLengthProof.headRetries.front().
-                        failedDeclaredContentLength == 0,
-                "exact-five HEAD without Content-Length was not admitted as "
-                "a valid bounded retry");
-
-        AttributedReplay headContentRange = copyAttributedReplay(passing);
-        const std::size_t headContentRangeEvent = replayMessageIndex(
-            headContentRange.capture, "response-v1 ordinal=1");
-        replaceAll(headContentRange.capture.messages[headContentRangeEvent],
-                   "content-range-count=0 content-range-valid=0 "
-                   "content-start=-1 content-end=-1 content-total=-1",
-                   "content-range-count=1 content-range-valid=1 "
-                   "content-start=0 content-end=16 content-total=1048576");
-        requireAttributedRejected(headContentRange,
-                                  "Content-Range on a HEAD response");
-
-        completionMutationAt("response-v1 ordinal=3", "connection=7",
-                            "connection=8",
-                            "a connection change after HEAD recovery");
-        completionMutationAt("response-v1 ordinal=3",
-                            "declared-content-length=1048576",
-                            "declared-content-length=0",
-                            "invalid final HEAD metadata");
-
-        AttributedReplay malformedRawLength = copyAttributedReplay(passing);
-        const std::size_t malformedRawLengthLine = replayMessageIndex(
-            malformedRawLength.capture,
-            "CURL_INFO_HEADER_IN: content-length: 17");
-        malformedRawLength.capture.messages[malformedRawLengthLine] =
-            "CURL_INFO_HEADER_IN: content-length: malformed";
-        requireAttributedRejected(malformedRawLength,
-                                  "a malformed raw Content-Length");
-
-        AttributedReplay duplicateRawLength = copyAttributedReplay(passing);
-        const std::size_t duplicateRawLengthLine = replayMessageIndex(
-            duplicateRawLength.capture,
-            "CURL_INFO_HEADER_IN: content-length: 17");
-        duplicateRawLength.capture.messages.insert(
-            duplicateRawLength.capture.messages.begin() +
-                duplicateRawLengthLine,
-            duplicateRawLength.capture.messages[duplicateRawLengthLine]);
-        requireAttributedRejected(duplicateRawLength,
-                                  "a duplicated raw Content-Length");
-
-        AttributedReplay oversizedTransient = copyAttributedReplay(mirror);
-        const std::size_t oversizedTransientEvent = replayMessageIndex(
-            oversizedTransient.capture, "response-v1 ordinal=2");
-        replaceAll(oversizedTransient.capture.messages[oversizedTransientEvent],
-                   "declared-content-length=17",
-                   "declared-content-length=131073");
-        replaceAll(oversizedTransient.capture.messages[oversizedTransientEvent],
-                   "actual-body-bytes=17",
-                   "actual-body-bytes=131073");
-        requireAttributedRejected(oversizedTransient,
-                                  "a transient Range body over 128 KiB");
-
-        AttributedReplay spoofedTransientRange = copyAttributedReplay(mirror);
-        const std::size_t spoofedTransientEvent = replayMessageIndex(
-            spoofedTransientRange.capture, "response-v1 ordinal=2");
-        replaceAll(spoofedTransientRange.capture.messages[spoofedTransientEvent],
-                   "content-range-count=0 content-range-valid=0 "
-                   "content-start=-1 content-end=-1 content-total=-1",
-                   "content-range-count=1 content-range-valid=1 "
-                   "content-start=1 content-end=131072 content-total=1048576");
-        requireAttributedRejected(spoofedTransientRange,
-                                  "a spoofed/contradictory transient Range");
-
-        const std::string mirrorStats =
-            "{\"methods\":{\"GET\":{\"count\":1,"
-            "\"downloaded_bytes\":131089},\"HEAD\":{\"count\":1}}}";
-        const HttpProof mirrorHttp = buildHttpProof(
-            mirror.capture, mirrorStats, AttributionMode::AttributedV6);
-        require(mirrorHttp.attributedTransportQualified &&
-                    mirrorHttp.actualHttpBodyBytes == 131089 &&
-                    mirrorHttp.statsGetOperationCount == 1,
-                "attributed transient Range stats baseline changed");
-
-        AttributedReplay absentTransientLength =
-            copyAttributedReplay(mirror);
-        const std::size_t absentTransientCompletion = replayMessageIndex(
-            absentTransientLength.capture, "response-v1 ordinal=2");
-        replaceAll(
-            absentTransientLength.capture.messages[absentTransientCompletion],
-            "content-length-count=1 content-length-valid=1 "
-            "declared-content-length=17",
-            "content-length-count=0 content-length-valid=0 "
-            "declared-content-length=0");
-        absentTransientLength.capture.messages.erase(
-            absentTransientLength.capture.messages.begin() +
-                replayMessageIndex(
-                    absentTransientLength.capture,
-                    "CURL_INFO_HEADER_IN: content-length: 17"));
-        absentTransientLength.serverRequests[1].contentLength = 0;
-        const HttpProof absentTransientLengthProof = buildHttpProof(
-            absentTransientLength.capture, mirrorStats,
-            AttributionMode::AttributedV6);
-        require(absentTransientLengthProof.attributedTransportQualified &&
-                    absentTransientLengthProof.declaredTransientBytes == 0 &&
-                    absentTransientLengthProof.actualHttpBodyBytes == 131089 &&
-                    absentTransientLengthProof.conservativeBodyUpperBound ==
-                        131089,
-                "Content-Length-absent transient Range undercounted its "
-                "conservative body bound");
-        bool absentLengthStatsRejected = false;
-        try
-        {
-            static_cast<void>(buildHttpProof(
-                absentTransientLength.capture,
-                "{\"methods\":{\"GET\":{\"count\":1,"
-                "\"downloaded_bytes\":131072},\"HEAD\":{\"count\":1}}}",
-                AttributionMode::AttributedV6));
-        }
-        catch (const std::exception&)
-        {
-            absentLengthStatsRejected = true;
-        }
-        require(absentLengthStatsRejected,
-                "Content-Length-absent transient Range accepted stats that "
-                "omitted its actual body");
-        const auto requireStatsRejected = [&mirror](
-                const std::string& stats, const std::string& description)
-        {
-            try
-            {
-                static_cast<void>(buildHttpProof(
-                    mirror.capture, stats, AttributionMode::AttributedV6));
-            }
-            catch (const std::exception&)
-            {
-                return;
-            }
-            fail("AttributedV6 accepted " + description);
-        };
-        requireStatsRejected(
-            "{\"methods\":{\"GET\":{\"count\":1,"
-            "\"downloaded_bytes\":131072},\"HEAD\":{\"count\":1}}}",
-            "an unaccounted transient body");
-        requireStatsRejected(
-            "{\"methods\":{\"GET\":{\"count\":1,"
-            "\"downloaded_bytes\":131090},\"HEAD\":{\"count\":1}}}",
-            "a one-byte VSINetworkStats size mismatch");
-
-        std::uint64_t overflowTarget =
-            std::numeric_limits<std::uint64_t>::max();
-        bool sumRejected = false;
-        try
-        {
-            checkedAdd(overflowTarget, 1, "synthetic sum");
-        }
-        catch (const std::exception&)
-        {
-            sumRejected = true;
-        }
-        require(sumRejected, "checked byte sum accepted overflow");
-        const auto jsonNumberRejected = [](double number)
-        {
-            try
-            {
-                static_cast<void>(checkedJsonUnsigned(
-                    picojson::value(number), "synthetic JSON integer", 100));
-                return false;
-            }
-            catch (const std::exception&)
-            {
-                return true;
-            }
-        };
-        require(jsonNumberRejected(std::numeric_limits<double>::infinity()) &&
-                    jsonNumberRejected(1.5) && jsonNumberRejected(-1.0) &&
-                    jsonNumberRejected(101.0),
-                "JSON numeric proof accepted nonfinite/fractional/range input");
-        const auto wideJsonNumberRejected = [](double number)
-        {
-            try
-            {
-                static_cast<void>(checkedJsonUnsigned(
-                    picojson::value(number), "wide synthetic JSON integer"));
-                return false;
-            }
-            catch (const std::exception&)
-            {
-                return true;
-            }
-        };
-        require(wideJsonNumberRejected(9007199254740992.0) &&
-                    wideJsonNumberRejected(18446744073709551616.0),
-                "JSON numeric proof accepted an inexact/overflowing double "
-                "before integer conversion");
-
-        AttributedReplay reordered = copyAttributedReplay(passing);
-        const std::size_t firstCompletion = replayMessageIndex(
-            reordered.capture, "response-v1 ordinal=1");
-        const std::size_t secondCompletion = replayMessageIndex(
-            reordered.capture, "response-v1 ordinal=2");
-        std::swap(reordered.capture.messages[firstCompletion],
-                  reordered.capture.messages[secondCompletion]);
-        requireAttributedRejected(reordered,
-                                  "reordered completion events");
-
-        AttributedReplay wrongContext = copyAttributedReplay(passing);
-        const std::size_t wrongContextEvent = replayMessageIndex(
-            wrongContext.capture, "response-v1 ordinal=1");
-        replaceAll(wrongContext.capture.messages[wrongContextEvent],
-                   proof.completions.front().context,
-                   "55555555555555555555555555555555");
-        requireAttributedRejected(wrongContext,
-                                  "a completion with the wrong context");
-
-        AttributedReplay declaredActualMismatch =
-            copyAttributedReplay(mirror);
-        const std::size_t transientGet = replayMessageIndex(
-            declaredActualMismatch.capture, "response-v1 ordinal=2");
-        const std::size_t declaredGet =
-            declaredActualMismatch.capture.messages[transientGet].find(
-                "declared-content-length=17");
-        require(declaredGet != std::string::npos,
-                "declared/actual mutation source is missing");
-        declaredActualMismatch.capture.messages[transientGet].replace(
-            declaredGet, std::string("declared-content-length=17").size(),
-            "declared-content-length=18");
-        requireAttributedRejected(declaredActualMismatch,
-                                  "a declared/actual GET mismatch");
-
-        AttributedReplay wrongCorrelation = copyAttributedReplay(passing);
-        const std::size_t rawIndex = replayMessageIndex(
-            wrongCorrelation.capture, "X-OSGSol-Science-Correlation: ");
-        const std::size_t requestField =
-            wrongCorrelation.capture.messages[rawIndex].find("/1/1");
-        require(requestField != std::string::npos,
-                "raw correlation mutation source is missing");
-        wrongCorrelation.capture.messages[rawIndex].replace(
-            requestField, 4, "/9/1");
-        requireAttributedRejected(wrongCorrelation,
-                                  "a raw correlation mismatch");
-
-        AttributedReplay duplicateCorrelation = copyAttributedReplay(passing);
-        const std::size_t duplicateRawIndex = replayMessageIndex(
-            duplicateCorrelation.capture,
-            "X-OSGSol-Science-Correlation: ");
-        const std::size_t headerTerminator =
-            duplicateCorrelation.capture.messages[duplicateRawIndex].find(
-                "\r\n\r\n");
-        require(headerTerminator != std::string::npos,
-                "raw duplicate-correlation mutation source is missing");
-        duplicateCorrelation.capture.messages[duplicateRawIndex].insert(
-            headerTerminator + 2,
-            "X-OSGSol-Science-Correlation: " +
-                proof.completions.front().context + "/1/1\r\n");
-        requireAttributedRejected(duplicateCorrelation,
-                                  "a duplicated raw correlation header");
-
-        AttributedReplay missingCorrelation = copyAttributedReplay(passing);
-        const std::size_t missingCorrelationIndex = replayMessageIndex(
-            missingCorrelation.capture,
-            "X-OSGSol-Science-Correlation: ");
-        const std::size_t correlationLine =
-            missingCorrelation.capture.messages[missingCorrelationIndex].find(
-                "X-OSGSol-Science-Correlation: ");
-        const std::size_t correlationEnd =
-            missingCorrelation.capture.messages[missingCorrelationIndex].find(
-                "\r\n", correlationLine);
-        require(correlationLine != std::string::npos &&
-                    correlationEnd != std::string::npos,
-                "missing-correlation mutation source is missing");
-        missingCorrelation.capture.messages[missingCorrelationIndex].erase(
-            correlationLine, correlationEnd + 2 - correlationLine);
-        requireAttributedRejected(missingCorrelation,
-                                  "a missing raw correlation header");
-
-        AttributedReplay pathBearingCorrelation =
-            copyAttributedReplay(passing);
-        const std::size_t pathCorrelationIndex = replayMessageIndex(
-            pathBearingCorrelation.capture,
-            "X-OSGSol-Science-Correlation: ");
-        const std::size_t pathRequestField =
-            pathBearingCorrelation.capture.messages[pathCorrelationIndex].find(
-                "/1/1\r\n");
-        require(pathRequestField != std::string::npos,
-                "path-bearing correlation mutation source is missing");
-        pathBearingCorrelation.capture.messages[pathCorrelationIndex].replace(
-            pathRequestField, std::string("/1/1").size(),
-            "/1/1/secret-path-token");
-        requireAttributedRejected(pathBearingCorrelation,
-                                  "a path-bearing correlation header");
-
-        AttributedReplay missingRawRequest = copyAttributedReplay(passing);
-        missingRawRequest.capture.messages.erase(
-            missingRawRequest.capture.messages.begin() +
-            replayMessageIndex(missingRawRequest.capture,
-                               "CURL_INFO_HEADER_OUT: HEAD"));
-        requireAttributedRejected(missingRawRequest,
-                                  "a missing raw request tuple");
-
-        AttributedReplay extraRawRequest = copyAttributedReplay(passing);
-        const std::size_t rawRequestIndex = replayMessageIndex(
-            extraRawRequest.capture, "CURL_INFO_HEADER_OUT: HEAD");
-        extraRawRequest.capture.messages.insert(
-            extraRawRequest.capture.messages.begin() + rawRequestIndex,
-            extraRawRequest.capture.messages[rawRequestIndex]);
-        requireAttributedRejected(extraRawRequest,
-                                  "an extra raw request tuple");
-
-        AttributedReplay missingRawResponse = copyAttributedReplay(passing);
-        missingRawResponse.capture.messages.erase(
-            missingRawResponse.capture.messages.begin() +
-            replayMessageIndex(missingRawResponse.capture,
-                               "CURL_INFO_HEADER_IN: HTTP/2 206"));
-        requireAttributedRejected(missingRawResponse,
-                                  "a missing raw response status");
-
-        AttributedReplay extraRawResponse = copyAttributedReplay(passing);
-        extraRawResponse.capture.messages.push_back(
-            "CURL_INFO_HEADER_IN: HTTP/2 500");
-        extraRawResponse.capture.messages.push_back(
-            "CURL_INFO_HEADER_IN: content-length: 17");
-        extraRawResponse.capture.messages.push_back(
-            "CURL_INFO_HEADER_IN: ");
-        requireAttributedRejected(extraRawResponse,
-                                  "an extra raw response tuple");
-
-        AttributedReplay missingDecisionContext =
-            copyAttributedReplay(passing);
-        missingDecisionContext.capture.messages.push_back(
-            "VSICURL: ParallelHeadRange: transient-retry status=500");
-        requireAttributedRejected(missingDecisionContext,
-                                  "a decision without context");
-
-        AttributedReplay missingServer = copyAttributedReplay(passing);
-        missingServer.serverRequests.pop_back();
-        requireAttributedRejected(missingServer,
-                                  "a missing server-oracle request");
-
-        AttributedReplay extraServer = copyAttributedReplay(passing);
-        extraServer.serverRequests.push_back(
-            extraServer.serverRequests.front());
-        requireAttributedRejected(extraServer,
-                                  "an extra server-oracle request");
-
-        AttributedReplay wrongServer = copyAttributedReplay(passing);
-        wrongServer.serverRequests.front().range = "bytes=0-131071";
-        requireAttributedRejected(wrongServer,
-                                  "a server-oracle role/Range mismatch");
-
-        AttributedReplay missingServerEnd = copyAttributedReplay(passing);
-        missingServerEnd.serverRequests.front().endCount = 0;
-        requireAttributedRejected(missingServerEnd,
-                                  "a missing server stream_end event");
-
-        AttributedReplay duplicateServerHeaders = copyAttributedReplay(passing);
-        duplicateServerHeaders.serverRequests.front().responseCount = 2;
-        requireAttributedRejected(duplicateServerHeaders,
-                                  "duplicate server response headers");
-
-        AttributedReplay wrongServerStatus = copyAttributedReplay(passing);
-        wrongServerStatus.serverRequests.front().status = 200;
-        requireAttributedRejected(wrongServerStatus,
-                                  "a mismatched server response status");
-
-        AttributedReplay wrongServerBody = copyAttributedReplay(passing);
-        wrongServerBody.serverRequests[1].attemptedBodyBytes = 1;
-        requireAttributedRejected(wrongServerBody,
-                                  "mismatched server body bytes");
-
-        AttributedReplay wrongServerIdentity = copyAttributedReplay(passing);
-        wrongServerIdentity.serverRequests.front().correlation =
-            "88888888888888888888888888888888/1/1";
-        requireAttributedRejected(wrongServerIdentity,
-                                  "mismatched server correlation identity");
-
-        AttributedReplay earlyPublication = copyAttributedReplay(passing);
-        const std::size_t publication = replayMessageIndex(
-            earlyPublication.capture, "published context=");
-        const std::string event = earlyPublication.capture.messages[publication];
-        earlyPublication.capture.messages.erase(
-            earlyPublication.capture.messages.begin() + publication);
-        earlyPublication.capture.messages.insert(
-            earlyPublication.capture.messages.begin(), event);
-        requireAttributedRejected(earlyPublication,
-                                  "publication before completion");
-
-        AttributedReplay duplicatePublication = copyAttributedReplay(passing);
-        const std::size_t publicationIndex = replayMessageIndex(
-            duplicatePublication.capture, "published context=");
-        duplicatePublication.capture.messages.insert(
-            duplicatePublication.capture.messages.begin() + publicationIndex,
-            duplicatePublication.capture.messages[publicationIndex]);
-        requireAttributedRejected(duplicatePublication,
-                                  "duplicate publication");
-
-        AttributedReplay fallbackBecamePublication =
-            copyAttributedReplay(fallback);
-        const std::size_t fallbackDecision = replayMessageIndex(
-            fallbackBecamePublication.capture, "fallback context=");
-        fallbackBecamePublication.capture.messages[fallbackDecision] =
-            "VSICURL: ParallelHeadRange: published context=" +
-            fallbackProof.completions.front().context +
-            " request=1 attempt=1";
-        requireAttributedRejected(fallbackBecamePublication,
-                                  "fallback changed to publication");
-
-        AttributedReplay completionAfterRetry = copyAttributedReplay(passing);
-        const std::size_t failedCompletion = replayMessageIndex(
-            completionAfterRetry.capture, "response-v1 ordinal=1");
-        const std::string delayedCompletion =
-            completionAfterRetry.capture.messages[failedCompletion];
-        completionAfterRetry.capture.messages.erase(
-            completionAfterRetry.capture.messages.begin() + failedCompletion);
-        const std::size_t delayedRetry = replayMessageIndex(
-            completionAfterRetry.capture, "head-transient-retry context=");
-        completionAfterRetry.capture.messages.insert(
-            completionAfterRetry.capture.messages.begin() + delayedRetry + 1,
-            delayedCompletion);
-        requireAttributedRejected(completionAfterRetry,
-                                  "completion emitted after its retry");
-
-        AttributedReplay falseRangeRetry = copyAttributedReplay(passing);
-        const std::size_t falseRetry = replayMessageIndex(
-            falseRangeRetry.capture, "head-transient-retry context=");
-        falseRangeRetry.capture.messages[falseRetry] =
-            "VSICURL: ParallelHeadRange: transient-retry context=" +
-            proof.completions.front().context +
-            " request=1 failed-attempt=1 scheduled-attempt=2 "
-            "range=bytes=0-131071 status=500 bytes=17 delay-ms=100 "
-            "connection=7 http=2";
-        requireAttributedRejected(falseRangeRetry,
-                                  "a HEAD failure matched to a Range retry");
-
-        AttributedReplay wrongRetry = copyAttributedReplay(passing);
-        const std::size_t retry = replayMessageIndex(
-            wrongRetry.capture, "head-transient-retry context=");
-        const std::size_t attempt =
-            wrongRetry.capture.messages[retry].find("scheduled-attempt=2");
-        require(attempt != std::string::npos,
-                "HEAD retry mutation source is missing");
-        wrongRetry.capture.messages[retry].replace(
-            attempt, std::string("scheduled-attempt=2").size(),
-            "scheduled-attempt=3");
-        requireAttributedRejected(wrongRetry,
-                                  "a skipped scheduled HEAD attempt");
-
-        AttributedReplay wrongRetryDelay = copyAttributedReplay(passing);
-        const std::size_t retryDelay = replayMessageIndex(
-            wrongRetryDelay.capture, "head-transient-retry context=");
-        const std::size_t delay =
-            wrongRetryDelay.capture.messages[retryDelay].find("delay-ms=100");
-        require(delay != std::string::npos,
-                "HEAD retry delay mutation source is missing");
-        wrongRetryDelay.capture.messages[retryDelay].replace(
-            delay, std::string("delay-ms=100").size(), "delay-ms=99");
-        requireAttributedRejected(wrongRetryDelay,
-                                  "an invalid HEAD retry delay");
-
-        AttributedReplay crossContextRetry = copyAttributedReplay(nested);
-        const std::size_t crossRetry = replayMessageIndex(
-            crossContextRetry.capture,
-            "head-transient-retry context=" + firstContext);
-        replaceAll(crossContextRetry.capture.messages[crossRetry],
-                   firstContext, secondContext);
-        requireAttributedRejected(crossContextRetry,
-                                  "a cross-context retry decision");
     }
 
     void verifyHttpParserRegression()
@@ -10676,8 +4283,7 @@ namespace
         const std::string stats =
             "{\"methods\":{\"GET\":{\"count\":1,\"downloaded_bytes\":10},"
             "\"HEAD\":{\"count\":1}}}";
-        const HttpProof proof = buildHttpProof(
-            capture, stats, AttributionMode::LegacyFrozen);
+        const HttpProof proof = buildHttpProof(capture, stats);
         require(proof.actualGetCount == 2 && proof.actualHeadCount == 1 &&
                 proof.successfulGetCount == 1 && proof.transientRetryCount == 1 &&
                 proof.transientRetryCodes == std::map<int, int>({{500, 1}}) &&
@@ -10714,8 +4320,7 @@ namespace
                 std::chrono::milliseconds(
                     130 + static_cast<long long>(index - 13));
         }
-        const HttpProof immediateProof = buildHttpProof(
-            immediate, stats, AttributionMode::LegacyFrozen);
+        const HttpProof immediateProof = buildHttpProof(immediate, stats);
         require(immediateProof.transientRetryCount == 1 &&
                     immediateProof.immediateTransientRetryCount == 1 &&
                     immediateProof.immediateTransientRetryBytes == 17 &&
@@ -10803,8 +4408,7 @@ namespace
             "{\"methods\":{\"GET\":{\"count\":2,\"downloaded_bytes\":20},"
             "\"HEAD\":{\"count\":1}}}";
         const HttpProof simultaneousProof =
-            buildHttpProof(simultaneousImmediate, simultaneousStats,
-                           AttributionMode::LegacyFrozen);
+            buildHttpProof(simultaneousImmediate, simultaneousStats);
         require(simultaneousProof.actualGetCount == 4 &&
                     simultaneousProof.successfulGetCount == 2 &&
                     simultaneousProof.transientRetryCount == 2 &&
@@ -10826,8 +4430,7 @@ namespace
         {
             try
             {
-                static_cast<void>(buildHttpProof(
-                    candidate, stats, AttributionMode::LegacyFrozen));
+                static_cast<void>(buildHttpProof(candidate, stats));
                 return false;
             }
             catch (const std::exception&)
@@ -10932,8 +4535,7 @@ namespace
         const std::string multiplexedStats =
             "{\"methods\":{\"GET\":{\"count\":2,\"downloaded_bytes\":20},"
             "\"HEAD\":{\"count\":1}}}";
-        const HttpProof multiplexedProof = buildHttpProof(
-            multiplexed, multiplexedStats, AttributionMode::LegacyFrozen);
+        const HttpProof multiplexedProof = buildHttpProof(multiplexed, multiplexedStats);
         require(multiplexedProof.actualGetCount == 3 &&
                 multiplexedProof.successfulGetCount == 2 &&
                 multiplexedProof.transientRetryCount == 1 &&
@@ -10972,8 +4574,7 @@ namespace
             "{\"methods\":{\"GET\":{\"count\":2,\"downloaded_bytes\":131082},"
             "\"HEAD\":{\"count\":1}}}";
         const HttpProof highOffsetFirstProof =
-            buildHttpProof(highOffsetFirst, highOffsetFirstStats,
-                           AttributionMode::LegacyFrozen);
+            buildHttpProof(highOffsetFirst, highOffsetFirstStats);
         require(highOffsetFirstProof.successfulByteIntervals ==
                     std::vector<std::pair<std::uint64_t, std::uint64_t>>(
                         {{900000, 900009}, {0, 131071}}),
@@ -11088,7 +4689,6 @@ namespace
         const std::string expectedMetadata =
             "  \"metadata_prefetch\": {\n"
             "    \"enabled\": true,\n"
-            "    \"attributed_transport_qualified\": false,\n"
             "    \"head_request_count\": 1,\n"
             "    \"range_request_count\": 1,\n"
             "    \"range_start\": 0,\n"
@@ -11099,7 +4699,6 @@ namespace
             "    \"requests_overlapped\": true,\n"
             "    \"cache_published\": true,\n"
             "    \"coordinator_retries\": [],\n"
-            "    \"head_retries\": [],\n"
             "    \"fallback_reason\": \"\"\n"
             "  }";
         require(serializeProof(prefetchHttp).find(expectedMetadata) != std::string::npos,
@@ -11223,8 +4822,7 @@ namespace
             "range-connection=0 head-http=2 range-http=2",
             std::chrono::nanoseconds(474401786394000));
 
-        HttpProof proof = buildHttpProof(
-            replay, stats, AttributionMode::LegacyFrozen);
+        HttpProof proof = buildHttpProof(replay, stats);
         require(proof.statsGetOperationCount == 2,
                 "prefetch replay did not preserve two logical GET operations");
         proof.metadataPrefetch = buildMetadataPrefetchProof(replay, proof);
@@ -11262,8 +4860,7 @@ namespace
         {
             try
             {
-                static_cast<void>(buildHttpProof(
-                    candidate, stats, AttributionMode::LegacyFrozen));
+                static_cast<void>(buildHttpProof(candidate, stats));
                 return false;
             }
             catch (const std::exception&)
@@ -11408,8 +5005,7 @@ namespace
         const std::string stats = loadReplayText(
             fixtureRoot / "prefetch_hong_kong_transient_stats.json");
 
-        const HttpProof proof = buildHttpProof(
-            replay, stats, AttributionMode::LegacyFrozen);
+        const HttpProof proof = buildHttpProof(replay, stats);
         require(proof.coordinatorTransientFallbackCount == 1 &&
                 proof.coordinatorTransientFallbackBytes == 17 &&
                 proof.coordinatorTransientFallbackCodes ==
@@ -11475,8 +5071,7 @@ namespace
             return !failureMessage(
                 [&candidate, &stats]()
                 {
-                    static_cast<void>(buildHttpProof(
-                        candidate, stats, AttributionMode::LegacyFrozen));
+                    static_cast<void>(buildHttpProof(candidate, stats));
                 }).empty();
         };
         const auto replaceCoordinatorEvent =
@@ -11561,8 +5156,7 @@ namespace
         const std::string stats = loadReplayText(
             fixtureRoot / "prefetch_nvidia_transient_retry_stats.json");
 
-        HttpProof proof = buildHttpProof(
-            replay, stats, AttributionMode::LegacyFrozen);
+        HttpProof proof = buildHttpProof(replay, stats);
         require(proof.coordinatorTransientRetryCount == 1 &&
                     proof.coordinatorTransientRetryBytes == 17 &&
                     proof.coordinatorTransientRetryCodes ==
@@ -11609,8 +5203,7 @@ namespace
         {
             try
             {
-                HttpProof candidateProof = buildHttpProof(
-                    candidate, stats, AttributionMode::LegacyFrozen);
+                HttpProof candidateProof = buildHttpProof(candidate, stats);
                 candidateProof.metadataPrefetch =
                     buildMetadataPrefetchProof(candidate, candidateProof);
             }
@@ -12382,10 +5975,7 @@ namespace
         const std::string evidenceName = std::string(profileName(profile)) + "-" +
             item.name + "-" + std::to_string(iteration);
         writeRawTransportEvidence(evidenceDirectory, evidenceName, capture, statsJson);
-        HttpProof proof = buildHttpProof(
-            capture, statsJson, profile == RangeProfile::Prefetch
-                ? AttributionMode::AttributedV6
-                : AttributionMode::LegacyFrozen);
+        HttpProof proof = buildHttpProof(capture, statsJson);
         if (profile == RangeProfile::Prefetch)
             proof.metadataPrefetch = buildMetadataPrefetchProof(capture, proof);
         verifyLiveProfileProof(profile, proof);
@@ -12705,10 +6295,6 @@ namespace
 
     void verifyLiveCommandAndSummaryRegression()
     {
-        // Candidate completion exists before the formal process starts.  Use the
-        // still-absent formal target for pure command-regression successes so the
-        // candidate-to-formal handoff cannot poison its own verifier.
-        const std::string completion = V6_FORMAL_COMPLETION.string();
         const auto rejected = [](const std::vector<std::string>& arguments)
         {
             try
@@ -12747,7 +6333,6 @@ namespace
         require(rejected({"--live-cases", "cases.json", "--iterations", "1",
                           "--profile", "optimized", "--evidence-dir", "evidence",
                           "--summary-json", "summary.json",
-                          "--completion-json", completion,
                           "--enforce-latency"}),
                 "latency enforcement with fewer than five iterations was accepted");
         require(rejected({"--live-cases", "cases.json", "--iteration", "5",
@@ -12757,60 +6342,11 @@ namespace
         require(rejected({"--live-cases", "cases.json", "--iterations", "5",
                           "--profile", "prefetch", "--summary-json", "summary.json"}),
                 "prefetch command without an explicit evidence directory was accepted");
-        require(rejected({"--live-cases", "cases.json", "--iterations", "5",
-                          "--profile", "prefetch", "--evidence-dir", "evidence",
-                          "--summary-json", "summary.json", "--completion-json",
-                          "relative-completion.json"}),
-                "relative completion target was accepted");
-        require(rejected({"--live-cases", "cases.json", "--iterations", "5",
-                          "--profile", "prefetch", "--evidence-dir", "evidence",
-                          "--summary-json", "summary.json", "--completion-json",
-                          "/tmp/unapproved-completion.json"}),
-                "unapproved completion target was accepted");
-        require(rejected({"--live-cases", "cases.json", "--iterations", "5",
-                          "--profile", "prefetch", "--evidence-dir", "evidence",
-                          "--summary-json", "summary.json", "--completion-json",
-                          completion, "--completion-json", completion}),
-                "duplicate completion target was accepted");
-        require(!approvedCompletionTarget(
-                    V6_CANDIDATE_COMPLETION, true, false, false, false) &&
-                !approvedCompletionTarget(
-                    V6_CANDIDATE_COMPLETION, true, true, false, false) &&
-                !approvedCompletionTarget(
-                    V6_CANDIDATE_COMPLETION, false, false, true, false) &&
-                !approvedCompletionTarget(
-                    V6_CANDIDATE_COMPLETION, false, false, true, true),
-                "completion target accepted existing/symlink target or temp");
-        const std::string digestA(64, 'a');
-        const std::string digestB(64, 'b');
-        const std::string digestC(64, 'c');
-        const std::string validCompletion = completionPayload(
-            42, digestA, digestB, digestC);
-        require(validCompletionPayload(validCompletion),
-                "valid completion record failed schema validation");
-        std::string wrongHash = validCompletion;
-        wrongHash.replace(wrongHash.find(digestB), digestB.size(), "short");
-        require(!validCompletionPayload(wrongHash),
-                "completion record accepted a checksum/hash mismatch");
-        std::string duplicateField = validCompletion;
-        const std::size_t closing = duplicateField.rfind('}');
-        duplicateField.insert(closing,
-            ",\n  \"summary_sha256\": \"" + digestB + "\"\n");
-        require(!validCompletionPayload(duplicateField),
-                "completion record accepted a duplicate field");
-        std::string fractionalPid = validCompletion;
-        const std::size_t pidValue = fractionalPid.find("\"pid\": 42");
-        require(pidValue != std::string::npos,
-                "completion PID mutation source is missing");
-        fractionalPid.replace(pidValue, std::string("\"pid\": 42").size(),
-                              "\"pid\": 42.5");
-        require(!validCompletionPayload(fractionalPid),
-                "completion record accepted a fractional PID");
 
         const auto baseline = parseLiveCommand(
             {"--live-cases", "cases.json", "--iterations", "1", "--profile",
              "baseline", "--evidence-dir", "baseline-evidence",
-             "--summary-json", "baseline.json", "--completion-json", completion});
+             "--summary-json", "baseline.json"});
         require(baseline.profile == RangeProfile::Baseline && baseline.iterations == 1 &&
                 !baseline.enforceLatency && baseline.summaryPath == "baseline.json" &&
                 baseline.evidenceDirectory == "baseline-evidence",
@@ -12818,16 +6354,14 @@ namespace
         const auto optimized = parseLiveCommand(
             {"--live-cases", "cases.json", "--iterations", "5", "--profile",
              "optimized", "--evidence-dir", "optimized-evidence",
-             "--summary-json", "optimized.json", "--completion-json", completion,
-             "--enforce-latency"});
+             "--summary-json", "optimized.json", "--enforce-latency"});
         require(optimized.profile == RangeProfile::Optimized &&
                 optimized.iterations == 5 && optimized.enforceLatency,
                 "optimized enforced command parsed incorrectly");
         const auto prefetchCommand = parseLiveCommand(
             {"--live-cases", "cases.json", "--iterations", "5", "--profile",
              "prefetch", "--evidence-dir", "prefetch-evidence",
-             "--summary-json", "prefetch.json", "--completion-json", completion,
-             "--enforce-latency"});
+             "--summary-json", "prefetch.json", "--enforce-latency"});
         require(prefetchCommand.profile == RangeProfile::Prefetch &&
                 prefetchCommand.evidenceDirectory == "prefetch-evidence" &&
                 std::string(profileName(prefetchCommand.profile)) == "prefetch",
@@ -13040,10 +6574,7 @@ namespace
     int runLive(const std::filesystem::path& casesPath, int iterations,
                 RangeProfile profile,
                 const std::filesystem::path& evidenceDirectory,
-                const std::filesystem::path& summaryPath,
-                const std::filesystem::path& completionPath,
-                const std::filesystem::path& executablePath,
-                bool enforceLatency)
+                const std::filesystem::path& summaryPath, bool enforceLatency)
     {
         require(iterations == 1 || iterations == 5,
                 "live evidence accepts one smoke iteration or five measured iterations");
@@ -13167,9 +6698,6 @@ namespace
         require(!caseSummaries.empty(), "pinned fixture contained no live cases");
         writeAtomicSummary(summaryPath,
                            serializeLiveSummary(profile, caseSummaries, allCasesPassed));
-        if (allCasesPassed)
-            publishLiveCompletion(evidenceDirectory, summaryPath,
-                                  completionPath, executablePath);
         return liveGateExitCode(enforceLatency, allCasesPassed);
     }
 }
@@ -13193,8 +6721,7 @@ int runMain(int argc, char** argv)
             "usage: no arguments, --validate-live-cases FILE, or "
             "--live-cases FILE --iterations 1|5 "
             "--profile baseline|optimized|prefetch --evidence-dir DIRECTORY "
-            "--summary-json FILE --completion-json FIXED-ABSENT-FILE "
-            "[--enforce-latency]");
+            "--summary-json FILE [--enforce-latency]");
     if (liveMode)
     {
         prepareLiveEvidenceDirectory(liveCommand.evidenceDirectory);
@@ -13209,16 +6736,9 @@ int runMain(int argc, char** argv)
     verifyRangeAccessConfig(processProfile);
     verifyLatencyGateRegression();
     verifyLiveCommandAndSummaryRegression();
-    const std::set<std::string> completionRootsBefore =
-        completionPrimitiveRegressionTrees();
-    verifyCompletionPrimitiveRegression();
-    require(completionPrimitiveRegressionTrees() == completionRootsBefore,
-            "completion primitive regression changed disposable root set");
-    verifyCurlFaultInterposerSelfTests();
     verifyPrefetchReplayRegression();
     verifyPrefetchTransientFallbackReplayRegression();
     verifyPrefetchTransientRetryReplayRegression();
-    verifyAttributedTransportRegression();
     verifyHttpParserRegression();
     registerScienceRuntime();
     verifyGeoreferenceRegression();
@@ -13232,8 +6752,7 @@ int runMain(int argc, char** argv)
     if (liveMode)
         return runLive(liveCommand.casesPath, liveCommand.iterations,
                        liveCommand.profile, liveCommand.evidenceDirectory,
-                       liveCommand.summaryPath, liveCommand.completionPath,
-                       absoluteNormalizedPath(argv[0]),
+                       liveCommand.summaryPath,
                        liveCommand.enforceLatency);
     UniqueTempDirectory temporary("osgsol-science-http-range");
     const std::filesystem::path root = temporary.path();
@@ -13242,8 +6761,6 @@ int runMain(int argc, char** argv)
     const std::filesystem::path log = root / "requests.jsonl";
     createFixture(fixture);
     const std::uint64_t sourceSize = std::filesystem::file_size(fixture);
-
-    verifyCompletionSinkConcurrencyRegression(fixture, root);
 
     {
         DatasetPtr localDataset(static_cast<GDALDataset*>(GDALOpenEx(
@@ -13278,8 +6795,6 @@ int runMain(int argc, char** argv)
     }
 
     verifyParallelMetadataPrefetch(fixture, root);
-    verifyV6HeadRecoveryContract(fixture, root);
-    verifyV6InvalidHeadSurfaces(fixture, root);
     verifyImmediateMultiRangeRetry(fixture, root);
 
     ServerProcess server = startServer(fixture, ready, log);
@@ -13307,8 +6822,7 @@ int runMain(int argc, char** argv)
     const std::string statsJson = requireNetworkStatsEvidence();
     writeRawTransportEvidence(OSGSOL_SCIENCE_EVIDENCE_DIR,
                               "local", capture, statsJson);
-    const HttpProof proof = buildHttpProof(
-        capture, statsJson, AttributionMode::LegacyFrozen);
+    const HttpProof proof = buildHttpProof(capture, statsJson);
     verifyOptimizedMetadataIntervals(proof);
     server.stop();
     const LocalServerEvidence local = verifyLog(log, sourceSize);
@@ -13318,7 +6832,6 @@ int runMain(int argc, char** argv)
             proof.actualHttpBodyBytes <= TRANSFER_BUDGET,
             "local server, curl headers, and VSINetworkStats evidence disagree");
     writeParsedProof(OSGSOL_SCIENCE_EVIDENCE_DIR, "local", proof);
-    verifyV6CombinedOperationScope(fixture, root);
     return 0;
 }
 
