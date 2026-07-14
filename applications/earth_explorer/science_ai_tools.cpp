@@ -11,23 +11,26 @@
 
 namespace
 {
-    const char* stateName(earthscience::PreviewState state)
+    const char* stateName(earthscience::AlphaEarthPreviewState state)
     {
         switch (state)
         {
-        case earthscience::PreviewState::Unavailable: return "unavailable";
-        case earthscience::PreviewState::Idle: return "idle";
-        case earthscience::PreviewState::Queued: return "queued";
-        case earthscience::PreviewState::Fetching: return "fetching";
-        case earthscience::PreviewState::Ready: return "ready";
-        case earthscience::PreviewState::Failed: return "failed";
-        case earthscience::PreviewState::Cancelled: return "cancelled";
+        case earthscience::AlphaEarthPreviewState::Unavailable:
+            return "unavailable";
+        case earthscience::AlphaEarthPreviewState::Idle: return "idle";
+        case earthscience::AlphaEarthPreviewState::Queued: return "queued";
+        case earthscience::AlphaEarthPreviewState::Fetching:
+            return "fetching";
+        case earthscience::AlphaEarthPreviewState::Ready: return "ready";
+        case earthscience::AlphaEarthPreviewState::Failed: return "failed";
+        case earthscience::AlphaEarthPreviewState::Cancelled:
+            return "cancelled";
         }
         return "unknown";
     }
 
     picojson::value snapshotJson(
-        const earthscience::SciencePreviewSnapshot& snapshot)
+        const earthscience::AlphaEarthPreviewSnapshot& snapshot)
     {
         picojson::object result;
         result["job_id"] = picojson::value(
@@ -38,7 +41,7 @@ namespace
         result["lat"] = picojson::value(snapshot.latitude);
         result["lon"] = picojson::value(snapshot.longitude);
         result["year"] = picojson::value(static_cast<double>(snapshot.year));
-        if (snapshot.state == earthscience::PreviewState::Ready)
+        if (snapshot.state == earthscience::AlphaEarthPreviewState::Ready)
         {
             picojson::object artifact;
             artifact["dataset_id"] = picojson::value(snapshot.artifact.datasetId);
@@ -84,7 +87,8 @@ void registerScienceResearchTools(
     search.parametersJson = "{\"type\":\"object\",\"properties\":{}}";
     search.execute = [runtime](const picojson::value&)
     {
-        const earthscience::ScienceSourceDescriptor& source = runtime->source();
+        const earthscience::AlphaEarthSourceDescriptor& source =
+            runtime->source();
         picojson::object item;
         item["id"] = picojson::value(source.id);
         item["name"] = picojson::value(source.name);
@@ -154,7 +158,8 @@ void registerScienceResearchTools(
         "\"job_id\":{\"type\":\"integer\"}}}";
     get.execute = [runtime](const picojson::value& args)
     {
-        const earthscience::SciencePreviewSnapshot snapshot = runtime->snapshot();
+        const earthscience::AlphaEarthPreviewSnapshot snapshot =
+            runtime->snapshot();
         double requested = static_cast<double>(snapshot.generation);
         if (!optionalNumber(args, "job_id", requested))
         {
@@ -182,7 +187,8 @@ void registerScienceResearchTools(
         "\"job_id\":{\"type\":\"integer\"}}}";
     show.execute = [runtime, layer, layers](const picojson::value& args)
     {
-        const earthscience::SciencePreviewSnapshot snapshot = runtime->snapshot();
+        const earthscience::AlphaEarthPreviewSnapshot snapshot =
+            runtime->snapshot();
         double requested = static_cast<double>(snapshot.generation);
         if (!optionalNumber(args, "job_id", requested) ||
             static_cast<std::uint64_t>(requested) != snapshot.generation)
@@ -191,7 +197,7 @@ void registerScienceResearchTools(
             error["error"] = picojson::value("science artifact job_id is not current");
             return picojson::value(error);
         }
-        if (snapshot.state != earthscience::PreviewState::Ready)
+        if (snapshot.state != earthscience::AlphaEarthPreviewState::Ready)
         {
             picojson::object error;
             error["error"] = picojson::value(

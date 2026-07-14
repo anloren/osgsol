@@ -304,8 +304,8 @@ struct SciencePreviewRuntime::Impl
     explicit Impl(const std::string& path)
         : indexPath(path), available(std::filesystem::is_regular_file(path))
     {
-        state.state = available ? PreviewState::Idle
-                                : PreviewState::Unavailable;
+        state.state = available ? AlphaEarthPreviewState::Idle
+                                : AlphaEarthPreviewState::Unavailable;
         state.message = available ? "Ready"
                                   : "AlphaEarth index is missing";
         worker = std::thread([this]() { run(); });
@@ -328,7 +328,8 @@ struct SciencePreviewRuntime::Impl
                cancelledThrough.load(std::memory_order_acquire) >= value;
     }
 
-    void update(std::uint64_t value, PreviewState next, float progress,
+    void update(std::uint64_t value, AlphaEarthPreviewState next,
+                float progress,
                 const std::string& message)
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -354,7 +355,7 @@ struct SciencePreviewRuntime::Impl
                 request = *pending;
                 pending.reset();
                 if (request.generation != generation) continue;
-                state.state = PreviewState::Fetching;
+                state.state = AlphaEarthPreviewState::Fetching;
                 state.progress = 0.05f;
                 state.message = "Locating AlphaEarth tile";
             }
@@ -368,7 +369,7 @@ struct SciencePreviewRuntime::Impl
                 continue;
             }
             if (isCancelled(request.generation)) continue;
-            update(request.generation, PreviewState::Fetching, 0.2f,
+            update(request.generation, AlphaEarthPreviewState::Fetching, 0.2f,
                    "Reading A01/A16/A09 preview");
 
             PreviewReadResult preview;
@@ -389,7 +390,7 @@ struct SciencePreviewRuntime::Impl
             std::lock_guard<std::mutex> lock(mutex);
             if (request.generation != generation || isCancelled(request.generation))
                 continue;
-            state.state = PreviewState::Ready;
+            state.state = AlphaEarthPreviewState::Ready;
             state.progress = 1.0f;
             state.message = "AlphaEarth preview ready";
             state.artifact.generation = request.generation;
@@ -420,14 +421,14 @@ struct SciencePreviewRuntime::Impl
         std::lock_guard<std::mutex> lock(mutex);
         if (request.generation != generation || isCancelled(request.generation))
             return;
-        state.state = PreviewState::Failed;
+        state.state = AlphaEarthPreviewState::Failed;
         state.progress = 0.0f;
         state.message = error.empty() ? "AlphaEarth request failed" : error;
     }
 
     std::string indexPath;
     bool available = false;
-    ScienceSourceDescriptor descriptor;
+    AlphaEarthSourceDescriptor descriptor;
     mutable std::mutex mutex;
     std::condition_variable condition;
     std::thread worker;
@@ -435,7 +436,7 @@ struct SciencePreviewRuntime::Impl
     std::uint64_t generation = 0;
     std::atomic<std::uint64_t> cancelledThrough{0};
     std::optional<Request> pending;
-    SciencePreviewSnapshot state;
+    AlphaEarthPreviewSnapshot state;
 };
 
 SciencePreviewRuntime::SciencePreviewRuntime(const std::string& indexPath)
@@ -450,7 +451,7 @@ bool SciencePreviewRuntime::available() const
     return _impl->available;
 }
 
-const ScienceSourceDescriptor& SciencePreviewRuntime::source() const
+const AlphaEarthSourceDescriptor& SciencePreviewRuntime::source() const
 {
     return _impl->descriptor;
 }
@@ -461,14 +462,14 @@ std::uint64_t SciencePreviewRuntime::queryPoint(
     std::lock_guard<std::mutex> lock(_impl->mutex);
     const std::uint64_t next = ++_impl->generation;
     _impl->cancelledThrough.store(next - 1, std::memory_order_release);
-    _impl->state = SciencePreviewSnapshot();
+    _impl->state = AlphaEarthPreviewSnapshot();
     _impl->state.generation = next;
     _impl->state.latitude = latitude;
     _impl->state.longitude = longitude;
     _impl->state.year = year;
     if (!_impl->available)
     {
-        _impl->state.state = PreviewState::Unavailable;
+        _impl->state.state = AlphaEarthPreviewState::Unavailable;
         _impl->state.message = "AlphaEarth index is missing";
         return next;
     }
@@ -479,11 +480,11 @@ std::uint64_t SciencePreviewRuntime::queryPoint(
         year > _impl->descriptor.lastYear ||
         !std::isfinite(requestedSpanMeters) || requestedSpanMeters < 0.0)
     {
-        _impl->state.state = PreviewState::Failed;
+        _impl->state.state = AlphaEarthPreviewState::Failed;
         _impl->state.message = "Invalid latitude, longitude, or year";
         return next;
     }
-    _impl->state.state = PreviewState::Queued;
+    _impl->state.state = AlphaEarthPreviewState::Queued;
     _impl->state.progress = 0.0f;
     _impl->state.message = "Queued";
     _impl->pending = Impl::Request{
@@ -498,10 +499,10 @@ void SciencePreviewRuntime::cancel()
     _impl->pending.reset();
     _impl->cancelledThrough.store(_impl->generation,
                                   std::memory_order_release);
-    if (_impl->state.state == PreviewState::Queued ||
-        _impl->state.state == PreviewState::Fetching)
+    if (_impl->state.state == AlphaEarthPreviewState::Queued ||
+        _impl->state.state == AlphaEarthPreviewState::Fetching)
     {
-        _impl->state.state = PreviewState::Cancelled;
+        _impl->state.state = AlphaEarthPreviewState::Cancelled;
         _impl->state.progress = 0.0f;
         _impl->state.message = "Cancelled";
     }
@@ -511,14 +512,15 @@ void SciencePreviewRuntime::clear()
 {
     cancel();
     std::lock_guard<std::mutex> lock(_impl->mutex);
-    _impl->state = SciencePreviewSnapshot();
-    _impl->state.state = _impl->available ? PreviewState::Idle
-                                         : PreviewState::Unavailable;
+    _impl->state = AlphaEarthPreviewSnapshot();
+    _impl->state.state = _impl->available
+        ? AlphaEarthPreviewState::Idle
+        : AlphaEarthPreviewState::Unavailable;
     _impl->state.message = _impl->available ? "Ready"
                                             : "AlphaEarth index is missing";
 }
 
-SciencePreviewSnapshot SciencePreviewRuntime::snapshot() const
+AlphaEarthPreviewSnapshot SciencePreviewRuntime::snapshot() const
 {
     std::lock_guard<std::mutex> lock(_impl->mutex);
     return _impl->state;

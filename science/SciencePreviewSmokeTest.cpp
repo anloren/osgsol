@@ -27,9 +27,9 @@ int main(int argc, char** argv)
                           std::chrono::seconds(60);
     while (std::chrono::steady_clock::now() < deadline)
     {
-        const earthscience::SciencePreviewSnapshot snapshot =
+        const earthscience::AlphaEarthPreviewSnapshot snapshot =
             runtime.snapshot();
-        if (snapshot.state == earthscience::PreviewState::Ready)
+        if (snapshot.state == earthscience::AlphaEarthPreviewState::Ready)
         {
             const std::size_t expected =
                 static_cast<std::size_t>(snapshot.artifact.width) *
@@ -47,8 +47,8 @@ int main(int argc, char** argv)
                       << snapshot.artifact.height << "\n";
             return 0;
         }
-        if (snapshot.state == earthscience::PreviewState::Failed ||
-            snapshot.state == earthscience::PreviewState::Unavailable)
+        if (snapshot.state == earthscience::AlphaEarthPreviewState::Failed ||
+            snapshot.state == earthscience::AlphaEarthPreviewState::Unavailable)
         {
             std::cerr << snapshot.message << "\n";
             return 1;

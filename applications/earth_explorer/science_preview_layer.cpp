@@ -81,7 +81,7 @@ namespace
     }
 
     osg::Node* createArtifactNodeImpl(
-        const earthscience::SciencePreviewArtifact& artifact)
+        const earthscience::AlphaEarthPreviewArtifact& artifact)
     {
         if (!artifact.rgba || !artifact.groundGrid ||
             artifact.width <= 0 || artifact.height <= 0 ||
@@ -164,7 +164,7 @@ namespace
 }
 
 osg::Node* createSciencePreviewArtifactNode(
-    const earthscience::SciencePreviewArtifact& artifact)
+    const earthscience::AlphaEarthPreviewArtifact& artifact)
 {
     return createArtifactNodeImpl(artifact);
 }
@@ -235,8 +235,9 @@ void SciencePreviewLayer::syncFromRuntime()
     }
     if (!_runtime) return;
 
-    const earthscience::SciencePreviewSnapshot snapshot = _runtime->snapshot();
-    if (snapshot.state != earthscience::PreviewState::Ready ||
+    const earthscience::AlphaEarthPreviewSnapshot snapshot =
+        _runtime->snapshot();
+    if (snapshot.state != earthscience::AlphaEarthPreviewState::Ready ||
         snapshot.artifact.generation == 0 ||
         snapshot.artifact.generation == artifactGeneration())
         return;

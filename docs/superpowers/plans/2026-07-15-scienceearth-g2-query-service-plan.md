@@ -445,8 +445,16 @@ git commit -m "feat(scienceearth): add unified query service"
 - Modify: `science/SciencePreviewRegressionTest.cpp`
 - Modify: `science/SciencePreviewSmokeTest.cpp`
 - Modify: `science/CMakeLists.txt`
+- Modify mechanically for renamed legacy types only:
+  `applications/earth_explorer/EarthControlUI.h`
+- Modify mechanically for renamed legacy types only:
+  `applications/earth_explorer/science_ai_tools.cpp`
+- Modify mechanically for renamed legacy types only:
+  `applications/earth_explorer/science_preview_layer.h`
+- Modify mechanically for renamed legacy types only:
+  `applications/earth_explorer/science_preview_layer.cpp`
 
-- [ ] **Step 1: Add failing pure translation tests**
+- [x] **Step 1: Add failing pure translation tests**
 
 Test descriptor translation for id/name/version/attribution, 2017-2025, 10 m, 64 components,
 `A01/A16/A09`, false-color display range, availability, and health message. Test state translation
@@ -456,7 +464,7 @@ grid pointer.
 
 These tests construct legacy snapshots in memory and perform no network access.
 
-- [ ] **Step 2: Rename only the legacy AlphaEarth-facing types**
+- [x] **Step 2: Rename only the legacy AlphaEarth-facing types**
 
 Avoid collision with the new generic contracts by mechanically renaming:
 
@@ -468,10 +476,12 @@ SciencePreviewSnapshot       -> AlphaEarthPreviewSnapshot
 ```
 
 Keep `SciencePreviewRuntime` itself and all request/worker/GDAL behavior unchanged. Update the
-existing preview regression and smoke tests for the type names only. Use `git diff --word-diff` to
-verify no algorithmic change entered `SciencePreviewRuntime.cpp` beyond identifiers.
+existing preview regression, smoke tests, and direct app consumers for the type names only. Use
+`git diff --word-diff` to verify no algorithmic change entered `SciencePreviewRuntime.cpp` beyond
+identifiers. The consumers remain directly wired until Tasks 5-7; this mechanical rename keeps the
+intermediate EarthExplorer target buildable.
 
-- [ ] **Step 3: Implement the adapter**
+- [x] **Step 3: Implement the adapter**
 
 `AlphaEarthProvider` owns `SciencePreviewRuntime`. Its constructor receives the compact index path.
 Its `descriptor()` translates the current runtime descriptor and availability. `submit()` validates
@@ -483,7 +493,7 @@ ignores old generations; `clear()` delegates to the runtime.
 Expose small pure translation helpers to the adapter test rather than adding a fake network seam
 inside the verified runtime.
 
-- [ ] **Step 4: Run adapter plus protected renderer/runtime regressions**
+- [x] **Step 4: Run adapter plus protected renderer/runtime regressions**
 
 ```bash
 cmake --build build/science_g2 --target \
@@ -498,7 +508,7 @@ git diff --word-diff=porcelain 1183f85 -- science/SciencePreviewRuntime.cpp | \
 Expected: translation and protected preview regressions pass; runtime diff contains no networking,
 windowing, orientation, grid, or rendering change.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add science/AlphaEarthProvider.h science/AlphaEarthProvider.cpp \
@@ -507,6 +517,20 @@ git add science/AlphaEarthProvider.h science/AlphaEarthProvider.cpp \
   science/SciencePreviewSmokeTest.cpp science/CMakeLists.txt
 git commit -m "feat(scienceearth): adapt AlphaEarth to query service"
 ```
+
+### Task 4 Evidence
+
+- RED: `osgSol_Test_AlphaEarthProvider` failed because `AlphaEarthProvider.h` did not exist.
+- GREEN: adapter translation and protected preview regression tests passed `2/2`; the preview
+  smoke executable and complete EarthExplorer target also compiled.
+- Translation: source health/capabilities, all seven runtime states, query, dataset, URL, version,
+  year, footprint, resolutions, processing, and attribution are preserved.
+- Payload: generic artifacts share the verified RGBA and exact ground-grid pointers; no pixel or
+  grid copy/reprojection was introduced.
+- Runtime audit: the word diff of `SciencePreviewRuntime.cpp` contains only the mechanical
+  `AlphaEarth*` type names and line wrapping; GDAL/network/window/grid algorithms are unchanged.
+- Network scope: the adapter test uses only an in-memory snapshot and a deliberately missing local
+  index; it starts no data request.
 
 ## Task 5: Migrate the preview layer without changing rendering
 

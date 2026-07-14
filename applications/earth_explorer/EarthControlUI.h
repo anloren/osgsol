@@ -335,9 +335,9 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 ImGui::CollapsingHeader(u8"ScienceEarth 科学研究",
                                         ImGuiTreeNodeFlags_DefaultOpen))
             {
-                const earthscience::ScienceSourceDescriptor& source =
+                const earthscience::AlphaEarthSourceDescriptor& source =
                     _scienceRuntime->source();
-                const earthscience::SciencePreviewSnapshot snapshot =
+                const earthscience::AlphaEarthPreviewSnapshot snapshot =
                     _scienceRuntime->snapshot();
                 const osg::Vec3d targetLla =
                     _mani->computeViewPointLatLonHeight();
@@ -381,10 +381,13 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.18f, 1.0f),
                                    u8"黄色边框 = 本次数据的真实地理覆盖范围");
 
-                const bool busy = snapshot.state == earthscience::PreviewState::Queued ||
-                                  snapshot.state == earthscience::PreviewState::Fetching;
+                const bool busy = snapshot.state ==
+                                      earthscience::AlphaEarthPreviewState::Queued ||
+                                  snapshot.state ==
+                                      earthscience::AlphaEarthPreviewState::Fetching;
                 if (yearEditCommitted && _scienceRuntime->available() &&
-                    (busy || snapshot.state == earthscience::PreviewState::Ready))
+                    (busy || snapshot.state ==
+                        earthscience::AlphaEarthPreviewState::Ready))
                     requestPreview();
                 if (!_scienceRuntime->available()) ImGui::BeginDisabled();
                 if (ImGui::Button(u8"载入当前视野 Load##science", ImVec2(-1.0f, 0.0f)))
@@ -398,7 +401,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     if (ImGui::Button(u8"取消载入 Cancel##science"))
                         _scienceRuntime->cancel();
                 }
-                else if (snapshot.state == earthscience::PreviewState::Ready)
+                else if (snapshot.state ==
+                         earthscience::AlphaEarthPreviewState::Ready)
                 {
                     ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.55f, 1.0f),
                                        u8"已显示 %d · 屏显纹理 256×256", snapshot.artifact.year);
@@ -435,8 +439,10 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     ImGui::TextWrapped(u8"数据集: %s",
                                        snapshot.artifact.datasetId.c_str());
                 }
-                else if (snapshot.state == earthscience::PreviewState::Failed ||
-                         snapshot.state == earthscience::PreviewState::Unavailable)
+                else if (snapshot.state ==
+                             earthscience::AlphaEarthPreviewState::Failed ||
+                         snapshot.state ==
+                             earthscience::AlphaEarthPreviewState::Unavailable)
                 {
                     ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
                                        "%s", snapshot.message.c_str());

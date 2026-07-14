@@ -176,7 +176,7 @@ namespace
 
     void testFalseColorMeaningIsMachineReadable()
     {
-        const earthscience::ScienceSourceDescriptor descriptor;
+        const earthscience::AlphaEarthSourceDescriptor descriptor;
         require(descriptor.visualization == "false-color embedding composite",
                 "preview visualization is not identified as false color");
         require(descriptor.redBand == "A01" && descriptor.greenBand == "A16" &&
@@ -189,7 +189,7 @@ namespace
 
     void testTerrainCannotHideAReadyScienceArtifact()
     {
-        earthscience::SciencePreviewArtifact artifact;
+        earthscience::AlphaEarthPreviewArtifact artifact;
         artifact.width = 2;
         artifact.height = 2;
         artifact.rgba = std::make_shared<const std::vector<unsigned char>>(

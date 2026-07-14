@@ -10,7 +10,7 @@
 
 namespace earthscience
 {
-    enum class PreviewState
+    enum class AlphaEarthPreviewState
     {
         Unavailable,
         Idle,
@@ -21,7 +21,7 @@ namespace earthscience
         Cancelled,
     };
 
-    struct ScienceSourceDescriptor
+    struct AlphaEarthSourceDescriptor
     {
         std::string id = "alphaearth-foundations";
         std::string name = "AlphaEarth Foundations";
@@ -41,7 +41,7 @@ namespace earthscience
         double displayMaximum = 0.3;
     };
 
-    struct SciencePreviewArtifact
+    struct AlphaEarthPreviewArtifact
     {
         std::uint64_t generation = 0;
         std::string datasetId;
@@ -63,16 +63,16 @@ namespace earthscience
         std::shared_ptr<const ScienceGroundGrid> groundGrid;
     };
 
-    struct SciencePreviewSnapshot
+    struct AlphaEarthPreviewSnapshot
     {
-        PreviewState state = PreviewState::Unavailable;
+        AlphaEarthPreviewState state = AlphaEarthPreviewState::Unavailable;
         std::uint64_t generation = 0;
         double latitude = 0.0;
         double longitude = 0.0;
         int year = 2025;
         float progress = 0.0f;
         std::string message;
-        SciencePreviewArtifact artifact;
+        AlphaEarthPreviewArtifact artifact;
     };
 
     class SciencePreviewRuntime
@@ -85,12 +85,12 @@ namespace earthscience
         SciencePreviewRuntime& operator=(const SciencePreviewRuntime&) = delete;
 
         bool available() const;
-        const ScienceSourceDescriptor& source() const;
+        const AlphaEarthSourceDescriptor& source() const;
         std::uint64_t queryPoint(double latitude, double longitude, int year,
                                  double requestedSpanMeters = 0.0);
         void cancel();
         void clear();
-        SciencePreviewSnapshot snapshot() const;
+        AlphaEarthPreviewSnapshot snapshot() const;
 
     private:
         struct Impl;

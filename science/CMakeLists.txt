@@ -15,6 +15,8 @@ SET_TARGET_PROPERTIES(osgSolScienceCore PROPERTIES
     CXX_VISIBILITY_PRESET hidden)
 
 ADD_LIBRARY(osgSolSciencePreview STATIC
+    AlphaEarthProvider.cpp
+    AlphaEarthProvider.h
     SciencePreviewSupport.cpp
     SciencePreviewSupport.h
     SciencePreviewRuntime.cpp
@@ -90,6 +92,18 @@ IF(BUILD_TESTING)
     ADD_TEST(NAME osgSol_Test_ScienceQueryService
              COMMAND $<TARGET_FILE:osgSol_Test_ScienceQueryService>)
     SET_TESTS_PROPERTIES(osgSol_Test_ScienceQueryService PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_AlphaEarthProvider
+        AlphaEarthProviderTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_AlphaEarthProvider
+        PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_AlphaEarthProvider
+        PRIVATE osgSolSciencePreview)
+    ADD_TEST(NAME osgSol_Test_AlphaEarthProvider
+             COMMAND $<TARGET_FILE:osgSol_Test_AlphaEarthProvider>)
+    SET_TESTS_PROPERTIES(osgSol_Test_AlphaEarthProvider PROPERTIES
         LABELS "offline;scienceearth"
         TIMEOUT 10)
 
