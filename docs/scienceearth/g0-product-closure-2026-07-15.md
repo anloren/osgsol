@@ -1,0 +1,172 @@
+# ScienceEarth G0 Product Closure and Follow-up Register
+
+**Recorded:** 2026-07-15
+
+**Product baseline:** `v0.3.0` / `ScienceEarth-v0.3.0` / commit
+`929fab38b14fba5b703f050d93eef26e7b744a07`
+
+**Protected pre-science rollback:** `v0.2.0` / `ScienceEarth` / commit
+`0e91c7c4b121d80b929d595ea711d3dd0833ee67`
+
+**Next-development branch:** `codex/scienceearth-g2-query-service`
+
+## 1. Authoritative status
+
+```text
+G0_PRODUCT_BASELINE=ACCEPTED
+G0_FORMAL_GATE=NOT_GO
+G2_PROCEED=YES
+G0_V6_WIP=QUARANTINED_NOT_RELEASE_READY
+V0_3_0_CLEAN_SOURCE_TEST_BASELINE=19_OF_20_DUE_TO_V6_RED_CONTRACT
+V0_3_0_TAGS=MUST_NOT_MOVE
+```
+
+The user accepted the working `v0.3.0` product behavior before its paired tags were created and,
+on 2026-07-15, approved proceeding to G2 after a short G0 isolation and documentation closeout.
+This is a product decision. It does not rewrite the historical formal G0 result into a technical
+`GO`.
+
+The formal G0 documents remain truthful: the fixed three-second uncached first-RGB median was not
+passed by every formal run, and the later v5 public requalification stopped after incomplete
+transient-HTTP evidence. Those historical results are retained; they are no longer allowed to
+block the facade-first G2 query-service slice.
+
+## 2. Fresh state audit
+
+The following checks were run immediately before this record was written. The first clean v5
+science-off run exposed that nine committed v6 RED-only test changes were still present in the
+`v0.3.0` history. It correctly failed `ScienceDepsScript` because the production patch remained
+v5. After those tests were quarantined from the G2 line in commit
+`bf776e51d158ecf36e552fac843a4402e0fd7d80`, the v5 source contract and complete science-off suite
+were rerun from the clean G2 branch.
+
+| Check | Result |
+|---|---|
+| Clean `v0.3.0`-history science-off baseline before test isolation | `19/20`; v6 RED source contract failed against v5 patch |
+| Science-off baseline after G2 test isolation | `20/20` passed |
+| Private dependency builder source contract after isolation | Passed against the committed v5 patch |
+| Existing v6 private prefix verification | Passed against the quarantined v6 source state |
+| Fresh clean v5 prefix build | Passed from locally cached, checksum-verified archives |
+| Fresh clean v5 prefix verification | Passed; archives, embed capability, static prefix, and manifest verified |
+| v6 local ownership/fault matrix | Failed; not release-ready |
+| Desktop metadata | `0.3.0`, release tag `ScienceEarth-v0.3.0`, source commit `929fab3...` |
+| v6-only runtime markers in the Desktop executable | Absent; the Desktop was not identified as a v6 build |
+| Current Desktop strict signature verification | Failed because Finder/resource-fork extended attributes are present |
+| Current Desktop direct clean-machine dependency audit | Existing Homebrew Python 3.14 dependency remains |
+
+Absence of v6-only marker strings is a scope check, not a claim of byte-for-byte rebuild
+reproducibility. A future release must be rebuilt from a clean committed source and independently
+audited.
+
+## 3. Quarantined v6 state
+
+Six previously uncommitted v6 files were preserved without modification on:
+
+```text
+branch: codex/scienceearth-g0-v6-wip
+commit: f37e5e9560d4d610efc31ae49359e035ab0897d2
+patch:  939ea11953475e42adeac0f1d0b6fb54565715427a174ddcbed7afa0e23b387a
+```
+
+The WIP commit is explicitly non-release-ready. Fresh local fault verification exposed at least
+these two unresolved paths:
+
+- `v6-ownership-initial-head-add`: initial HEAD multi-add failure did not produce the required
+  provisional detach behavior;
+- `v6-ownership-head-405-ordinary-remove-persistent`: persistent ordinary compatibility removal
+  did not produce the required retained-ownership evidence.
+
+The already committed v6 RED-only tests are also retained on the WIP branch. On the G2 branch,
+these nine test commits were reversed together by `bf776e51d158ecf36e552fac843a4402e0fd7d80`:
+
+```text
+02b053f 5ff7b47 77d9af2 0596540 55d89ae 5c877e4 4c5cbab b9b6555 c0f83bd
+```
+
+The immutable `v0.3.0` tags still contain those RED-only test commits. That does not change the
+shipped application runtime, but a clean tag checkout reports `19/20` science-off tests because
+`ScienceDepsScript` asks the v5 production patch for the deliberately absent v6 contract. The G2
+branch correction is the authoritative clean development baseline; the tags must not be moved to
+hide the historical mismatch.
+
+The G2 branch does not contain those six changes. It is back on the committed v5 patch and pin:
+
+```text
+GDAL_PREFETCH_PATCH_SHA256=0e67079267a4adfc316f20c88ba22cf078e5d653d2f35c2e3b54fff7efd0de1e
+```
+
+The v6-built prefix at `build/science-deps-prefetch` must not be used for G2. The clean G2 prefix
+is `build/science-deps-g2-v5/prefix`.
+
+## 4. Unconditional required follow-ups
+
+### 4.1 Before the next tagged ScienceEarth version
+
+- Build only from a clean, committed source tree and record the exact source commit in the app.
+- Use a dependency prefix whose source patch hash matches the tracked pin; do not reuse the v6 WIP
+  prefix.
+- Run the complete science-off suite and the G2 science-core/provider/preview suites with zero
+  failures.
+- Verify source catalog, load, year change, replacement failure retention, cancellation,
+  hide/show/remove, camera invariance, and Quit in the fixed Desktop application.
+- Remove package extended attributes before signing, then require
+  `codesign --verify --deep --strict` to pass after the Desktop copy is in its final location.
+- Run the offscreen render/package smoke and inspect its log for OpenGL or shader failures.
+- Do not move or overwrite `v0.3.0`, `ScienceEarth-v0.3.0`, or the protected `ScienceEarth` tag.
+
+### 4.2 Before adding or enabling another remote science provider
+
+- Give the provider an explicit latency, transfer, memory, cache, cancellation, and failure-retention
+  acceptance budget based on its real data shape.
+- Keep progress and cancellation visible and retain the last successful artifact while a
+  replacement is loading or fails.
+- Record source, dataset, requested and actual coverage, time, variables, units, visualization,
+  processing steps, and attribution in the resulting artifact.
+- Measure normal user-visible load behavior. The historical AlphaEarth three-second number is a
+  useful observation, not a universal threshold for Sentinel-2, DEM, or later providers.
+
+### 4.3 Before claiming clean-machine macOS distribution
+
+- Remove, bundle, or otherwise make relocatable the existing direct
+  `/opt/homebrew/opt/python@3.14` runtime dependency.
+- Test the signed app on a Mac without the development Homebrew tree or private build prefixes.
+- Re-run forbidden-path, unresolved-dependency, signature, launch, and fixed-Desktop smoke checks.
+
+## 5. Conditional required follow-up if v6 is ever adopted
+
+The quarantined v6 branch is optional. If it is abandoned, no v6 fault-matrix work blocks G2. If
+any v6 code is proposed for merge or packaging, all of the following become mandatory:
+
+- fix both known ownership failures without weakening their assertions;
+- rebuild a new private dependency prefix from the final committed patch and matching hash;
+- pass the complete offline HTTP/2, ownership, abandonment, capacity, dependency, science-off,
+  packaging, and signature suites;
+- review callback lifetime, multi/easy-handle ownership, cancellation, and double-cleanup paths;
+- commit the implementation, pin, tests, and decision record before any package is built.
+
+Never cherry-pick the WIP production patch or updated hash by itself.
+
+## 6. Deferred product work, not a G2-1 blocker
+
+- further AlphaEarth first-RGB optimization beyond the current usable product behavior;
+- exhaustive curl add/remove/perform/getinfo fault injection;
+- immutable one-shot evidence roots, negative process-history ledgers, and mutation matrices for
+  symlinks, FIFOs, and unexpected evidence entries;
+- a new public v6 live requalification campaign.
+
+These items may be reconsidered when a measured product failure or distribution requirement
+justifies them. They are not prerequisites for the unified query-service migration.
+
+## 7. G2 continuation boundary
+
+G2-1 may now implement only the approved facade-first slice:
+
+- GDAL-free generic query/artifact contracts and `osgSolScienceCore`;
+- source registry and single-active-job query service;
+- AlphaEarth adapter around the verified v5 runtime rather than a runtime rewrite;
+- migration of UI, Agent tools, and preview consumption to the service;
+- visible source catalog and last-good-artifact retention;
+- no Sentinel-2, Copernicus DEM, STAC request, camera change, or release tag in this slice.
+
+The authoritative G2-1 design remains
+`docs/superpowers/specs/2026-07-14-scienceearth-g2-query-service-design.md`.
