@@ -330,7 +330,7 @@ git commit -m "feat(scienceearth): add provider registry"
 - Create: `science/ScienceQueryServiceTest.cpp`
 - Modify: `science/CMakeLists.txt`
 
-- [ ] **Step 1: Write failing service-state tests**
+- [x] **Step 1: Write failing service-state tests**
 
 Use a controlled fake provider. Cover all of these cases before implementation:
 
@@ -357,7 +357,7 @@ cmake --build build/science_g2 --target osgSol_Test_ScienceQueryService -j4
 
 Expected: target is absent or tests fail before implementation.
 
-- [ ] **Step 2: Implement service construction and catalog**
+- [x] **Step 2: Implement service construction and catalog**
 
 Use an owning registry:
 
@@ -375,7 +375,7 @@ Reject a null registry during construction with a valid unavailable service stat
 background service thread; `snapshot()` reconciles the provider's immutable snapshot with the
 active service job.
 
-- [ ] **Step 3: Implement validation and synchronous failures**
+- [x] **Step 3: Implement validation and synchronous failures**
 
 Assign a service job id, validate, and publish a `Failed` snapshot synchronously without calling
 the provider when invalid. G2-1 accepts only:
@@ -392,7 +392,7 @@ the provider when invalid. G2-1 accepts only:
 
 Errors must name the rejected field, not collapse into `invalid query`.
 
-- [ ] **Step 4: Implement replacement and last-good rules**
+- [x] **Step 4: Implement replacement and last-good rules**
 
 On accepted replacement: cancel the old provider generation, retain
 `lastSuccessfulArtifact`, dispatch the new query, and record the source id/provider generation.
@@ -400,7 +400,7 @@ On reconcile: ignore mismatched generations; copy progress/message for matching 
 artifact only for matching `Ready` with a non-null artifact. `Failed` and `Cancelled` never clear
 the retained artifact. `clearArtifact()` never silently cancels the current job.
 
-- [ ] **Step 5: Run the focused state matrix and isolation check**
+- [x] **Step 5: Run the focused state matrix and isolation check**
 
 ```bash
 cmake --build build/science_g2 --target osgSol_Test_ScienceQueryService -j4
@@ -411,13 +411,27 @@ otool -L build/science_g2/science/libosgSolScienceCore.a 2>/dev/null || true
 
 Expected: all service cases pass; core remains a static, GDAL/OSG-free target.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add science/ScienceQueryService.h science/ScienceQueryService.cpp \
   science/ScienceQueryServiceTest.cpp science/CMakeLists.txt
 git commit -m "feat(scienceearth): add unified query service"
 ```
+
+### Task 3 Evidence
+
+- RED: `osgSol_Test_ScienceQueryService` failed because `ScienceQueryService.h` did not exist.
+- GREEN: query service, registry, generic type, and build-contract tests passed `4/4`.
+- Validation: unknown/unavailable source, geometry, coordinate, span, time, year, visualization,
+  variables, aggregation, output, resolution, and limit checks complete before provider dispatch.
+- State: accepted job ids increase monotonically; replacement cancels the previous provider
+  generation; old job ids and stale completions cannot alter the current job.
+- Artifact: fetching, failure, and cancellation retain the last successful artifact; only explicit
+  clear removes it.
+- Lifetime: an active provider generation is cancelled before registry/provider destruction.
+- Isolation: the core archive contains only query service, query type, and registry objects and
+  still has no GDAL, OSG, UI, or Agent dependency.
 
 ## Task 4: Wrap the accepted AlphaEarth runtime with an adapter
 
