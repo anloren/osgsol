@@ -480,6 +480,8 @@ server.on('stream', (stream, headers) =>
                 status,
                 content_length: Number.isSafeInteger(numericContentLength) &&
                     numericContentLength >= 0 ? numericContentLength : 0,
+                raw_content_length:
+                    responseHeaders['content-length'] ?? null,
                 content_range: responseHeaders['content-range'] ?? null,
                 violation: null,
             });
@@ -501,7 +503,8 @@ server.on('stream', (stream, headers) =>
             !path.includes('head-') && !path.includes('redirect-source') &&
             !path.includes('head-first') &&
             !path.includes('transport-interrupt');
-        const v6RangeFirst = path.includes('v6-range-first');
+        const v6RangeFirst = path.includes('v6-range-first') ||
+            path.includes('v6-head-content-length-malformed');
         setTimeout(respond, delayedSuccess || v6RangeFirst ? 200 : 0);
         stream.once('close', () =>
         {

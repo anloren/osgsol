@@ -399,6 +399,7 @@ namespace
         int status = 0;
         std::uint64_t attemptedBodyBytes = 0;
         std::uint64_t contentLength = 0;
+        std::string rawContentLength;
         std::string contentRange;
         bool aborted = false;
         int startCount = 0;
@@ -449,10 +450,12 @@ namespace
         const DebugCapture& capture, const HttpProof& httpProof);
     HttpProof buildHttpProof(const DebugCapture& capture,
                              const std::string& statsJson,
-                             AttributionMode mode);
+                             AttributionMode mode,
+                             bool allowProtocolTerminatedFinalResponse = false);
     AttributedTransportProof buildAttributedTransportProof(
         const DebugCapture& capture,
-        const std::vector<ScienceServerRequest>& serverRequests = {});
+        const std::vector<ScienceServerRequest>& serverRequests = {},
+        bool allowProtocolTerminatedFinalResponse = false);
     std::string requireNetworkStatsEvidence();
     bool parseCoordinatorRetryBlockedEvidence(
         const std::string& message, CoordinatorRetryBlockedEvidence& evidence);
@@ -1099,6 +1102,19 @@ namespace
                 record.contentLength = checkedJsonUnsigned(
                     field(object, "content_length"),
                     "HTTP/2 response Content-Length");
+                const auto rawContentLength =
+                    object.find("raw_content_length");
+                if (rawContentLength != object.end())
+                {
+                    require(rawContentLength->second.is<std::string>() ||
+                                rawContentLength->second.is<picojson::null>(),
+                            "HTTP/2 raw Content-Length has an invalid type");
+                    if (rawContentLength->second.is<std::string>())
+                    {
+                        record.rawContentLength =
+                            rawContentLength->second.get<std::string>();
+                    }
+                }
                 const picojson::value& contentRange =
                     field(object, "content_range");
                 record.contentRange = contentRange.is<std::string>()
@@ -2706,11 +2722,33 @@ namespace
             const std::string statsJson = requireNetworkStatsEvidence();
             server.stop();
             const Http2Evidence evidence = readHttp2Log(log);
+            const std::vector<ScienceServerRequest> serverRequests =
+                scienceServerRequests(evidence);
+            const bool malformedHeadCase =
+                std::string(item.name).find(
+                    "v6-head-content-length-malformed") != std::string::npos;
+            if (malformedHeadCase)
+            {
+                bool strictParserRejected = false;
+                try
+                {
+                    static_cast<void>(buildAttributedTransportProof(
+                        capture, serverRequests));
+                }
+                catch (const std::exception&)
+                {
+                    strictParserRejected = true;
+                }
+                require(strictParserRejected,
+                        "strict raw parser accepted a protocol-terminated "
+                        "malformed HEAD response");
+            }
             const AttributedTransportProof proof =
                 buildAttributedTransportProof(
-                    capture, scienceServerRequests(evidence));
+                    capture, serverRequests, malformedHeadCase);
             const HttpProof httpProof = buildHttpProof(
-                capture, statsJson, AttributionMode::AttributedV6);
+                capture, statsJson, AttributionMode::AttributedV6,
+                malformedHeadCase);
             const int serverHeads = static_cast<int>(std::count_if(
                 evidence.streams.begin(), evidence.streams.end(),
                 [](const Http2StreamEvidence& stream)
@@ -2768,6 +2806,49 @@ namespace
                                 "ERR_HTTP2_HEADER_SINGLE_VALUE" &&
                             stream.status == 0 && stream.aborted;
                     });
+            const bool malformedHeadTransportObserved =
+                !malformedHeadCase ||
+                (std::any_of(evidence.streams.begin(), evidence.streams.end(),
+                    [](const Http2StreamEvidence& stream)
+                    {
+                        return stream.method == "HEAD" &&
+                            stream.status == 500 &&
+                            stream.rawContentLength == "malformed";
+                    }) &&
+                 std::any_of(proof.completions.begin(),
+                    proof.completions.end(),
+                    [](const ScienceTransportCompletion& completion)
+                    {
+                        return completion.role == "head" &&
+                            completion.method == "HEAD" &&
+                            completion.status == 500 &&
+                            completion.curlCode != 0 &&
+                            completion.actualBodyBytes == 0 &&
+                            completion.contentLengthCount <= 1 &&
+                            !completion.contentLengthValid &&
+                            completion.declaredContentLength == 0 &&
+                            completion.contentRangeCount == 0;
+                    }));
+            const auto malformedHeadStream = std::find_if(
+                evidence.streams.begin(), evidence.streams.end(),
+                [](const Http2StreamEvidence& stream)
+                {
+                    return stream.method == "HEAD";
+                });
+            const auto malformedRangeStream = std::find_if(
+                evidence.streams.begin(), evidence.streams.end(),
+                [](const Http2StreamEvidence& stream)
+                {
+                    return stream.method == "GET";
+                });
+            const bool malformedHeadOrderingObserved =
+                !malformedHeadCase ||
+                (malformedHeadStream != evidence.streams.end() &&
+                 malformedRangeStream != evidence.streams.end() &&
+                 malformedHeadStream->sessionId ==
+                    malformedRangeStream->sessionId &&
+                 malformedHeadStream->start < malformedRangeStream->start &&
+                 malformedRangeStream->end < malformedHeadStream->response);
             require(!opened && !proof.qualified &&
                         !httpProof.attributedTransportQualified &&
                         serverHeads == httpProof.actualHeadCount &&
@@ -2790,6 +2871,8 @@ namespace
                         countDebug(capture,
                             "head-transient-retry context=") == 0 &&
                         countDebug(capture, "CanRetry=") == 0 &&
+                        malformedHeadTransportObserved &&
+                        malformedHeadOrderingObserved &&
                         (!item.requireDuplicateProtocolFailure ||
                          duplicateProtocolFailureObserved),
                     std::string(item.name) +
@@ -2804,7 +2887,8 @@ namespace
                 try
                 {
                     static_cast<void>(buildHttpProof(
-                        capture, mutated, AttributionMode::AttributedV6));
+                        capture, mutated, AttributionMode::AttributedV6,
+                        malformedHeadCase));
                     return false;
                 }
                 catch (const std::exception&)
@@ -6234,7 +6318,8 @@ namespace
 
     AttributedTransportProof buildAttributedTransportProof(
         const DebugCapture& capture,
-        const std::vector<ScienceServerRequest>& serverRequests)
+        const std::vector<ScienceServerRequest>& serverRequests,
+        bool allowProtocolTerminatedFinalResponse)
     {
         struct RawRequest
         {
@@ -6660,7 +6745,62 @@ namespace
                         "science operation block has a malformed schema");
             }
         }
-        require(!responseOpen, "science raw response is incomplete");
+        if (responseOpen)
+        {
+            bool rawContentLengthRejected =
+                currentResponse.contentLengths.empty();
+            if (currentResponse.contentLengths.size() == 1)
+            {
+                try
+                {
+                    static_cast<void>(checkedUnsignedDecimal(
+                        currentResponse.contentLengths.front(),
+                        "protocol-terminated raw Content-Length"));
+                    rawContentLengthRejected = false;
+                }
+                catch (const std::exception&)
+                {
+                    rawContentLengthRejected = true;
+                }
+            }
+            const int matchingCompletionCount = static_cast<int>(std::count_if(
+                proof.completions.begin(), proof.completions.end(),
+                [&](const ScienceTransportCompletion& completion)
+                {
+                    return completion.role == "head" &&
+                        completion.method == "HEAD" &&
+                        completion.status == currentResponse.status &&
+                        completion.curlCode != 0 &&
+                        completion.actualBodyBytes == 0 &&
+                        completion.contentLengthCount ==
+                            static_cast<int>(
+                                currentResponse.contentLengths.size()) &&
+                        !completion.contentLengthValid &&
+                        completion.declaredContentLength == 0 &&
+                        completion.contentRangeCount == 0;
+                }));
+            // nghttp2 rejects a nonnumeric Content-Length before libcurl
+            // exposes that header or the closing verbose delimiter. The
+            // caller separately binds the wire value from the server oracle.
+            require(allowProtocolTerminatedFinalResponse &&
+                        isExactFiveStatus(currentResponse.status) &&
+                        rawContentLengthRejected &&
+                        currentResponse.contentRanges.empty() &&
+                        matchingCompletionCount == 1,
+                    "science raw response is incomplete allow=" +
+                        std::to_string(allowProtocolTerminatedFinalResponse) +
+                        " status=" + std::to_string(currentResponse.status) +
+                        " content-lengths=" + std::to_string(
+                            currentResponse.contentLengths.size()) +
+                        " content-ranges=" + std::to_string(
+                            currentResponse.contentRanges.size()) +
+                        " raw-rejected=" +
+                        std::to_string(rawContentLengthRejected) +
+                        " matching-completions=" +
+                        std::to_string(matchingCompletionCount));
+            rawResponses.push_back(currentResponse);
+            responseOpen = false;
+        }
         require(!proof.completions.empty(),
                 "AttributedV6 requires response-v1 completion events");
 
@@ -7264,10 +7404,12 @@ namespace
     }
 
     HttpProof buildAttributedHttpProof(const DebugCapture& capture,
-                                       const std::string& statsJson)
+                                       const std::string& statsJson,
+                                       bool allowProtocolTerminatedFinalResponse)
     {
         const AttributedTransportProof transport =
-            buildAttributedTransportProof(capture);
+            buildAttributedTransportProof(
+                capture, {}, allowProtocolTerminatedFinalResponse);
         HttpProof proof;
         proof.headRetries = transport.headRetries;
         proof.scienceTransportEvents = transport.events;
@@ -7428,11 +7570,13 @@ namespace
         return proof;
     }
 
-    HttpProof buildHttpProof(const DebugCapture& capture, const std::string& statsJson,
-                             AttributionMode mode)
+    HttpProof buildHttpProof(
+        const DebugCapture& capture, const std::string& statsJson,
+        AttributionMode mode, bool allowProtocolTerminatedFinalResponse)
     {
         if (mode == AttributionMode::AttributedV6)
-            return buildAttributedHttpProof(capture, statsJson);
+            return buildAttributedHttpProof(
+                capture, statsJson, allowProtocolTerminatedFinalResponse);
         require(mode == AttributionMode::LegacyFrozen,
                 "HTTP proof attribution mode is invalid");
         struct Request
