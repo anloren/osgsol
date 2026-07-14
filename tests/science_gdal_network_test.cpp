@@ -9139,7 +9139,8 @@ namespace
             static_cast<CompletionSinkRaceCapture*>(
                 CPLGetErrorHandlerUserData());
         if (state == nullptr || message == nullptr) return;
-        if (std::string(message) == "completion-sink-reentrant-probe")
+        if (std::string(message) ==
+            "OSGSOL_SCIENCE_SINK_RACE: completion-sink-reentrant-probe")
         {
             std::lock_guard<std::mutex> lock(state->controlMutex);
             state->reentrantCallbackCompleted = true;
@@ -9218,6 +9219,7 @@ namespace
             {"GDAL_HTTP_PROXY", ""},
             {"GDAL_HTTPS_PROXY", ""},
             {"GDAL_HTTP_MAX_RETRY", "0"},
+            {"CPL_TIMESTAMP", "NO"},
         });
         VSICurlClearCache();
         CompletionSinkRaceCapture state;
