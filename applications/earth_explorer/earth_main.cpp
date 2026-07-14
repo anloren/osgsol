@@ -53,6 +53,11 @@
 #include "feeds/strategic_feed.h"
 #include "feeds/firms_feed.h"
 #include "geo_primitives.h"
+#if OSGSOL_BUILD_SCIENCE
+#include <SciencePreviewRuntime.h>
+#include "science_preview_layer.h"
+#include "science_ai_tools.h"
+#endif
 #include <VerseCommon.h>
 #if defined(__APPLE__)
 #   include <OpenGL/OpenGL.h>   // EARTH_OFFSCREEN(测试基建)用:CGL 无头上下文,见下方 HeadlessCGLContext
@@ -928,6 +933,17 @@ int main(int argc, char** argv)
     // 图层注册（P0：底图 + 标注）
     LayerManager layerMgr;
     viewer.addEventHandler(new LayerManagerDrainHandler(&layerMgr));
+#if OSGSOL_BUILD_SCIENCE
+    std::string scienceIndexPath =
+        MISC_DIR + std::string("science/alphaearth/alphaearth.sqlite");
+    if (const char* indexEnv = getenv("OSGSOL_ALPHAEARTH_INDEX"))
+        if (*indexEnv) scienceIndexPath = indexEnv;
+    std::unique_ptr<earthscience::SciencePreviewRuntime> scienceRuntime(
+        new earthscience::SciencePreviewRuntime(scienceIndexPath));
+    osg::ref_ptr<SciencePreviewLayer> scienceLayer =
+        new SciencePreviewLayer(scienceRuntime.get());
+    sceneCamera->addChild(scienceLayer.get());
+#endif
     {
         OverlayLayer base; base.id = "base"; base.displayName = u8"卫星影像";
         base.group = u8"底图 / 标注"; base.enabled = true; base.hasOpacity = false;
@@ -942,6 +958,24 @@ int main(int argc, char** argv)
                 eptr->commonUniforms["LabelOpacity"]->set(v);
         };
         layerMgr.add(labels);
+
+#if OSGSOL_BUILD_SCIENCE
+        OverlayLayer alphaearth;
+        alphaearth.id = "alphaearth";
+        alphaearth.displayName = u8"AlphaEarth 科学预览";
+        alphaearth.group = "ScienceEarth";
+        alphaearth.subtitle = u8"64 维地表嵌入 · 10 m · 2017–2025 · Experimental";
+        alphaearth.type = OverlayLayer::Grid;
+        alphaearth.enabled = false;
+        alphaearth.shape = earthmark::MarkerShape::Square;
+        alphaearth.iconColor = osg::Vec4(0.25f, 0.82f, 1.0f, 1.0f);
+        SciencePreviewLayer* scienceLayerPtr = scienceLayer.get();
+        alphaearth.apply = [scienceLayerPtr](const OverlayLayer& layer)
+        {
+            scienceLayerPtr->setVisible(layer.enabled);
+        };
+        layerMgr.add(alphaearth);
+#endif
 
         LayerManager* lmptr = &layerMgr;
         PrecipController* pcptr = precip.get();
@@ -1218,6 +1252,12 @@ int main(int argc, char** argv)
     if (aiMedia) aiMedia->setEarthUniforms(&earthRenderingUtils);   // 快门补光需要 WorldSunDir
     if (aiMedia) aiMedia->setContentSize(w, h);   // 快照按渲染内容区裁剪(去掉整窗多余底色边条)
 
+#if OSGSOL_BUILD_SCIENCE
+    registerScienceResearchTools(aiRuntime.tools, scienceRuntime.get(),
+                                 scienceLayer.get(), &layerMgr,
+                                 earthManipulator.get());
+#endif
+
     if (aiRuntime.tools && shipLayer)
     {
         earthai::Tool t; t.name = "get_ships_summary";
@@ -1352,6 +1392,10 @@ int main(int argc, char** argv)
     ctrlUI->_aiUI = aiUI;
     ctrlUI->_aiCore = aiCore;
     ctrlUI->_aiMedia = aiMedia;
+#if OSGSOL_BUILD_SCIENCE
+    ctrlUI->_scienceRuntime = scienceRuntime.get();
+    ctrlUI->_scienceLayer = scienceLayer.get();
+#endif
     imgui->initialize(ctrlUI, false);
     imgui->addToView(&viewer, cameras[3]);  // cameras[3] = finalCamera (HUD, renders to screen)
 

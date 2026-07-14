@@ -1,0 +1,88 @@
+#ifndef OSGSOL_SCIENCE_PREVIEW_RUNTIME_H
+#define OSGSOL_SCIENCE_PREVIEW_RUNTIME_H
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace earthscience
+{
+    enum class PreviewState
+    {
+        Unavailable,
+        Idle,
+        Queued,
+        Fetching,
+        Ready,
+        Failed,
+        Cancelled,
+    };
+
+    struct ScienceSourceDescriptor
+    {
+        std::string id = "alphaearth-foundations";
+        std::string name = "AlphaEarth Foundations";
+        std::string version = "1.1";
+        std::string attribution =
+            "Google / Google DeepMind · source.coop · CC-BY 4.0";
+        int firstYear = 2017;
+        int lastYear = 2025;
+        int nativeResolutionMeters = 10;
+        int bandCount = 64;
+        bool experimental = true;
+    };
+
+    struct SciencePreviewArtifact
+    {
+        std::uint64_t generation = 0;
+        std::string datasetId;
+        std::string sourceUrl;
+        std::string sourceVersion;
+        std::string attribution;
+        int year = 0;
+        double west = 0.0;
+        double south = 0.0;
+        double east = 0.0;
+        double north = 0.0;
+        int width = 0;
+        int height = 0;
+        std::shared_ptr<const std::vector<unsigned char>> rgba;
+    };
+
+    struct SciencePreviewSnapshot
+    {
+        PreviewState state = PreviewState::Unavailable;
+        std::uint64_t generation = 0;
+        double latitude = 0.0;
+        double longitude = 0.0;
+        int year = 2025;
+        float progress = 0.0f;
+        std::string message;
+        SciencePreviewArtifact artifact;
+    };
+
+    class SciencePreviewRuntime
+    {
+    public:
+        explicit SciencePreviewRuntime(const std::string& indexPath);
+        ~SciencePreviewRuntime();
+
+        SciencePreviewRuntime(const SciencePreviewRuntime&) = delete;
+        SciencePreviewRuntime& operator=(const SciencePreviewRuntime&) = delete;
+
+        bool available() const;
+        const ScienceSourceDescriptor& source() const;
+        std::uint64_t queryPoint(double latitude, double longitude, int year);
+        void cancel();
+        void clear();
+        SciencePreviewSnapshot snapshot() const;
+
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> _impl;
+    };
+}
+
+#endif
+

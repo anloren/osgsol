@@ -1,0 +1,39 @@
+ADD_LIBRARY(osgSolSciencePreview STATIC
+    SciencePreviewRuntime.cpp
+    SciencePreviewRuntime.h)
+
+TARGET_COMPILE_FEATURES(osgSolSciencePreview PUBLIC cxx_std_17)
+TARGET_INCLUDE_DIRECTORIES(osgSolSciencePreview
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
+    PRIVATE "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
+SET_TARGET_PROPERTIES(osgSolSciencePreview PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden)
+
+IF(NOT APPLE)
+    MESSAGE(FATAL_ERROR "ScienceEarth preview currently targets macOS")
+ENDIF()
+IF(NOT EXISTS "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libgdal.a")
+    MESSAGE(FATAL_ERROR
+        "OSGSOL_SCIENCE_DEPS_ROOT must name the built private ScienceEarth prefix")
+ENDIF()
+
+EXECUTE_PROCESS(COMMAND xcrun --show-sdk-path
+    OUTPUT_VARIABLE OSGSOL_SCIENCE_PREVIEW_SDK
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE OSGSOL_SCIENCE_PREVIEW_XCRUN_RESULT)
+IF(NOT OSGSOL_SCIENCE_PREVIEW_XCRUN_RESULT EQUAL 0)
+    MESSAGE(FATAL_ERROR "xcrun could not locate the active macOS SDK")
+ENDIF()
+
+TARGET_LINK_LIBRARIES(osgSolSciencePreview
+    "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libgdal.a"
+    "${OSGSOL_SCIENCE_PREVIEW_SDK}/usr/lib/libcurl.tbd"
+    "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libzstd.a"
+    "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libproj.a"
+    "${OSGSOL_SCIENCE_PREVIEW_SDK}/usr/lib/libsqlite3.tbd"
+    m dl)
+
+INSTALL(TARGETS osgSolSciencePreview
+        ARCHIVE DESTINATION ${INSTALL_LIBDIR})
+

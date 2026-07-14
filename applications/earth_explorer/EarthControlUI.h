@@ -26,6 +26,10 @@
 #include "overlay_lod_badge.h"
 #include "earth_config.h"
 #include <readerwriter/TileCallback.h>
+#if OSGSOL_BUILD_SCIENCE
+#include <SciencePreviewRuntime.h>
+#include "science_preview_layer.h"
+#endif
 
 // EarthExplorer 的 ImGui 控制面板。直接驱动 EarthManipulator 与 EarthAtmosphereOcean，
 // 不经 USER 事件中转。
@@ -41,6 +45,11 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
     AIChatUI* _aiUI = nullptr;         // 由 main 注入；为空则不画底部聊天条
     earthai::AIChatCore* _aiCore = nullptr;   // 由 main 注入；draw() 内部对空指针安全
     earthai::MediaManager* _aiMedia = nullptr;   // 由 main 注入；为空则📷按钮禁用(见 draw())
+#if OSGSOL_BUILD_SCIENCE
+    earthscience::SciencePreviewRuntime* _scienceRuntime = nullptr;
+    SciencePreviewLayer* _scienceLayer = nullptr;
+    int _scienceYear = 2025;
+#endif
     float _sunAz, _sunEl;     // 太阳方位角/高度角（度）
     float _exposure;          // HDR 曝光
     bool  _exposureAuto;      // 自适应曝光(随高度):低空高曝光、高空低曝光
@@ -318,6 +327,82 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 }
             }
             // 地震详情等「信息呈现」UI 不在此操作面板内,统一放右上角独立面板(见 End() 之后)。
+
+#if OSGSOL_BUILD_SCIENCE
+            // ScienceEarth is a dedicated preview layer. It never replaces the globe
+            // TMS/terrain stack and loading it never changes the current camera.
+            if (_scienceRuntime && _scienceLayer &&
+                ImGui::CollapsingHeader(u8"ScienceEarth 科学研究",
+                                        ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                const earthscience::ScienceSourceDescriptor& source =
+                    _scienceRuntime->source();
+                const earthscience::SciencePreviewSnapshot snapshot =
+                    _scienceRuntime->snapshot();
+                const osg::Vec3d lla = _mani->computeEyeLatLonHeight();
+                const double latitude = osg::RadiansToDegrees(lla[0]);
+                const double longitude = osg::RadiansToDegrees(lla[1]);
+
+                ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f),
+                                   "AlphaEarth Foundations · Experimental");
+                ImGui::TextDisabled(u8"64 维 / 10 m / 年度嵌入 · 独立图层");
+                ImGui::Text(u8"当前中心: %.4f, %.4f", latitude, longitude);
+                ImGui::SliderInt(u8"年份 Year##science", &_scienceYear,
+                                 source.firstYear, source.lastYear);
+
+                const bool busy = snapshot.state == earthscience::PreviewState::Queued ||
+                                  snapshot.state == earthscience::PreviewState::Fetching;
+                if (!_scienceRuntime->available()) ImGui::BeginDisabled();
+                if (ImGui::Button(u8"载入当前视野 Load##science", ImVec2(-1.0f, 0.0f)))
+                {
+                    _scienceLayer->setVisible(true);
+                    if (_layers) _layers->setEnabled("alphaearth", true);
+                    _scienceRuntime->queryPoint(latitude, longitude, _scienceYear);
+                }
+                if (!_scienceRuntime->available()) ImGui::EndDisabled();
+
+                if (busy)
+                {
+                    ImGui::ProgressBar(snapshot.progress, ImVec2(-1.0f, 0.0f));
+                    ImGui::TextWrapped("%s", snapshot.message.c_str());
+                    if (ImGui::Button(u8"取消载入 Cancel##science"))
+                        _scienceRuntime->cancel();
+                }
+                else if (snapshot.state == earthscience::PreviewState::Ready)
+                {
+                    ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.55f, 1.0f),
+                                       u8"已就绪 · %d · 预览 256×256", snapshot.artifact.year);
+                    if (ImGui::Button(_scienceLayer->isVisible()
+                                      ? u8"隐藏图层 Hide##science"
+                                      : u8"显示图层 Show##science"))
+                    {
+                        const bool show = !_scienceLayer->isVisible();
+                        _scienceLayer->setVisible(show);
+                        if (_layers) _layers->setEnabled("alphaearth", show);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button(u8"移除结果 Remove##science"))
+                    {
+                        _scienceRuntime->clear();
+                        _scienceLayer->removeArtifact();
+                        _scienceLayer->setVisible(false);
+                        if (_layers) _layers->setEnabled("alphaearth", false);
+                    }
+                    ImGui::TextWrapped("%s", snapshot.artifact.datasetId.c_str());
+                }
+                else if (snapshot.state == earthscience::PreviewState::Failed ||
+                         snapshot.state == earthscience::PreviewState::Unavailable)
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
+                                       "%s", snapshot.message.c_str());
+                }
+                else
+                    ImGui::TextDisabled(u8"选择年份后载入；相机不会移动");
+
+                ImGui::TextDisabled("%s · v%s", source.attribution.c_str(),
+                                    source.version.c_str());
+            }
+#endif
 
             // ---- 跳转 ----
             if (ImGui::CollapsingHeader(u8"跳转 Go To", ImGuiTreeNodeFlags_DefaultOpen))

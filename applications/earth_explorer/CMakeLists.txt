@@ -11,6 +11,12 @@ SET(EXECUTABLE_FILES
     geo_primitives.cpp
 )
 
+IF(OSGSOL_BUILD_SCIENCE)
+    LIST(APPEND EXECUTABLE_FILES
+         science_preview_layer.cpp science_preview_layer.h
+         science_ai_tools.cpp science_ai_tools.h)
+ENDIF()
+
 IF(APPLE)
     # 中文 IME 直打桥(Objective-C++,给 OSG Cocoa 窗口挂 NSTextInputClient overlay,
     # 设计说明见 ime_bridge.h)。不能在子目录 ENABLE_LANGUAGE(OBJCXX)(CMake 语言
@@ -35,6 +41,12 @@ SET_PROPERTY(TARGET ${EXE_NAME} PROPERTY FOLDER "APPLICATIONS")
 TARGET_LINK_LIBRARIES(${EXE_NAME} osgVerseReaderWriter osgVerseAnimation osgVersePipeline
                       osgVerseWrappers osgVerseModeling osgVerseScript osgVerseUI osgVerseAI
                       osgVerseDependency ${EXTERNAL_LIBRARIES})
+IF(OSGSOL_BUILD_SCIENCE)
+    TARGET_LINK_LIBRARIES(${EXE_NAME} osgSolSciencePreview)
+    TARGET_COMPILE_DEFINITIONS(${EXE_NAME} PRIVATE OSGSOL_BUILD_SCIENCE=1)
+ELSE()
+    TARGET_COMPILE_DEFINITIONS(${EXE_NAME} PRIVATE OSGSOL_BUILD_SCIENCE=0)
+ENDIF()
 LINK_OSG_LIBRARY(${EXE_NAME} OpenThreads osg osgDB osgUtil osgGA osgText osgSim osgTerrain osgViewer)
 TARGET_COMPILE_OPTIONS(${EXE_NAME} PUBLIC -D_SCL_SECURE_NO_WARNINGS)
 IF(APPLE)
