@@ -663,6 +663,8 @@ ENDIF()
 INCLUDE_DIRECTORIES(libhv libhv/all libhv/mbedtls imgui stb ozz leveldb ktx ktx/basisu/zstd ktx/dfdutils
                     metis/gklib quadriflow recastnavigation/Detour rlottie rlottie/vector nanobind smplxpp spz
                     Discregrid GaussForge "${CMAKE_BINARY_DIR}/3rdparty/leveldb" ${THIRDPARTY_INCLUDE_DIRS})
+SET_SOURCE_FILES_PROPERTIES(sqlite3.c PROPERTIES
+                            COMPILE_DEFINITIONS SQLITE_ENABLE_RTREE)
 NEW_LIBRARY(${LIB_NAME} STATIC)
 TARGET_LINK_LIBRARIES(${LIB_NAME} ${THIRDPARTY_LIBRARIES})
 TARGET_COMPILE_OPTIONS(${LIB_NAME} PUBLIC -D_SCL_SECURE_NO_WARNINGS)

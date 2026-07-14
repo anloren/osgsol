@@ -37,3 +37,21 @@ TARGET_LINK_LIBRARIES(osgSolSciencePreview
 INSTALL(TARGETS osgSolSciencePreview
         ARCHIVE DESTINATION ${INSTALL_LIBDIR})
 
+IF(BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_ScienceSqliteRtree
+        ScienceSqliteRtreeTest.cpp)
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceSqliteRtree
+        PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty")
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceSqliteRtree
+        PRIVATE osgVerseDependency)
+    ADD_TEST(NAME osgSol_Test_ScienceSqliteRtree
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceSqliteRtree>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceSqliteRtree PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_SciencePreviewSmoke
+        SciencePreviewSmokeTest.cpp)
+    TARGET_LINK_LIBRARIES(osgSol_Test_SciencePreviewSmoke
+        PRIVATE osgSolSciencePreview)
+ENDIF()
