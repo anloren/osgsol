@@ -31,7 +31,7 @@ This plan starts from the authoritative record in
 
 ```text
 ACTIVE_BRANCH=codex/scienceearth-g2-query-service
-ACTIVE_HEAD=1183f85131f0bbb75b1c5915a098499ec857d459
+ACTIVE_HEAD=3fa9f6083bf216bdcad1ee3174bc38391e98e7f0
 G0_PRODUCT_BASELINE=ACCEPTED
 G0_FORMAL_GATE=NOT_GO
 G2_PROCEED=YES
@@ -42,9 +42,14 @@ G2_V5_SCIENCE_OFF=20_OF_20
 DESKTOP_VERSION=0.3.0
 DESKTOP_UPDATE_IN_THIS_PLAN=ONLY_AFTER_ALL_AUTOMATED_GATES
 NEXT_RELEASE_TAG=FORBIDDEN_UNTIL_MANUAL_ACCEPTANCE
+G2_TASKS_1_TO_7=COMPLETE
+G2_TASK_8_FULL_REGRESSION=NOT_YET_RUN
+G2_TASK_9_MANUAL_CANDIDATE=NOT_YET_BUILT
+DESKTOP_APP=UNCHANGED_ACCEPTED_V0_3_0_BASELINE
 ```
 
-The source tree is clean. A fresh v5 private dependency prefix exists at
+The committed implementation through Task 7 is clean at `3fa9f60`. A fresh v5 private dependency
+prefix exists at
 `build/science-deps-g2-v5/prefix` and passes its archive, capability, static-prefix, and manifest
 verification. The fixed Desktop app is the accepted product baseline, but its current Finder
 extended attributes make a fresh strict signature check fail, and it still has a direct Homebrew
@@ -56,14 +61,14 @@ claiming clean-machine distribution.
 
 ### Required in this G2-1 slice before the user receives a candidate
 
-- [ ] Generic contracts compile in `osgSolScienceCore` with no GDAL, OSG, UI, or AI link edge.
-- [ ] Registry/provider tests prove deterministic catalog and provider ownership.
-- [ ] Service tests prove validation, cancellation, job-id monotonicity, stale-result rejection,
+- [x] Generic contracts compile in `osgSolScienceCore` with no GDAL, OSG, UI, or AI link edge.
+- [x] Registry/provider tests prove deterministic catalog and provider ownership.
+- [x] Service tests prove validation, cancellation, job-id monotonicity, stale-result rejection,
       last-good retention, explicit clear, and shutdown cancellation.
-- [ ] AlphaEarth adapter preserves descriptor, request, progress, failure, and artifact data.
-- [ ] Preview renderer, UI, and all four Agent tools consume `ScienceQueryService`, not
+- [x] AlphaEarth adapter preserves descriptor, request, progress, failure, and artifact data.
+- [x] Preview renderer, UI, and all four Agent tools consume `ScienceQueryService`, not
       `SciencePreviewRuntime`.
-- [ ] Existing georeference, orientation, view-target, display-resolution, opacity, terrain-depth,
+- [x] Existing georeference, orientation, view-target, display-resolution, opacity, terrain-depth,
       and back-face regression tests stay green.
 - [ ] Science-off remains 20/20 and selects no science targets.
 - [ ] Science-enabled offline suite, local-index smoke, app build, package audit, offscreen render,
@@ -540,7 +545,7 @@ git commit -m "feat(scienceearth): adapt AlphaEarth to query service"
 - Modify: `applications/earth_explorer/science_preview_layer.cpp`
 - Modify: `science/SciencePreviewRegressionTest.cpp`
 
-- [ ] **Step 1: Add failing service-artifact renderer cases**
+- [x] **Step 1: Add failing service-artifact renderer cases**
 
 Change the regression fixture to create a generic `ScienceArtifact` with the same 2x2 RGBA and
 ground grid. Add a controlled service/provider case proving:
@@ -551,7 +556,7 @@ ground grid. Add a controlled service/provider case proving:
 - `removeArtifact()` clears scene children without touching the service job;
 - visibility toggling does not mutate the service or camera.
 
-- [ ] **Step 2: Replace the direct runtime dependency**
+- [x] **Step 2: Replace the direct runtime dependency**
 
 Change the layer constructor/member to `ScienceQueryService*`. Preserve
 `createSciencePreviewArtifactNode()` and the complete shader/mesh implementation. Update
@@ -561,7 +566,7 @@ of job state. Use artifact generation/id for duplicate suppression.
 Do not change `PREVIEW_ALTITUDE_METERS`, shader code, RGBA origin, exact grid-to-ECEF conversion,
 depth mode, blend mode, culling, or yellow border.
 
-- [ ] **Step 3: Run the renderer oracle**
+- [x] **Step 3: Run the renderer oracle**
 
 ```bash
 cmake --build build/science_g2 --target osgSol_Test_SciencePreviewRegression -j4
@@ -572,7 +577,7 @@ git diff 1183f85 -- applications/earth_explorer/science_preview_layer.cpp
 
 Expected: regression passes and the visual implementation differs only at input type/state sync.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add applications/earth_explorer/science_preview_layer.h \
@@ -580,6 +585,18 @@ git add applications/earth_explorer/science_preview_layer.h \
   science/SciencePreviewRegressionTest.cpp
 git commit -m "refactor(scienceearth): render query artifacts"
 ```
+
+### Task 5 Evidence
+
+- The renderer RED failed on the intended missing `ScienceArtifact` overload and
+  `ScienceQueryService*` constructor.
+- `osgSol_Test_SciencePreviewRegression` passed after migration. It now proves last-good retention
+  during replacement fetch/failure, later replacement, visibility purity, and explicit removal.
+- Shader strings, exact ECEF ground grid, 650 m preview altitude, blend/depth/cull behavior, and
+  yellow coverage border were preserved.
+- Task 5 was committed together with Tasks 6-7 as `3fa9f60` because changing the layer constructor
+  alone would intentionally leave `earth_main.cpp` uncompilable. The combined commit is the first
+  buildable consumer boundary.
 
 ## Task 6: Migrate app construction and build the visible source catalog
 
@@ -591,7 +608,7 @@ git commit -m "refactor(scienceearth): render query artifacts"
 - Create: `tests/science_query_consumer_contract_tests.py`
 - Modify: `tests/CMakeLists.txt`
 
-- [ ] **Step 1: Write failing source-consumer contract tests**
+- [x] **Step 1: Write failing source-consumer contract tests**
 
 The Python source contract must assert:
 
@@ -613,7 +630,7 @@ python3 -m unittest tests.science_query_consumer_contract_tests -v
 
 Expected: fails while consumers still reference the runtime.
 
-- [ ] **Step 2: Construct the registry/service once in `earth_main.cpp`**
+- [x] **Step 2: Construct the registry/service once in `earth_main.cpp`**
 
 Create the index path exactly as today, then:
 
@@ -629,7 +646,7 @@ auto scienceService = std::make_unique<earthscience::ScienceQueryService>(
 Pass the service to `SciencePreviewLayer`, UI, and Agent registration. Provider registration
 failure must leave a visible unavailable catalog state rather than silently removing the panel.
 
-- [ ] **Step 3: Replace the panel's direct runtime logic**
+- [x] **Step 3: Replace the panel's direct runtime logic**
 
 Store `_scienceService`. Read the selected descriptor from `listSources()` and the job from
 `snapshot()`. Build one bounded AlphaEarth `GeoTemporalQuery` helper from the viewed target, eye
@@ -655,7 +672,7 @@ scienceLayer->setVisible(false);
 
 Quit remains the existing viewer quit request; do not alter its control path.
 
-- [ ] **Step 4: Run contract, service, renderer, and app compile gates**
+- [x] **Step 4: Run contract, service, renderer, and app compile gates**
 
 ```bash
 python3 -m unittest tests.science_query_consumer_contract_tests -v
@@ -668,7 +685,7 @@ ctest --test-dir build/science_g2 --output-on-failure \
 
 Expected: contracts and focused regressions pass; EarthExplorer links the preview/core targets.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add applications/earth_explorer/earth_main.cpp \
@@ -677,6 +694,19 @@ git add applications/earth_explorer/earth_main.cpp \
   tests/science_query_consumer_contract_tests.py tests/CMakeLists.txt
 git commit -m "feat(scienceearth): expose unified source catalog"
 ```
+
+### Task 6 Evidence
+
+- The consumer contract first failed in three intended places: UI/Agent runtime references,
+  direct runtime construction in `earth_main.cpp`, and the missing generic catalog fields.
+- All five Python consumer contracts now pass.
+- `earth_main.cpp` owns one registry, one `AlphaEarthProvider`, and one `ScienceQueryService`, then
+  injects the service into renderer, UI, and Agent tools.
+- UI exposes health/reason, category/provider version, time range, resolution/components,
+  visualization channel meaning and attribution. Current failure/progress is displayed separately
+  from the retained last-successful artifact.
+- `osgVerse_EarthExplorer` compiled and linked successfully; Quit and all non-science control paths
+  were not modified.
 
 ## Task 7: Migrate the four Agent tools and preserve camera authority
 
@@ -688,7 +718,7 @@ git commit -m "feat(scienceearth): expose unified source catalog"
 - Modify: `applications/earth_explorer/CMakeLists.txt`
 - Modify: `tests/science_query_consumer_contract_tests.py`
 
-- [ ] **Step 1: Write failing tool schema/result tests**
+- [x] **Step 1: Write failing tool schema/result tests**
 
 Use a fake service/provider and a manipulator with a stable matrix. Verify:
 
@@ -704,7 +734,7 @@ Use a fake service/provider and a manipulator with a stable matrix. Verify:
 - show toggles only layer visibility and reports `camera_changed=false`;
 - the camera matrix is byte-stable across every tool execution.
 
-- [ ] **Step 2: Change registration to `ScienceQueryService*`**
+- [x] **Step 2: Change registration to `ScienceQueryService*`**
 
 Build query JSON through the same bounded query helper semantics used by UI. `get_research_job`
 must reject a non-current job id. `show_science_artifact` may show the retained last-good artifact
@@ -714,7 +744,7 @@ and current job state honestly.
 Do not add a fly-to or camera argument to these tools. Research/navigation composition remains an
 Agent-level sequence using existing separate tools.
 
-- [ ] **Step 3: Run focused tool and consumer contracts**
+- [x] **Step 3: Run focused tool and consumer contracts**
 
 ```bash
 cmake --build build/science_g2 --target osgSol_Test_ScienceAiTools -j4
@@ -725,7 +755,7 @@ python3 -m unittest tests.science_query_consumer_contract_tests -v
 
 Expected: schemas/results pass and the camera matrix remains unchanged.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add applications/earth_explorer/science_ai_tools.h \
@@ -735,6 +765,19 @@ git add applications/earth_explorer/science_ai_tools.h \
   tests/science_query_consumer_contract_tests.py
 git commit -m "feat(scienceearth): route Agent research through service"
 ```
+
+### Task 7 Evidence
+
+- The Agent source contract first failed because registration still named
+  `SciencePreviewRuntime`; it passed after the service migration.
+- `osgSol_Test_ScienceAiTools` uses an in-memory provider and verifies the exact four stable tool
+  names, catalog health/attribution, optional source/visualization selection, viewed-target
+  defaults, explicit coordinates, generic artifact provenance, retained artifact after a failed
+  replacement, and layer-only show behavior.
+- The test compares the complete 4x4 camera matrix byte-for-byte after every tool execution.
+- Focused CTest gate passed `5/5`: query service, AlphaEarth provider, preview regression, consumer
+  contract, and Agent tools.
+- Tasks 5-7 share buildable commit `3fa9f6083bf216bdcad1ee3174bc38391e98e7f0`.
 
 ## Task 8: Run full automated regressions and local-index smoke
 
