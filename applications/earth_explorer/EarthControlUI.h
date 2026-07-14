@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <memory>
 #include <osg/Vec3d>
 #include <osgViewer/Viewer>
 #include <ui/ImGui.h>
@@ -27,7 +28,8 @@
 #include "earth_config.h"
 #include <readerwriter/TileCallback.h>
 #if OSGSOL_BUILD_SCIENCE
-#include <SciencePreviewRuntime.h>
+#include <ScienceQueryService.h>
+#include "science_query_builder.h"
 #include "science_preview_layer.h"
 #endif
 
@@ -46,7 +48,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
     earthai::AIChatCore* _aiCore = nullptr;   // 由 main 注入；draw() 内部对空指针安全
     earthai::MediaManager* _aiMedia = nullptr;   // 由 main 注入；为空则📷按钮禁用(见 draw())
 #if OSGSOL_BUILD_SCIENCE
-    earthscience::SciencePreviewRuntime* _scienceRuntime = nullptr;
+    earthscience::ScienceQueryService* _scienceService = nullptr;
     SciencePreviewLayer* _scienceLayer = nullptr;
     int _scienceYear = 2025;
 #endif
@@ -331,127 +333,184 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
 #if OSGSOL_BUILD_SCIENCE
             // ScienceEarth is a dedicated preview layer. It never replaces the globe
             // TMS/terrain stack and loading it never changes the current camera.
-            if (_scienceRuntime && _scienceLayer &&
+            if (_scienceService && _scienceLayer &&
                 ImGui::CollapsingHeader(u8"ScienceEarth 科学研究",
                                         ImGuiTreeNodeFlags_DefaultOpen))
             {
-                const earthscience::AlphaEarthSourceDescriptor& source =
-                    _scienceRuntime->source();
-                const earthscience::AlphaEarthPreviewSnapshot snapshot =
-                    _scienceRuntime->snapshot();
-                const osg::Vec3d targetLla =
-                    _mani->computeViewPointLatLonHeight();
-                const osg::Vec3d eyeLla = _mani->computeEyeLatLonHeight();
-                const double latitude = osg::RadiansToDegrees(targetLla[0]);
-                const double longitude = osg::RadiansToDegrees(targetLla[1]);
-                const double requestedSpanMeters = std::clamp(
-                    eyeLla[2] * 0.85, 2560.0, 81920.0);
-                const auto requestPreview = [&]()
-                {
-                    _scienceLayer->setVisible(true);
-                    if (_layers) _layers->setEnabled("alphaearth", true);
-                    _scienceRuntime->queryPoint(
-                        latitude, longitude, _scienceYear,
-                        requestedSpanMeters);
-                };
-
-                ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f),
-                                   "AlphaEarth Foundations · Experimental");
-                ImGui::TextDisabled(u8"64 维 / 10 m 原始分辨率 / 年度嵌入 · 独立图层");
-                ImGui::Text(u8"屏幕中心: %.4f, %.4f", latitude, longitude);
-                ImGui::TextUnformatted(u8"年份 Year");
-                ImGui::SetNextItemWidth(-1.0f);
-                ImGui::SliderInt("##science_year", &_scienceYear,
-                                 source.firstYear, source.lastYear, "%d");
-                const bool yearEditCommitted =
-                    ImGui::IsItemDeactivatedAfterEdit();
-
-                ImGui::TextUnformatted(u8"颜色：伪彩嵌入合成（不是自然影像）");
-                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
-                                   "R = %s", source.redBand.c_str());
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.35f, 1.0f, 0.45f, 1.0f),
-                                   "G = %s", source.greenBand.c_str());
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f),
-                                   "B = %s", source.blueBand.c_str());
-                ImGui::TextDisabled(u8"亮度表示各嵌入维度在 %.1f…+%.1f 范围内的数值；"
-                                    u8"不代表温度、植被或海拔",
-                                    source.displayMinimum, source.displayMaximum);
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.18f, 1.0f),
-                                   u8"黄色边框 = 本次数据的真实地理覆盖范围");
-
-                const bool busy = snapshot.state ==
-                                      earthscience::AlphaEarthPreviewState::Queued ||
-                                  snapshot.state ==
-                                      earthscience::AlphaEarthPreviewState::Fetching;
-                if (yearEditCommitted && _scienceRuntime->available() &&
-                    (busy || snapshot.state ==
-                        earthscience::AlphaEarthPreviewState::Ready))
-                    requestPreview();
-                if (!_scienceRuntime->available()) ImGui::BeginDisabled();
-                if (ImGui::Button(u8"载入当前视野 Load##science", ImVec2(-1.0f, 0.0f)))
-                    requestPreview();
-                if (!_scienceRuntime->available()) ImGui::EndDisabled();
-
-                if (busy)
-                {
-                    ImGui::ProgressBar(snapshot.progress, ImVec2(-1.0f, 0.0f));
-                    ImGui::TextWrapped("%s", snapshot.message.c_str());
-                    if (ImGui::Button(u8"取消载入 Cancel##science"))
-                        _scienceRuntime->cancel();
-                }
-                else if (snapshot.state ==
-                         earthscience::AlphaEarthPreviewState::Ready)
-                {
-                    ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.55f, 1.0f),
-                                       u8"已显示 %d · 屏显纹理 256×256", snapshot.artifact.year);
-                    const double midLatitude = 0.5 *
-                        (snapshot.artifact.south + snapshot.artifact.north);
-                    const double widthKm = std::abs(
-                        snapshot.artifact.east - snapshot.artifact.west) *
-                        111.32 * std::cos(osg::DegreesToRadians(midLatitude));
-                    const double heightKm = std::abs(
-                        snapshot.artifact.north - snapshot.artifact.south) * 110.57;
-                    ImGui::Text(u8"现实覆盖: 约 %.1f × %.1f km · 显示 %.0f m/像素",
-                                widthKm, heightKm,
-                                snapshot.artifact.displayResolutionMeters);
-                    ImGui::TextWrapped(
-                        u8"经纬范围: %.4f…%.4f E / %.4f…%.4f N",
-                        snapshot.artifact.west, snapshot.artifact.east,
-                        snapshot.artifact.south, snapshot.artifact.north);
-                    if (ImGui::Button(_scienceLayer->isVisible()
-                                      ? u8"隐藏图层 Hide##science"
-                                      : u8"显示图层 Show##science"))
-                    {
-                        const bool show = !_scienceLayer->isVisible();
-                        _scienceLayer->setVisible(show);
-                        if (_layers) _layers->setEnabled("alphaearth", show);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button(u8"移除结果 Remove##science"))
-                    {
-                        _scienceRuntime->clear();
-                        _scienceLayer->removeArtifact();
-                        _scienceLayer->setVisible(false);
-                        if (_layers) _layers->setEnabled("alphaearth", false);
-                    }
-                    ImGui::TextWrapped(u8"数据集: %s",
-                                       snapshot.artifact.datasetId.c_str());
-                }
-                else if (snapshot.state ==
-                             earthscience::AlphaEarthPreviewState::Failed ||
-                         snapshot.state ==
-                             earthscience::AlphaEarthPreviewState::Unavailable)
+                const std::vector<earthscience::ScienceSourceDescriptor> sources =
+                    _scienceService->listSources();
+                if (sources.empty())
                 {
                     ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
-                                       "%s", snapshot.message.c_str());
+                                       u8"没有注册科学数据源");
                 }
                 else
-                    ImGui::TextDisabled(u8"选择年份后载入；相机不会移动");
+                {
+                    const earthscience::ScienceSourceDescriptor& source =
+                        sources.front();
+                    earthscience::ScienceJobSnapshot snapshot =
+                        _scienceService->snapshot();
+                    const earthscience::ScienceVisualizationDescriptor* visualization =
+                        source.visualizations.empty()
+                            ? nullptr : &source.visualizations.front();
+                    const osg::Vec3d targetLla =
+                        _mani->computeViewPointLatLonHeight();
+                    const osg::Vec3d eyeLla = _mani->computeEyeLatLonHeight();
+                    const double latitude = osg::RadiansToDegrees(targetLla[0]);
+                    const double longitude = osg::RadiansToDegrees(targetLla[1]);
+                    const double requestedSpanMeters = std::clamp(
+                        eyeLla[2] * 0.85, 2560.0, 81920.0);
+                    _scienceYear = std::clamp(
+                        _scienceYear, source.firstYear, source.lastYear);
+                    const auto requestPreview = [&]()
+                    {
+                        if (!visualization) return;
+                        _scienceLayer->setVisible(true);
+                        if (_layers) _layers->setEnabled("alphaearth", true);
+                        _scienceService->submit(makeSciencePointQuery(
+                            source, *visualization, latitude, longitude,
+                            _scienceYear, requestedSpanMeters));
+                    };
 
-                ImGui::TextDisabled("%s · v%s", source.attribution.c_str(),
-                                    source.version.c_str());
+                    ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f),
+                                       "%s%s", source.name.c_str(),
+                                       source.experimental ? " · Experimental" : "");
+                    const bool sourceUnavailable =
+                        source.health == earthscience::ScienceSourceHealth::Unavailable;
+                    ImGui::TextColored(
+                        sourceUnavailable
+                            ? ImVec4(1.0f, 0.42f, 0.35f, 1.0f)
+                            : ImVec4(0.35f, 0.9f, 0.55f, 1.0f),
+                        u8"状态: %s", earthscience::scienceSourceHealthName(source.health));
+                    if (!source.healthMessage.empty())
+                        ImGui::TextWrapped("%s", source.healthMessage.c_str());
+                    ImGui::TextDisabled(
+                        u8"%s · provider v%s", source.category.c_str(),
+                        source.providerVersion.c_str());
+                    ImGui::TextDisabled(
+                        u8"%d–%d · %.0f m 原始分辨率 · %d 个分量 · 独立图层",
+                        source.firstYear, source.lastYear,
+                        source.nativeResolutionMeters, source.componentCount);
+                    ImGui::Text(u8"屏幕中心: %.4f, %.4f", latitude, longitude);
+
+                    if (visualization)
+                    {
+                        ImGui::TextUnformatted(u8"颜色：伪彩嵌入合成（不是自然影像）");
+                        if (visualization->channelVariables.size() >= 3)
+                        {
+                            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
+                                "R = %s", visualization->channelVariables[0].c_str());
+                            ImGui::SameLine();
+                            ImGui::TextColored(ImVec4(0.35f, 1.0f, 0.45f, 1.0f),
+                                "G = %s", visualization->channelVariables[1].c_str());
+                            ImGui::SameLine();
+                            ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f),
+                                "B = %s", visualization->channelVariables[2].c_str());
+                        }
+                        ImGui::TextDisabled(
+                            u8"%s · 显示范围 %.1f…%.1f",
+                            visualization->legend.c_str(),
+                            visualization->displayMinimum,
+                            visualization->displayMaximum);
+                    }
+                    else
+                        ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
+                                           u8"数据源没有可用的可视化定义");
+                    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.18f, 1.0f),
+                                       u8"黄色边框 = 本次数据的真实地理覆盖范围");
+
+                    ImGui::TextUnformatted(u8"年份 Year");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderInt("##science_year", &_scienceYear,
+                                     source.firstYear, source.lastYear, "%d");
+                    const bool yearEditCommitted =
+                        ImGui::IsItemDeactivatedAfterEdit();
+                    const bool busy =
+                        snapshot.state == earthscience::ScienceJobState::Queued ||
+                        snapshot.state == earthscience::ScienceJobState::Fetching;
+                    if (yearEditCommitted && !sourceUnavailable && visualization &&
+                        (busy || snapshot.lastSuccessfulArtifact))
+                        requestPreview();
+
+                    if (sourceUnavailable || !visualization) ImGui::BeginDisabled();
+                    if (ImGui::Button(u8"载入当前视野 Load##science",
+                                      ImVec2(-1.0f, 0.0f)))
+                        requestPreview();
+                    if (sourceUnavailable || !visualization) ImGui::EndDisabled();
+
+                    if (busy)
+                    {
+                        ImGui::ProgressBar(snapshot.progress, ImVec2(-1.0f, 0.0f));
+                        if (ImGui::Button(u8"取消载入 Cancel##science"))
+                            _scienceService->cancel(snapshot.jobId);
+                    }
+                    if (snapshot.state != earthscience::ScienceJobState::Idle)
+                    {
+                        const bool errorState =
+                            snapshot.state == earthscience::ScienceJobState::Failed ||
+                            snapshot.state == earthscience::ScienceJobState::Unavailable;
+                        ImGui::TextColored(
+                            errorState
+                                ? ImVec4(1.0f, 0.42f, 0.35f, 1.0f)
+                                : ImVec4(0.72f, 0.78f, 0.84f, 1.0f),
+                            "%s · %s",
+                            earthscience::scienceJobStateName(snapshot.state),
+                            snapshot.message.c_str());
+                    }
+
+                    const std::shared_ptr<const earthscience::ScienceArtifact>& artifact =
+                        snapshot.lastSuccessfulArtifact;
+                    if (artifact)
+                    {
+                        const earthscience::ScienceRasterPayload& raster = artifact->raster;
+                        const int artifactYear = artifact->query.time.explicitYears.empty()
+                            ? 0 : artifact->query.time.explicitYears.front();
+                        ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.55f, 1.0f),
+                            u8"保留结果 %d · 屏显纹理 %d×%d",
+                            artifactYear, raster.width, raster.height);
+                        const double midLatitude =
+                            0.5 * (raster.bounds.south + raster.bounds.north);
+                        const double widthKm = std::abs(
+                            raster.bounds.east - raster.bounds.west) * 111.32 *
+                            std::cos(osg::DegreesToRadians(midLatitude));
+                        const double heightKm = std::abs(
+                            raster.bounds.north - raster.bounds.south) * 110.57;
+                        ImGui::Text(
+                            u8"现实覆盖: 约 %.1f × %.1f km · 显示 %.0f m/像素",
+                            widthKm, heightKm, raster.displayResolutionMeters);
+                        ImGui::TextWrapped(
+                            u8"经纬范围: %.4f…%.4f E / %.4f…%.4f N",
+                            raster.bounds.west, raster.bounds.east,
+                            raster.bounds.south, raster.bounds.north);
+                        if (ImGui::Button(_scienceLayer->isVisible()
+                                          ? u8"隐藏图层 Hide##science"
+                                          : u8"显示图层 Show##science"))
+                        {
+                            const bool show = !_scienceLayer->isVisible();
+                            _scienceLayer->setVisible(show);
+                            if (_layers) _layers->setEnabled("alphaearth", show);
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button(u8"移除结果 Remove##science"))
+                        {
+                            _scienceService->cancel(snapshot.jobId);
+                            _scienceService->clearArtifact();
+                            _scienceLayer->removeArtifact();
+                            _scienceLayer->setVisible(false);
+                            if (_layers) _layers->setEnabled("alphaearth", false);
+                        }
+                        if (!artifact->sourceReferences.empty())
+                        {
+                            const auto& reference = artifact->sourceReferences.front();
+                            ImGui::TextWrapped(u8"数据集: %s",
+                                               reference.datasetId.c_str());
+                        }
+                    }
+                    else if (!busy && snapshot.state == earthscience::ScienceJobState::Idle)
+                        ImGui::TextDisabled(u8"选择年份后载入；相机不会移动");
+
+                    ImGui::TextDisabled("%s", source.attribution.c_str());
+                }
             }
 #endif
 

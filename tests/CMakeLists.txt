@@ -218,6 +218,15 @@ IF(BUILD_TESTING)
         TIMEOUT 30)
 
     IF(OSGSOL_BUILD_SCIENCE)
+        ADD_TEST(NAME osgSol_Test_ScienceQueryConsumer
+                 COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+                         "${OSGSOL_PYTHON3_EXECUTABLE}" -m unittest
+                         tests.science_query_consumer_contract_tests -v)
+        SET_TESTS_PROPERTIES(osgSol_Test_ScienceQueryConsumer PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            LABELS "offline;scienceearth"
+            TIMEOUT 30)
+
         IF(NOT EXISTS "${OSGSOL_SCIENCE_DEPS_ROOT}/lib/libgdal.a")
             MESSAGE(FATAL_ERROR
                 "OSGSOL_SCIENCE_DEPS_ROOT must name the verified private static prefix")

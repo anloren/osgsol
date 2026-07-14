@@ -14,7 +14,7 @@ SET(EXECUTABLE_FILES
 IF(OSGSOL_BUILD_SCIENCE)
     LIST(APPEND EXECUTABLE_FILES
          science_preview_layer.cpp science_preview_layer.h
-         science_ai_tools.cpp science_ai_tools.h)
+         science_ai_tools.cpp science_ai_tools.h science_query_builder.h)
 ENDIF()
 
 IF(APPLE)
@@ -52,6 +52,27 @@ TARGET_COMPILE_OPTIONS(${EXE_NAME} PUBLIC -D_SCL_SECURE_NO_WARNINGS)
 IF(APPLE)
     TARGET_LINK_LIBRARIES(${EXE_NAME} "-framework Cocoa")   # ime_bridge.mm 的 AppKit 依赖
 ENDIF(APPLE)
+
+IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_ScienceAiTools
+        science_ai_tools_test.cpp
+        science_ai_tools.cpp
+        science_preview_layer.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceAiTools PRIVATE cxx_std_17)
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceAiTools PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceAiTools
+        osgSolSciencePreview osgVerseReaderWriter osgVersePipeline
+        osgVerseModeling osgVerseDependency)
+    LINK_OSG_LIBRARY(osgSol_Test_ScienceAiTools
+        OpenThreads osg osgDB osgGA osgUtil osgViewer)
+    ADD_TEST(NAME osgSol_Test_ScienceAiTools
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceAiTools>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceAiTools PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 30)
+ENDIF()
 
 USE_MSVC_DEBUGGER(${EXE_NAME} "${THIRDPARTY_ROOT}/bin;${OSG_BUILD_INCLUDE_DIR}/../bin")
 IF(MSVC AND VERSE_INSTALL_PDB_FILES)

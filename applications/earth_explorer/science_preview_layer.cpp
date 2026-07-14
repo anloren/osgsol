@@ -11,7 +11,7 @@
 #include <osg/Texture2D>
 #include <modeling/Math.h>
 #include <pipeline/Pipeline.h>
-#include <SciencePreviewRuntime.h>
+#include <ScienceQueryService.h>
 
 namespace
 {
@@ -81,22 +81,23 @@ namespace
     }
 
     osg::Node* createArtifactNodeImpl(
-        const earthscience::AlphaEarthPreviewArtifact& artifact)
+        const earthscience::ScienceArtifact& artifact)
     {
-        if (!artifact.rgba || !artifact.groundGrid ||
-            artifact.width <= 0 || artifact.height <= 0 ||
-            artifact.rgba->size() !=
-                static_cast<std::size_t>(artifact.width * artifact.height * 4) ||
-            artifact.groundGrid->columns < 2 ||
-            artifact.groundGrid->rows < 2 ||
-            artifact.groundGrid->points.size() != static_cast<std::size_t>(
-                artifact.groundGrid->columns * artifact.groundGrid->rows))
+        const earthscience::ScienceRasterPayload& raster = artifact.raster;
+        if (!raster.rgba || !raster.groundGrid ||
+            raster.width <= 0 || raster.height <= 0 ||
+            raster.rgba->size() != static_cast<std::size_t>(
+                raster.width * raster.height * 4) ||
+            raster.groundGrid->columns < 2 ||
+            raster.groundGrid->rows < 2 ||
+            raster.groundGrid->points.size() != static_cast<std::size_t>(
+                raster.groundGrid->columns * raster.groundGrid->rows))
             return nullptr;
 
         osg::ref_ptr<osg::Image> image = new osg::Image;
-        image->allocateImage(artifact.width, artifact.height, 1,
+        image->allocateImage(raster.width, raster.height, 1,
                              GL_RGBA, GL_UNSIGNED_BYTE);
-        std::memcpy(image->data(), artifact.rgba->data(), artifact.rgba->size());
+        std::memcpy(image->data(), raster.rgba->data(), raster.rgba->size());
         image->setInternalTextureFormat(GL_RGBA8);
         image->setOrigin(osg::Image::BOTTOM_LEFT);
 
@@ -109,8 +110,8 @@ namespace
 
         osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
         osg::ref_ptr<osg::Vec2Array> texcoords = new osg::Vec2Array;
-        const int columns = artifact.groundGrid->columns;
-        const int rows = artifact.groundGrid->rows;
+        const int columns = raster.groundGrid->columns;
+        const int rows = raster.groundGrid->rows;
         vertices->reserve(columns * rows);
         texcoords->reserve(columns * rows);
         for (int y = 0; y < rows; ++y)
@@ -120,7 +121,7 @@ namespace
             {
                 const double u = static_cast<double>(x) / (columns - 1);
                 const earthscience::ScienceGroundPoint& point =
-                    artifact.groundGrid->points[y * columns + x];
+                    raster.groundGrid->points[y * columns + x];
                 const osg::Vec3d ecef = osgVerse::Coordinate::convertLLAtoECEF(
                     osg::Vec3d(osg::DegreesToRadians(point.latitude),
                                osg::DegreesToRadians(point.longitude),
@@ -164,7 +165,7 @@ namespace
 }
 
 osg::Node* createSciencePreviewArtifactNode(
-    const earthscience::AlphaEarthPreviewArtifact& artifact)
+    const earthscience::ScienceArtifact& artifact)
 {
     return createArtifactNodeImpl(artifact);
 }
@@ -177,7 +178,7 @@ public:
     void operator()(osg::Node* node, osg::NodeVisitor* visitor) override
     {
         SciencePreviewLayer* layer = _layer.get();
-        if (layer) layer->syncFromRuntime();
+        if (layer) layer->syncFromService();
         traverse(node, visitor);
     }
 
@@ -186,9 +187,10 @@ private:
 };
 
 SciencePreviewLayer::SciencePreviewLayer(
-    earthscience::SciencePreviewRuntime* runtime)
-    : _runtime(runtime), _artifactRoot(new osg::Group), _visible(false),
-      _hasArtifact(false), _removeRequested(false), _artifactGeneration(0)
+    earthscience::ScienceQueryService* service)
+    : _service(service), _artifactRoot(new osg::Group), _visible(false),
+      _hasArtifact(false), _removeRequested(false), _artifactGeneration(0),
+      _suppressedGeneration(0)
 {
     setName("ScienceEarthPreviewLayer");
     _artifactRoot->setName("ScienceEarthPreviewArtifactRoot");
@@ -224,30 +226,34 @@ void SciencePreviewLayer::removeArtifact()
     _removeRequested.store(true, std::memory_order_release);
 }
 
-void SciencePreviewLayer::syncFromRuntime()
+void SciencePreviewLayer::syncFromService()
 {
     _artifactRoot->setNodeMask(isVisible() ? ~0u : 0u);
     if (_removeRequested.exchange(false, std::memory_order_acq_rel))
     {
+        _suppressedGeneration.store(
+            artifactGeneration(), std::memory_order_release);
         _artifactRoot->removeChildren(0, _artifactRoot->getNumChildren());
         _artifactGeneration.store(0, std::memory_order_release);
         _hasArtifact.store(false, std::memory_order_release);
     }
-    if (!_runtime) return;
+    if (!_service) return;
 
-    const earthscience::AlphaEarthPreviewSnapshot snapshot =
-        _runtime->snapshot();
-    if (snapshot.state != earthscience::AlphaEarthPreviewState::Ready ||
-        snapshot.artifact.generation == 0 ||
-        snapshot.artifact.generation == artifactGeneration())
+    const earthscience::ScienceJobSnapshot snapshot = _service->snapshot();
+    if (!snapshot.lastSuccessfulArtifact ||
+        snapshot.lastSuccessfulArtifact->generation == 0 ||
+        snapshot.lastSuccessfulArtifact->generation == artifactGeneration() ||
+        snapshot.lastSuccessfulArtifact->generation ==
+            _suppressedGeneration.load(std::memory_order_acquire))
         return;
 
     osg::ref_ptr<osg::Node> artifact =
-        createSciencePreviewArtifactNode(snapshot.artifact);
+        createSciencePreviewArtifactNode(*snapshot.lastSuccessfulArtifact);
     if (!artifact) return;
     _artifactRoot->removeChildren(0, _artifactRoot->getNumChildren());
     _artifactRoot->addChild(artifact.get());
-    _artifactGeneration.store(snapshot.artifact.generation,
+    _artifactGeneration.store(snapshot.lastSuccessfulArtifact->generation,
                               std::memory_order_release);
+    _suppressedGeneration.store(0, std::memory_order_release);
     _hasArtifact.store(true, std::memory_order_release);
 }

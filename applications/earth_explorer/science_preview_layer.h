@@ -5,12 +5,12 @@
 #include <cstdint>
 #include <osg/Group>
 
-namespace earthscience { class SciencePreviewRuntime; }
-namespace earthscience { struct AlphaEarthPreviewArtifact; }
+namespace earthscience { class ScienceQueryService; }
+namespace earthscience { struct ScienceArtifact; }
 namespace osg { class Node; }
 
 osg::Node* createSciencePreviewArtifactNode(
-    const earthscience::AlphaEarthPreviewArtifact& artifact);
+    const earthscience::ScienceArtifact& artifact);
 
 // Dedicated AlphaEarth preview overlay. It is independent from the globe TMS,
 // elevation, 3D Tiles, camera, and photo paths: a completed science artifact is
@@ -18,7 +18,7 @@ osg::Node* createSciencePreviewArtifactNode(
 class SciencePreviewLayer : public osg::Group
 {
 public:
-    explicit SciencePreviewLayer(earthscience::SciencePreviewRuntime* runtime);
+    explicit SciencePreviewLayer(earthscience::ScienceQueryService* service);
 
     void setVisible(bool visible);
     bool isVisible() const;
@@ -32,14 +32,15 @@ protected:
 private:
     class SyncCallback;
     friend class SyncCallback;
-    void syncFromRuntime();
+    void syncFromService();
 
-    earthscience::SciencePreviewRuntime* _runtime;
+    earthscience::ScienceQueryService* _service;
     osg::ref_ptr<osg::Group> _artifactRoot;
     std::atomic<bool> _visible;
     std::atomic<bool> _hasArtifact;
     std::atomic<bool> _removeRequested;
     std::atomic<std::uint64_t> _artifactGeneration;
+    std::atomic<std::uint64_t> _suppressedGeneration;
 };
 
 #endif

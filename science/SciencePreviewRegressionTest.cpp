@@ -1,5 +1,6 @@
 #include "SciencePreviewRuntime.h"
 #include "SciencePreviewSupport.h"
+#include "ScienceQueryService.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -12,6 +13,7 @@
 #include <osg/CullFace>
 #include <osg/Depth>
 #include <osg/Geode>
+#include <osgUtil/UpdateVisitor>
 #include <readerwriter/EarthManipulator.h>
 #include <applications/earth_explorer/science_preview_layer.h>
 
@@ -27,6 +29,119 @@ namespace
     bool near(double actual, double expected, double tolerance = 1e-8)
     {
         return std::abs(actual - expected) <= tolerance;
+    }
+
+    earthscience::ScienceSourceDescriptor makeLayerSource()
+    {
+        earthscience::ScienceSourceDescriptor source;
+        source.id = "alphaearth-foundations";
+        source.firstYear = 2017;
+        source.lastYear = 2025;
+        source.nativeResolutionMeters = 10.0;
+        source.health = earthscience::ScienceSourceHealth::Ready;
+        source.capabilities.pointQuery = true;
+        source.capabilities.explicitYears = true;
+        source.capabilities.rasterLayerOutput = true;
+        source.capabilities.minimumSpanMeters = 2560.0;
+        source.capabilities.maximumSpanMeters = 81920.0;
+        earthscience::ScienceVisualizationDescriptor visualization;
+        visualization.id = "false-color-a01-a16-a09";
+        visualization.channelVariables = {"A01", "A16", "A09"};
+        source.visualizations.push_back(visualization);
+        return source;
+    }
+
+    earthscience::GeoTemporalQuery makeLayerQuery(int year)
+    {
+        earthscience::GeoTemporalQuery query;
+        query.sourceId = "alphaearth-foundations";
+        query.geometry.point.latitude = 35.36;
+        query.geometry.point.longitude = 138.73;
+        query.geometry.requestedSpanMeters = 20000.0;
+        query.time.explicitYears = {year};
+        query.variables = {"A01", "A16", "A09"};
+        query.targetResolutionMeters = 10.0;
+        query.visualizationId = "false-color-a01-a16-a09";
+        return query;
+    }
+
+    std::shared_ptr<const earthscience::ScienceArtifact> makeLayerArtifact(
+        const std::string& id, std::uint64_t generation)
+    {
+        auto artifact = std::make_shared<earthscience::ScienceArtifact>();
+        artifact->artifactId = id;
+        artifact->generation = generation;
+        artifact->raster.width = 2;
+        artifact->raster.height = 2;
+        artifact->raster.rgba =
+            std::make_shared<const std::vector<unsigned char>>(16, 166);
+        auto grid = std::make_shared<earthscience::ScienceGroundGrid>();
+        grid->columns = 2;
+        grid->rows = 2;
+        grid->points = {
+            {138.70, 35.34}, {138.76, 35.34},
+            {138.70, 35.40}, {138.76, 35.40},
+        };
+        artifact->raster.groundGrid = grid;
+        return artifact;
+    }
+
+    class LayerProvider : public earthscience::IScienceProvider
+    {
+    public:
+        earthscience::ScienceSourceDescriptor descriptor() const override
+        {
+            return makeLayerSource();
+        }
+
+        std::uint64_t submit(
+            const earthscience::GeoTemporalQuery&) override
+        {
+            _snapshot = earthscience::ScienceProviderSnapshot();
+            _snapshot.generation = ++_generation;
+            _snapshot.state = earthscience::ScienceJobState::Queued;
+            return _generation;
+        }
+
+        earthscience::ScienceProviderSnapshot snapshot() const override
+        {
+            return _snapshot;
+        }
+
+        void cancel(std::uint64_t generation) override
+        {
+            if (generation != _generation) return;
+            _snapshot.state = earthscience::ScienceJobState::Cancelled;
+        }
+
+        void clear() override
+        {
+            _snapshot = earthscience::ScienceProviderSnapshot();
+        }
+
+        void publish(earthscience::ScienceJobState state, float progress,
+                     const std::string& message,
+                     std::shared_ptr<const earthscience::ScienceArtifact>
+                         artifact = nullptr)
+        {
+            _snapshot.generation = _generation;
+            _snapshot.state = state;
+            _snapshot.progress = progress;
+            _snapshot.message = message;
+            _snapshot.artifact = std::move(artifact);
+        }
+
+        std::uint64_t generation() const { return _generation; }
+
+    private:
+        std::uint64_t _generation = 0;
+        earthscience::ScienceProviderSnapshot _snapshot;
+    };
+
+    void updateLayer(SciencePreviewLayer& layer)
+    {
+        osgUtil::UpdateVisitor visitor;
+        layer.accept(visitor);
     }
 
     void testSouthUpRasterStaysSouthAtTextureBottom()
@@ -189,10 +304,11 @@ namespace
 
     void testTerrainCannotHideAReadyScienceArtifact()
     {
-        earthscience::AlphaEarthPreviewArtifact artifact;
-        artifact.width = 2;
-        artifact.height = 2;
-        artifact.rgba = std::make_shared<const std::vector<unsigned char>>(
+        earthscience::ScienceArtifact artifact;
+        artifact.raster.width = 2;
+        artifact.raster.height = 2;
+        artifact.raster.rgba =
+            std::make_shared<const std::vector<unsigned char>>(
             16, 166);
         auto grid = std::make_shared<earthscience::ScienceGroundGrid>();
         grid->columns = 2;
@@ -201,7 +317,7 @@ namespace
             {138.70, 35.34}, {138.76, 35.34},
             {138.70, 35.40}, {138.76, 35.40},
         };
-        artifact.groundGrid = grid;
+        artifact.raster.groundGrid = grid;
 
         osg::ref_ptr<osg::Node> node = createSciencePreviewArtifactNode(artifact);
         osg::Geode* geode = dynamic_cast<osg::Geode*>(node.get());
@@ -219,6 +335,79 @@ namespace
         require(cull && cull->getMode() == osg::CullFace::BACK,
                 "depth-independent artifact can leak through the globe back face");
     }
+
+    void testLayerRetainsLastGoodUntilExplicitReplacementOrRemoval()
+    {
+        auto registry =
+            std::make_unique<earthscience::ScienceSourceRegistry>();
+        auto provider = std::make_unique<LayerProvider>();
+        LayerProvider* providerPointer = provider.get();
+        std::string error;
+        require(registry->add(std::move(provider), error),
+                "layer provider registration failed");
+        earthscience::ScienceQueryService service(std::move(registry));
+        osg::ref_ptr<SciencePreviewLayer> layer =
+            new SciencePreviewLayer(&service);
+        layer->setVisible(true);
+
+        const std::uint64_t firstJob = service.submit(makeLayerQuery(2025));
+        providerPointer->publish(
+            earthscience::ScienceJobState::Ready, 1.0f, "Ready",
+            makeLayerArtifact("first", providerPointer->generation()));
+        require(service.snapshot().state ==
+                    earthscience::ScienceJobState::Ready,
+                "first layer artifact did not complete");
+        updateLayer(*layer);
+        require(layer->hasArtifact() &&
+                    layer->artifactGeneration() == firstJob,
+                "layer did not materialize the first service artifact");
+
+        const std::uint64_t secondJob = service.submit(makeLayerQuery(2018));
+        providerPointer->publish(
+            earthscience::ScienceJobState::Fetching, 0.5f, "Fetching");
+        require(service.snapshot().lastSuccessfulArtifact != nullptr,
+                "replacement fetch lost the service artifact");
+        updateLayer(*layer);
+        require(layer->artifactGeneration() == firstJob,
+                "replacement fetch removed the visible last-good artifact");
+
+        providerPointer->publish(
+            earthscience::ScienceJobState::Failed, 0.0f, "Failure");
+        require(service.snapshot().state ==
+                    earthscience::ScienceJobState::Failed,
+                "replacement failure was not published");
+        updateLayer(*layer);
+        require(layer->artifactGeneration() == firstJob,
+                "replacement failure removed the visible last-good artifact");
+
+        const std::uint64_t thirdJob = service.submit(makeLayerQuery(2019));
+        providerPointer->publish(
+            earthscience::ScienceJobState::Ready, 1.0f, "Ready",
+            makeLayerArtifact("third", providerPointer->generation()));
+        service.snapshot();
+        updateLayer(*layer);
+        require(thirdJob > secondJob &&
+                    layer->artifactGeneration() == thirdJob,
+                "new successful artifact did not replace the last-good node");
+
+        const earthscience::ScienceJobSnapshot beforeVisibility =
+            service.snapshot();
+        layer->setVisible(false);
+        updateLayer(*layer);
+        const earthscience::ScienceJobSnapshot afterVisibility =
+            service.snapshot();
+        require(beforeVisibility.jobId == afterVisibility.jobId &&
+                    beforeVisibility.state == afterVisibility.state &&
+                    beforeVisibility.lastSuccessfulArtifact ==
+                        afterVisibility.lastSuccessfulArtifact,
+                "layer visibility mutated service state");
+
+        layer->removeArtifact();
+        updateLayer(*layer);
+        require(!layer->hasArtifact() &&
+                    layer->artifactGeneration() == 0,
+                "explicit layer removal left an artifact node");
+    }
 }
 
 int main()
@@ -229,6 +418,7 @@ int main()
     testViewTargetDoesNotMoveWhenOnlyCameraHeightChanges();
     testFalseColorMeaningIsMachineReadable();
     testTerrainCannotHideAReadyScienceArtifact();
+    testLayerRetainsLastGoodUntilExplicitReplacementOrRemoval();
     std::cout << "[OK] ScienceEarth preview georeference, orientation, target and legend\n";
     return 0;
 }

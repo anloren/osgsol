@@ -54,7 +54,8 @@
 #include "feeds/firms_feed.h"
 #include "geo_primitives.h"
 #if OSGSOL_BUILD_SCIENCE
-#include <SciencePreviewRuntime.h>
+#include <AlphaEarthProvider.h>
+#include <ScienceQueryService.h>
 #include "science_preview_layer.h"
 #include "science_ai_tools.h"
 #endif
@@ -938,10 +939,19 @@ int main(int argc, char** argv)
         MISC_DIR + std::string("science/alphaearth/alphaearth.sqlite");
     if (const char* indexEnv = getenv("OSGSOL_ALPHAEARTH_INDEX"))
         if (*indexEnv) scienceIndexPath = indexEnv;
-    std::unique_ptr<earthscience::SciencePreviewRuntime> scienceRuntime(
-        new earthscience::SciencePreviewRuntime(scienceIndexPath));
+    auto scienceRegistry =
+        std::make_unique<earthscience::ScienceSourceRegistry>();
+    std::string scienceProviderError;
+    if (!scienceRegistry->add(
+            std::make_unique<earthscience::AlphaEarthProvider>(scienceIndexPath),
+            scienceProviderError))
+        OSG_WARN << "ScienceEarth provider registration failed: "
+                 << scienceProviderError << std::endl;
+    auto scienceService =
+        std::make_unique<earthscience::ScienceQueryService>(
+            std::move(scienceRegistry));
     osg::ref_ptr<SciencePreviewLayer> scienceLayer =
-        new SciencePreviewLayer(scienceRuntime.get());
+        new SciencePreviewLayer(scienceService.get());
     sceneCamera->addChild(scienceLayer.get());
 #endif
     {
@@ -1253,7 +1263,7 @@ int main(int argc, char** argv)
     if (aiMedia) aiMedia->setContentSize(w, h);   // 快照按渲染内容区裁剪(去掉整窗多余底色边条)
 
 #if OSGSOL_BUILD_SCIENCE
-    registerScienceResearchTools(aiRuntime.tools, scienceRuntime.get(),
+    registerScienceResearchTools(aiRuntime.tools, scienceService.get(),
                                  scienceLayer.get(), &layerMgr,
                                  earthManipulator.get());
 #endif
@@ -1393,7 +1403,7 @@ int main(int argc, char** argv)
     ctrlUI->_aiCore = aiCore;
     ctrlUI->_aiMedia = aiMedia;
 #if OSGSOL_BUILD_SCIENCE
-    ctrlUI->_scienceRuntime = scienceRuntime.get();
+    ctrlUI->_scienceService = scienceService.get();
     ctrlUI->_scienceLayer = scienceLayer.get();
 #endif
     imgui->initialize(ctrlUI, false);
