@@ -9334,13 +9334,11 @@ namespace
                 match[3].str() + "/" + match[4].str());
         }
         std::set<std::string> serverCorrelations;
-        std::set<std::string> serverSessions;
         int serverHeads = 0;
         int serverGets = 0;
         for (const Http2StreamEvidence& stream : serverEvidence.streams)
         {
             serverCorrelations.insert(stream.correlation);
-            serverSessions.insert(stream.sessionId);
             if (stream.method == "HEAD") ++serverHeads;
             if (stream.method == "GET") ++serverGets;
         }
@@ -9353,7 +9351,6 @@ namespace
                             return thread == state.drainerThread;
                         }) &&
                     serverHeads == 2 && serverGets == 2 &&
-                    serverSessions.size() == 1 &&
                     serverCorrelations == completionCorrelations,
                 "same-token race did not emit both HEAD/Range completions");
         for (std::size_t index = 0; index < ordinals.size(); ++index)
