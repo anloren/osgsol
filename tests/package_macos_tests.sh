@@ -153,6 +153,13 @@ while IFS= read -r -d '' binary; do
             echo "FAIL: packaged Mach-O retains install SDK path: $binary" >&2
             exit 1
         fi
+        if otool -l "$binary" |
+           awk '$1 == "cmd" && $2 == "LC_RPATH" { wanted = 1; next }
+                wanted && $1 == "path" { print $2; wanted = 0 }' |
+           grep -E '^/' >/dev/null; then
+            echo "FAIL: packaged Mach-O retains an absolute LC_RPATH: $binary" >&2
+            exit 1
+        fi
     fi
 done < <(find "$APP/Contents" -type f -print0)
 

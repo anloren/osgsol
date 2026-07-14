@@ -144,6 +144,24 @@ for file in "$BUILD_APP/Contents/lib/$PLUGVER/"*.so; do
     install_name_tool -add_rpath '@loader_path/..' "$file" 2>/dev/null || true
 done
 
+# A runtime SDK may be reached through a symlink while its binaries retain the real build path.
+# Remove every absolute LC_RPATH; the bundle-local @loader_path/@executable_path entries above are
+# the complete runtime search policy for the packaged application.
+while IFS= read -r -d '' binary; do
+    if ! file -b "$binary" | grep -q 'Mach-O'; then
+        continue
+    fi
+    while IFS= read -r rpath; do
+        case "$rpath" in
+            /*)
+                install_name_tool -delete_rpath "$rpath" "$binary"
+                ;;
+        esac
+    done < <(otool -l "$binary" |
+        awk '$1 == "cmd" && $2 == "LC_RPATH" { wanted = 1; next }
+             wanted && $1 == "path" { print $2; wanted = 0 }')
+done < <(find "$BUILD_APP/Contents" -type f -print0)
+
 # A fresh CMake build may encode absolute Homebrew OSG paths while osgVerse libraries use @rpath.
 # Loading both identities creates two OSG runtimes in one process and corrupts GL dispatch. Rewrite
 # every dependency whose basename is already bundled to the single bundle-local @rpath identity.
@@ -176,6 +194,12 @@ while IFS= read -r -d '' binary; do
         continue
     fi
     dylib_id="$(otool -D "$binary" 2>/dev/null | sed -n '2p')"
+    if otool -l "$binary" |
+       awk '$1 == "cmd" && $2 == "LC_RPATH" { wanted = 1; next }
+            wanted && $1 == "path" { print $2; wanted = 0 }' |
+       grep -E '^/' >/dev/null; then
+        fail 67 "Absolute LC_RPATH remains in packaged binary: $binary"
+    fi
     while IFS= read -r dependency; do
         if [ -n "$dylib_id" ] && [ "$dependency" = "$dylib_id" ]; then
             continue
