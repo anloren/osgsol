@@ -786,10 +786,10 @@ git commit -m "feat(scienceearth): route Agent research through service"
 - Modify only if a real defect is exposed: files from Tasks 1-7 and their focused tests
 - Append evidence: this plan under `Task 8 Evidence`
 
-- [ ] **Step 1: Verify the clean v5 prefix and source contract**
+- [x] **Step 1: Verify the clean v5 prefix and source contract**
 
 Run the existing committed v5 verification command recorded by
-`packaging/science_deps/build_private_science_deps.sh --help`/script interface, targeting only:
+`packaging/science_deps/build_science_deps.sh --help`/script interface, targeting only:
 
 ```text
 build/science-deps-g2-v5/prefix
@@ -798,7 +798,7 @@ build/science-deps-g2-v5/prefix
 Expected: archive checksums, embed capability, static prefix, patch/pin, and manifest pass. Any v6
 marker or v6 prefix use is a hard stop.
 
-- [ ] **Step 2: Run the complete science-enabled offline suite**
+- [x] **Step 2: Run the complete science-enabled offline suite**
 
 ```bash
 cmake --build build/science_g2 -j4
@@ -808,7 +808,7 @@ ctest --test-dir build/science_g2 -L offline --output-on-failure
 Expected: zero failures. Do not weaken or exclude a failing test; fix the scoped defect and rerun
 its focused test before rerunning the suite.
 
-- [ ] **Step 3: Reconfigure and run the complete science-off suite**
+- [x] **Step 3: Reconfigure and run the complete science-off suite**
 
 ```bash
 cmake -S . -B build/science_g2_off \
@@ -821,16 +821,16 @@ ctest --test-dir build/science_g2_off -L offline --output-on-failure
 Expected: the established 20/20 science-off baseline passes, generated target list is empty, and
 the Earth app has no science symbols/targets.
 
-- [ ] **Step 4: Run the local-index AlphaEarth smoke for two years**
+- [x] **Step 4: Run the local-index AlphaEarth smoke for two years**
 
-Use the packaged compact index and existing smoke executable. Query one verified point for 2018
+Use the production packaged index and existing smoke executable. Query one verified point for 2018
 and 2025 without changing the URL/provider architecture. Record dataset ids, elapsed time, output
 size, and exit status. Require both ready artifacts to be 256x256 and dataset ids to differ.
 
 Network access here is only the existing normal AlphaEarth COG data path. Do not start local proxy,
 port-forwarding, interception, fault injection, or v6 security experiments.
 
-- [ ] **Step 5: Run static scope checks**
+- [x] **Step 5: Run static scope checks**
 
 ```bash
 rg -n 'SciencePreviewRuntime' applications/earth_explorer
@@ -844,7 +844,7 @@ git status --short
 Expected: no direct runtime consumer, no science camera authority, no whitespace errors, and only
 the planned tracked changes.
 
-- [ ] **Step 6: Record Task 8 evidence and commit**
+- [x] **Step 6: Record Task 8 evidence and commit**
 
 Append exact build directories, test counts, smoke dataset ids/timings, and any known warnings under
 `Task 8 Evidence` below.
@@ -856,7 +856,31 @@ git commit -m "test(scienceearth): verify G2 query service"
 
 ### Task 8 Evidence
 
-Pending implementation.
+Verified on 2026-07-15 from committed G2 consumer state `5db1117`:
+
+- v5-only dependency verification used
+  `SCIENCE_DEPS_ROOT=build/science-deps-g2-v5 packaging/science_deps/build_science_deps.sh --verify`.
+  The GDAL 3.13.1, PROJ 9.8.1, and zstd 1.5.7 archive checksums, independent GDAL embed
+  capability, private static prefix, and manifest all passed. No v6 prefix or marker was used.
+- Science-enabled Release build `build/science_g2` completed and the complete offline suite passed
+  **33/33** in 46.08 seconds real time. The four existing local network simulations passed; no
+  proxy, port-forward, interception, or external fault-injection service was started.
+- Fresh Science-OFF Release build `build/science_g2_off` configured and built EarthExplorer from
+  zero, then passed **20/20** offline tests in 24.42 seconds. Its generated
+  `OSGSOL_BUILD_TARGETS_VALUE` is empty, target-help exposes no Science runtime/test target, and
+  the EarthExplorer executable contains no `ScienceQuery`, `AlphaEarth`, or `SciencePreview`
+  symbol.
+- The production local index `build/science-index-full/alphaearth.sqlite` has SHA-256
+  `15875963d1bf4dd3f35a1f6c3ec6329378fef0fab6549fac677552f1d348f736`, identical to the
+  accepted Desktop v0.3.0 bundle's packaged index. At NVIDIA headquarters vicinity
+  `(37.3700, -121.9600)`, the normal GDAL COG path returned:
+  - 2018: dataset `7851`, `256x256`, exit 0, 3.57 seconds real;
+  - 2025: dataset `9790`, `256x256`, exit 0, 3.23 seconds real.
+  The differing dataset ids prove year selection reached distinct indexed source records.
+- Static scope scans found no `SciencePreviewRuntime` consumer in `applications/earth_explorer`,
+  no camera setter/fly authority in the science Agent or preview layer, and no whitespace error in
+  the G2 diff. Build output contains only the established macOS OpenGL deprecation and duplicate
+  library-link warnings; there was no compile or test failure.
 
 ## Task 9: Build, audit, and install one untagged manual candidate
 

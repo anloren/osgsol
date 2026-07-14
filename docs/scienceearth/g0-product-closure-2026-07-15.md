@@ -171,16 +171,17 @@ G2-1 may now implement only the approved facade-first slice:
 The authoritative G2-1 design remains
 `docs/superpowers/specs/2026-07-14-scienceearth-g2-query-service-design.md`.
 
-## 8. G2-1 progress snapshot after the consumer migration
+## 8. G2-1 progress snapshot after full automated verification
 
-**Snapshot commit:** `3fa9f6083bf216bdcad1ee3174bc38391e98e7f0`
+**Verified consumer state:** `5db1117`
 
 ```text
 G2_TASKS_1_TO_7=COMPLETE
 G2_FOCUSED_TESTS=5_OF_5_PASS
 G2_EARTHEXPLORER_COMPILE=PASS
-G2_FULL_OFFLINE_REGRESSION=NOT_YET_RUN
-G2_LOCAL_INDEX_SMOKE=NOT_YET_RUN
+G2_FULL_OFFLINE_REGRESSION=SCIENCE_ON_33_OF_33_AND_OFF_20_OF_20_PASS
+G2_LOCAL_INDEX_SMOKE=2018_DATASET_7851_AND_2025_DATASET_9790_PASS
+G2_OFF_BUILD_ISOLATION=PASS
 G2_MANUAL_CANDIDATE=NOT_YET_BUILT
 DESKTOP_APP=UNCHANGED_V0_3_0_BASELINE
 TAG_CREATED_OR_MOVED=NO
@@ -201,23 +202,22 @@ The last commit intentionally contains Tasks 5-7 together. Changing the preview-
 alone would leave `earth_main.cpp` uncompilable until UI and Agent injection changed, so the first
 safe commit boundary was the complete consumer cutover.
 
+Task 8 is now complete. Its exact commands, timings, index fingerprint, dataset ids, and known
+warnings are recorded in
+`docs/superpowers/plans/2026-07-15-scienceearth-g2-query-service-plan.md`.
+
 ### Mandatory next work before the user can manually verify a candidate
 
-1. Run Task 8 against only `build/science-deps-g2-v5/prefix`: verify the private-prefix contract,
-   run the complete science-enabled offline suite, re-run the complete science-off suite, execute
-   the checked-in local AlphaEarth index smoke, and audit forbidden v6/runtime symbols.
-2. Fix any Task 8 regression without weakening tests or changing non-science camera, terrain,
-   basemap, 3D Tiles, photo, satellite, or Quit paths.
-3. Complete Task 9 packaging work: parameterize the currently generic macOS packager for the fixed
+1. Complete Task 9 packaging work: parameterize the currently generic macOS packager for the fixed
    `osgSol Earth.app` identity, remove extended attributes before signing, pass dependency/path,
    offscreen render, launch, and strict/deep codesign audits, then create one untagged candidate.
-4. Preserve the currently installed Desktop v0.3.0 app until the candidate passes every automated
+2. Preserve the currently installed Desktop v0.3.0 app until the candidate passes every automated
    gate; update that same fixed app in place only after creating a rollback copy. Do not create a
    second Desktop app.
-5. Run the Task 10 human matrix: catalog meaning, load, year change, replacement-failure retention,
+3. Run the Task 10 human matrix: catalog meaning, load, year change, replacement-failure retention,
    cancel, hide/show/remove, panel scrolling, low-altitude placement, camera invariance, Agent
    research, photo regression, 3D Tiles regression, and Quit.
-6. Only after explicit human acceptance decide the next version/tag and remote synchronization.
+4. Only after explicit human acceptance decide the next version/tag and remote synchronization.
    Never move the protected `v0.3.0`, `ScienceEarth-v0.3.0`, `v0.2.0`, or `ScienceEarth` tags.
 
 ### Required later, but not a blocker for this local manual candidate
