@@ -245,17 +245,23 @@ template<typename PerformFunction>
 CURLMcode forwardPerform(PerformFunction realPerform, CURLM* multiHandle,
                          int* runningHandles)
 {
+    {
+        const std::lock_guard<std::mutex> lock(faultMutex());
+        const auto headRetry = headRetryPerformHandles().find(multiHandle);
+        if (headRetry != headRetryPerformHandles().end() &&
+            consumeFaultLocked(
+                "OSGSOL_TEST_FAIL_HEAD_RETRY_CURL_PERFORM"))
+        {
+            headRetryPerformHandles().erase(headRetry);
+            return CURLM_INTERNAL_ERROR;
+        }
+    }
     const CURLMcode result = realPerform(multiHandle, runningHandles);
     if (result != CURLM_OK) return result;
     const std::lock_guard<std::mutex> lock(faultMutex());
     const auto headRetry = headRetryPerformHandles().find(multiHandle);
     if (headRetry != headRetryPerformHandles().end())
-    {
         headRetryPerformHandles().erase(headRetry);
-        if (consumeFaultLocked(
-                "OSGSOL_TEST_FAIL_HEAD_RETRY_CURL_PERFORM"))
-            return CURLM_INTERNAL_ERROR;
-    }
     return consumeFaultLocked("OSGSOL_TEST_FAIL_NEXT_CURL_PERFORM")
         ? CURLM_INTERNAL_ERROR : result;
 }
@@ -479,7 +485,12 @@ extern "C" int osgSolTestRunCurlFaultSelfTests()
     const auto addError = [](CURLM*, CURL*) { return CURLM_BAD_HANDLE; };
     const auto removeOk = [](CURLM*, CURL*) { return CURLM_OK; };
     const auto removeError = [](CURLM*, CURL*) { return CURLM_BAD_EASY_HANDLE; };
-    const auto performOk = [](CURLM*, int*) { return CURLM_OK; };
+    int genericPerformCalls = 0;
+    const auto performOk = [&](CURLM*, int*)
+    {
+        ++genericPerformCalls;
+        return CURLM_OK;
+    };
     const auto performError = [](CURLM*, int*) { return CURLM_BAD_HANDLE; };
     const auto cleanup = [](CURL*) {};
     bool physicallyAttached = false;
@@ -553,7 +564,7 @@ extern "C" int osgSolTestRunCurlFaultSelfTests()
     setenv(performFault, "1", 1);
     if (forwardPerform(performOk, multi, &runningHandles) !=
             CURLM_INTERNAL_ERROR ||
-        std::getenv(performFault) != nullptr)
+        std::getenv(performFault) != nullptr || genericPerformCalls != 1)
         return 9;
     setenv(performFault, "1", 1);
     if (forwardPerform(performError, multi, &runningHandles) !=
@@ -748,10 +759,17 @@ extern "C" int osgSolTestRunCurlFaultSelfTests()
         completedTransientHandles().insert(easy);
     }
     if (forwardAdd(addOk, multi, easy) != CURLM_OK) return 20;
+    int headRetryPerformCalls = 0;
+    const auto headRetryPerform = [&](CURLM*, int*)
+    {
+        ++headRetryPerformCalls;
+        return CURLM_OK;
+    };
     setenv(headRetryPerformFault, "1", 1);
-    if (forwardPerform(performOk, multi, &runningHandles) !=
+    if (forwardPerform(headRetryPerform, multi, &runningHandles) !=
             CURLM_INTERNAL_ERROR ||
-        std::getenv(headRetryPerformFault) != nullptr)
+        std::getenv(headRetryPerformFault) != nullptr ||
+        headRetryPerformCalls != 0)
         return 21;
     if (forwardRemove(removeOk, addOk, multi, easy) != CURLM_OK) return 22;
     forwardCleanup(cleanup, easy);
