@@ -173,7 +173,7 @@ The authoritative G2-1 design remains
 
 ## 8. G2-1 progress snapshot after full automated verification
 
-**Current packaged manual-candidate state:** `9234c4b`
+**Current packaged manual-candidate state:** `338bd9d`
 
 ```text
 G2_TASKS_1_TO_7=COMPLETE
@@ -189,6 +189,7 @@ G2_DESKTOP_SIGNATURE=DEEP_PASS_STRICT_BLOCKED_BY_FILEPROVIDER_FINDERINFO
 G2_DESKTOP_FIRST_FOREGROUND_APPROVAL=COMPLETE
 G2_DESKTOP_POST_APPROVAL_OFFSCREEN=PASS
 G2_PANEL_LAYOUT_REGRESSION=FIXED_PENDING_HUMAN_RETEST
+G2_PANEL_FIELD_CLIPPING=FIXED_PENDING_HUMAN_RETEST
 G0_IMMUTABLE_V0_2_AUDIT=STOP_UNCHANGED
 DESKTOP_APP=UPDATED_IN_PLACE_WITH_ROLLBACK
 TAG_CREATED_OR_MOVED=NO
@@ -207,6 +208,9 @@ Completed and committed on the G2 branch:
 - `9234c4b`: responsive Earth control-panel constraints, standard bidirectional wheel scrolling,
   and a pure viewport-layout regression test after the first manual candidate exposed an
   unbounded half-screen panel.
+- `338bd9d`: responsive label-above/full-width field layout for sliders and numeric inputs,
+  wrapped checkbox and description text, and no forced same-line ScienceEarth text at constrained
+  panel widths.
 
 The last commit intentionally contains Tasks 5-7 together. Changing the preview-layer constructor
 alone would leave `earth_main.cpp` uncompilable until UI and Agent injection changed, so the first
@@ -220,7 +224,8 @@ warnings are recorded in
 
 1. Re-test the repaired panel in `/Users/USER/Desktop/osgSol Earth.app`: it must open at about
    one third of the compact Retina viewport, keep the globe and bottom AI bar usable, allow manual
-   resize/collapse, and scroll both down and back up.
+   resize/collapse, scroll both down and back up, and show every field label and long explanation
+   without right-edge clipping.
 2. Run the remaining Task 10 human matrix: catalog meaning, load, year change,
    replacement-failure retention, cancel, hide/show/remove, panel scrolling, low-altitude placement,
    camera invariance, Agent research, photo regression, 3D Tiles regression, and Quit.
@@ -230,7 +235,9 @@ warnings are recorded in
 The staging package, fixed identity, private-path/RPATH audits, package-contract offscreen run, and
 staging strict signatures passed. The accepted pre-G2 rollback remains at
 `build/desktop-backups/pre-g2-243f00b/osgSol Earth.app`; the immediately previous G2 candidate is at
-`build/desktop-backups/pre-panel-layout-243f00b/osgSol Earth.app`.
+`build/desktop-backups/pre-panel-layout-243f00b/osgSol Earth.app`. The panel-size candidate replaced
+by the responsive-field repair is at
+`build/desktop-backups/pre-responsive-fields-9234c4b/osgSol Earth.app`.
 
 The user completed the first foreground launch and reported the panel-layout defect with a
 2048x1152 Retina screenshot. After the `9234c4b` repair, the Desktop-path offscreen smoke reached
@@ -238,6 +245,15 @@ application code, created its 1920x1080 context and capture, logged no selected 
 marker, and exited zero. FileProvider immediately recreates an empty `com.apple.FinderInfo` on the
 Desktop bundle root: `codesign --verify --deep` passes, while `--deep --strict` rejects that external
 metadata. This remains a release-packaging issue; it is not reported as a strict-signature pass.
+
+The next foreground retest used a 3840x2160 screenshot and exposed a second, separate UI defect:
+the newly constrained window still used ImGui's default slider/input form, which draws a visible
+label to the right of a default-width control. Those combined widths exceeded the panel and clipped
+`Azimuth`, `Elevation`, `Exposure`, `Atmosphere`, layer opacity, and later form labels. Commit
+`338bd9d` adopts the already-working ScienceEarth year pattern for every affected field: wrapped
+label on its own row, hidden stable control id, and full-width control below. The package contract,
+`34/34` offline suite, and final Desktop-path offscreen smoke passed. Human visual confirmation is
+still required because the offscreen capture occurs before ImGui drawing.
 
 ### Mandatory before the next tagged ScienceEarth release
 

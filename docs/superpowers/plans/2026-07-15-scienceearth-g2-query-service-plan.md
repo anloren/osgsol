@@ -1106,6 +1106,19 @@ capture, exited zero, and contained no selected OpenGL/shader fatal marker. Two 
 Desktop. Human retest of the repaired panel and the other matrix items is pending. Record all twelve
 outcomes before changing the release-decision fields below.
 
+The first panel-size retest then exposed a distinct clipping defect in a 3840x2160 screenshot:
+visible labels attached to default-width ImGui sliders and numeric inputs were drawn to the right of
+their controls and crossed the constrained window boundary. The affected paths included Sun,
+Render, layer opacity, Go To, Settings, and long ScienceEarth descriptions. Commit
+`338bd9d5389d0dac095f33a89202fc0851322d8e` converts those fields to a wrapped label row plus a
+full-width hidden-id control row, wraps checkbox/description text, separates ScienceEarth R/G/B and
+status text, and makes relevant ScienceEarth action buttons full width. Its contract test was
+observed RED on the old visible-label calls and GREEN after the change; EarthExplorer compiled and
+the complete offline suite passed `34/34`. The formal package contract and Desktop-path offscreen
+smoke also passed. The fixed Desktop app now records `338bd9d`, with the prior `9234c4b` candidate at
+`build/desktop-backups/pre-responsive-fields-9234c4b/osgSol Earth.app`. ImGui text remains a human
+visual acceptance item because the automated offscreen capture is taken before ImGui rendering.
+
 ## Plan Self-Review
 
 - [x] **Spec coverage:** Design sections 2 and 4-9 map to Tasks 1-10 or an explicit exclusion in
