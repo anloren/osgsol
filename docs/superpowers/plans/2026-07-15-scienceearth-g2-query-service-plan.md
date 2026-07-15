@@ -965,6 +965,12 @@ test -z "$(find '/Users/USER/Desktop/osgSol Earth.app' -name imgui.ini -print -q
 Do not run the finalized signed bundle again after the last strict verification; manual launch may
 create mutable UI state and must be followed by cleanup/re-sign before a release decision.
 
+Current result after the user's first foreground launch: the fixed Desktop app was updated in
+place and its direct offscreen smoke exits zero, but this step stays open for release. Desktop
+FileProvider immediately recreates an empty `com.apple.FinderInfo` on the bundle root. The copied
+signature passes `codesign --verify --deep`; strict verification fails only on that external
+Finder/resource-fork policy. The staging bundle continues to pass strict/deep verification.
+
 - [x] **Step 7: Rerun the package contract**
 
 ```bash
@@ -1078,9 +1084,27 @@ REMOTE_SYNC=NOT_PERFORMED
 
 ### Task 10 Evidence
 
-The fixed Desktop app and rollback are installed. Human verification is pending. First launch must
-be performed by the user in the foreground; no automatic Gatekeeper exception was created. Record
-all twelve outcomes before changing the release-decision fields below.
+The fixed Desktop app and rollback are installed. The user performed the first foreground launch;
+no automatic Gatekeeper exception was created. That launch exposed a control panel occupying about
+half of a 2048x1152 Retina screen. Root cause was the main window's combination of
+`AlwaysAutoResize` and `NoScrollbar`, with no viewport constraints; long ScienceEarth content and
+expanded sections therefore dictated the complete window width and height.
+
+Commit `9234c4bb28511d57deb60e5be4e3ef616d522393` replaces that policy with responsive min/default/max
+constraints. At the corresponding 1024x576 ImGui logical viewport, default size is about 338x415
+points, maximum width is 42 percent, bottom UI reserve is 76 points, the title-bar collapse/resize
+behavior remains available, and standard vertical wheel scrolling is enabled. The new regression
+test was observed RED before implementation and passed after it; the Earth target compiled and the
+complete science-enabled offline suite passed `34/34`.
+
+The formal package contract passed, the staging bundle passed strict/deep signing, and the fixed
+Desktop app now records source commit `9234c4b`, version `0.3.0`, channel `manual-test`. Its
+post-approval Desktop-path offscreen smoke established a 1920x1080 context, wrote a non-empty
+capture, exited zero, and contained no selected OpenGL/shader fatal marker. Two old desktop siblings
+(`osgSol Earth 2.app` and `osgSol Earth 3.app`) were moved to
+`build/desktop-backups/legacy-desktop-duplicates-20260715`; only `osgSol Earth.app` remains on the
+Desktop. Human retest of the repaired panel and the other matrix items is pending. Record all twelve
+outcomes before changing the release-decision fields below.
 
 ## Plan Self-Review
 

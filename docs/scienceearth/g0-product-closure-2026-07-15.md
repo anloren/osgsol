@@ -173,20 +173,22 @@ The authoritative G2-1 design remains
 
 ## 8. G2-1 progress snapshot after full automated verification
 
-**Packaged manual-candidate state:** `243f00b`
+**Current packaged manual-candidate state:** `9234c4b`
 
 ```text
 G2_TASKS_1_TO_7=COMPLETE
 G2_FOCUSED_TESTS=5_OF_5_PASS
 G2_EARTHEXPLORER_COMPILE=PASS
-G2_FULL_OFFLINE_REGRESSION=SCIENCE_ON_33_OF_33_AND_OFF_20_OF_20_PASS
+G2_FULL_OFFLINE_REGRESSION=SCIENCE_ON_34_OF_34_AND_OFF_20_OF_20_PASS
 G2_LOCAL_INDEX_SMOKE=2018_DATASET_7851_AND_2025_DATASET_9790_PASS
 G2_OFF_BUILD_ISOLATION=PASS
 G2_STAGING_PACKAGE=PASS
 G2_MANUAL_CANDIDATE=INSTALLED_UNTAGGED
-G2_DESKTOP_FINAL_SIGNATURE=PASS
-G2_DESKTOP_FIRST_FOREGROUND_APPROVAL=PENDING
-G2_DESKTOP_POST_APPROVAL_OFFSCREEN=PENDING
+G2_STAGING_FINAL_SIGNATURE=PASS
+G2_DESKTOP_SIGNATURE=DEEP_PASS_STRICT_BLOCKED_BY_FILEPROVIDER_FINDERINFO
+G2_DESKTOP_FIRST_FOREGROUND_APPROVAL=COMPLETE
+G2_DESKTOP_POST_APPROVAL_OFFSCREEN=PASS
+G2_PANEL_LAYOUT_REGRESSION=FIXED_PENDING_HUMAN_RETEST
 G0_IMMUTABLE_V0_2_AUDIT=STOP_UNCHANGED
 DESKTOP_APP=UPDATED_IN_PLACE_WITH_ROLLBACK
 TAG_CREATED_OR_MOVED=NO
@@ -202,6 +204,9 @@ Completed and committed on the G2 branch:
 - `5226f61`: AlphaEarth adapter around the accepted v5 runtime;
 - `3fa9f60`: atomic renderer/UI/Agent consumer migration, visible generic source catalog, shared
   bounded point-query builder, retained-result rendering, and camera-invariant Agent tests.
+- `9234c4b`: responsive Earth control-panel constraints, standard bidirectional wheel scrolling,
+  and a pure viewport-layout regression test after the first manual candidate exposed an
+  unbounded half-screen panel.
 
 The last commit intentionally contains Tasks 5-7 together. Changing the preview-layer constructor
 alone would leave `earth_main.cpp` uncompilable until UI and Agent injection changed, so the first
@@ -213,19 +218,26 @@ warnings are recorded in
 
 ### Mandatory next work before the user can complete manual verification
 
-1. Perform the first foreground launch of `/Users/USER/Desktop/osgSol Earth.app` as the user.
-   The terminal must not install a Gatekeeper exception or other trust bypass. After approval,
-   repeat the Desktop-path offscreen smoke, clean mutable state, re-sign, and require strict/deep
-   verification again.
-2. Run the Task 10 human matrix: catalog meaning, load, year change, replacement-failure retention,
-   cancel, hide/show/remove, panel scrolling, low-altitude placement, camera invariance, Agent
-   research, photo regression, 3D Tiles regression, and Quit.
+1. Re-test the repaired panel in `/Users/USER/Desktop/osgSol Earth.app`: it must open at about
+   one third of the compact Retina viewport, keep the globe and bottom AI bar usable, allow manual
+   resize/collapse, and scroll both down and back up.
+2. Run the remaining Task 10 human matrix: catalog meaning, load, year change,
+   replacement-failure retention, cancel, hide/show/remove, panel scrolling, low-altitude placement,
+   camera invariance, Agent research, photo regression, 3D Tiles regression, and Quit.
 3. Only after explicit human acceptance decide the next version/tag and remote synchronization.
    Never move the protected `v0.3.0`, `ScienceEarth-v0.3.0`, `v0.2.0`, or `ScienceEarth` tags.
 
 The staging package, fixed identity, private-path/RPATH audits, package-contract offscreen run, and
-strict signatures passed. The rollback remains at
-`build/desktop-backups/pre-g2-243f00b/osgSol Earth.app`.
+staging strict signatures passed. The accepted pre-G2 rollback remains at
+`build/desktop-backups/pre-g2-243f00b/osgSol Earth.app`; the immediately previous G2 candidate is at
+`build/desktop-backups/pre-panel-layout-243f00b/osgSol Earth.app`.
+
+The user completed the first foreground launch and reported the panel-layout defect with a
+2048x1152 Retina screenshot. After the `9234c4b` repair, the Desktop-path offscreen smoke reached
+application code, created its 1920x1080 context and capture, logged no selected OpenGL/shader fatal
+marker, and exited zero. FileProvider immediately recreates an empty `com.apple.FinderInfo` on the
+Desktop bundle root: `codesign --verify --deep` passes, while `--deep --strict` rejects that external
+metadata. This remains a release-packaging issue; it is not reported as a strict-signature pass.
 
 ### Mandatory before the next tagged ScienceEarth release
 
@@ -239,6 +251,8 @@ strict signatures passed. The rollback remains at
   use the accepted GLCore SDK and the offscreen shader/OpenGL assertion; a legacy Homebrew OSG
   default must never be allowed to recreate the GLSL-130 failure.
 - Complete the twelve-item human matrix and the Desktop post-approval smoke/cleanup/re-sign gate.
+- Resolve final-location strict signing independently of Desktop FileProvider metadata, for example
+  by selecting a release location/installation model that does not rewrite the signed bundle.
 - Investigate the NASA GIBS dated-layer 404 warnings seen in offscreen logs if the same layer is
   visibly missing during manual verification; add a last-available-date fallback before release if
   reproducible.
