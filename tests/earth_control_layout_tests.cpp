@@ -16,6 +16,15 @@ bool nearlyEqual(float lhs, float rhs)
 {
     return std::abs(lhs - rhs) < 0.01f;
 }
+
+size_t countOccurrences(const std::string& text, const std::string& needle)
+{
+    size_t count = 0;
+    for (size_t pos = 0; (pos = text.find(needle, pos)) != std::string::npos;
+         pos += needle.size())
+        ++count;
+    return count;
+}
 }
 
 int main()
@@ -67,6 +76,26 @@ int main()
     CHECK(setup.find("ImGuiCond_FirstUseEver") != std::string::npos);
     CHECK(setup.find("AlwaysAutoResize") == std::string::npos);
     CHECK(setup.find("NoScrollbar") == std::string::npos);
+
+    // A constrained panel must not use ImGui's default "control then visible
+    // label on the right" form. At compact widths that pattern clips the
+    // label. Production fields use a wrapped label row followed by a
+    // full-width control with a hidden ID instead.
+    CHECK(source.find("ImGui::SliderFloat(u8\"") == std::string::npos);
+    CHECK(source.find("ImGui::InputFloat(u8\"") == std::string::npos);
+    CHECK(source.find("ImGui::InputInt(u8\"") == std::string::npos);
+    CHECK(source.find("ImGui::Checkbox(u8\"") == std::string::npos);
+    CHECK(source.find("ImGui::Checkbox(l.displayName.c_str()") == std::string::npos);
+    CHECK(source.find("ImGui::Checkbox(p.label.c_str()") == std::string::npos);
+    CHECK(source.find("SliderFloat((l.displayName") == std::string::npos);
+    CHECK(source.find("ImGui::SliderInt(p.label.c_str()") == std::string::npos);
+    CHECK(source.find("ImGui::SliderFloat(p.label.c_str()") == std::string::npos);
+    CHECK(countOccurrences(source, "panelSliderFloat(") >= 8);
+    CHECK(countOccurrences(source, "panelInputFloat(") >= 4);
+    CHECK(countOccurrences(source, "panelInputInt(") >= 4);
+    CHECK(countOccurrences(source, "panelCheckbox(") >= 8);
+    CHECK(source.find("ImGui::PushTextWrapPos(0.0f)") != std::string::npos);
+    CHECK(source.find("ImGui::PopTextWrapPos()") != std::string::npos);
 
     std::cout << "[OK] Earth control panel responsive layout\n";
     return 0;

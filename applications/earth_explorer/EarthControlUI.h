@@ -79,6 +79,52 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         return r;
     }
 
+    static void panelControlLabel(const char* label)
+    {
+        ImGui::TextWrapped("%s", label);
+        ImGui::SetNextItemWidth(-1.0f);
+    }
+
+    static bool panelSliderFloat(const char* label, const char* id, float* value,
+                                 float minimum, float maximum, const char* format)
+    {
+        panelControlLabel(label);
+        return ImGui::SliderFloat(id, value, minimum, maximum, format);
+    }
+
+    static bool panelSliderInt(const char* label, const char* id, int* value,
+                               int minimum, int maximum)
+    {
+        panelControlLabel(label);
+        return ImGui::SliderInt(id, value, minimum, maximum);
+    }
+
+    static bool panelInputFloat(const char* label, const char* id, float* value,
+                                const char* format)
+    {
+        panelControlLabel(label);
+        return ImGui::InputFloat(id, value, 0.0f, 0.0f, format);
+    }
+
+    static bool panelInputInt(const char* label, const char* id, int* value)
+    {
+        panelControlLabel(label);
+        return ImGui::InputInt(id, value);
+    }
+
+    static bool panelCheckbox(const char* label, const char* id, bool* value)
+    {
+        bool changed = ImGui::Checkbox(id, value);
+        ImGui::SameLine();
+        ImGui::TextWrapped("%s", label);
+        if (ImGui::IsItemClicked())
+        {
+            *value = !*value;
+            changed = true;
+        }
+        return changed;
+    }
+
     EarthControlUI(osgVerse::EarthManipulator* m, osgVerse::EarthAtmosphereOcean* e, osgViewer::Viewer* v)
         : _mani(m), _earth(e), _viewer(v), _sunAz(0.0f), _sunEl(0.0f), _exposure(0.25f), _exposureAuto(true), _globalOpaque(1.0f), _ocean(true)
         , _gotoLat(35.36f), _gotoLon(138.73f), _gotoAltKm(150.0f), _bookmarkTime(0)   // 同 fly_to 默认高度(v0.15-vision)
@@ -169,6 +215,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             ImVec2(panelLayout.maxWidth, panelLayout.maxHeight));
         if (ImGui::Begin("Earth Control / 地球控制台"))
         {
+            ImGui::PushTextWrapPos(0.0f);
             // ---- 相机读数 ----
             if (ImGui::CollapsingHeader(u8"相机 Camera", ImGuiTreeNodeFlags_DefaultOpen))
             {
@@ -184,10 +231,15 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             {
                 // v0.15-vision:常昼模式默认开启;开启时手动滑块/按钮禁用(同 _exposureAuto
                 // 禁用曝光滑块的既有惯例,见下方"渲染"节),与真实时间太阳互斥。
-                if (ImGui::Checkbox(u8"常昼 Always Day", &_alwaysDay)) { if (_alwaysDay) _realTimeSun = false; }
+                if (panelCheckbox(u8"常昼 Always Day", "##always_day", &_alwaysDay))
+                { if (_alwaysDay) _realTimeSun = false; }
                 if (_alwaysDay) ImGui::BeginDisabled();
-                if (ImGui::SliderFloat(u8"方位角 Azimuth", &_sunAz, -180.0f, 180.0f, "%.0f")) updateSun();
-                if (ImGui::SliderFloat(u8"高度角 Elevation", &_sunEl, -90.0f, 90.0f, "%.0f")) updateSun();
+                if (panelSliderFloat(u8"方位角 Azimuth", "##sun_azimuth",
+                                     &_sunAz, -180.0f, 180.0f, "%.0f"))
+                    updateSun();
+                if (panelSliderFloat(u8"高度角 Elevation", "##sun_elevation",
+                                     &_sunEl, -90.0f, 90.0f, "%.0f"))
+                    updateSun();
                 if (ImGui::Button(u8"太阳对准相机")) {
                     osg::Vec3d lla = _mani->computeEyeLatLonHeight();
                     _sunAz = (float)osg::RadiansToDegrees(lla[1]);
@@ -196,17 +248,19 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 }
                 if (_alwaysDay) ImGui::EndDisabled();
                 ImGui::Separator();
-                if (ImGui::Checkbox(u8"真实时间太阳 Real-time", &_realTimeSun))
+                if (panelCheckbox(u8"真实时间太阳 Real-time", "##realtime_sun",
+                                  &_realTimeSun))
                 { if (_realTimeSun) { _alwaysDay = false; applyRealtimeSun(); } }
                 if (_realTimeSun)
                 {
-                    ImGui::Checkbox(u8"跟随系统时钟", &_followClock);
+                    panelCheckbox(u8"跟随系统时钟", "##follow_clock", &_followClock);
                     if (!_followClock)
                     {
-                        ImGui::InputInt(u8"年 Year", &_year);
-                        ImGui::InputInt(u8"月 Month", &_month);
-                        ImGui::InputInt(u8"日 Day", &_day);
-                        ImGui::SliderFloat(u8"UTC 小时", &_utcHour, 0.0f, 24.0f, "%.1f");
+                        panelInputInt(u8"年 Year", "##sun_year", &_year);
+                        panelInputInt(u8"月 Month", "##sun_month", &_month);
+                        panelInputInt(u8"日 Day", "##sun_day", &_day);
+                        panelSliderFloat(u8"UTC 小时", "##utc_hour",
+                                         &_utcHour, 0.0f, 24.0f, "%.1f");
                     }
                 }
             }
@@ -214,14 +268,16 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             // ---- 渲染 ----
             if (ImGui::CollapsingHeader(u8"渲染 Render", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                if (ImGui::Checkbox(u8"海洋 Ocean", &_ocean))
+                if (panelCheckbox(u8"海洋 Ocean", "##ocean", &_ocean))
                     _earth->commonUniforms["OceanOpaque"]->set(_ocean ? 1.0f : 0.0f);
-                ImGui::Checkbox(u8"自适应曝光 Auto", &_exposureAuto);
+                panelCheckbox(u8"自适应曝光 Auto", "##exposure_auto", &_exposureAuto);
                 if (_exposureAuto) ImGui::BeginDisabled();
-                if (ImGui::SliderFloat(u8"曝光 Exposure", &_exposure, 0.05f, 1.5f, "%.2f"))
+                if (panelSliderFloat(u8"曝光 Exposure", "##exposure",
+                                     &_exposure, 0.05f, 1.5f, "%.2f"))
                     _earth->commonUniforms["HdrExposure"]->set(_exposure);
                 if (_exposureAuto) ImGui::EndDisabled();
-                if (ImGui::SliderFloat(u8"大气强度 Atmosphere", &_globalOpaque, 0.0f, 1.0f, "%.2f"))
+                if (panelSliderFloat(u8"大气强度 Atmosphere", "##atmosphere",
+                                     &_globalOpaque, 0.0f, 1.0f, "%.2f"))
                     _earth->commonUniforms["GlobalOpaque"]->set(_globalOpaque);
             }
             // ---- 图层 ----
@@ -241,6 +297,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 ImGui::SameLine();
                 if (ImGui::SmallButton(u8"状态带")) _ticker.showStatusBar = !_ticker.showStatusBar;
                 // 搜索框:按 displayName/group 过滤(大小写不敏感;中文直接字节子串匹配)
+                ImGui::SetNextItemWidth(-1.0f);
                 ImGui::InputTextWithHint(u8"##图层搜索", u8"搜索图层 Filter...",
                                          _layerFilter, sizeof(_layerFilter));
                 std::string filter = lowered(_layerFilter);
@@ -293,8 +350,9 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                                 cur.x + ic*0.5f, cur.y + ic*0.5f, ic, icol);
                             ImGui::Dummy(ImVec2(ic + 4.0f, ic)); ImGui::SameLine();
                         }
-                        if (ImGui::Checkbox(l.displayName.c_str(), &en)) _layers->setEnabled(l.id, en);
-                        if (l.needsKey) { ImGui::SameLine(); ImGui::TextDisabled(u8"🔑"); }
+                        if (panelCheckbox(l.displayName.c_str(), "##enabled", &en))
+                            _layers->setEnabled(l.id, en);
+                        if (l.needsKey) ImGui::TextDisabled(u8"需要密钥 🔑");
                         if (!l.subtitle.empty()) ImGui::TextDisabled("%s", l.subtitle.c_str());
                         // 任务A:抓取失败 UI 可见——只在层已开启且接了 fetchStatus 回调时查询
                         // (底图/标注等常开层没有"抓取"概念,回调为空,天然跳过)。
@@ -309,18 +367,15 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                             int fetchSt = l.fetchStatus(fetchErr);
                             if (fetchSt == 2)
                             {
-                                ImGui::SameLine();
                                 ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.35f, 1.0f), u8"⚠ 抓取失败");
                                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", fetchErr.c_str());
                             }
                             else if (fetchSt == 0)
                             {
-                                ImGui::SameLine();
                                 ImGui::TextDisabled(u8"加载中…");
                             }
                             else if (fetchSt == 3)
                             {
-                                ImGui::SameLine();
                                 ImGui::TextDisabled(u8"· 当前无数据");
                                 if (ImGui::IsItemHovered()) ImGui::SetTooltip(u8"抓取成功,当前无数据(非故障)");
                             }
@@ -328,8 +383,9 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                         if (l.hasOpacity && l.enabled)
                         {
                             float op = l.opacity;
-                            // 标签带层名，避免多个透明度滑块同名混淆
-                            if (ImGui::SliderFloat((l.displayName + u8" 透明度").c_str(), &op, 0.0f, 1.0f, "%.2f"))
+                            std::string label = l.displayName + u8" 透明度";
+                            if (panelSliderFloat(label.c_str(), "##opacity", &op,
+                                                 0.0f, 1.0f, "%.2f"))
                                 _layers->setOpacity(l.id, op);
                         }
                         if (inactive) ImGui::EndDisabled();
@@ -410,10 +466,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                         {
                             ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f),
                                 "R = %s", visualization->channelVariables[0].c_str());
-                            ImGui::SameLine();
                             ImGui::TextColored(ImVec4(0.35f, 1.0f, 0.45f, 1.0f),
                                 "G = %s", visualization->channelVariables[1].c_str());
-                            ImGui::SameLine();
                             ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f),
                                 "B = %s", visualization->channelVariables[2].c_str());
                         }
@@ -451,7 +505,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     if (busy)
                     {
                         ImGui::ProgressBar(snapshot.progress, ImVec2(-1.0f, 0.0f));
-                        if (ImGui::Button(u8"取消载入 Cancel##science"))
+                        if (ImGui::Button(u8"取消载入 Cancel##science",
+                                          ImVec2(-1.0f, 0.0f)))
                             _scienceService->cancel(snapshot.jobId);
                     }
                     if (snapshot.state != earthscience::ScienceJobState::Idle)
@@ -494,14 +549,15 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                             raster.bounds.south, raster.bounds.north);
                         if (ImGui::Button(_scienceLayer->isVisible()
                                           ? u8"隐藏图层 Hide##science"
-                                          : u8"显示图层 Show##science"))
+                                          : u8"显示图层 Show##science",
+                                          ImVec2(-1.0f, 0.0f)))
                         {
                             const bool show = !_scienceLayer->isVisible();
                             _scienceLayer->setVisible(show);
                             if (_layers) _layers->setEnabled("alphaearth", show);
                         }
-                        ImGui::SameLine();
-                        if (ImGui::Button(u8"移除结果 Remove##science"))
+                        if (ImGui::Button(u8"移除结果 Remove##science",
+                                          ImVec2(-1.0f, 0.0f)))
                         {
                             _scienceService->cancel(snapshot.jobId);
                             _scienceService->clearArtifact();
@@ -527,9 +583,9 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             // ---- 跳转 ----
             if (ImGui::CollapsingHeader(u8"跳转 Go To", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                ImGui::InputFloat(u8"纬度 Lat", &_gotoLat, 0.0f, 0.0f, "%.4f");
-                ImGui::InputFloat(u8"经度 Lon", &_gotoLon, 0.0f, 0.0f, "%.4f");
-                ImGui::InputFloat(u8"高度 km", &_gotoAltKm, 0.0f, 0.0f, "%.1f");
+                panelInputFloat(u8"纬度 Lat", "##goto_lat", &_gotoLat, "%.4f");
+                panelInputFloat(u8"经度 Lon", "##goto_lon", &_gotoLon, "%.4f");
+                panelInputFloat(u8"高度 km", "##goto_altitude", &_gotoAltKm, "%.1f");
                 if (ImGui::Button(u8"飞过去 Go"))
                 {
                     _mani->setByEye(osg::DegreesToRadians((double)_gotoLat),
@@ -569,22 +625,25 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 {
                     earthcfg::Param& p = ps[i];
                     if (p.group != curGroup) { curGroup = p.group; ImGui::SeparatorText(p.group.c_str()); }
+                    ImGui::PushID((int)i);
                     if (p.kind == earthcfg::PK_INT) {
                         int v = (int)p.value.load();
-                        if (ImGui::SliderInt(p.label.c_str(), &v, (int)p.minVal, (int)p.maxVal))
+                        if (panelSliderInt(p.label.c_str(), "##value", &v,
+                                           (int)p.minVal, (int)p.maxVal))
                             earthcfg::setValue(p.id, (double)v);
                     } else if (p.kind == earthcfg::PK_DOUBLE) {
                         float v = (float)p.value.load();
-                        if (ImGui::SliderFloat(p.label.c_str(), &v, (float)p.minVal, (float)p.maxVal, "%.1f"))
+                        if (panelSliderFloat(p.label.c_str(), "##value", &v,
+                                             (float)p.minVal, (float)p.maxVal, "%.1f"))
                             earthcfg::setValue(p.id, (double)v);
                     } else {
                         bool v = p.value.load() != 0.0;
-                        if (ImGui::Checkbox(p.label.c_str(), &v)) earthcfg::setValue(p.id, v ? 1.0 : 0.0);
+                        if (panelCheckbox(p.label.c_str(), "##value", &v))
+                            earthcfg::setValue(p.id, v ? 1.0 : 0.0);
                     }
-                    ImGui::SameLine();
-                    ImGui::PushID((int)i);
                     if (ImGui::SmallButton(u8"默认")) earthcfg::resetDefault(p.id);
                     ImGui::PopID();
+                    ImGui::Spacing();
                 }
             }
 
@@ -592,6 +651,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             ImGui::Separator();
             if (ImGui::Button(u8"退出程序 Quit", ImVec2(-1.0f, 0.0f)))
                 if (_viewer) _viewer->setDone(true);
+            ImGui::PopTextWrapPos();
         }
         ImGui::End();
 
