@@ -167,6 +167,11 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Ais PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_WorldTools world_tools_tests.cpp offline 120)  # P4 world-query tools: async fetcher / tool dispatch offline tests
 NEW_CTEST(osgVerse_Test_ImGuiSettings imgui_settings_tests.cpp offline 30)
+NEW_CTEST(osgVerse_Test_EarthControlLayout earth_control_layout_tests.cpp offline 30)
+TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_EarthControlLayout PRIVATE
+                           "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
+TARGET_COMPILE_DEFINITIONS(osgVerse_Test_EarthControlLayout PRIVATE
+                           OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_McpSafety mcp_safety_tests.cpp offline 30)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_McpSafety PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

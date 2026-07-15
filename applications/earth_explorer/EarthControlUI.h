@@ -26,6 +26,7 @@
 #include "ai_media.h"
 #include "overlay_lod_badge.h"
 #include "earth_config.h"
+#include "earth_control_layout.h"
 #include <readerwriter/TileCallback.h>
 #if OSGSOL_BUILD_SCIENCE
 #include <ScienceQueryService.h>
@@ -154,10 +155,19 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         bool hudHidden = _aiMedia && _aiMedia->isHudHidden();
         if (!hudHidden)
         {
+        ImGuiIO& io = ImGui::GetIO();
+        const earthui::EarthControlPanelLayout panelLayout =
+            earthui::computeEarthControlPanelLayout(io.DisplaySize.x, io.DisplaySize.y);
         ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
-        // 自适应内容高度，不出现滚动条
-        if (ImGui::Begin("Earth Control / 地球控制台", NULL,
-                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar))
+        ImGui::SetNextWindowSize(
+            ImVec2(panelLayout.defaultWidth, panelLayout.defaultHeight),
+            ImGuiCond_FirstUseEver);
+        // Every frame constraints also repair an oversized value already saved in imgui.ini.
+        // Standard ImGui scrolling remains enabled so expanded sections never grow over Earth.
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(panelLayout.minWidth, panelLayout.minHeight),
+            ImVec2(panelLayout.maxWidth, panelLayout.maxHeight));
+        if (ImGui::Begin("Earth Control / 地球控制台"))
         {
             // ---- 相机读数 ----
             if (ImGui::CollapsingHeader(u8"相机 Camera", ImGuiTreeNodeFlags_DefaultOpen))
