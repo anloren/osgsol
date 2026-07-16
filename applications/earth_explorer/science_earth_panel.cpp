@@ -596,7 +596,8 @@ SciencePanelPresentation describeScienceSnapshot(
         break;
     case SciencePanelResultKind::Stale:
         view.retention.reason = std::string(
-            u8"旧请求已丢弃，保留旧结果 / Stale request discarded; retained artifact: ") +
+            u8"旧请求已丢弃，保留旧结果 / "
+            u8"Stale request discarded; retained artifact: ") +
             retained->artifactId;
         break;
     default:
