@@ -2,6 +2,7 @@
 #include "AlphaEarthEmbeddingReader.h"
 
 #include "ScienceEmbedding.h"
+#include "ScienceQueryService.h"
 
 #include <atomic>
 #include <chrono>
@@ -192,6 +193,132 @@ namespace
             if (value.find(needle) != std::string::npos) return true;
         }
         return false;
+    }
+
+    earthscience::ScienceSourceDescriptor runtimeDescriptor()
+    {
+        earthscience::ScienceSourceDescriptor source;
+        source.id = "alphaearth-foundations";
+        source.firstYear = 2017;
+        source.lastYear = 2025;
+        source.nativeResolutionMeters = 10.0;
+        source.health = earthscience::ScienceSourceHealth::Ready;
+        source.variables = {
+            {"embedding64", "Embedding A01-A64", "1", "embedding", 64}};
+        source.capabilities.pointQuery = true;
+        source.capabilities.explicitYears = true;
+        source.capabilities.timeSeriesOutput = true;
+        return source;
+    }
+
+    class RuntimeBackedProvider : public earthscience::IScienceProvider
+    {
+    public:
+        explicit RuntimeBackedProvider(
+            earthscience::AlphaEarthAssetResolver resolver)
+            : _runtime(std::move(resolver))
+        {
+        }
+
+        earthscience::ScienceSourceDescriptor descriptor() const override
+        {
+            return runtimeDescriptor();
+        }
+
+        std::uint64_t submit(
+            const earthscience::GeoTemporalQuery& query) override
+        {
+            return _runtime.submit(query);
+        }
+
+        earthscience::ScienceProviderSnapshot snapshot() const override
+        {
+            return _runtime.snapshot();
+        }
+
+        void cancel(std::uint64_t generation) override
+        {
+            _runtime.cancel(generation);
+        }
+
+        void clear() override
+        {
+            const earthscience::ScienceProviderSnapshot state =
+                _runtime.snapshot();
+            _runtime.cancel(state.generation);
+        }
+
+    private:
+        earthscience::AlphaEarthEmbeddingRuntime _runtime;
+    };
+
+    earthscience::ScienceJobSnapshot waitForServiceTerminal(
+        earthscience::ScienceQueryService& service, std::uint64_t jobId)
+    {
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(5);
+        do
+        {
+            const earthscience::ScienceJobSnapshot snapshot =
+                service.snapshot();
+            if (snapshot.jobId == jobId &&
+                (snapshot.state == earthscience::ScienceJobState::Ready ||
+                 snapshot.state == earthscience::ScienceJobState::Failed ||
+                 snapshot.state ==
+                    earthscience::ScienceJobState::Cancelled))
+                return snapshot;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        while (std::chrono::steady_clock::now() < deadline);
+        require(false, "runtime-backed service timed out");
+        return {};
+    }
+
+    void testRealRuntimeThroughputEnablesDurationBudget()
+    {
+        LocalFixture fixture;
+        auto registry =
+            std::make_unique<earthscience::ScienceSourceRegistry>();
+        auto provider = std::make_unique<RuntimeBackedProvider>(
+            [&fixture](double, double, int year,
+                       earthscience::AlphaEarthAsset& asset,
+                       std::string& error)
+            {
+                asset = fixture.asset(year);
+                error.clear();
+                return true;
+            });
+        std::string error;
+        require(registry->add(std::move(provider), error),
+                "runtime-backed provider registration failed");
+        earthscience::ScienceQueryService service(std::move(registry));
+
+        earthscience::GeoTemporalQuery query = pointQuery();
+        query.variables = {"embedding64"};
+        query.outputKind = earthscience::ScienceOutputKind::TimeSeries;
+        const earthscience::ScienceQueryCost before = service.estimate(query);
+        require(!before.durationDeterminate,
+                "real runtime query started with fabricated duration");
+
+        const std::uint64_t jobId = service.submit(query);
+        const earthscience::ScienceJobSnapshot ready =
+            waitForServiceTerminal(service, jobId);
+        require(ready.state == earthscience::ScienceJobState::Ready &&
+                    ready.progress.elapsedSeconds > 0.0,
+                "real runtime success did not report elapsed seconds");
+        const earthscience::ScienceQueryCost observed =
+            service.estimate(query);
+        require(observed.durationDeterminate &&
+                    observed.estimatedDurationSeconds > 0.0,
+                "real runtime success did not enable duration estimate");
+
+        query.limits.maximumDurationSeconds =
+            observed.estimatedDurationSeconds * 0.5;
+        service.submit(query);
+        const earthscience::ScienceJobSnapshot rejected = service.snapshot();
+        require(rejected.state == earthscience::ScienceJobState::Failed &&
+                    rejected.message == "analysis exceeds maximum duration",
+                "observed runtime duration did not enforce duration budget");
     }
 
     void testCompletePointAndRegionalReadsUseOneGrid()
@@ -678,6 +805,7 @@ namespace
 
 int main()
 {
+    testRealRuntimeThroughputEnablesDurationBudget();
     testRotatedSourcePublishesActualSampleGridAndFootprint();
     testSingleTileRejectsPartialRequestedCoverage();
     testGridUpsamplingRequiresExplicitPermission();

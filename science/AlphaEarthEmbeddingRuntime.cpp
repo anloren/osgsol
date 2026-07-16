@@ -3,6 +3,7 @@
 #include "AlphaEarthEmbeddingReader.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <optional>
@@ -17,6 +18,7 @@ struct AlphaEarthEmbeddingRuntime::Impl
     {
         std::uint64_t generation = 0;
         GeoTemporalQuery query;
+        std::chrono::steady_clock::time_point startedAt;
     };
 
     explicit Impl(AlphaEarthAssetResolver value, bool localOnly)
@@ -136,6 +138,9 @@ struct AlphaEarthEmbeddingRuntime::Impl
             state.progress.totalUnits = 1;
             state.progress.determinate = true;
             state.progress.unit = "artifact";
+            state.progress.elapsedSeconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() -
+                request.startedAt).count();
             state.message = "Ready";
             state.artifact = std::move(artifact);
         }
@@ -191,7 +196,8 @@ std::uint64_t AlphaEarthEmbeddingRuntime::submit(
     if (previous != 0)
         _impl->cancelledThrough.store(previous, std::memory_order_release);
     _impl->activeGeneration.store(generation, std::memory_order_release);
-    _impl->pending = Impl::Request{generation, query};
+    _impl->pending = Impl::Request{
+        generation, query, std::chrono::steady_clock::now()};
     _impl->state = ScienceProviderSnapshot();
     _impl->state.generation = generation;
     _impl->state.state = ScienceJobState::Queued;

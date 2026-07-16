@@ -613,6 +613,60 @@ namespace
                 "preview throughput fabricated a 64D analysis duration");
     }
 
+    void testAnotherProviderCannotImpersonateLegacyPreview()
+    {
+        ProviderEvents alphaEvents, otherEvents;
+        auto registry =
+            std::make_unique<earthscience::ScienceSourceRegistry>();
+        auto alpha = std::make_unique<ControlledProvider>(
+            makeDescriptor(), &alphaEvents);
+        ControlledProvider* alphaPointer = alpha.get();
+        earthscience::ScienceSourceDescriptor otherDescriptor =
+            makeDescriptor();
+        otherDescriptor.id = "other-foundations";
+        auto other = std::make_unique<ControlledProvider>(
+            otherDescriptor, &otherEvents);
+        std::string error;
+        require(registry->add(std::move(alpha), error) &&
+                    registry->add(std::move(other), error),
+                "two-provider fixture registration failed");
+        earthscience::ScienceQueryService service(std::move(registry));
+
+        service.submit(makeQuery());
+        const std::uint64_t generation = alphaPointer->generation();
+        alphaPointer->publish(
+            generation, earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready, 1, 1,
+                         "artifact", 1.0),
+            "Ready", makeArtifact("alpha-preview", generation));
+        const earthscience::ScienceJobSnapshot alphaReady =
+            service.snapshot();
+        require(alphaReady.lastSuccessfulPreviewArtifact &&
+                    alphaReady.lastSuccessfulPreviewArtifact->artifactId ==
+                        "alpha-preview",
+                "AlphaEarth preview fixture did not become last preview");
+
+        earthscience::GeoTemporalQuery impostor = makeQuery();
+        impostor.sourceId = "other-foundations";
+        const earthscience::ScienceQueryCost impostorCost =
+            service.estimate(impostor);
+        require(impostorCost.resultCells == 1 &&
+                    !impostorCost.durationDeterminate,
+                "another provider inherited AlphaEarth preview cost or timing");
+
+        service.submit(impostor);
+        const earthscience::ScienceJobSnapshot rejected = service.snapshot();
+        require(rejected.state == earthscience::ScienceJobState::Failed &&
+                    rejected.message ==
+                        "raster-layer output requires the exact preview "
+                        "signature" &&
+                    otherEvents.submits == 0 &&
+                    rejected.lastSuccessfulPreviewArtifact ==
+                        alphaReady.lastSuccessfulPreviewArtifact &&
+                    rejected.displayArtifact == alphaReady.displayArtifact,
+                "another provider polluted AlphaEarth preview state");
+    }
+
     void testRequiresConfirmationAndEnforcesEstimatedBudgets()
     {
         ServiceFixture fixture;
@@ -646,6 +700,7 @@ int main()
     testRetainsPreviewAnalysisAndDisplayIndependently();
     testEstimatesExactCostAndRequiresEvidenceForDuration();
     testPreviewThroughputDoesNotFabricateAnalysisDuration();
+    testAnotherProviderCannotImpersonateLegacyPreview();
     testRequiresConfirmationAndEnforcesEstimatedBudgets();
     testDestructionCancelsBeforeProviderDestruction();
     std::cout << "[OK] ScienceEarth single-active-job query service\n";

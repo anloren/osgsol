@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <filesystem>
@@ -299,6 +300,7 @@ struct SciencePreviewRuntime::Impl
         double longitude = 0.0;
         int year = 2025;
         double requestedSpanMeters = 0.0;
+        std::chrono::steady_clock::time_point startedAt;
     };
 
     explicit Impl(const std::string& path)
@@ -392,6 +394,8 @@ struct SciencePreviewRuntime::Impl
                 continue;
             state.state = AlphaEarthPreviewState::Ready;
             state.progress = 1.0f;
+            state.elapsedSeconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - request.startedAt).count();
             state.message = "AlphaEarth preview ready";
             state.artifact.generation = request.generation;
             state.artifact.datasetId = tile.datasetId;
@@ -488,7 +492,8 @@ std::uint64_t SciencePreviewRuntime::queryPoint(
     _impl->state.progress = 0.0f;
     _impl->state.message = "Queued";
     _impl->pending = Impl::Request{
-        next, latitude, longitude, year, requestedSpanMeters};
+        next, latitude, longitude, year, requestedSpanMeters,
+        std::chrono::steady_clock::now()};
     _impl->condition.notify_one();
     return next;
 }

@@ -219,6 +219,7 @@ namespace
         legacy.generation = 12;
         legacy.state = earthscience::AlphaEarthPreviewState::Ready;
         legacy.progress = 1.0f;
+        legacy.elapsedSeconds = 0.25;
         legacy.message = "AlphaEarth preview ready";
         legacy.artifact.generation = 12;
         legacy.artifact.datasetId = "195398";
@@ -256,7 +257,8 @@ namespace
                     earthscience::ScienceProgressStage::Ready &&
                     translated.progress.determinate &&
                     translated.progress.completedUnits == 1 &&
-                    translated.progress.totalUnits == 1,
+                    translated.progress.totalUnits == 1 &&
+                    translated.progress.elapsedSeconds == 0.25,
                 "ready preview did not publish measurable completion");
         require(translated.artifact != nullptr,
                 "ready AlphaEarth snapshot lost its artifact");

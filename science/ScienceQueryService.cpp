@@ -56,7 +56,8 @@ namespace
 
     bool isLegacyPreviewQuery(const GeoTemporalQuery& query)
     {
-        return query.geometry.kind == ScienceGeometryKind::Point &&
+        return query.sourceId == "alphaearth-foundations" &&
+               query.geometry.kind == ScienceGeometryKind::Point &&
                query.time.mode == ScienceTimeMode::ExplicitYears &&
                query.time.explicitYears.size() == 1 &&
                query.variables ==

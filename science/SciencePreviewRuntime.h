@@ -71,6 +71,7 @@ namespace earthscience
         double longitude = 0.0;
         int year = 2025;
         float progress = 0.0f;
+        double elapsedSeconds = 0.0;
         std::string message;
         AlphaEarthPreviewArtifact artifact;
     };

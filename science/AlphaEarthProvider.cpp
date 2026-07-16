@@ -50,6 +50,7 @@ namespace
     {
         ScienceProgress progress;
         progress.stage = translateProgressStage(snapshot.state);
+        progress.elapsedSeconds = snapshot.elapsedSeconds;
         if (snapshot.state == AlphaEarthPreviewState::Ready &&
             snapshot.progress >= 1.0f)
         {
