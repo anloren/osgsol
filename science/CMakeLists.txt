@@ -1,4 +1,6 @@
 ADD_LIBRARY(osgSolScienceCore STATIC
+    ScienceEmbedding.cpp
+    ScienceEmbedding.h
     ScienceProvider.h
     ScienceQueryService.cpp
     ScienceQueryService.h
@@ -68,6 +70,17 @@ IF(BUILD_TESTING)
     ADD_TEST(NAME osgSol_Test_ScienceQueryTypes
              COMMAND $<TARGET_FILE:osgSol_Test_ScienceQueryTypes>)
     SET_TESTS_PROPERTIES(osgSol_Test_ScienceQueryTypes PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_ScienceEmbedding
+        ScienceEmbeddingTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceEmbedding PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceEmbedding
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceEmbedding
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceEmbedding>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceEmbedding PROPERTIES
         LABELS "offline;scienceearth"
         TIMEOUT 10)
 
