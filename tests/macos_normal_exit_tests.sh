@@ -8,7 +8,7 @@ after="$(mktemp -t osgsol-exit-after.XXXXXX)"
 find "$HOME/Library/Logs/DiagnosticReports" -name 'osgSol_Earth*.ips' -print | sort > "$before"
 set +e
 /usr/bin/perl -e '$seconds=shift; alarm $seconds; exec @ARGV' 30 \
-    /usr/bin/env EARTH_OFFSCREEN=1 EARTH_PREFETCH=0 EARTH_IME=0 \
+    /usr/bin/env -u EARTH_AUTOCAP EARTH_OFFSCREEN=1 EARTH_PREFETCH=0 EARTH_IME=0 \
     EARTH_AUTOQUIT_FRAMES=5 "$binary"
 status=$?
 set -e

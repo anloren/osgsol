@@ -1,8 +1,10 @@
 #include <ui/ImGuiInputQueue.h>
 #include <ui/ImGuiScroll.h>
+#include "../applications/earth_explorer/earth_exit.h"
 
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -32,6 +34,20 @@ int main()
     CHECK(queue.wantsMouse());
     CHECK(!queue.wantsKeyboard());
 
+    unsigned int frames = 99;
+    CHECK(earthexit::parsePositiveFrameCount("5", frames));
+    CHECK(frames == 5);
+    CHECK(!earthexit::parsePositiveFrameCount("not-a-count", frames));
+    CHECK(!earthexit::parsePositiveFrameCount("0", frames));
+    CHECK(!earthexit::parsePositiveFrameCount("-1", frames));
+    CHECK(!earthexit::parsePositiveFrameCount("5frames", frames));
+    const std::string maxFrames = std::to_string(
+        static_cast<unsigned long long>(std::numeric_limits<unsigned int>::max()));
+    CHECK(earthexit::parsePositiveFrameCount(maxFrames.c_str(), frames));
+    CHECK(frames == std::numeric_limits<unsigned int>::max());
+    const std::string overflowingFrames = maxFrames + "0";
+    CHECK(!earthexit::parsePositiveFrameCount(overflowingFrames.c_str(), frames));
+
     std::ifstream sourceFile(std::string(OSGVERSE_SOURCE_DIR) + "/ui/ImGui3D.cpp");
     std::ostringstream sourceBuffer; sourceBuffer << sourceFile.rdbuf();
     const std::string source = sourceBuffer.str();
@@ -57,12 +73,33 @@ int main()
                             "/applications/earth_explorer/earth_main.cpp");
     std::ostringstream earthBuffer; earthBuffer << earthFile.rdbuf();
     const std::string earthSource = earthBuffer.str();
+    const size_t guardClass = earthSource.find("class ViewerThreadStopGuard");
+    const size_t guardDestructor = earthSource.find("~ViewerThreadStopGuard()", guardClass);
+    const size_t stopOperation = earthSource.find("_viewer.stopThreading();", guardDestructor);
+    const size_t guardClassEnd = earthSource.find("\n};", guardDestructor);
     const size_t stopGuard = earthSource.find(
         "ViewerThreadStopGuard stopViewerThreads(viewer);");
     const size_t viewerRun = earthSource.rfind("return viewer.run();");
+    CHECK(guardClass != std::string::npos);
+    CHECK(guardDestructor != std::string::npos);
+    CHECK(stopOperation != std::string::npos && stopOperation < guardClassEnd);
     CHECK(stopGuard != std::string::npos);
     CHECK(viewerRun != std::string::npos);
     CHECK(stopGuard < viewerRun);
+    CHECK(earthSource.find(
+        "ViewerThreadStopGuard stopViewerThreads(viewer);\n    return viewer.run();") !=
+        std::string::npos);
+    CHECK(earthSource.find("#include \"earth_exit.h\"") != std::string::npos);
+    CHECK(earthSource.find(
+        "earthexit::parsePositiveFrameCount(autoQuitFramesEnv, autoQuitFrames)") !=
+        std::string::npos);
+
+    std::ifstream normalExitFile(std::string(OSGVERSE_SOURCE_DIR) +
+                                 "/tests/macos_normal_exit_tests.sh");
+    std::ostringstream normalExitBuffer; normalExitBuffer << normalExitFile.rdbuf();
+    const std::string normalExitSource = normalExitBuffer.str();
+    CHECK(normalExitSource.find(
+        "/usr/bin/env -u EARTH_AUTOCAP EARTH_OFFSCREEN=1") != std::string::npos);
 
     osg::ref_ptr<osgGA::GUIEventAdapter> scrollEvent = new osgGA::GUIEventAdapter;
     scrollEvent->setScrollingMotion(osgGA::GUIEventAdapter::SCROLL_UP);

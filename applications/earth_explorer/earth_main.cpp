@@ -25,6 +25,7 @@
 #include "LayerManager.h"
 #include "hk_elevation_filter.h"
 #include "input_gate.h"
+#include "earth_exit.h"
 #include "science_overlay.h"
 #include "science_image_pager.h"
 #if defined(__APPLE__)
@@ -870,10 +871,9 @@ int main(int argc, char** argv)
     viewer.addEventHandler(new GlobalKeyboardGate);
     viewer.addEventHandler(new CloseWindowQuitHandler);   // 关窗=退出(见类注释)
     const char* autoQuitFramesEnv = getenv("EARTH_AUTOQUIT_FRAMES");
-    int autoQuitFrames = autoQuitFramesEnv ? atoi(autoQuitFramesEnv) : 0;
-    if (autoQuitFrames > 0)
-        viewer.addEventHandler(new AutoQuitAfterFramesHandler(
-            static_cast<unsigned int>(autoQuitFrames)));
+    unsigned int autoQuitFrames = 0;
+    if (earthexit::parsePositiveFrameCount(autoQuitFramesEnv, autoQuitFrames))
+        viewer.addEventHandler(new AutoQuitAfterFramesHandler(autoQuitFrames));
     // Esc 不再整个退出程序:默认 _keyEventSetsDone=Escape 在 eventTraversal 里先于
     // 所有 handler 判定,闸拦不住——聊天框里按 Esc(ImGui 语义=撤销输入并失焦)会直接
     // 杀掉 app。退出改走窗口关闭按钮 / Cmd+Q,Esc 专职"输入框失焦/取消"。
