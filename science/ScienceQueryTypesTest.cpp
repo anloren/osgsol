@@ -228,6 +228,10 @@ namespace
             std::shared_ptr<const std::vector<double>>>::value,
             "PCA variance ratios must be immutable");
         static_assert(std::is_same<
+            decltype(earthscience::SciencePcaResult::eigenvalues),
+            std::shared_ptr<const std::vector<double>>>::value,
+            "PCA eigenvalues must be immutable");
+        static_assert(std::is_same<
             decltype(earthscience::ScienceClusterResult::centroids),
             std::shared_ptr<const std::vector<float>>>::value,
             "cluster centroids must be immutable");
@@ -235,6 +239,10 @@ namespace
             decltype(earthscience::ScienceClusterResult::populations),
             std::shared_ptr<const std::vector<std::uint64_t>>>::value,
             "cluster populations must be immutable");
+        static_assert(std::is_same<
+            decltype(earthscience::ScienceClusterResult::concentrations),
+            std::shared_ptr<const std::vector<double>>>::value,
+            "cluster concentrations must be immutable");
         static_assert(std::is_same<
             decltype(earthscience::ScienceAnalysisPayload::interpretation),
             std::shared_ptr<const std::vector<std::string>>>::value,
@@ -307,6 +315,9 @@ namespace
         artifact.analysis.pca.explainedVarianceRatios =
             std::make_shared<const std::vector<double>>(
                 std::initializer_list<double>{0.6, 0.3, 0.1});
+        artifact.analysis.pca.eigenvalues =
+            std::make_shared<const std::vector<double>>(
+                std::initializer_list<double>{6.0, 3.0, 1.0});
         artifact.analysis.clusters.assignments =
             std::make_shared<const std::vector<int>>(2, 1);
         artifact.analysis.clusters.centroids =
@@ -314,6 +325,11 @@ namespace
         artifact.analysis.clusters.populations =
             std::make_shared<const std::vector<std::uint64_t>>(
                 std::initializer_list<std::uint64_t>{1, 1, 0, 0});
+        artifact.analysis.clusters.concentrations =
+            std::make_shared<const std::vector<double>>(
+                std::initializer_list<double>{0.99, 0.98, 0.0, 0.0});
+        artifact.analysis.clusters.converged = true;
+        artifact.analysis.clusters.iterations = 7;
         artifact.analysis.interpretation =
             std::make_shared<const std::vector<std::string>>(
                 1, "change is localized");
@@ -362,12 +378,18 @@ namespace
                     copied.analysis.pca.scores == artifact.analysis.pca.scores &&
                     copied.analysis.pca.explainedVarianceRatios ==
                         artifact.analysis.pca.explainedVarianceRatios &&
+                    copied.analysis.pca.eigenvalues ==
+                        artifact.analysis.pca.eigenvalues &&
                     copied.analysis.clusters.assignments ==
                         artifact.analysis.clusters.assignments &&
                     copied.analysis.clusters.centroids ==
                         artifact.analysis.clusters.centroids &&
                     copied.analysis.clusters.populations ==
                         artifact.analysis.clusters.populations &&
+                    copied.analysis.clusters.concentrations ==
+                        artifact.analysis.clusters.concentrations &&
+                    copied.analysis.clusters.converged &&
+                    copied.analysis.clusters.iterations == 7 &&
                     copied.analysis.interpretation ==
                         artifact.analysis.interpretation &&
                     copied.analysis.limitations ==
@@ -394,6 +416,23 @@ namespace
             512 * sizeof(std::uint64_t);
         require(after >= before + minimumAdded,
                 "artifact byte estimate omitted regional analysis backing");
+    }
+
+    void testArtifactByteEstimateIncludesLatentAnalysisBacking()
+    {
+        earthscience::ScienceArtifact artifact;
+        const std::uint64_t before =
+            earthscience::estimatedArtifactBytes(artifact);
+        artifact.analysis.pca.eigenvalues =
+            std::make_shared<const std::vector<double>>(64, 1.0);
+        artifact.analysis.clusters.concentrations =
+            std::make_shared<const std::vector<double>>(8, 0.9);
+        const std::uint64_t after =
+            earthscience::estimatedArtifactBytes(artifact);
+        const std::uint64_t minimumAdded =
+            (64 + 8) * sizeof(double);
+        require(after >= before + minimumAdded,
+                "artifact byte estimate omitted latent analysis backing");
     }
 
     void testArtifactByteEstimateRejectsOverflow()
@@ -516,6 +555,7 @@ int main()
     testArtifactSharesImmutablePixelsAndExactGroundGrid();
     testArtifactSharesImmutableEmbeddingAndAnalysisBacking();
     testArtifactByteEstimateIncludesRegionalAnalysisBacking();
+    testArtifactByteEstimateIncludesLatentAnalysisBacking();
     testArtifactByteEstimateRejectsOverflow();
     testEmbeddingShapeContractRejectsPartialPayloads();
     testEmbeddingShapeContractRejectsInconsistentBacking();

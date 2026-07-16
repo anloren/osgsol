@@ -315,10 +315,12 @@ std::uint64_t estimatedArtifactBytes(const ScienceArtifact& artifact)
     addGroundGridBytes(total, analysis.regionalChange.groundGrid);
     addVectorBytes(total, analysis.pca.components);
     addVectorBytes(total, analysis.pca.scores);
+    addVectorBytes(total, analysis.pca.eigenvalues);
     addVectorBytes(total, analysis.pca.explainedVarianceRatios);
     addVectorBytes(total, analysis.clusters.assignments);
     addVectorBytes(total, analysis.clusters.centroids);
     addVectorBytes(total, analysis.clusters.populations);
+    addVectorBytes(total, analysis.clusters.concentrations);
     addStringVectorBytes(total, analysis.interpretation);
     addStringVectorBytes(total, analysis.limitations);
     addStringBytes(total, artifact.visualizationId);

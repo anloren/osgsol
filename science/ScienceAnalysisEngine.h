@@ -34,6 +34,16 @@ namespace earthscience
             ScienceAnalysisPayload& output,
             const std::function<bool()>& cancelled, std::string& error);
 
+        static bool computeLocalPca(
+            const ScienceEmbeddingPayload& embedding, int componentCount,
+            ScienceAnalysisPayload& output,
+            const std::function<bool()>& cancelled, std::string& error);
+
+        static bool computeSphericalClusters(
+            const ScienceEmbeddingPayload& embedding, int clusterCount,
+            ScienceAnalysisPayload& output,
+            const std::function<bool()>& cancelled, std::string& error);
+
         static ScienceRasterPayload materializeChangeRaster(
             const ScienceAnalysisPayload& analysis,
             const ScienceEmbeddingPayload& embedding, std::string& error);

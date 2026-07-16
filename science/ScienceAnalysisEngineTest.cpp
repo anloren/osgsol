@@ -5,9 +5,11 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <set>
 #include <string>
 #include <vector>
@@ -142,6 +144,343 @@ namespace
             if (value.find(needle) != std::string::npos) return true;
         }
         return false;
+    }
+
+    earthscience::ScienceEmbeddingPayload makeLowRankFixture()
+    {
+        earthscience::ScienceEmbeddingPayload embedding;
+        embedding.years =
+            std::make_shared<const std::vector<int>>(1, 2024);
+        embedding.width = 6;
+        embedding.height = 1;
+        const std::array<std::array<float, 2>, 6> samples = {{
+            {{-3.0f, -1.0f}}, {{-2.0f, 1.0f}}, {{-1.0f, -1.0f}},
+            {{1.0f, 1.0f}}, {{2.0f, -1.0f}}, {{3.0f, 1.0f}},
+        }};
+        std::vector<float> values(
+            samples.size() * earthscience::SCIENCE_EMBEDDING_COMPONENTS,
+            0.0f);
+        for (std::size_t sample = 0; sample < samples.size(); ++sample)
+        {
+            const std::size_t offset =
+                sample * earthscience::SCIENCE_EMBEDDING_COMPONENTS;
+            values[offset] = samples[sample][0];
+            values[offset + 1] = samples[sample][1];
+        }
+        embedding.values = std::make_shared<const std::vector<float>>(
+            std::move(values));
+        embedding.mask =
+            std::make_shared<const std::vector<unsigned char>>(6, 1);
+        embedding.bounds = {100.0, 20.0, 100.05, 20.0};
+        embedding.actualResolutionMeters = 10.0;
+        embedding.validCellCount = 6;
+        embedding.coverageFraction = 1.0;
+        return embedding;
+    }
+
+    std::string serializeLatentResult(
+        const earthscience::ScienceAnalysisPayload& result)
+    {
+        std::ostringstream stream;
+        stream.imbue(std::locale::classic());
+        stream << std::setprecision(std::numeric_limits<double>::max_digits10)
+               << static_cast<int>(result.kind) << '|';
+        const auto append = [&stream](const auto& values) {
+            if (!values)
+            {
+                stream << "null|";
+                return;
+            }
+            for (const auto& value : *values) stream << value << ',';
+            stream << '|';
+        };
+        append(result.pca.eigenvalues);
+        append(result.pca.explainedVarianceRatios);
+        append(result.pca.components);
+        append(result.pca.scores);
+        append(result.clusters.assignments);
+        append(result.clusters.centroids);
+        append(result.clusters.populations);
+        append(result.clusters.concentrations);
+        stream << result.clusters.converged << '|'
+               << result.clusters.iterations;
+        return stream.str();
+    }
+
+    std::string replayHash(const std::string& serialized)
+    {
+        std::uint64_t hash = 14695981039346656037ull;
+        for (unsigned char byte : serialized)
+        {
+            hash ^= byte;
+            hash *= 1099511628211ull;
+        }
+        std::ostringstream stream;
+        stream << std::hex << std::setfill('0') << std::setw(16) << hash;
+        return stream.str();
+    }
+
+    void testLocalPcaIsCenteredLowRankAndReplayStable()
+    {
+        const earthscience::ScienceEmbeddingPayload embedding =
+            makeLowRankFixture();
+        const std::vector<float> valuesBefore = *embedding.values;
+        earthscience::ScienceAnalysisPayload first;
+        earthscience::ScienceAnalysisPayload second;
+        std::string error = "stale";
+
+        require(earthscience::ScienceAnalysisEngine::computeLocalPca(
+                    embedding, 2, first, [] { return false; }, error) &&
+                    error.empty(),
+                "low-rank PCA failed");
+        require(first.kind ==
+                    earthscience::ScienceAnalysisKind::PrincipalComponents &&
+                    first.pca.inputComponentCount == 64 &&
+                    first.pca.componentCount == 2 &&
+                    first.pca.eigenvalues &&
+                    first.pca.eigenvalues->size() == 2 &&
+                    first.pca.explainedVarianceRatios &&
+                    first.pca.explainedVarianceRatios->size() == 2 &&
+                    first.pca.components &&
+                    first.pca.components->size() == 128 &&
+                    first.pca.scores && first.pca.scores->size() == 12,
+                "PCA result shape is incomplete");
+        require(first.pca.eigenvalues->at(0) >=
+                    first.pca.eigenvalues->at(1) &&
+                    nearlyEqual(first.pca.explainedVarianceRatios->at(0) +
+                                    first.pca.explainedVarianceRatios->at(1),
+                                1.0, 1.0e-5),
+                "PCA eigenvalues or explained ratios are not ordered");
+        for (int axis = 0; axis < 2; ++axis)
+        {
+            std::size_t largest = 0;
+            for (std::size_t component = 1; component < 64; ++component)
+            {
+                if (std::abs(first.pca.components->at(
+                                 static_cast<std::size_t>(axis) * 64 +
+                                 component)) >
+                    std::abs(first.pca.components->at(
+                        static_cast<std::size_t>(axis) * 64 + largest)))
+                    largest = component;
+            }
+            require(first.pca.components->at(
+                        static_cast<std::size_t>(axis) * 64 + largest) > 0.0f,
+                    "PCA loading sign was not canonicalized");
+        }
+        require(containsText(first.limitations, "physical") &&
+                    containsText(first.interpretation, "local mathematical"),
+                "PCA assigned physical semantics to mathematical axes");
+        require(*embedding.values == valuesBefore,
+                "PCA mutated immutable embedding input");
+
+        require(earthscience::ScienceAnalysisEngine::computeLocalPca(
+                    embedding, 2, second, [] { return false; }, error),
+                "PCA deterministic replay failed");
+        require(serializeLatentResult(first) == serializeLatentResult(second),
+                "PCA deterministic replay serialization changed");
+        std::cout << "[REPLAY] PCA FNV-1a "
+                  << replayHash(serializeLatentResult(first)) << '\n';
+    }
+
+    earthscience::ScienceEmbeddingPayload makeDirectionalGroupsFixture()
+    {
+        earthscience::ScienceEmbeddingPayload embedding;
+        embedding.years =
+            std::make_shared<const std::vector<int>>(1, 2024);
+        embedding.width = 8;
+        embedding.height = 1;
+        std::vector<float> values(
+            8 * earthscience::SCIENCE_EMBEDDING_COMPONENTS, 0.0f);
+        const std::array<double, 8> angles = {
+            -0.12, -0.04, 0.04, 0.12,
+            PI * 0.5 - 0.12, PI * 0.5 - 0.04,
+            PI * 0.5 + 0.04, PI * 0.5 + 0.12};
+        for (std::size_t sample = 0; sample < angles.size(); ++sample)
+            setDirection(values, sample, angles[sample]);
+        embedding.values = std::make_shared<const std::vector<float>>(
+            std::move(values));
+        embedding.mask =
+            std::make_shared<const std::vector<unsigned char>>(8, 1);
+        embedding.bounds = {100.0, 20.0, 100.07, 20.0};
+        embedding.actualResolutionMeters = 10.0;
+        embedding.validCellCount = 8;
+        embedding.coverageFraction = 1.0;
+        return embedding;
+    }
+
+    bool centroidLexicographicallyLessOrEqual(
+        const std::vector<float>& centroids, int left, int right)
+    {
+        for (int component = 0;
+             component < earthscience::SCIENCE_EMBEDDING_COMPONENTS;
+             ++component)
+        {
+            const float a = centroids[static_cast<std::size_t>(left) * 64 +
+                                      static_cast<std::size_t>(component)];
+            const float b = centroids[static_cast<std::size_t>(right) * 64 +
+                                      static_cast<std::size_t>(component)];
+            if (a < b) return true;
+            if (a > b) return false;
+        }
+        return true;
+    }
+
+    void testSphericalClustersAreOrderedConvergedAndReplayStable()
+    {
+        const earthscience::ScienceEmbeddingPayload embedding =
+            makeDirectionalGroupsFixture();
+        const std::vector<float> valuesBefore = *embedding.values;
+        earthscience::ScienceAnalysisPayload first;
+        earthscience::ScienceAnalysisPayload second;
+        std::string error;
+
+        require(earthscience::ScienceAnalysisEngine::
+                    computeSphericalClusters(
+                        embedding, 2, first, [] { return false; }, error),
+                "spherical clustering failed");
+        require(error.empty() &&
+                    first.kind ==
+                        earthscience::ScienceAnalysisKind::SphericalClusters &&
+                    first.clusters.metric ==
+                        earthscience::ScienceMetric::CosineDistance &&
+                    first.clusters.clusterCount == 2 &&
+                    first.clusters.assignments &&
+                    first.clusters.assignments->size() == 8 &&
+                    first.clusters.centroids &&
+                    first.clusters.centroids->size() == 128 &&
+                    first.clusters.populations &&
+                    first.clusters.populations->size() == 2 &&
+                    first.clusters.concentrations &&
+                    first.clusters.concentrations->size() == 2 &&
+                    first.clusters.converged &&
+                    first.clusters.iterations >= 1 &&
+                    first.clusters.iterations <= 100,
+                "cluster diagnostics are incomplete");
+        require(first.clusters.populations->at(0) == 4 &&
+                    first.clusters.populations->at(1) == 4,
+                "directional groups did not form two non-empty clusters");
+        require(centroidLexicographicallyLessOrEqual(
+                    *first.clusters.centroids, 0, 1),
+                "final centroids were not lexicographically ordered");
+        for (double concentration : *first.clusters.concentrations)
+            require(concentration > 0.99 && concentration <= 1.0,
+                    "cluster concentration is outside its directional range");
+        require(containsText(first.limitations, "physical") &&
+                    containsText(first.interpretation, "direction"),
+                "clusters were given unsupported semantic class names");
+        require(*embedding.values == valuesBefore,
+                "clustering mutated immutable embedding input");
+
+        require(earthscience::ScienceAnalysisEngine::
+                    computeSphericalClusters(
+                        embedding, 2, second, [] { return false; }, error),
+                "cluster deterministic replay failed");
+        require(serializeLatentResult(first) == serializeLatentResult(second),
+                "cluster ids or serialization changed on replay");
+        std::cout << "[REPLAY] spherical clusters FNV-1a "
+                  << replayHash(serializeLatentResult(first)) << '\n';
+    }
+
+    void testSphericalClustersRecoverEmptyGroupsDeterministically()
+    {
+        earthscience::ScienceEmbeddingPayload embedding =
+            makeDirectionalGroupsFixture();
+        std::vector<float> identical(
+            embedding.values->size(), 0.0f);
+        for (std::size_t sample = 0; sample < 8; ++sample)
+            identical[sample * earthscience::SCIENCE_EMBEDDING_COMPONENTS] =
+                1.0f;
+        embedding.values = std::make_shared<const std::vector<float>>(
+            std::move(identical));
+        earthscience::ScienceAnalysisPayload first;
+        earthscience::ScienceAnalysisPayload second;
+        std::string error;
+
+        require(earthscience::ScienceAnalysisEngine::
+                    computeSphericalClusters(
+                        embedding, 3, first, [] { return false; }, error) &&
+                    earthscience::ScienceAnalysisEngine::
+                    computeSphericalClusters(
+                        embedding, 3, second, [] { return false; }, error),
+                "deterministic empty-cluster recovery failed");
+        require(first.clusters.populations &&
+                    first.clusters.populations->size() == 3 &&
+                    std::all_of(first.clusters.populations->begin(),
+                                first.clusters.populations->end(),
+                                [](std::uint64_t population) {
+                                    return population > 0;
+                                }) &&
+                    first.clusters.converged,
+                "empty-cluster recovery left an empty or unstable group");
+        require(serializeLatentResult(first) == serializeLatentResult(second),
+                "empty-cluster recovery changed ids on replay");
+    }
+
+    void testLatentAnalysisRejectsInvalidSamplesAndCancellationPrecisely()
+    {
+        earthscience::ScienceAnalysisPayload output;
+        output.kind = earthscience::ScienceAnalysisKind::PointSeries;
+        std::string error;
+        earthscience::ScienceEmbeddingPayload one = makeLowRankFixture();
+        one.mask = std::make_shared<const std::vector<unsigned char>>(
+            std::initializer_list<unsigned char>{1, 0, 0, 0, 0, 0});
+        require(!earthscience::ScienceAnalysisEngine::computeLocalPca(
+                    one, 2, output, [] { return false; }, error) &&
+                    error.find("at least two valid samples") !=
+                        std::string::npos,
+                "PCA accepted too few valid samples");
+
+        earthscience::ScienceEmbeddingPayload underdetermined =
+            makeLowRankFixture();
+        underdetermined.mask =
+            std::make_shared<const std::vector<unsigned char>>(
+                std::initializer_list<unsigned char>{1, 1, 0, 0, 0, 0});
+        require(!earthscience::ScienceAnalysisEngine::computeLocalPca(
+                    underdetermined, 2, output,
+                    [] { return false; }, error) &&
+                    error.find("more valid samples") != std::string::npos,
+                "PCA accepted more axes than centered samples support");
+
+        earthscience::ScienceEmbeddingPayload constant = makeLowRankFixture();
+        constant.values = std::make_shared<const std::vector<float>>(
+            constant.values->size(), 0.25f);
+        require(!earthscience::ScienceAnalysisEngine::computeLocalPca(
+                    constant, 2, output, [] { return false; }, error) &&
+                    error.find("zero variance") != std::string::npos,
+                "PCA accepted zero-variance samples");
+
+        earthscience::ScienceEmbeddingPayload nonFinite = makeLowRankFixture();
+        std::vector<float> values = *nonFinite.values;
+        values[2] = std::numeric_limits<float>::infinity();
+        nonFinite.values = std::make_shared<const std::vector<float>>(
+            std::move(values));
+        require(!earthscience::ScienceAnalysisEngine::computeLocalPca(
+                    nonFinite, 2, output, [] { return false; }, error) &&
+                    error.find("finite") != std::string::npos,
+                "PCA accepted a non-finite valid sample");
+
+        require(!earthscience::ScienceAnalysisEngine::
+                    computeSphericalClusters(
+                        makeDirectionalGroupsFixture(), 1, output,
+                        [] { return false; }, error) &&
+                    error.find("2 through 8") != std::string::npos,
+                "spherical clustering accepted k outside 2 through 8");
+        earthscience::ScienceEmbeddingPayload zeroNorm =
+            makeDirectionalGroupsFixture();
+        zeroNorm.values = std::make_shared<const std::vector<float>>(
+            zeroNorm.values->size(), 0.0f);
+        require(!earthscience::ScienceAnalysisEngine::
+                    computeSphericalClusters(
+                        zeroNorm, 2, output, [] { return false; }, error) &&
+                    error.find("positive-norm") != std::string::npos,
+                "spherical clustering accepted zero-norm directions");
+        require(!earthscience::ScienceAnalysisEngine::computeLocalPca(
+                    makeLowRankFixture(), 2, output,
+                    [] { return true; }, error) &&
+                    error.find("cancelled") != std::string::npos &&
+                    output.kind ==
+                        earthscience::ScienceAnalysisKind::PointSeries,
+                "cancelled PCA published output or returned an imprecise error");
     }
 
     void testPointSeriesPreservesGapAndFindsLargestConsecutiveChange()
@@ -533,6 +872,10 @@ namespace
 
 int main()
 {
+    testLocalPcaIsCenteredLowRankAndReplayStable();
+    testSphericalClustersAreOrderedConvergedAndReplayStable();
+    testSphericalClustersRecoverEmptyGroupsDeterministically();
+    testLatentAnalysisRejectsInvalidSamplesAndCancellationPrecisely();
     testPointSeriesPreservesGapAndFindsLargestConsecutiveChange();
     testRegionalChangeReportsExactOverlapDistributionAndHotspots();
     testRegionalValidationRejectsGridOverlapAndFiniteFailures();

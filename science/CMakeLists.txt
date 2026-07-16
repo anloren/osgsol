@@ -1,6 +1,11 @@
 ADD_LIBRARY(osgSolScienceCore STATIC
     ScienceAnalysisEngine.cpp
     ScienceAnalysisEngine.h
+    ScienceAnalysisExport.cpp
+    ScienceAnalysisExportCsv.cpp
+    ScienceAnalysisExportDetail.h
+    ScienceAnalysisExport.h
+    ScienceLatentAnalysis.cpp
     ScienceAnalysisSupport.cpp
     ScienceAnalysisSupport.h
     ScienceEmbedding.cpp
@@ -15,7 +20,8 @@ ADD_LIBRARY(osgSolScienceCore STATIC
 
 TARGET_COMPILE_FEATURES(osgSolScienceCore PUBLIC cxx_std_17)
 TARGET_INCLUDE_DIRECTORIES(osgSolScienceCore
-    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
+    PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty")
 SET_TARGET_PROPERTIES(osgSolScienceCore PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     CXX_VISIBILITY_PRESET hidden)
@@ -97,6 +103,20 @@ IF(BUILD_TESTING)
     ADD_TEST(NAME osgSol_Test_ScienceAnalysisEngine
              COMMAND $<TARGET_FILE:osgSol_Test_ScienceAnalysisEngine>)
     SET_TESTS_PROPERTIES(osgSol_Test_ScienceAnalysisEngine PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_ScienceAnalysisExport
+        ScienceAnalysisExportTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceAnalysisExport
+        PRIVATE cxx_std_17)
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceAnalysisExport
+        PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty")
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceAnalysisExport
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceAnalysisExport
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceAnalysisExport>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceAnalysisExport PROPERTIES
         LABELS "offline;scienceearth"
         TIMEOUT 10)
 

@@ -387,6 +387,7 @@ namespace earthscience
         int componentCount = 0;
         std::shared_ptr<const std::vector<float>> components;
         std::shared_ptr<const std::vector<float>> scores;
+        std::shared_ptr<const std::vector<double>> eigenvalues;
         std::shared_ptr<const std::vector<double>> explainedVarianceRatios;
     };
 
@@ -397,6 +398,9 @@ namespace earthscience
         std::shared_ptr<const std::vector<int>> assignments;
         std::shared_ptr<const std::vector<float>> centroids;
         std::shared_ptr<const std::vector<std::uint64_t>> populations;
+        std::shared_ptr<const std::vector<double>> concentrations;
+        bool converged = false;
+        int iterations = 0;
     };
 
     struct ScienceAnalysisPayload
