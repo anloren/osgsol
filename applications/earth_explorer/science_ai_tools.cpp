@@ -138,6 +138,101 @@ namespace
         return picojson::value(item);
     }
 
+    constexpr std::size_t MAX_PRIMARY_METRIC_ENTRIES = 32;
+
+    struct CoverageEvidence
+    {
+        std::string basis;
+        earthscience::ScienceWgs84Bounds bounds;
+        double sourceResolutionMeters = 0.0;
+        double displayResolutionMeters = 0.0;
+        double actualResolutionMeters = 0.0;
+        double fraction = 0.0;
+        std::uint64_t validCells = 0;
+        std::uint64_t noDataCells = 0;
+        bool hasStatistics = false;
+        bool hasActualResolution = false;
+    };
+
+    CoverageEvidence coverageEvidence(
+        const earthscience::ScienceArtifact& artifact,
+        earthscience::ScienceAnalysisKind analysisKind)
+    {
+        CoverageEvidence evidence;
+        if (artifact.query.outputKind ==
+            earthscience::ScienceOutputKind::RasterLayer)
+        {
+            evidence.basis = "raster";
+            evidence.bounds = artifact.raster.bounds;
+            evidence.sourceResolutionMeters =
+                artifact.raster.sourceResolutionMeters;
+            evidence.displayResolutionMeters =
+                artifact.raster.displayResolutionMeters;
+            return evidence;
+        }
+
+        if (analysisKind == earthscience::ScienceAnalysisKind::RegionalChange)
+        {
+            const earthscience::ScienceRegionalChangeSummary& regional =
+                artifact.analysis.regionalChange;
+            if (regional.totalCellCount != 0 ||
+                regional.validOverlapCount != 0 ||
+                regional.noDataCellCount != 0 ||
+                regional.actualResolutionMeters > 0.0)
+            {
+                evidence.basis = "regional-change";
+                evidence.bounds = regional.bounds;
+                evidence.fraction = regional.coverageFraction;
+                evidence.validCells = regional.validOverlapCount;
+                evidence.noDataCells = regional.noDataCellCount;
+                evidence.actualResolutionMeters =
+                    regional.actualResolutionMeters;
+                evidence.hasStatistics = true;
+                evidence.hasActualResolution = true;
+                evidence.sourceResolutionMeters =
+                    evidence.actualResolutionMeters;
+                evidence.displayResolutionMeters =
+                    evidence.actualResolutionMeters;
+                return evidence;
+            }
+
+            const earthscience::ScienceScalarChangeRaster& scalar =
+                artifact.analysis.scalarChangeRaster;
+            if (scalar.width > 0 || scalar.height > 0 ||
+                scalar.validCellCount != 0 || scalar.noDataCellCount != 0 ||
+                scalar.actualResolutionMeters > 0.0)
+            {
+                evidence.basis = "scalar-change";
+                evidence.bounds = scalar.bounds;
+                evidence.fraction = scalar.coverageFraction;
+                evidence.validCells = scalar.validCellCount;
+                evidence.noDataCells = scalar.noDataCellCount;
+                evidence.actualResolutionMeters =
+                    scalar.actualResolutionMeters;
+                evidence.hasStatistics = true;
+                evidence.hasActualResolution = true;
+                evidence.sourceResolutionMeters =
+                    evidence.actualResolutionMeters;
+                evidence.displayResolutionMeters =
+                    evidence.actualResolutionMeters;
+                return evidence;
+            }
+        }
+
+        evidence.basis = "embedding";
+        evidence.bounds = artifact.embedding.bounds;
+        evidence.fraction = artifact.embedding.coverageFraction;
+        evidence.validCells = artifact.embedding.validCellCount;
+        evidence.noDataCells = artifact.embedding.noDataCellCount;
+        evidence.actualResolutionMeters =
+            artifact.embedding.actualResolutionMeters;
+        evidence.hasStatistics = true;
+        evidence.hasActualResolution = true;
+        evidence.sourceResolutionMeters = evidence.actualResolutionMeters;
+        evidence.displayResolutionMeters = evidence.actualResolutionMeters;
+        return evidence;
+    }
+
     picojson::value artifactSummaryJson(
         const earthscience::ScienceArtifact& artifact)
     {
@@ -156,52 +251,76 @@ namespace
         item["years"] = picojson::value(
             yearsJson(artifact.query.time.explicitYears));
 
-        picojson::object metrics;
+        picojson::array metrics;
         if (artifact.analysis.metrics)
         {
             for (const earthscience::ScienceMetricResult& metric :
                  *artifact.analysis.metrics)
             {
-                if (std::isfinite(metric.value))
-                    metrics[earthscience::scienceMetricName(metric.metric)] =
-                        picojson::value(metric.value);
+                if (!std::isfinite(metric.value) ||
+                    metrics.size() >= MAX_PRIMARY_METRIC_ENTRIES)
+                    continue;
+                picojson::object entry;
+                entry["metric"] = picojson::value(std::string(
+                    earthscience::scienceMetricName(metric.metric)));
+                entry["baseline_year"] = picojson::value(
+                    static_cast<double>(metric.baselineYear));
+                entry["comparison_year"] = picojson::value(
+                    static_cast<double>(metric.comparisonYear));
+                entry["value"] = picojson::value(metric.value);
+                entry["unit"] = picojson::value(metric.unit);
+                metrics.push_back(picojson::value(entry));
             }
         }
+        item["primary_metrics"] = picojson::value(metrics);
+        item["primary_metrics_limit"] = picojson::value(
+            static_cast<double>(MAX_PRIMARY_METRIC_ENTRIES));
+        item["primary_metrics_truncated"] = picojson::value(
+            artifact.analysis.metrics &&
+            artifact.analysis.metrics->size() > metrics.size());
+
         const earthscience::ScienceRegionalChangeSummary& regional =
             artifact.analysis.regionalChange;
         if (analysisKind == earthscience::ScienceAnalysisKind::RegionalChange)
         {
+            picojson::object statistics;
             if (std::isfinite(regional.mean))
-                metrics["mean"] = picojson::value(regional.mean);
+                statistics["mean"] = picojson::value(regional.mean);
             if (std::isfinite(regional.median))
-                metrics["median"] = picojson::value(regional.median);
+                statistics["median"] = picojson::value(regional.median);
             if (std::isfinite(regional.standardDeviation))
-                metrics["standard_deviation"] =
+                statistics["standard_deviation"] =
                     picojson::value(regional.standardDeviation);
             if (std::isfinite(regional.minimum))
-                metrics["minimum"] = picojson::value(regional.minimum);
+                statistics["minimum"] = picojson::value(regional.minimum);
             if (std::isfinite(regional.maximum))
-                metrics["maximum"] = picojson::value(regional.maximum);
+                statistics["maximum"] = picojson::value(regional.maximum);
+            item["regional_statistics"] = picojson::value(statistics);
         }
-        item["primary_metrics"] = picojson::value(metrics);
 
+        const CoverageEvidence evidence = coverageEvidence(
+            artifact, analysisKind);
         picojson::object coverage;
-        const bool regionalCoverage =
-            analysisKind == earthscience::ScienceAnalysisKind::RegionalChange &&
-            regional.totalCellCount + regional.validOverlapCount +
-                regional.noDataCellCount != 0;
-        coverage["fraction"] = picojson::value(regionalCoverage
-            ? regional.coverageFraction : artifact.embedding.coverageFraction);
-        coverage["valid_cells"] = picojson::value(static_cast<double>(
-            regionalCoverage ? regional.validOverlapCount
-                             : artifact.embedding.validCellCount));
-        coverage["no_data_cells"] = picojson::value(static_cast<double>(
-            regionalCoverage ? regional.noDataCellCount
-                             : artifact.embedding.noDataCellCount));
-        coverage["west"] = picojson::value(artifact.raster.bounds.west);
-        coverage["south"] = picojson::value(artifact.raster.bounds.south);
-        coverage["east"] = picojson::value(artifact.raster.bounds.east);
-        coverage["north"] = picojson::value(artifact.raster.bounds.north);
+        coverage["basis"] = picojson::value(evidence.basis);
+        coverage["west"] = picojson::value(evidence.bounds.west);
+        coverage["south"] = picojson::value(evidence.bounds.south);
+        coverage["east"] = picojson::value(evidence.bounds.east);
+        coverage["north"] = picojson::value(evidence.bounds.north);
+        coverage["source_resolution_m"] = picojson::value(
+            evidence.sourceResolutionMeters);
+        coverage["display_resolution_m"] = picojson::value(
+            evidence.displayResolutionMeters);
+        if (evidence.hasActualResolution)
+            coverage["actual_resolution_m"] = picojson::value(
+                evidence.actualResolutionMeters);
+        if (evidence.hasStatistics)
+        {
+            coverage["fraction"] = picojson::value(evidence.fraction);
+            coverage["valid_cells"] = picojson::value(
+                static_cast<double>(evidence.validCells));
+            coverage["no_data_cells"] = picojson::value(
+                static_cast<double>(evidence.noDataCells));
+        }
         item["coverage"] = picojson::value(coverage);
 
         picojson::object source;
@@ -244,14 +363,14 @@ namespace
         item["limitations"] = picojson::value(artifact.analysis.limitations
             ? stringsJson(*artifact.analysis.limitations) : picojson::array{});
 
-        item["west"] = picojson::value(artifact.raster.bounds.west);
-        item["south"] = picojson::value(artifact.raster.bounds.south);
-        item["east"] = picojson::value(artifact.raster.bounds.east);
-        item["north"] = picojson::value(artifact.raster.bounds.north);
+        item["west"] = picojson::value(evidence.bounds.west);
+        item["south"] = picojson::value(evidence.bounds.south);
+        item["east"] = picojson::value(evidence.bounds.east);
+        item["north"] = picojson::value(evidence.bounds.north);
         item["source_resolution_m"] = picojson::value(
-            artifact.raster.sourceResolutionMeters);
+            evidence.sourceResolutionMeters);
         item["display_resolution_m"] = picojson::value(
-            artifact.raster.displayResolutionMeters);
+            evidence.displayResolutionMeters);
         const int year = artifact.query.time.explicitYears.empty()
             ? 0 : artifact.query.time.explicitYears.front();
         item["year"] = picojson::value(static_cast<double>(year));
@@ -307,6 +426,39 @@ namespace
         return earthscience::aggregateEmbeddingVectors(
             embedding.values->data(), embedding.mask->data(), sampleCount,
             direction, concentration, error);
+    }
+
+    struct SourceEvidence
+    {
+        std::string sourceId;
+        std::string providerVersion;
+        std::vector<std::string> variables;
+    };
+
+    bool uniformSourceEvidence(
+        const earthscience::ScienceArtifact& artifact,
+        SourceEvidence& evidence)
+    {
+        if (artifact.query.sourceId.empty() ||
+            artifact.sourceReferences.empty())
+            return false;
+        const earthscience::ScienceSourceReference& first =
+            artifact.sourceReferences.front();
+        if (first.sourceId.empty() || first.providerVersion.empty() ||
+            first.variables.empty() || first.sourceId != artifact.query.sourceId)
+            return false;
+        evidence.sourceId = first.sourceId;
+        evidence.providerVersion = first.providerVersion;
+        evidence.variables = first.variables;
+        for (const earthscience::ScienceSourceReference& reference :
+             artifact.sourceReferences)
+        {
+            if (reference.sourceId != evidence.sourceId ||
+                reference.providerVersion != evidence.providerVersion ||
+                reference.variables != evidence.variables)
+                return false;
+        }
+        return true;
     }
 
     picojson::value sourceJson(
@@ -582,43 +734,56 @@ void registerScienceResearchTools(
     {
         if (!args.is<picojson::object>())
             return errorJson("show arguments must be an object");
+
+        const earthscience::ScienceJobSnapshot snapshot = service->snapshot();
         std::string artifactId;
         const bool explicitArtifact = args.contains("artifact_id");
         if (explicitArtifact)
         {
             if (!requiredString(args, "artifact_id", artifactId))
                 return errorJson("artifact_id must be a non-empty string");
-            if (!service->showArtifact(artifactId))
-                return errorJson("unknown science artifact: " + artifactId);
         }
 
-        const earthscience::ScienceJobSnapshot snapshot = service->snapshot();
         const std::shared_ptr<const earthscience::ScienceArtifact> artifact =
-            explicitArtifact ? snapshot.displayArtifact
+            explicitArtifact ? service->findArtifact(artifactId)
                              : snapshot.lastSuccessfulArtifact;
         if (!artifact)
-            return errorJson("science artifact is not ready; call get_research_job first");
+        {
+            if (explicitArtifact)
+                return errorJson("unknown science artifact: " + artifactId);
+            return errorJson(
+                "science artifact is not ready; call get_research_job first");
+        }
 
         double requested = static_cast<double>(snapshot.jobId);
         if (!optionalNumber(args, "job_id", requested) ||
+            !std::isfinite(requested) || requested < 0.0 ||
+            requested >= static_cast<double>(
+                std::numeric_limits<std::uint64_t>::max()) ||
             std::floor(requested) != requested)
             return errorJson("job_id must be an integer");
         const std::uint64_t requestedId =
             static_cast<std::uint64_t>(requested);
+        if (explicitArtifact && args.contains("job_id") &&
+            requestedId != artifact->generation)
+            return errorJson("science artifact job_id does not match artifact_id");
         if (!explicitArtifact && requestedId != snapshot.jobId &&
             requestedId != artifact->generation)
             return errorJson("science artifact job_id is not current or retained");
+        if (explicitArtifact && !service->showArtifact(artifactId))
+            return errorJson("unknown science artifact: " + artifactId);
 
         layer->setVisible(true);
         layers->setEnabled("alphaearth", true);
+        const earthscience::ScienceJobSnapshot current = service->snapshot();
         picojson::object result;
         result["ok"] = picojson::value(true);
         result["visible"] = picojson::value(true);
         result["camera_changed"] = picojson::value(false);
         result["current_job_id"] = picojson::value(
-            static_cast<double>(snapshot.jobId));
+            static_cast<double>(current.jobId));
         result["current_job_state"] = picojson::value(std::string(
-            earthscience::scienceJobStateName(snapshot.state)));
+            earthscience::scienceJobStateName(current.state)));
         result["artifact_generation"] = picojson::value(
             static_cast<double>(artifact->generation));
         result["artifact_id"] = picojson::value(artifact->artifactId);
@@ -650,13 +815,20 @@ void registerScienceResearchTools(
             service->findArtifact(rightId);
         if (!left || !right)
             return errorJson("science comparison requires two ready artifacts");
+        SourceEvidence leftEvidence, rightEvidence;
         if (left->query.sourceId.empty() ||
             left->query.sourceId != right->query.sourceId ||
-            sourceVersion(*left) != sourceVersion(*right) ||
+            left->processingVersion.empty() ||
+            left->processingVersion != right->processingVersion ||
             left->query.variables != std::vector<std::string>({"embedding64"}) ||
-            right->query.variables != std::vector<std::string>({"embedding64"}))
+            right->query.variables != std::vector<std::string>({"embedding64"}) ||
+            !uniformSourceEvidence(*left, leftEvidence) ||
+            !uniformSourceEvidence(*right, rightEvidence) ||
+            leftEvidence.sourceId != rightEvidence.sourceId ||
+            leftEvidence.providerVersion != rightEvidence.providerVersion ||
+            leftEvidence.variables != rightEvidence.variables)
             return errorJson(
-                "science artifacts do not share a compatible 64D source");
+                "science artifacts do not share compatible 64D evidence");
 
         std::array<float, earthscience::SCIENCE_EMBEDDING_COMPONENTS>
             leftDirection{}, rightDirection{};

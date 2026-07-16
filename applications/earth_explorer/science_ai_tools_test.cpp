@@ -108,71 +108,114 @@ namespace
             _snapshot = earthscience::ScienceProviderSnapshot();
         }
 
-        void publishReady(const std::string& artifactId = "test-artifact",
-                          int direction = 0)
+        void publishReady(
+            const std::string& artifactId = "test-artifact",
+            int direction = 0,
+            const std::string& processingVersion = "test-processing-v1",
+            const std::string& providerVersion = "1.1",
+            bool includeRegionalSummary = true)
         {
             auto artifact = std::make_shared<earthscience::ScienceArtifact>();
             artifact->artifactId = artifactId;
             artifact->generation = _generation;
             artifact->visualizationId = lastQuery.visualizationId;
-            artifact->processingVersion = "test-processing-v1";
-            artifact->raster.bounds = {-122.2, 37.4, -122.0, 37.6};
-            artifact->raster.sourceResolutionMeters = 10.0;
-            artifact->raster.displayResolutionMeters = 80.0;
+            artifact->processingVersion = processingVersion;
+            const bool preview = lastQuery.outputKind ==
+                earthscience::ScienceOutputKind::RasterLayer;
+            if (preview)
+            {
+                artifact->raster.bounds = {-122.2, 37.4, -122.0, 37.6};
+                artifact->raster.sourceResolutionMeters = 10.0;
+                artifact->raster.displayResolutionMeters = 80.0;
+            }
             earthscience::ScienceSourceReference reference;
             reference.sourceId = lastQuery.sourceId;
-            reference.providerVersion = "1.1";
+            reference.providerVersion = providerVersion;
             reference.datasetId = "alphaearth-test-cog";
             reference.originalUrl = "https://example.invalid/test.tif";
             reference.attribution =
                 "Google / Google DeepMind / source.coop";
-            reference.actualCoverage = artifact->raster.bounds;
+            reference.actualCoverage = preview ? artifact->raster.bounds
+                : earthscience::ScienceWgs84Bounds{10.0, 20.0, 30.0, 40.0};
+            reference.variables = lastQuery.variables;
             reference.processingSteps = {"read 64D embedding", "validate mask"};
             artifact->sourceReferences.push_back(reference);
             const std::vector<int> years = lastQuery.time.explicitYears.empty()
                 ? std::vector<int>{2025} : lastQuery.time.explicitYears;
-            artifact->embedding.years =
-                std::make_shared<const std::vector<int>>(years);
-            artifact->embedding.width = 1;
-            artifact->embedding.height = 1;
-            std::vector<float> values(
-                years.size() * earthscience::ScienceEmbeddingPayload::componentCount,
-                0.0f);
-            const int axis = direction == 0 ? 0 : 1;
-            for (std::size_t year = 0; year < years.size(); ++year)
-                values[year * earthscience::ScienceEmbeddingPayload::componentCount +
-                       static_cast<std::size_t>(axis)] = 1.0f;
-            artifact->embedding.values =
-                std::make_shared<const std::vector<float>>(std::move(values));
-            artifact->embedding.mask =
-                std::make_shared<const std::vector<unsigned char>>(
-                    years.size(), 1);
-            artifact->embedding.validCellCount = years.size();
-            artifact->embedding.noDataCellCount = 1;
-            artifact->embedding.coverageFraction = 0.875;
-            artifact->embedding.processingSteps =
-                std::make_shared<const std::vector<std::string>>(
-                    std::initializer_list<std::string>{"dequantize A01-A64"});
+            if (!preview)
+            {
+                artifact->embedding.years =
+                    std::make_shared<const std::vector<int>>(years);
+                artifact->embedding.width = 1;
+                artifact->embedding.height = 1;
+                std::vector<float> values(
+                    years.size() *
+                        earthscience::ScienceEmbeddingPayload::componentCount,
+                    0.0f);
+                const int axis = direction == 0 ? 0 : 1;
+                for (std::size_t year = 0; year < years.size(); ++year)
+                    values[year *
+                               earthscience::ScienceEmbeddingPayload::componentCount +
+                           static_cast<std::size_t>(axis)] = 1.0f;
+                artifact->embedding.values =
+                    std::make_shared<const std::vector<float>>(std::move(values));
+                artifact->embedding.mask =
+                    std::make_shared<const std::vector<unsigned char>>(
+                        years.size(), 1);
+                artifact->embedding.bounds = {10.0, 20.0, 30.0, 40.0};
+                artifact->embedding.actualResolutionMeters = 12.5;
+                artifact->embedding.validCellCount = years.size();
+                artifact->embedding.noDataCellCount = 1;
+                artifact->embedding.coverageFraction = 0.875;
+                artifact->embedding.processingSteps =
+                    std::make_shared<const std::vector<std::string>>(
+                        std::initializer_list<std::string>{
+                            "dequantize A01-A64"});
+            }
             artifact->analysis.kind = lastQuery.analysis.kind;
-            earthscience::ScienceMetricResult metric;
-            metric.metric = earthscience::ScienceMetric::CosineDistance;
-            metric.baselineYear = years.front();
-            metric.comparisonYear = years.back();
-            metric.value = 0.25;
-            metric.unit = "unitless";
+            std::vector<earthscience::ScienceMetricResult> metrics;
+            if (years.size() == 1)
+            {
+                metrics.push_back({earthscience::ScienceMetric::CosineDistance,
+                                   years.front(), years.front(), 0.0,
+                                   "unitless"});
+            }
+            else
+            {
+                for (std::size_t index = 1; index < years.size(); ++index)
+                {
+                    metrics.push_back({
+                        earthscience::ScienceMetric::CosineDistance,
+                        years[index - 1], years[index],
+                        0.05 * static_cast<double>(index), "unitless"});
+                }
+            }
             artifact->analysis.metrics =
                 std::make_shared<const std::vector<earthscience::ScienceMetricResult>>(
-                    std::initializer_list<earthscience::ScienceMetricResult>{metric});
+                    std::move(metrics));
             artifact->analysis.regionalChange.baselineYear = years.front();
             artifact->analysis.regionalChange.comparisonYear = years.back();
-            artifact->analysis.regionalChange.coverageFraction = 0.875;
-            artifact->analysis.regionalChange.validOverlapCount = years.size();
-            artifact->analysis.regionalChange.noDataCellCount = 1;
-            artifact->analysis.regionalChange.mean = 0.25;
-            artifact->analysis.regionalChange.median = 0.20;
-            artifact->analysis.regionalChange.standardDeviation = 0.05;
-            artifact->analysis.regionalChange.minimum = 0.10;
-            artifact->analysis.regionalChange.maximum = 0.40;
+            if (includeRegionalSummary)
+            {
+                artifact->analysis.regionalChange.totalCellCount = 4;
+                artifact->analysis.regionalChange.coverageFraction = 0.75;
+                artifact->analysis.regionalChange.validOverlapCount = 3;
+                artifact->analysis.regionalChange.noDataCellCount = 1;
+                artifact->analysis.regionalChange.mean = 0.25;
+                artifact->analysis.regionalChange.median = 0.20;
+                artifact->analysis.regionalChange.standardDeviation = 0.05;
+                artifact->analysis.regionalChange.minimum = 0.10;
+                artifact->analysis.regionalChange.maximum = 0.40;
+                artifact->analysis.regionalChange.bounds =
+                    {11.0, 21.0, 31.0, 41.0};
+                artifact->analysis.regionalChange.actualResolutionMeters = 25.0;
+            }
+            artifact->analysis.scalarChangeRaster.bounds =
+                {12.0, 22.0, 32.0, 42.0};
+            artifact->analysis.scalarChangeRaster.actualResolutionMeters = 50.0;
+            artifact->analysis.scalarChangeRaster.validCellCount = 2;
+            artifact->analysis.scalarChangeRaster.noDataCellCount = 2;
+            artifact->analysis.scalarChangeRaster.coverageFraction = 0.5;
             artifact->analysis.limitations =
                 std::make_shared<const std::vector<std::string>>(
                     std::initializer_list<std::string>{
@@ -395,6 +438,18 @@ namespace
                     result.get("artifact").contains("warnings") &&
                     result.get("artifact").contains("limitations"),
                 "job result omitted compact artifact evidence");
+        const picojson::value& previewCoverage =
+            result.get("artifact").get("coverage");
+        require(previewCoverage.contains("basis") &&
+                    previewCoverage.contains("source_resolution_m") &&
+                    previewCoverage.contains("display_resolution_m") &&
+                    previewCoverage.get("basis").get<std::string>() == "raster" &&
+                    previewCoverage.get("west").get<double>() == -122.2 &&
+                    previewCoverage.get("source_resolution_m").get<double>() ==
+                        10.0 &&
+                    previewCoverage.get("display_resolution_m").get<double>() ==
+                        80.0,
+                "preview summary did not use raster coverage and resolution");
         require(result.get("progress").contains("percent"),
                 "determinate job progress omitted percent");
         requireMatrixUnchanged(originalMatrix, *manipulator);
@@ -458,6 +513,49 @@ namespace
                 "point-series mode changed map visibility");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
+        providerPointer->publishReady("series-artifact");
+        const std::uint64_t seriesJob = service.snapshot().jobId;
+        getArgs["job_id"] = picojson::value(static_cast<double>(seriesJob));
+        require(tools.dispatch("get_research_job", picojson::value(getArgs), result),
+                "point-series artifact job did not dispatch");
+        const picojson::value& seriesArtifact = result.get("artifact");
+        const picojson::value& seriesCoverage = seriesArtifact.get("coverage");
+        require(seriesCoverage.contains("basis") &&
+                    seriesCoverage.contains("actual_resolution_m") &&
+                    seriesCoverage.get("basis").get<std::string>() == "embedding" &&
+                    seriesCoverage.get("west").get<double>() == 10.0 &&
+                    seriesCoverage.get("actual_resolution_m").get<double>() ==
+                        12.5 &&
+                    seriesArtifact.get("source_resolution_m").get<double>() ==
+                        12.5 &&
+                    seriesArtifact.get("display_resolution_m").get<double>() ==
+                        12.5,
+                "point-series summary did not use embedding coverage and resolution");
+        require(seriesArtifact.get("primary_metrics").is<picojson::array>(),
+                "point-series primary metrics were not bounded entries");
+        const picojson::array& seriesMetrics =
+            seriesArtifact.get("primary_metrics").get<picojson::array>();
+        require(seriesMetrics.size() == 3 && seriesMetrics.size() <= 32 &&
+                    seriesArtifact.get("primary_metrics_limit").get<double>() ==
+                        32.0,
+                "point-series summary lost or failed to bound metric intervals");
+        for (std::size_t index = 0; index < seriesMetrics.size(); ++index)
+        {
+            const picojson::value& metric = seriesMetrics[index];
+            require(metric.contains("metric") &&
+                        metric.contains("baseline_year") &&
+                        metric.contains("comparison_year") &&
+                        metric.get("metric").get<std::string>() ==
+                        "cosine-distance" &&
+                        metric.get("baseline_year").get<double>() ==
+                            2019.0 + static_cast<double>(index) &&
+                        metric.get("comparison_year").get<double>() ==
+                            2020.0 + static_cast<double>(index) &&
+                        metric.contains("value") && metric.contains("unit"),
+                    "point-series metric entry lost its year interval evidence");
+        }
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
         const std::uint64_t beforeMalformed = providerPointer->generation();
         seriesArgs["first_year"] = picojson::value(2010.0);
         require(tools.dispatch(
@@ -512,12 +610,45 @@ namespace
                     regionalArtifact.contains("warnings") &&
                     regionalArtifact.contains("limitations"),
                 "analysis artifact omitted required compact evidence");
+        const picojson::value& regionalCoverage =
+            regionalArtifact.get("coverage");
+        require(regionalCoverage.contains("basis") &&
+                    regionalCoverage.contains("actual_resolution_m") &&
+                    regionalCoverage.get("basis").get<std::string>() ==
+                    "regional-change" &&
+                    regionalCoverage.get("west").get<double>() == 11.0 &&
+                    regionalCoverage.get("fraction").get<double>() == 0.75 &&
+                    regionalCoverage.get("valid_cells").get<double>() == 3.0 &&
+                    regionalCoverage.get("actual_resolution_m").get<double>() ==
+                        25.0 &&
+                    regionalArtifact.get("source_resolution_m").get<double>() ==
+                        25.0,
+                "regional summary did not prefer regional-change evidence");
         require(regionalJson.find("embedding_values") == std::string::npos &&
                     regionalJson.find("change_values") == std::string::npos &&
                     regionalJson.find("rgba") == std::string::npos &&
                     regionalJson.find("\"A01\"") == std::string::npos &&
                     regionalJson.find("\"A64\"") == std::string::npos,
                 "analysis artifact leaked raw scientific arrays");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(regionalArgs), result),
+                "scalar fallback research did not dispatch");
+        providerPointer->publishReady(
+            "scalar-fallback-artifact", 0, "test-processing-v1", "1.1", false);
+        const std::uint64_t scalarJob = service.snapshot().jobId;
+        getArgs["job_id"] = picojson::value(static_cast<double>(scalarJob));
+        require(tools.dispatch("get_research_job", picojson::value(getArgs), result),
+                "scalar fallback artifact job did not dispatch");
+        const picojson::value& scalarCoverage =
+            result.get("artifact").get("coverage");
+        require(scalarCoverage.get("basis").get<std::string>() ==
+                    "scalar-change" &&
+                    scalarCoverage.get("west").get<double>() == 12.0 &&
+                    scalarCoverage.get("actual_resolution_m").get<double>() ==
+                        50.0,
+                "regional summary did not fall back to scalar-change evidence");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
         regionalArgs["grid_size"] = picojson::value(0.0);
@@ -565,6 +696,34 @@ namespace
                 "artifact comparison returned unbounded 64D metrics");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(seriesArgs), result),
+                "mismatched comparison research did not dispatch");
+        providerPointer->publishReady(
+            "mismatched-processing-artifact", 0, "test-processing-v2");
+        service.snapshot();
+        compareArgs["right_artifact_id"] =
+            picojson::value("mismatched-processing-artifact");
+        require(tools.dispatch(
+                    "compare_science_artifacts", picojson::value(compareArgs), result) &&
+                    result.contains("error"),
+                "artifact comparison accepted different processing versions");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(seriesArgs), result),
+                "mismatched source-version research did not dispatch");
+        providerPointer->publishReady(
+            "mismatched-source-artifact", 0, "test-processing-v1", "2.0");
+        service.snapshot();
+        compareArgs["right_artifact_id"] =
+            picojson::value("mismatched-source-artifact");
+        require(tools.dispatch(
+                    "compare_science_artifacts", picojson::value(compareArgs), result) &&
+                    result.contains("error"),
+                "artifact comparison accepted different source evidence");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
         layer->setVisible(false);
         picojson::object showArgs;
         showArgs["artifact_id"] = picojson::value("left-artifact");
@@ -573,6 +732,49 @@ namespace
                     service.snapshot().displayArtifact &&
                     service.snapshot().displayArtifact->artifactId == "left-artifact",
                 "show did not explicitly materialize a retained artifact id");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        const std::string displayBeforeInvalidShow =
+            service.snapshot().displayArtifact->artifactId;
+        picojson::object invalidShowArgs;
+        invalidShowArgs["artifact_id"] = picojson::value(17.0);
+        require(tools.dispatch(
+                    "show_science_artifact", picojson::value(invalidShowArgs),
+                    result) &&
+                    result.contains("error") &&
+                    service.snapshot().displayArtifact->artifactId ==
+                        displayBeforeInvalidShow,
+                "show accepted a non-string artifact_id");
+        invalidShowArgs["artifact_id"] = picojson::value("right-artifact");
+        invalidShowArgs["job_id"] = picojson::value("not-an-integer");
+        require(tools.dispatch(
+                    "show_science_artifact", picojson::value(invalidShowArgs),
+                    result) &&
+                    result.contains("error") &&
+                    service.snapshot().displayArtifact->artifactId ==
+                        displayBeforeInvalidShow,
+                "show mutated display before validating job_id type");
+        invalidShowArgs["job_id"] = picojson::value(999999.0);
+        require(tools.dispatch(
+                    "show_science_artifact", picojson::value(invalidShowArgs),
+                    result) &&
+                    result.contains("error") &&
+                    service.snapshot().displayArtifact->artifactId ==
+                        displayBeforeInvalidShow,
+                "show accepted mismatched artifact_id and job_id");
+        const std::shared_ptr<const earthscience::ScienceArtifact> rightArtifact =
+            service.findArtifact("right-artifact");
+        require(static_cast<bool>(rightArtifact),
+                "right comparison artifact was not retained");
+        invalidShowArgs["job_id"] = picojson::value(
+            static_cast<double>(rightArtifact->generation));
+        require(tools.dispatch(
+                    "show_science_artifact", picojson::value(invalidShowArgs),
+                    result) &&
+                    result.get("ok").get<bool>() &&
+                    service.snapshot().displayArtifact->artifactId ==
+                        "right-artifact",
+                "show rejected matching artifact_id and job_id");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
         layer->setVisible(false);
