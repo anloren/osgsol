@@ -107,6 +107,27 @@ namespace
         return query;
     }
 
+    earthscience::GeoTemporalQuery makePointSeriesQuery(
+        int firstYear, int lastYear)
+    {
+        earthscience::GeoTemporalQuery query = makeQuery();
+        query.geometry.requestedSpanMeters = 0.0;
+        query.time.explicitYears.clear();
+        for (int year = firstYear; year <= lastYear; ++year)
+            query.time.explicitYears.push_back(year);
+        query.variables = {"embedding64"};
+        query.outputKind = earthscience::ScienceOutputKind::TimeSeries;
+        query.priority =
+            earthscience::SciencePriority::InteractiveResearch;
+        query.visualizationId.clear();
+        query.analysis.kind =
+            earthscience::ScienceAnalysisKind::PointSeries;
+        query.analysis.baselineYear = firstYear;
+        query.analysis.comparisonYear = lastYear;
+        query.analysis.gridSize = 0;
+        return query;
+    }
+
     std::shared_ptr<const earthscience::ScienceArtifact> makeArtifact(
         const std::string& id, std::uint64_t providerGeneration)
     {
@@ -613,6 +634,59 @@ namespace
                 "preview throughput fabricated a 64D analysis duration");
     }
 
+    void testThroughputEvidenceIsolatedByPhysicalWorkload()
+    {
+        ServiceFixture fixture;
+        earthscience::GeoTemporalQuery point =
+            makePointSeriesQuery(2017, 2025);
+        fixture.service->submit(point);
+        const std::uint64_t generation = fixture.provider->generation();
+        fixture.provider->publish(
+            generation, earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready, 9, 9,
+                         "year", 55.0),
+            "Ready", makeArtifact("timed-point-series", generation));
+        fixture.service->snapshot();
+
+        const earthscience::ScienceQueryCost samePoint =
+            fixture.service->estimate(point);
+        require(samePoint.durationDeterminate &&
+                    std::abs(samePoint.estimatedDurationSeconds - 55.0) <
+                        1.0e-9,
+                "same point workload lost observed duration evidence");
+        point.limits.maximumDurationSeconds = 54.0;
+        const int submitsBeforeBudget = fixture.events.submits;
+        fixture.service->submit(point);
+        const earthscience::ScienceJobSnapshot rejected =
+            fixture.service->snapshot();
+        require(rejected.state == earthscience::ScienceJobState::Failed &&
+                    rejected.message ==
+                        "analysis exceeds maximum duration" &&
+                    fixture.events.submits == submitsBeforeBudget,
+                "same-workload duration budget gate was weakened");
+
+        earthscience::GeoTemporalQuery regional = makeAnalysisQuery();
+        regional.analysis.gridSize = 128;
+        regional.limits.maximumDurationSeconds = 240.0;
+        const earthscience::ScienceQueryCost regionalCost =
+            fixture.service->estimate(regional);
+        require(!regionalCost.durationDeterminate &&
+                    regionalCost.estimatedDurationSeconds == 0.0,
+                "point throughput fabricated regional duration");
+        const int submitsBeforeRegional = fixture.events.submits;
+        fixture.service->submit(regional);
+        require(fixture.events.submits == submitsBeforeRegional + 1 &&
+                    fixture.service->snapshot().state ==
+                        earthscience::ScienceJobState::Queued,
+                "fabricated point duration blocked regional dispatch");
+
+        const earthscience::ScienceQueryCost twoYearPoint =
+            fixture.service->estimate(makePointSeriesQuery(2017, 2018));
+        require(!twoYearPoint.durationDeterminate &&
+                    twoYearPoint.estimatedDurationSeconds == 0.0,
+                "nine-year point throughput polluted two-year point work");
+    }
+
     void testAnotherProviderCannotImpersonateLegacyPreview()
     {
         ProviderEvents alphaEvents, otherEvents;
@@ -700,6 +774,7 @@ int main()
     testRetainsPreviewAnalysisAndDisplayIndependently();
     testEstimatesExactCostAndRequiresEvidenceForDuration();
     testPreviewThroughputDoesNotFabricateAnalysisDuration();
+    testThroughputEvidenceIsolatedByPhysicalWorkload();
     testAnotherProviderCannotImpersonateLegacyPreview();
     testRequiresConfirmationAndEnforcesEstimatedBudgets();
     testDestructionCancelsBeforeProviderDestruction();

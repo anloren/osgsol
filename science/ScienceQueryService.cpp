@@ -70,8 +70,18 @@ namespace
 
     std::string throughputKey(const GeoTemporalQuery& query)
     {
-        return query.sourceId +
-            (isLegacyPreviewQuery(query) ? "#preview" : "#embedding64");
+        if (isLegacyPreviewQuery(query))
+            return query.sourceId + "#preview";
+
+        std::ostringstream key;
+        key << query.sourceId
+            << "#embedding64#geometry=" << geometryName(query.geometry.kind)
+            << "#output=" << static_cast<int>(query.outputKind)
+            << "#analysis=" << static_cast<int>(query.analysis.kind)
+            << "#aggregation=" << aggregationName(query.aggregation)
+            << "#time=" << timeModeName(query.time.mode)
+            << "#years=" << query.time.explicitYears.size();
+        return key.str();
     }
 
     std::uint64_t checkedMultiply(std::uint64_t left, std::uint64_t right)
