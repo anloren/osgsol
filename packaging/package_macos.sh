@@ -4,14 +4,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDK="${OSGVERSE_SDK:-$REPO/build/sdk_core}"
-DEFAULT_OSG_RUNTIME_SDK="$SDK"
-if command -v brew >/dev/null 2>&1; then
-    BREW_OSG_RUNTIME_SDK="$(brew --prefix open-scene-graph 2>/dev/null || true)"
-    if [ -n "$BREW_OSG_RUNTIME_SDK" ]; then
-        DEFAULT_OSG_RUNTIME_SDK="$BREW_OSG_RUNTIME_SDK"
-    fi
-fi
-OSG_RUNTIME_SDK="${OSG_RUNTIME_SDK:-${OSG_ROOT:-$DEFAULT_OSG_RUNTIME_SDK}}"
+OSG_RUNTIME_SDK="${OSG_RUNTIME_SDK:-${OSG_ROOT:-}}"
 APP="${OSGSOL_PACKAGE_OUTPUT:-$REPO/dist/osgSol Earth.app}"
 VERSION="${OSGSOL_PACKAGE_VERSION:-0.3.0}"
 BUILD_CHANNEL="${OSGSOL_BUILD_CHANNEL:-developer}"
@@ -66,11 +59,51 @@ done
 if [ ! -d "$SDK/lib" ]; then
     fail 66 "Install SDK is incomplete: missing $SDK/lib"
 fi
+if [ -z "$OSG_RUNTIME_SDK" ]; then
+    fail 66 "OSG_RUNTIME_SDK must explicitly select the GLCore runtime used to build the app"
+fi
 if [ ! -d "$OSG_RUNTIME_SDK/lib" ] ||
    [ -z "$(find "$OSG_RUNTIME_SDK/lib" -maxdepth 1 -name 'libOpenThreads*.dylib' -print -quit)" ] ||
    [ ! -d "$OSG_RUNTIME_SDK/lib/$PLUGVER" ] ||
    [ -z "$(find -L "$OSG_RUNTIME_SDK/lib/$PLUGVER" -maxdepth 1 -name 'osgdb_*.so' -print -quit)" ]; then
     fail 66 "OSG runtime SDK is incomplete: $OSG_RUNTIME_SDK"
+fi
+
+# The macOS headless and foreground render paths require the same GLCore OSG profile at compile
+# time and runtime. The OSG ABI/install names alone cannot distinguish a legacy build, so validate
+# both independent inputs before creating or moving any output bundle.
+RUNTIME_GL_HEADER="$OSG_RUNTIME_SDK/include/osg/GL"
+if [ ! -f "$RUNTIME_GL_HEADER" ]; then
+    fail 66 "OSG runtime SDK is not GLCore: missing $RUNTIME_GL_HEADER"
+fi
+RUNTIME_GL3_COUNT="$(awk \
+    '$1 == "#define" && $2 == "OSG_GL3_AVAILABLE" { count++ } END { print count + 0 }' \
+    "$RUNTIME_GL_HEADER")"
+RUNTIME_LEGACY_COUNT="$(awk '
+    $1 == "#define" && ($2 == "OSG_GL1_AVAILABLE" ||
+                        $2 == "OSG_GL2_AVAILABLE" ||
+                        $2 == "OSG_GL_MATRICES_AVAILABLE" ||
+                        $2 == "OSG_GL_FIXED_FUNCTION_AVAILABLE") { count++ }
+    END { print count + 0 }
+' "$RUNTIME_GL_HEADER")"
+if [ "$RUNTIME_GL3_COUNT" -ne 1 ] || [ "$RUNTIME_LEGACY_COUNT" -ne 0 ]; then
+    fail 66 "OSG runtime SDK is not GLCore (GL3=$RUNTIME_GL3_COUNT legacy=$RUNTIME_LEGACY_COUNT)"
+fi
+
+PROFILE_ARCHIVE="$SDK/lib/libosgVersePipeline.a"
+if [ ! -f "$PROFILE_ARCHIVE" ]; then
+    fail 66 "Install SDK was not built for GLCore: missing $PROFILE_ARCHIVE"
+fi
+COMPILE_GL3_COUNT="$(strings -a "$PROFILE_ARCHIVE" |
+    awk '$0 == "#define VERSE_GLES3 1" { count++ } END { print count + 0 }')"
+COMPILE_CORE_SUFFIX_COUNT="$(strings -a "$PROFILE_ARCHIVE" |
+    awk '$0 == " core" { count++ } END { print count + 0 }')"
+COMPILE_LEGACY_SUFFIX_COUNT="$(strings -a "$PROFILE_ARCHIVE" |
+    awk '$0 == " compatibility" { count++ } END { print count + 0 }')"
+if [ "$COMPILE_GL3_COUNT" -lt 1 ] ||
+   [ "$COMPILE_CORE_SUFFIX_COUNT" -lt 1 ] ||
+   [ "$COMPILE_LEGACY_SUFFIX_COUNT" -ne 0 ]; then
+    fail 66 "Install SDK was not built for GLCore (GL3=$COMPILE_GL3_COUNT core=$COMPILE_CORE_SUFFIX_COUNT legacy=$COMPILE_LEGACY_SUFFIX_COUNT)"
 fi
 
 APP_PARENT="$(dirname "$APP")"
