@@ -48,7 +48,7 @@ namespace
     class LocalFixture
     {
     public:
-        LocalFixture()
+        explicit LocalFixture(bool rotated = false)
         {
             static std::atomic<unsigned int> sequence{0};
             const std::string name = "osgsol-alphaearth-64d-" +
@@ -62,7 +62,8 @@ namespace
                 _path.c_str(), 8, 8, 64, GDT_Int8, nullptr);
             require(dataset != nullptr, "could not create the 64-band fixture");
 
-            double transform[6] = {WEST, 0.01, 0.0, NORTH, 0.0, -0.01};
+            double transform[6] = {WEST, 0.01, rotated ? 0.002 : 0.0,
+                                   NORTH, rotated ? 0.001 : 0.0, -0.01};
             require(dataset->SetGeoTransform(transform) == CE_None,
                     "could not set the fixture geotransform");
             OGRSpatialReference wgs84;
@@ -356,6 +357,38 @@ namespace
                 "late cancelled work replaced the terminal snapshot");
     }
 
+    void testInjectedResolverRejectsRemoteAssetsBeforeGdal()
+    {
+        const std::vector<std::string> rejectedPaths = {
+            "https://example.invalid/must-not-be-requested.tif",
+            "relative-alphaearth.tif",
+            "/vsimem/injected-alphaearth.tif",
+            std::filesystem::temp_directory_path().string()};
+        for (const std::string& rejectedPath : rejectedPaths)
+        {
+            earthscience::AlphaEarthEmbeddingRuntime runtime(
+                [&rejectedPath](double, double, int year,
+                   earthscience::AlphaEarthAsset& asset,
+                   std::string& error)
+            {
+                asset.datasetId = "remote-probe-" + std::to_string(year);
+                asset.pathOrUrl = rejectedPath;
+                asset.sourceVersion = "fixture-v1";
+                asset.indexedBounds = {WEST, SOUTH, EAST, NORTH};
+                error.clear();
+                return true;
+            });
+            earthscience::GeoTemporalQuery query = pointQuery();
+            query.time.explicitYears = {2017};
+            const earthscience::ScienceProviderSnapshot rejected =
+                waitForTerminal(runtime, runtime.submit(query));
+            require(rejected.state == earthscience::ScienceJobState::Failed &&
+                        rejected.message.find("local") != std::string::npos &&
+                        rejected.message.find("open") == std::string::npos,
+                    "injected resolver reached GDAL for a non-local asset");
+        }
+    }
+
     void testNoCoverageMetadataAndGdalErrorsStayDistinct()
     {
         earthscience::AlphaEarthEmbeddingRuntime noCoverage(
@@ -389,8 +422,9 @@ namespace
         require(broken.state == earthscience::ScienceJobState::Failed &&
                     broken.message !=
                         "No AlphaEarth tile covers this point and year" &&
-                    broken.message.find("open") != std::string::npos,
-                "GDAL open error was reported as missing coverage");
+                    broken.message.find("regular local file") !=
+                        std::string::npos,
+                "invalid injected path was reported as missing coverage");
 
         LocalFixture fixture;
         fixture.changeDescription(64, "wrong");
@@ -416,6 +450,8 @@ namespace
         const std::string path = (std::filesystem::temp_directory_path() /
             ("osgsol-alphaearth-index-" +
              std::to_string(++sequence) + ".sqlite")).string();
+        std::error_code staleError;
+        std::filesystem::remove(path, staleError);
         sqlite3* database = nullptr;
         require(sqlite3_open(path.c_str(), &database) == SQLITE_OK,
                 "could not create resolver fixture index");
@@ -428,7 +464,8 @@ namespace
             "CREATE VIRTUAL TABLE tile_rtree USING "
             "rtree(id,min_lon,max_lon,min_lat,max_lat);"
             "INSERT INTO metadata VALUES('https://data.source.coop/google/');"
-            "INSERT INTO tiles VALUES(1,2017,'dataset-2017','tile.tiff',"
+            "INSERT INTO tiles VALUES(1,2017,'dataset-2017',"
+            "'must-not-open.blocked',"
             "'v1',100,20,101,21);"
             "INSERT INTO tile_rtree VALUES(1,100,101,20,21);";
         char* sqliteError = nullptr;
@@ -445,10 +482,23 @@ namespace
                         path, 20.5, 100.5, 2017, asset, error) &&
                     asset.datasetId == "dataset-2017" &&
                     asset.pathOrUrl ==
-                        "https://data.source.coop/google/tile.tiff" &&
+                        "https://data.source.coop/google/"
+                        "must-not-open.blocked" &&
                     asset.sourceVersion == "v1" &&
                     asset.indexedBounds.west == 100.0,
                 "production resolver lost the immutable index fields");
+
+        earthscience::GeoTemporalQuery preOpenQuery = pointQuery();
+        preOpenQuery.time.explicitYears = {2017};
+        preOpenQuery.limits.maximumBytes = 1;
+        earthscience::AlphaEarthEmbeddingRuntime preOpenRuntime(path);
+        const earthscience::ScienceProviderSnapshot preOpenRejected =
+            waitForTerminal(preOpenRuntime,
+                            preOpenRuntime.submit(preOpenQuery));
+        require(preOpenRejected.state == earthscience::ScienceJobState::Failed &&
+                    preOpenRejected.message.find("source-byte budget") !=
+                        std::string::npos,
+                "production source budget was checked after remote GDAL open");
 
         database = nullptr;
         require(sqlite3_open(path.c_str(), &database) == SQLITE_OK,
@@ -463,6 +513,20 @@ namespace
                         path, 20.5, 100.5, 2017, asset, error) &&
                     error.find("source.coop") != std::string::npos,
                 "production resolver accepted an untrusted asset prefix");
+
+        database = nullptr;
+        require(sqlite3_open(path.c_str(), &database) == SQLITE_OK,
+                "could not reopen resolver fixture without metadata");
+        require(sqlite3_exec(database, "DELETE FROM metadata",
+                    nullptr, nullptr, nullptr) == SQLITE_OK,
+                "could not remove resolver metadata");
+        sqlite3_close(database);
+        require(!earthscience::alphaearthdetail::
+                    resolveAlphaEarthAssetFromIndex(
+                        path, 20.5, 100.5, 2017, asset, error) &&
+                    error.find("metadata fault") != std::string::npos &&
+                    error != "No AlphaEarth tile covers this point and year",
+                "empty index metadata was misreported as no coverage");
         std::error_code ignored;
         std::filesystem::remove(path, ignored);
     }
@@ -490,6 +554,15 @@ namespace
                         std::string::npos && resolutions == 1,
                 "oversized source read was not rejected from metadata cost");
 
+        earthscience::GeoTemporalQuery memoryRejected = regionQuery();
+        memoryRejected.limits.maximumMemoryBytes = 11000;
+        const earthscience::ScienceProviderSnapshot overMemory =
+            waitForTerminal(runtime, runtime.submit(memoryRejected));
+        require(overMemory.state == earthscience::ScienceJobState::Failed &&
+                    overMemory.message.find("resident-memory budget") !=
+                        std::string::npos,
+                "peak retained/combine/analysis memory was underestimated");
+
         earthscience::GeoTemporalQuery mean = regionQuery();
         mean.outputKind = earthscience::ScienceOutputKind::Embedding;
         mean.analysis.kind = earthscience::ScienceAnalysisKind::None;
@@ -509,10 +582,106 @@ namespace
                     aggregated.artifact->embedding.mask->size() == 2,
                 "explicit mean did not aggregate dequantized 64D vectors");
     }
+
+    void testGridUpsamplingRequiresExplicitPermission()
+    {
+        LocalFixture fixture;
+        earthscience::AlphaEarthEmbeddingRuntime runtime(
+            [&fixture](double, double, int year,
+                       earthscience::AlphaEarthAsset& asset,
+                       std::string& error)
+            {
+                asset = fixture.asset(year);
+                error.clear();
+                return true;
+            });
+        earthscience::GeoTemporalQuery query = regionQuery();
+        query.time.explicitYears = {2017};
+        query.outputKind = earthscience::ScienceOutputKind::Embedding;
+        query.analysis.kind = earthscience::ScienceAnalysisKind::None;
+        query.analysis.gridSize = 9;
+        query.limits.allowUpsampling = false;
+        const earthscience::ScienceProviderSnapshot rejected =
+            waitForTerminal(runtime, runtime.submit(query));
+        require(rejected.state == earthscience::ScienceJobState::Failed &&
+                    rejected.message.find("upsampling") != std::string::npos,
+                "grid larger than the source window was silently upsampled");
+    }
+
+    void testSingleTileRejectsPartialRequestedCoverage()
+    {
+        LocalFixture fixture;
+        earthscience::AlphaEarthEmbeddingRuntime runtime(
+            [&fixture](double, double, int year,
+                       earthscience::AlphaEarthAsset& asset,
+                       std::string& error)
+            {
+                asset = fixture.asset(year);
+                error.clear();
+                return true;
+            });
+        earthscience::GeoTemporalQuery query = regionQuery();
+        query.geometry.bounds.west = WEST - 0.01;
+        query.time.explicitYears = {2017};
+        query.outputKind = earthscience::ScienceOutputKind::Embedding;
+        query.analysis.kind = earthscience::ScienceAnalysisKind::None;
+        query.analysis.gridSize = 4;
+        const earthscience::ScienceProviderSnapshot rejected =
+            waitForTerminal(runtime, runtime.submit(query));
+        require(rejected.state == earthscience::ScienceJobState::Failed &&
+                    rejected.message.find("single source tile") !=
+                        std::string::npos,
+                "partially covered request was published with a false bbox");
+    }
+
+    void testRotatedSourcePublishesActualSampleGridAndFootprint()
+    {
+        LocalFixture fixture(true);
+        earthscience::AlphaEarthEmbeddingRuntime runtime(
+            [&fixture](double, double, int year,
+                       earthscience::AlphaEarthAsset& asset,
+                       std::string& error)
+            {
+                asset = fixture.asset(year);
+                error.clear();
+                return true;
+            });
+        earthscience::GeoTemporalQuery query = regionQuery();
+        query.geometry.bounds = {100.038, 20.034, 100.058, 20.054};
+        query.time.explicitYears = {2017};
+        query.outputKind = earthscience::ScienceOutputKind::Embedding;
+        query.analysis.kind = earthscience::ScienceAnalysisKind::None;
+        query.analysis.gridSize = 4;
+        const earthscience::ScienceProviderSnapshot ready =
+            waitForTerminal(runtime, runtime.submit(query));
+        require(ready.state == earthscience::ScienceJobState::Ready &&
+                    ready.artifact && ready.artifact->embedding.groundGrid,
+                "rotated source request did not become Ready");
+        const auto& embedding = ready.artifact->embedding;
+        const auto& firstPoint = embedding.groundGrid->points.front();
+        const double requestedFirstLongitude =
+            query.geometry.bounds.west + 0.125 *
+            (query.geometry.bounds.east - query.geometry.bounds.west);
+        require(!nearlyEqual(firstPoint.longitude, requestedFirstLongitude) &&
+                    embedding.bounds.west < query.geometry.bounds.west &&
+                    embedding.bounds.east > query.geometry.bounds.east &&
+                    ready.artifact->sourceReferences.size() == 1 &&
+                    nearlyEqual(ready.artifact->sourceReferences.front().
+                                    actualCoverage.west,
+                                embedding.bounds.west) &&
+                    nearlyEqual(ready.artifact->sourceReferences.front().
+                                    actualCoverage.north,
+                                embedding.bounds.north),
+                "rotated source reused requested coordinates as actual coverage");
+    }
 }
 
 int main()
 {
+    testRotatedSourcePublishesActualSampleGridAndFootprint();
+    testSingleTileRejectsPartialRequestedCoverage();
+    testGridUpsamplingRequiresExplicitPermission();
+    testInjectedResolverRejectsRemoteAssetsBeforeGdal();
     testCompletePointAndRegionalReadsUseOneGrid();
     testCancellationPublishesNoPartialReady();
     testNoCoverageMetadataAndGdalErrorsStayDistinct();

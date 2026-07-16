@@ -19,8 +19,8 @@ struct AlphaEarthEmbeddingRuntime::Impl
         GeoTemporalQuery query;
     };
 
-    explicit Impl(AlphaEarthAssetResolver value)
-        : resolver(std::move(value))
+    explicit Impl(AlphaEarthAssetResolver value, bool localOnly)
+        : resolver(std::move(value)), injectedLocalResolver(localOnly)
     {
         state.state = resolver ? ScienceJobState::Idle
                                : ScienceJobState::Unavailable;
@@ -101,7 +101,8 @@ struct AlphaEarthEmbeddingRuntime::Impl
             std::shared_ptr<const ScienceArtifact> artifact;
             std::string error;
             const bool succeeded = alphaearthdetail::readAlphaEarthArtifact(
-                request.query, resolver, request.generation, callbacks,
+                request.query, resolver, injectedLocalResolver,
+                request.generation, callbacks,
                 artifact, error);
 
             std::lock_guard<std::mutex> lock(mutex);
@@ -141,6 +142,7 @@ struct AlphaEarthEmbeddingRuntime::Impl
     }
 
     AlphaEarthAssetResolver resolver;
+    bool injectedLocalResolver = false;
     mutable std::mutex mutex;
     std::condition_variable condition;
     std::optional<Request> pending;
@@ -153,19 +155,19 @@ struct AlphaEarthEmbeddingRuntime::Impl
 
 AlphaEarthEmbeddingRuntime::AlphaEarthEmbeddingRuntime(
     const std::string& indexPath)
-    : AlphaEarthEmbeddingRuntime(
+    : _impl(std::make_unique<Impl>(
         [indexPath](double latitude, double longitude, int year,
                     AlphaEarthAsset& asset, std::string& error)
         {
             return alphaearthdetail::resolveAlphaEarthAssetFromIndex(
                 indexPath, latitude, longitude, year, asset, error);
-        })
+        }, false))
 {
 }
 
 AlphaEarthEmbeddingRuntime::AlphaEarthEmbeddingRuntime(
     AlphaEarthAssetResolver resolver)
-    : _impl(std::make_unique<Impl>(std::move(resolver)))
+    : _impl(std::make_unique<Impl>(std::move(resolver), true))
 {
 }
 

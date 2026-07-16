@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -102,6 +103,15 @@ namespace
         return true;
     }
 
+    bool checkedAdd(std::uint64_t left, std::uint64_t right,
+                    std::uint64_t& result)
+    {
+        if (right > std::numeric_limits<std::uint64_t>::max() - left)
+            return false;
+        result = left + right;
+        return true;
+    }
+
     std::string sqliteText(sqlite3_stmt* statement, int column)
     {
         const unsigned char* value = sqlite3_column_text(statement, column);
@@ -188,27 +198,38 @@ namespace
             fail(error, "AlphaEarth pixel coordinate is not finite");
     }
 
-    ScienceGroundGrid makeGroundGrid(const ScienceWgs84Bounds& bounds,
-                                     int width, int height)
+    bool sourceToWgs84(const std::string& projection,
+                       std::vector<double>& xCoordinates,
+                       std::vector<double>& yCoordinates,
+                       std::string& error)
     {
-        ScienceGroundGrid grid;
-        grid.columns = width;
-        grid.rows = height;
-        grid.points.reserve(static_cast<std::size_t>(width * height));
-        for (int row = 0; row < height; ++row)
+        if (xCoordinates.size() != yCoordinates.size() || xCoordinates.empty())
+            return fail(error, "AlphaEarth source coordinate list is invalid");
+        OGRSpatialReference source, wgs84;
+        source.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        if (source.SetFromUserInput(projection.c_str()) != OGRERR_NONE ||
+            wgs84.importFromEPSG(4326) != OGRERR_NONE)
+            return fail(error, "AlphaEarth source CRS is invalid");
+        using TransformPtr = std::unique_ptr<
+            OGRCoordinateTransformation,
+            decltype(&OCTDestroyCoordinateTransformation)>;
+        TransformPtr transform(
+            OGRCreateCoordinateTransformation(&source, &wgs84),
+            OCTDestroyCoordinateTransformation);
+        if (!transform || !transform->Transform(
+                static_cast<int>(xCoordinates.size()), xCoordinates.data(),
+                yCoordinates.data()))
+            return fail(error,
+                        "AlphaEarth source-to-WGS84 transform failed");
+        for (std::size_t index = 0; index < xCoordinates.size(); ++index)
         {
-            const double latitude = bounds.north -
-                (static_cast<double>(row) + 0.5) /
-                static_cast<double>(height) * (bounds.north - bounds.south);
-            for (int column = 0; column < width; ++column)
-            {
-                const double longitude = bounds.west +
-                    (static_cast<double>(column) + 0.5) /
-                    static_cast<double>(width) * (bounds.east - bounds.west);
-                grid.points.push_back({longitude, latitude});
-            }
+            if (!std::isfinite(xCoordinates[index]) ||
+                !std::isfinite(yCoordinates[index]))
+                return fail(error,
+                            "AlphaEarth transformed coordinate is not finite");
         }
-        return grid;
+        return true;
     }
 
     double approximateResolutionMeters(const ScienceWgs84Bounds& bounds,
@@ -226,6 +247,96 @@ namespace
             METERS_PER_LATITUDE_DEGREE /
             static_cast<double>(std::max(1, height));
         return std::max(longitudeMeters, latitudeMeters);
+    }
+
+    double approximateDistanceMeters(const ScienceGroundPoint& left,
+                                     const ScienceGroundPoint& right)
+    {
+        constexpr double METERS_PER_LATITUDE_DEGREE = 110574.0;
+        constexpr double METERS_PER_LONGITUDE_DEGREE = 111320.0;
+        const double middleLatitude =
+            (left.latitude + right.latitude) * 0.5;
+        const double longitudeMeters =
+            (right.longitude - left.longitude) *
+            METERS_PER_LONGITUDE_DEGREE *
+            std::cos(middleLatitude * 3.14159265358979323846 / 180.0);
+        const double latitudeMeters =
+            (right.latitude - left.latitude) * METERS_PER_LATITUDE_DEGREE;
+        return std::hypot(longitudeMeters, latitudeMeters);
+    }
+
+    bool deriveActualCoordinates(ReadPlan& plan, std::string& error)
+    {
+        std::vector<double> cornerX(4), cornerY(4);
+        const std::array<double, 4> pixelX = {
+            static_cast<double>(plan.x),
+            static_cast<double>(plan.x + plan.width),
+            static_cast<double>(plan.x + plan.width),
+            static_cast<double>(plan.x)};
+        const std::array<double, 4> pixelY = {
+            static_cast<double>(plan.y), static_cast<double>(plan.y),
+            static_cast<double>(plan.y + plan.height),
+            static_cast<double>(plan.y + plan.height)};
+        for (std::size_t corner = 0; corner < pixelX.size(); ++corner)
+            GDALApplyGeoTransform(plan.geotransform.data(), pixelX[corner],
+                                  pixelY[corner], &cornerX[corner],
+                                  &cornerY[corner]);
+        if (!sourceToWgs84(plan.projection, cornerX, cornerY, error))
+            return false;
+        plan.bounds = {
+            *std::min_element(cornerX.begin(), cornerX.end()),
+            *std::min_element(cornerY.begin(), cornerY.end()),
+            *std::max_element(cornerX.begin(), cornerX.end()),
+            *std::max_element(cornerY.begin(), cornerY.end())};
+
+        const std::size_t pointCount = static_cast<std::size_t>(
+            plan.readWidth) * static_cast<std::size_t>(plan.readHeight);
+        std::vector<double> groundX(pointCount), groundY(pointCount);
+        for (int row = 0; row < plan.readHeight; ++row)
+        {
+            const int sourceRow = std::min(
+                plan.height - 1,
+                static_cast<int>(std::floor(
+                    (static_cast<double>(row) + 0.5) * plan.height /
+                    plan.readHeight)));
+            for (int column = 0; column < plan.readWidth; ++column)
+            {
+                const int sourceColumn = std::min(
+                    plan.width - 1,
+                    static_cast<int>(std::floor(
+                        (static_cast<double>(column) + 0.5) * plan.width /
+                        plan.readWidth)));
+                const std::size_t index = static_cast<std::size_t>(
+                    row * plan.readWidth + column);
+                GDALApplyGeoTransform(
+                    plan.geotransform.data(),
+                    static_cast<double>(plan.x + sourceColumn) + 0.5,
+                    static_cast<double>(plan.y + sourceRow) + 0.5,
+                    &groundX[index], &groundY[index]);
+            }
+        }
+        if (!sourceToWgs84(plan.projection, groundX, groundY, error))
+            return false;
+        ScienceGroundGrid grid;
+        grid.columns = plan.readWidth;
+        grid.rows = plan.readHeight;
+        grid.points.reserve(pointCount);
+        for (std::size_t index = 0; index < pointCount; ++index)
+            grid.points.push_back({groundX[index], groundY[index]});
+        plan.groundGrid = std::make_shared<const ScienceGroundGrid>(
+            std::move(grid));
+
+        double resolution = 0.0;
+        if (plan.readWidth > 1)
+            resolution = std::max(resolution, approximateDistanceMeters(
+                plan.groundGrid->points[0], plan.groundGrid->points[1]));
+        if (plan.readHeight > 1)
+            resolution = std::max(resolution, approximateDistanceMeters(
+                plan.groundGrid->points[0],
+                plan.groundGrid->points[plan.readWidth]));
+        plan.actualResolutionMeters = resolution > 0.0 ? resolution :
+            approximateResolutionMeters(plan.bounds, 1, 1);
+        return true;
     }
 
     bool derivePlan(GDALDataset& dataset, const GeoTemporalQuery& query,
@@ -251,28 +362,7 @@ namespace
                             "AlphaEarth point is outside the selected source tile");
             plan.width = plan.height = 1;
             plan.readWidth = plan.readHeight = 1;
-            plan.bounds = {query.geometry.point.longitude,
-                           query.geometry.point.latitude,
-                           query.geometry.point.longitude,
-                           query.geometry.point.latitude};
-            ScienceGroundGrid grid;
-            grid.columns = grid.rows = 1;
-            grid.points.push_back({query.geometry.point.longitude,
-                                   query.geometry.point.latitude});
-            plan.groundGrid = std::make_shared<const ScienceGroundGrid>(
-                std::move(grid));
-            const double longitudeDegrees =
-                std::hypot(plan.geotransform[1], plan.geotransform[4]);
-            const double latitudeDegrees =
-                std::hypot(plan.geotransform[2], plan.geotransform[5]);
-            ScienceWgs84Bounds pixelBounds = {
-                query.geometry.point.longitude - longitudeDegrees * 0.5,
-                query.geometry.point.latitude - latitudeDegrees * 0.5,
-                query.geometry.point.longitude + longitudeDegrees * 0.5,
-                query.geometry.point.latitude + latitudeDegrees * 0.5};
-            plan.actualResolutionMeters = approximateResolutionMeters(
-                pixelBounds, 1, 1);
-            return true;
+            return deriveActualCoordinates(plan, error);
         }
 
         if (query.geometry.kind != ScienceGeometryKind::BoundingBox &&
@@ -301,6 +391,15 @@ namespace
         const double maximumX = *std::max_element(pixelX.begin(), pixelX.end());
         const double minimumY = *std::min_element(pixelY.begin(), pixelY.end());
         const double maximumY = *std::max_element(pixelY.begin(), pixelY.end());
+        constexpr double PIXEL_TOLERANCE = 1.0e-7;
+        if (minimumX < -PIXEL_TOLERANCE || minimumY < -PIXEL_TOLERANCE ||
+            maximumX > static_cast<double>(plan.rasterWidth) +
+                PIXEL_TOLERANCE ||
+            maximumY > static_cast<double>(plan.rasterHeight) +
+                PIXEL_TOLERANCE)
+            return fail(error,
+                        "AlphaEarth single source tile does not fully cover "
+                        "the requested bounds");
         plan.x = std::max(0, static_cast<int>(std::floor(minimumX + 1.0e-9)));
         plan.y = std::max(0, static_cast<int>(std::floor(minimumY + 1.0e-9)));
         const int right = std::min(
@@ -317,6 +416,11 @@ namespace
 
         const int gridSize = std::clamp(query.analysis.gridSize, 1,
                                         MAX_GRID_SIZE);
+        if (query.aggregation != ScienceAggregation::Mean &&
+            !query.limits.allowUpsampling &&
+            (gridSize > plan.width || gridSize > plan.height))
+            return fail(error,
+                        "AlphaEarth grid upsampling requires explicit permission");
         if (query.aggregation == ScienceAggregation::Mean)
         {
             plan.readWidth = plan.width;
@@ -327,12 +431,7 @@ namespace
             plan.readWidth = gridSize;
             plan.readHeight = gridSize;
         }
-        plan.bounds = bounds;
-        plan.groundGrid = std::make_shared<const ScienceGroundGrid>(
-            makeGroundGrid(bounds, plan.readWidth, plan.readHeight));
-        plan.actualResolutionMeters = approximateResolutionMeters(
-            bounds, plan.readWidth, plan.readHeight);
-        return true;
+        return deriveActualCoordinates(plan, error);
     }
 
     bool sameSamplingPlan(const ReadPlan& reference, const ReadPlan& candidate)
@@ -372,9 +471,86 @@ namespace
         return true;
     }
 
+    bool validIndexedBounds(const ScienceWgs84Bounds& bounds)
+    {
+        return std::isfinite(bounds.west) && std::isfinite(bounds.south) &&
+               std::isfinite(bounds.east) && std::isfinite(bounds.north) &&
+               bounds.west < bounds.east && bounds.south < bounds.north;
+    }
+
+    bool productionBoundsCoverQuery(const ScienceWgs84Bounds& indexed,
+                                    const GeoTemporalQuery& query)
+    {
+        if (query.geometry.kind == ScienceGeometryKind::Point)
+            return query.geometry.point.longitude >= indexed.west &&
+                   query.geometry.point.longitude <= indexed.east &&
+                   query.geometry.point.latitude >= indexed.south &&
+                   query.geometry.point.latitude <= indexed.north;
+        const ScienceWgs84Bounds& requested = query.geometry.bounds;
+        return requested.west >= indexed.west &&
+               requested.south >= indexed.south &&
+               requested.east <= indexed.east &&
+               requested.north <= indexed.north;
+    }
+
+    bool enforceProductionPreOpenBudget(
+        const GeoTemporalQuery& query, const AlphaEarthAsset& asset,
+        std::size_t yearCount, std::string& error)
+    {
+        if (!validIndexedBounds(asset.indexedBounds))
+            return fail(error,
+                        "AlphaEarth production index bounds are invalid");
+        if (!productionBoundsCoverQuery(asset.indexedBounds, query))
+            return fail(error,
+                        "AlphaEarth single indexed tile does not fully cover "
+                        "the requested geometry");
+        if (yearCount == 0 || query.limits.maximumBytes == 0) return true;
+
+        std::uint64_t sourceCells = 1;
+        if (query.geometry.kind != ScienceGeometryKind::Point)
+        {
+            constexpr double METERS_PER_LATITUDE_DEGREE = 110574.0;
+            constexpr double METERS_PER_LONGITUDE_DEGREE = 111320.0;
+            constexpr double SOURCE_RESOLUTION_METERS = 10.0;
+            const ScienceWgs84Bounds& bounds = query.geometry.bounds;
+            const double middleLatitude =
+                (bounds.south + bounds.north) * 0.5;
+            const double widthMeters = (bounds.east - bounds.west) *
+                METERS_PER_LONGITUDE_DEGREE *
+                std::max(0.01, std::cos(middleLatitude *
+                    3.14159265358979323846 / 180.0));
+            const double heightMeters = (bounds.north - bounds.south) *
+                METERS_PER_LATITUDE_DEGREE;
+            if (!std::isfinite(widthMeters) || !std::isfinite(heightMeters) ||
+                widthMeters <= 0.0 || heightMeters <= 0.0)
+                return fail(error,
+                            "AlphaEarth production source estimate is invalid");
+            const std::uint64_t widthCells =
+                static_cast<std::uint64_t>(
+                    std::ceil(widthMeters / SOURCE_RESOLUTION_METERS)) + 2;
+            const std::uint64_t heightCells =
+                static_cast<std::uint64_t>(
+                    std::ceil(heightMeters / SOURCE_RESOLUTION_METERS)) + 2;
+            if (!checkedMultiply(widthCells, heightCells, sourceCells))
+                return fail(error,
+                            "AlphaEarth source-byte estimate overflowed");
+        }
+        std::uint64_t sourceBytes = 0;
+        if (!checkedMultiply(sourceCells, COMPONENT_COUNT, sourceBytes) ||
+            !checkedMultiply(sourceBytes,
+                             static_cast<std::uint64_t>(yearCount),
+                             sourceBytes))
+            return fail(error, "AlphaEarth source-byte estimate overflowed");
+        if (sourceBytes > query.limits.maximumBytes)
+            return fail(error, "AlphaEarth source-byte budget exceeded");
+        return true;
+    }
+
     bool resolveAndPrepare(const GeoTemporalQuery& query,
                            const AlphaEarthAssetResolver& resolver,
-                           int year, PreparedDataset& prepared,
+                           bool injectedLocalResolver,
+                           int year, std::size_t preOpenBudgetYears,
+                           PreparedDataset& prepared,
                            std::string& error)
     {
         const double latitude = query.geometry.kind == ScienceGeometryKind::Point
@@ -388,6 +564,28 @@ namespace
         if (asset.datasetId.empty() || asset.pathOrUrl.empty() ||
             asset.sourceVersion.empty())
             return fail(error, "AlphaEarth resolver returned incomplete metadata");
+        if (injectedLocalResolver)
+        {
+            const std::filesystem::path localPath(asset.pathOrUrl);
+            std::error_code filesystemError;
+            if (asset.pathOrUrl.find("://") != std::string::npos ||
+                asset.pathOrUrl.rfind("/vsi", 0) == 0 ||
+                !localPath.is_absolute() ||
+                !std::filesystem::is_regular_file(localPath, filesystemError))
+                return fail(error,
+                    "AlphaEarth injected resolver requires an absolute "
+                    "regular local file");
+        }
+        else
+        {
+            if (asset.pathOrUrl.rfind(SOURCE_PREFIX, 0) != 0)
+                return fail(error,
+                    "AlphaEarth production resolver requires a trusted "
+                    "source.coop asset URL");
+            if (!enforceProductionPreOpenBudget(
+                    query, asset, preOpenBudgetYears, error))
+                return false;
+        }
         return prepareDataset(asset, query, prepared, error);
     }
 
@@ -407,18 +605,65 @@ namespace
             sourceBytes > query.limits.maximumBytes)
             return fail(error, "AlphaEarth source-byte budget exceeded");
 
-        std::uint64_t readCells = 0, residentBytes = 0;
+        std::uint64_t readCells = 0;
         if (!checkedMultiply(static_cast<std::uint64_t>(plan.readWidth),
                              static_cast<std::uint64_t>(plan.readHeight),
-                             readCells) ||
-            !checkedMultiply(readCells, COMPONENT_COUNT * 5u + 5u,
-                             residentBytes))
+                             readCells))
             return fail(error, "AlphaEarth resident-memory estimate overflowed");
         const std::uint64_t retainedYears =
             query.analysis.kind == ScienceAnalysisKind::RegionalChange
                 ? std::min<std::uint64_t>(2, yearCount) : yearCount;
-        if (!checkedMultiply(residentBytes, retainedYears, residentBytes))
+        const std::uint64_t combinedYears =
+            query.analysis.kind == ScienceAnalysisKind::RegionalChange
+                ? retainedYears : static_cast<std::uint64_t>(yearCount);
+
+        constexpr std::uint64_t PERSISTENT_BYTES_PER_CELL =
+            COMPONENT_COUNT * sizeof(float) + sizeof(unsigned char) +
+            sizeof(float);
+        constexpr std::uint64_t READ_WORK_BYTES_PER_CELL =
+            COMPONENT_COUNT * sizeof(std::int8_t) +
+            COMPONENT_BATCH * sizeof(std::int8_t);
+        constexpr std::uint64_t ANALYSIS_WORK_BYTES_PER_CELL =
+            COMPONENT_COUNT * (sizeof(float) + sizeof(double));
+        std::uint64_t persistentSlice = 0, retainedBytes = 0;
+        std::uint64_t combinedBytes = 0, readWorkBytes = 0;
+        std::uint64_t analysisCells = 0, analysisBytes = 0;
+        std::uint64_t residentBytes = 0;
+        if (!checkedMultiply(readCells, PERSISTENT_BYTES_PER_CELL,
+                             persistentSlice) ||
+            !checkedMultiply(persistentSlice, retainedYears,
+                             retainedBytes) ||
+            !checkedMultiply(persistentSlice, combinedYears,
+                             combinedBytes) ||
+            !checkedMultiply(readCells, READ_WORK_BYTES_PER_CELL,
+                             readWorkBytes) ||
+            !checkedMultiply(readCells, combinedYears, analysisCells) ||
+            !checkedMultiply(analysisCells,
+                             ANALYSIS_WORK_BYTES_PER_CELL, analysisBytes) ||
+            !checkedAdd(retainedBytes, combinedBytes, residentBytes) ||
+            !checkedAdd(residentBytes, readWorkBytes, residentBytes) ||
+            !checkedAdd(residentBytes, analysisBytes, residentBytes))
             return fail(error, "AlphaEarth resident-memory estimate overflowed");
+
+        if (query.analysis.kind == ScienceAnalysisKind::PrincipalComponents)
+        {
+            std::uint64_t covarianceBytes = 0;
+            if (!checkedMultiply(COMPONENT_COUNT, COMPONENT_COUNT,
+                                 covarianceBytes) ||
+                !checkedMultiply(covarianceBytes, sizeof(double),
+                                 covarianceBytes) ||
+                !checkedAdd(residentBytes, covarianceBytes, residentBytes))
+                return fail(error,
+                    "AlphaEarth resident-memory estimate overflowed");
+        }
+        else if (query.analysis.kind == ScienceAnalysisKind::RegionalChange)
+        {
+            std::uint64_t rasterBytes = 0;
+            if (!checkedMultiply(readCells, 64u, rasterBytes) ||
+                !checkedAdd(residentBytes, rasterBytes, residentBytes))
+                return fail(error,
+                    "AlphaEarth resident-memory estimate overflowed");
+        }
         if (query.limits.maximumMemoryBytes != 0 &&
             residentBytes > query.limits.maximumMemoryBytes)
             return fail(error, "AlphaEarth resident-memory budget exceeded");
@@ -443,7 +688,7 @@ namespace
         reference.datasetId = asset.datasetId;
         reference.originalUrl = asset.pathOrUrl;
         reference.requestedCoverage = query.geometry;
-        reference.actualCoverage = asset.indexedBounds;
+        reference.actualCoverage = plan.bounds;
         reference.variables.reserve(COMPONENT_COUNT);
         reference.units.reserve(COMPONENT_COUNT);
         for (int component = 1;
@@ -464,7 +709,6 @@ namespace
                 "explicit 64D mean-direction aggregation");
         reference.acquisitionTime = std::to_string(year);
         reference.attribution = "Google / Google DeepMind; source.coop; CC-BY 4.0";
-        (void)plan;
         return reference;
     }
 
@@ -744,11 +988,35 @@ bool resolveAlphaEarthAssetFromIndex(
         return false;
     }
     SqlitePtr database(rawDatabase);
+
+    const char* metadataQuery =
+        "SELECT asset_base_url FROM metadata LIMIT 2";
+    sqlite3_stmt* rawMetadataStatement = nullptr;
+    if (sqlite3_prepare_v2(database.get(), metadataQuery, -1,
+                           &rawMetadataStatement, nullptr) != SQLITE_OK)
+        return fail(error, "AlphaEarth index metadata fault: " +
+                          std::string(sqlite3_errmsg(database.get())));
+    StatementPtr metadataStatement(rawMetadataStatement);
+    int metadataStep = sqlite3_step(metadataStatement.get());
+    if (metadataStep != SQLITE_ROW)
+        return fail(error,
+                    "AlphaEarth index metadata fault: expected exactly one "
+                    "metadata record");
+    const std::string baseUrl = sqliteText(metadataStatement.get(), 0);
+    metadataStep = sqlite3_step(metadataStatement.get());
+    if (metadataStep != SQLITE_DONE)
+        return fail(error,
+                    "AlphaEarth index metadata fault: expected exactly one "
+                    "metadata record");
+    if (baseUrl.rfind(SOURCE_PREFIX, 0) != 0)
+        return fail(error,
+                    "AlphaEarth index metadata fault: trusted source.coop "
+                    "asset prefix is required");
+
     const char* query =
         "SELECT t.dataset_id,t.cog_path,t.source_version,"
-        "t.min_lon,t.min_lat,t.max_lon,t.max_lat,m.asset_base_url "
+        "t.min_lon,t.min_lat,t.max_lon,t.max_lat "
         "FROM tile_rtree r JOIN tiles t ON t.id=r.id "
-        "CROSS JOIN metadata m "
         "WHERE t.year=?1 AND r.min_lon<=?2 AND r.max_lon>=?2 "
         "AND r.min_lat<=?3 AND r.max_lat>=?3 "
         "ORDER BY t.id LIMIT 1";
@@ -775,12 +1043,10 @@ bool resolveAlphaEarthAssetFromIndex(
         sqlite3_column_double(statement.get(), 4),
         sqlite3_column_double(statement.get(), 5),
         sqlite3_column_double(statement.get(), 6)};
-    const std::string baseUrl = sqliteText(statement.get(), 7);
     if (asset.datasetId.empty() || relativePath.empty() ||
-        asset.sourceVersion.empty() ||
-        baseUrl.rfind(SOURCE_PREFIX, 0) != 0)
+        asset.sourceVersion.empty())
         return fail(error,
-                    "AlphaEarth index requires a trusted source.coop asset prefix");
+                    "AlphaEarth index tile metadata is incomplete");
     asset.pathOrUrl = baseUrl;
     if (!asset.pathOrUrl.empty() && asset.pathOrUrl.back() != '/' &&
         relativePath.front() != '/')
@@ -795,6 +1061,7 @@ bool resolveAlphaEarthAssetFromIndex(
 bool readAlphaEarthArtifact(
     const GeoTemporalQuery& query,
     const AlphaEarthAssetResolver& resolver,
+    bool injectedLocalResolver,
     std::uint64_t generation,
     const AlphaEarthReadCallbacks& callbacks,
     std::shared_ptr<const ScienceArtifact>& artifact,
@@ -814,7 +1081,8 @@ bool readAlphaEarthArtifact(
         callbacks.progress(progress, "Locating AlphaEarth source metadata");
     }
     PreparedDataset firstPrepared;
-    if (!resolveAndPrepare(query, resolver, years.front(), firstPrepared,
+    if (!resolveAndPrepare(query, resolver, injectedLocalResolver,
+                           years.front(), years.size(), firstPrepared,
                            error))
         return false;
     if (!enforceBudget(query, firstPrepared.plan, years.size(), error))
@@ -840,7 +1108,8 @@ bool readAlphaEarthArtifact(
             prepared = std::move(firstPrepared);
             firstAvailable = false;
         }
-        else if (!resolveAndPrepare(query, resolver, year, prepared, loadError))
+        else if (!resolveAndPrepare(query, resolver, injectedLocalResolver,
+                                    year, 0, prepared, loadError))
             return nullptr;
         if (!sameSamplingPlan(referencePlan, prepared.plan))
         {

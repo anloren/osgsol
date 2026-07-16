@@ -24,6 +24,7 @@ namespace alphaearthdetail
     bool readAlphaEarthArtifact(
         const GeoTemporalQuery& query,
         const AlphaEarthAssetResolver& resolver,
+        bool injectedLocalResolver,
         std::uint64_t generation,
         const AlphaEarthReadCallbacks& callbacks,
         std::shared_ptr<const ScienceArtifact>& artifact,
