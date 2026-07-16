@@ -17,6 +17,7 @@
 #include "LayerManager.h"
 #include "ai_tools.h"
 #include "science_preview_layer.h"
+#include "science_query_builder.h"
 
 namespace
 {
@@ -164,6 +165,65 @@ namespace
                 "science tool changed the camera matrix");
     }
 
+    void testAnalysisQueryBuildersKeepExactScientificIntent()
+    {
+        earthscience::ScienceSourceDescriptor source = makeDescriptor();
+        source.variables.push_back(
+            {"embedding64", "Embedding A01-A64", "1", "embedding", 64});
+        source.capabilities.boundingBoxQuery = true;
+        source.capabilities.timeSeriesOutput = true;
+        source.capabilities.analysisOutput = true;
+
+        const earthscience::GeoTemporalQuery point =
+            makeSciencePointSeriesQuery(source, 91.0, -181.0, 2010, 2030);
+        require(point.sourceId == source.id &&
+                    point.geometry.kind ==
+                        earthscience::ScienceGeometryKind::Point &&
+                    point.geometry.point.latitude == 91.0 &&
+                    point.geometry.point.longitude == -181.0,
+                "point-series builder hid malformed coordinates from service");
+        require(point.time.mode ==
+                    earthscience::ScienceTimeMode::ExplicitYears &&
+                    point.time.explicitYears == std::vector<int>({
+                        2017, 2018, 2019, 2020, 2021,
+                        2022, 2023, 2024, 2025}),
+                "point-series builder did not select 2017-2025 exactly");
+        require(point.variables == std::vector<std::string>({"embedding64"}) &&
+                    point.outputKind ==
+                        earthscience::ScienceOutputKind::TimeSeries &&
+                    point.analysis.kind ==
+                        earthscience::ScienceAnalysisKind::PointSeries &&
+                    point.analysis.baselineYear == 2017,
+                "point-series builder lost its 64D analysis contract");
+
+        earthscience::ScienceAnalysisOptions options;
+        options.metrics = {earthscience::ScienceMetric::CosineDistance};
+        const earthscience::GeoTemporalQuery regional =
+            makeScienceRegionalAnalysisQuery(
+                source, 35.36, 138.73, 1.0, 2025, 2017, options);
+        require(regional.geometry.kind ==
+                    earthscience::ScienceGeometryKind::BoundingBox &&
+                    regional.geometry.requestedSpanMeters == 2560.0 &&
+                    regional.geometry.bounds.west < 138.73 &&
+                    regional.geometry.bounds.east > 138.73 &&
+                    regional.geometry.bounds.south < 35.36 &&
+                    regional.geometry.bounds.north > 35.36,
+                "regional builder did not create the clamped centered bbox");
+        require(regional.time.explicitYears ==
+                    std::vector<int>({2017, 2025}) &&
+                    regional.variables ==
+                        std::vector<std::string>({"embedding64"}) &&
+                    regional.outputKind ==
+                        earthscience::ScienceOutputKind::Analysis &&
+                    regional.analysis.kind ==
+                        earthscience::ScienceAnalysisKind::RegionalChange &&
+                    regional.analysis.baselineYear == 2017 &&
+                    regional.analysis.comparisonYear == 2025 &&
+                    regional.analysis.gridSize == 128 &&
+                    regional.analysis.metrics == options.metrics,
+                "regional builder lost ordered years or analysis options");
+    }
+
     const earthai::Tool& findTool(const earthai::ToolRegistry& registry,
                                   const std::string& name)
     {
@@ -291,6 +351,7 @@ namespace
 
 int main()
 {
+    testAnalysisQueryBuildersKeepExactScientificIntent();
     testScienceToolsUseServiceAndPreserveCamera();
     std::cout << "[OK] ScienceEarth Agent tools use the query service without camera writes\n";
     return 0;

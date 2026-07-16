@@ -240,19 +240,19 @@ void SciencePreviewLayer::syncFromService()
     if (!_service) return;
 
     const earthscience::ScienceJobSnapshot snapshot = _service->snapshot();
-    if (!snapshot.lastSuccessfulArtifact ||
-        snapshot.lastSuccessfulArtifact->generation == 0 ||
-        snapshot.lastSuccessfulArtifact->generation == artifactGeneration() ||
-        snapshot.lastSuccessfulArtifact->generation ==
+    if (!snapshot.displayArtifact ||
+        snapshot.displayArtifact->generation == 0 ||
+        snapshot.displayArtifact->generation == artifactGeneration() ||
+        snapshot.displayArtifact->generation ==
             _suppressedGeneration.load(std::memory_order_acquire))
         return;
 
     osg::ref_ptr<osg::Node> artifact =
-        createSciencePreviewArtifactNode(*snapshot.lastSuccessfulArtifact);
+        createSciencePreviewArtifactNode(*snapshot.displayArtifact);
     if (!artifact) return;
     _artifactRoot->removeChildren(0, _artifactRoot->getNumChildren());
     _artifactRoot->addChild(artifact.get());
-    _artifactGeneration.store(snapshot.lastSuccessfulArtifact->generation,
+    _artifactGeneration.store(snapshot.displayArtifact->generation,
                               std::memory_order_release);
     _suppressedGeneration.store(0, std::memory_order_release);
     _hasArtifact.store(true, std::memory_order_release);

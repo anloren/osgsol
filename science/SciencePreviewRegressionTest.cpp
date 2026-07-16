@@ -39,9 +39,17 @@ namespace
         source.lastYear = 2025;
         source.nativeResolutionMeters = 10.0;
         source.health = earthscience::ScienceSourceHealth::Ready;
+        source.variables = {
+            {"A01", "Embedding A01", "1", "embedding", 1},
+            {"A16", "Embedding A16", "1", "embedding", 1},
+            {"A09", "Embedding A09", "1", "embedding", 1},
+            {"embedding64", "Embedding A01-A64", "1", "embedding", 64},
+        };
         source.capabilities.pointQuery = true;
+        source.capabilities.boundingBoxQuery = true;
         source.capabilities.explicitYears = true;
         source.capabilities.rasterLayerOutput = true;
+        source.capabilities.analysisOutput = true;
         source.capabilities.minimumSpanMeters = 2560.0;
         source.capabilities.maximumSpanMeters = 81920.0;
         earthscience::ScienceVisualizationDescriptor visualization;
@@ -62,6 +70,27 @@ namespace
         query.variables = {"A01", "A16", "A09"};
         query.targetResolutionMeters = 10.0;
         query.visualizationId = "false-color-a01-a16-a09";
+        return query;
+    }
+
+    earthscience::GeoTemporalQuery makeLayerAnalysisQuery()
+    {
+        earthscience::GeoTemporalQuery query;
+        query.sourceId = "alphaearth-foundations";
+        query.geometry.kind = earthscience::ScienceGeometryKind::BoundingBox;
+        query.geometry.bounds = {138.70, 35.34, 138.76, 35.40};
+        query.geometry.requestedSpanMeters = 6000.0;
+        query.time.mode = earthscience::ScienceTimeMode::ExplicitYears;
+        query.time.explicitYears = {2017, 2025};
+        query.variables = {"embedding64"};
+        query.targetResolutionMeters = 10.0;
+        query.outputKind = earthscience::ScienceOutputKind::Analysis;
+        query.priority = earthscience::SciencePriority::InteractiveResearch;
+        query.analysis.kind =
+            earthscience::ScienceAnalysisKind::RegionalChange;
+        query.analysis.baselineYear = 2017;
+        query.analysis.comparisonYear = 2025;
+        query.analysis.gridSize = 4;
         return query;
     }
 
@@ -430,6 +459,59 @@ namespace
                     layer->artifactGeneration() == 0,
                 "explicit layer removal left an artifact node");
     }
+
+    void testLayerRendersOnlyTheExplicitDisplayArtifact()
+    {
+        auto registry =
+            std::make_unique<earthscience::ScienceSourceRegistry>();
+        auto provider = std::make_unique<LayerProvider>();
+        LayerProvider* providerPointer = provider.get();
+        std::string error;
+        require(registry->add(std::move(provider), error),
+                "display-selection provider registration failed");
+        earthscience::ScienceQueryService service(std::move(registry));
+        osg::ref_ptr<SciencePreviewLayer> layer =
+            new SciencePreviewLayer(&service);
+        layer->setVisible(true);
+
+        const std::uint64_t previewJob = service.submit(makeLayerQuery(2025));
+        providerPointer->publish(
+            earthscience::ScienceJobState::Ready,
+            layerProgress(earthscience::ScienceProgressStage::Ready, 1, 1),
+            "Ready",
+            makeLayerArtifact("preview", providerPointer->generation()));
+        earthscience::ScienceJobSnapshot snapshot = service.snapshot();
+        updateLayer(*layer);
+        require(snapshot.displayArtifact &&
+                    snapshot.displayArtifact->artifactId == "preview" &&
+                    layer->artifactGeneration() == previewJob,
+                "older preview was not the initial display artifact");
+
+        const std::uint64_t analysisJob =
+            service.submit(makeLayerAnalysisQuery());
+        providerPointer->publish(
+            earthscience::ScienceJobState::Ready,
+            layerProgress(earthscience::ScienceProgressStage::Ready, 1, 1),
+            "Ready",
+            makeLayerArtifact("analysis", providerPointer->generation()));
+        snapshot = service.snapshot();
+        require(snapshot.lastSuccessfulAnalysisArtifact &&
+                    snapshot.lastSuccessfulAnalysisArtifact->artifactId ==
+                        "analysis" &&
+                    snapshot.displayArtifact &&
+                    snapshot.displayArtifact->artifactId == "preview",
+                "hidden analysis replaced display without selection");
+        updateLayer(*layer);
+        require(layer->artifactGeneration() == previewJob,
+                "layer rendered hidden analysis instead of display artifact");
+
+        require(service.showArtifact("analysis"),
+                "explicit analysis display selection failed");
+        updateLayer(*layer);
+        require(analysisJob > previewJob &&
+                    layer->artifactGeneration() == analysisJob,
+                "layer ignored the explicitly selected display artifact");
+    }
 }
 
 int main()
@@ -441,6 +523,7 @@ int main()
     testFalseColorMeaningIsMachineReadable();
     testTerrainCannotHideAReadyScienceArtifact();
     testLayerRetainsLastGoodUntilExplicitReplacementOrRemoval();
+    testLayerRendersOnlyTheExplicitDisplayArtifact();
     std::cout << "[OK] ScienceEarth preview georeference, orientation, target and legend\n";
     return 0;
 }
