@@ -560,27 +560,48 @@ SciencePanelPresentation describeScienceSnapshot(
         replacementFailed ? selectSciencePanelArtifact(snapshot, mode) : nullptr;
     if (!retained) return view;
 
-    view.severity = SciencePanelSeverity::Warning;
+    view.retention.present = true;
+    view.retention.mode = mode;
+    view.retention.severity = SciencePanelSeverity::Warning;
     switch (mode)
     {
     case SciencePanelMode::Preview:
-        view.kind = SciencePanelResultKind::RetainedPreview;
-        view.title = u8"保留已载入预览 / Retained Preview after failed request";
+        view.retention.title = u8"已保留预览 / Retained Preview";
         break;
     case SciencePanelMode::PointSeries:
-        view.kind = SciencePanelResultKind::RetainedPointSeries;
-        view.title =
-            u8"保留点位序列 / Retained Point series after failed request";
+        view.retention.title = u8"已保留点位序列 / Retained Point series";
         break;
     case SciencePanelMode::RegionalChange:
-        view.kind = SciencePanelResultKind::RetainedRegionalChange;
-        view.title =
-            u8"保留区域变化 / Retained Regional change after failed request";
+        view.retention.title =
+            u8"已保留区域变化 / Retained Regional change";
         break;
     }
-    view.retentionReason = std::string(
-        u8"本次请求未替换已验证结果 / Current failure did not replace artifact: ") +
-        retained->artifactId;
+
+    switch (view.kind)
+    {
+    case SciencePanelResultKind::NoCoverage:
+        view.retention.reason = std::string(
+            u8"无覆盖未替换旧结果 / No coverage did not replace artifact: ") +
+            retained->artifactId;
+        break;
+    case SciencePanelResultKind::Failed:
+        view.retention.reason = std::string(
+            u8"数据源失败未替换旧结果 / Provider failure did not replace artifact: ") +
+            retained->artifactId;
+        break;
+    case SciencePanelResultKind::Cancelled:
+        view.retention.reason = std::string(
+            u8"取消未替换旧结果 / Cancelled request did not replace artifact: ") +
+            retained->artifactId;
+        break;
+    case SciencePanelResultKind::Stale:
+        view.retention.reason = std::string(
+            u8"旧请求已丢弃，保留旧结果 / Stale request discarded; retained artifact: ") +
+            retained->artifactId;
+        break;
+    default:
+        break;
+    }
     return view;
 }
 
@@ -1042,9 +1063,13 @@ void ScienceEarthPanel::drawResults(
         ImGui::TextWrapped("%s", presentation.detail.c_str());
     if (!presentation.progressText.empty())
         ImGui::TextWrapped("%s", presentation.progressText.c_str());
-    if (!presentation.retentionReason.empty())
-        drawColoredWrapped(ImVec4(1.0f, 0.78f, 0.25f, 1.0f),
-                           presentation.retentionReason.c_str());
+    if (presentation.retention.present)
+    {
+        drawColoredWrapped(
+            severityColor(presentation.retention.severity),
+            presentation.retention.title.c_str());
+        ImGui::TextWrapped("%s", presentation.retention.reason.c_str());
+    }
 
     const std::shared_ptr<const earthscience::ScienceArtifact> artifact =
         selectSciencePanelArtifact(snapshot, _state.mode);

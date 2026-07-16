@@ -146,11 +146,15 @@ int main()
     const SciencePanelPresentation retained =
         describeScienceSnapshot(replacementFailure,
                                 SciencePanelMode::PointSeries);
-    CHECK(retained.kind == SciencePanelResultKind::RetainedPointSeries);
+    CHECK(retained.kind == SciencePanelResultKind::Failed);
+    CHECK(retained.severity == SciencePanelSeverity::Error);
+    CHECK(retained.title.find("Request failed") != std::string::npos);
     CHECK(retained.detail.find("network timeout") != std::string::npos);
-    CHECK(!retained.retentionReason.empty());
-    CHECK(retained.retentionReason.find("retained-analysis") != std::string::npos);
-    CHECK(retained.detail != retained.retentionReason);
+    CHECK(retained.retention.present);
+    CHECK(!retained.retention.reason.empty());
+    CHECK(retained.retention.reason.find("retained-analysis") !=
+          std::string::npos);
+    CHECK(retained.detail != retained.retention.reason);
 
     earthscience::ScienceJobSnapshot independentResults;
     independentResults.lastSuccessfulPreviewArtifact = artifact("preview-new");
@@ -182,12 +186,12 @@ int main()
         "preview-2022");
     const SciencePanelPresentation retainedPreview = describeScienceSnapshot(
         previewReplacementFailure, SciencePanelMode::Preview);
-    CHECK(retainedPreview.kind == SciencePanelResultKind::RetainedPreview);
-    CHECK(retainedPreview.severity == SciencePanelSeverity::Warning);
-    CHECK(retainedPreview.title.find("Preview") != std::string::npos);
-    CHECK(retainedPreview.retentionReason.find("preview-2022") !=
+    CHECK(retainedPreview.kind == SciencePanelResultKind::Failed);
+    CHECK(retainedPreview.severity == SciencePanelSeverity::Error);
+    CHECK(retainedPreview.title.find("Request failed") != std::string::npos);
+    CHECK(retainedPreview.retention.reason.find("preview-2022") !=
           std::string::npos);
-    CHECK(retainedPreview.retentionReason.find("point-series") ==
+    CHECK(retainedPreview.retention.reason.find("point-series") ==
           std::string::npos);
 
     earthscience::ScienceJobSnapshot previewOnly;
@@ -209,9 +213,10 @@ int main()
         pointFailure, SciencePanelMode::RegionalChange));
     const SciencePanelPresentation retainedPoint = describeScienceSnapshot(
         pointFailure, SciencePanelMode::PointSeries);
-    CHECK(retainedPoint.kind == SciencePanelResultKind::RetainedPointSeries);
-    CHECK(retainedPoint.title.find("Point series") != std::string::npos);
-    CHECK(retainedPoint.retentionReason.find("point-retained") !=
+    CHECK(retainedPoint.kind == SciencePanelResultKind::Failed);
+    CHECK(retainedPoint.severity == SciencePanelSeverity::Error);
+    CHECK(retainedPoint.title.find("Request failed") != std::string::npos);
+    CHECK(retainedPoint.retention.reason.find("point-retained") !=
           std::string::npos);
 
     earthscience::ScienceJobSnapshot regionalFailure = snapshot(
@@ -228,11 +233,129 @@ int main()
         regionalFailure, SciencePanelMode::PointSeries));
     const SciencePanelPresentation retainedRegional = describeScienceSnapshot(
         regionalFailure, SciencePanelMode::RegionalChange);
-    CHECK(retainedRegional.kind ==
-          SciencePanelResultKind::RetainedRegionalChange);
-    CHECK(retainedRegional.title.find("Regional change") != std::string::npos);
-    CHECK(retainedRegional.retentionReason.find("regional-retained") !=
+    CHECK(retainedRegional.kind == SciencePanelResultKind::Failed);
+    CHECK(retainedRegional.severity == SciencePanelSeverity::Error);
+    CHECK(retainedRegional.title.find("Request failed") != std::string::npos);
+    CHECK(retainedRegional.retention.reason.find("regional-retained") !=
           std::string::npos);
+
+    earthscience::ScienceJobSnapshot noCoverageRetained = snapshot(
+        earthscience::ScienceJobState::Failed,
+        earthscience::ScienceProgressStage::Failed,
+        "No AlphaEarth tile covers this point and year");
+    noCoverageRetained.lastSuccessfulPreviewArtifact =
+        artifact("preview-no-coverage-retained");
+    const SciencePanelPresentation noCoverageRetainedView =
+        describeScienceSnapshot(noCoverageRetained, SciencePanelMode::Preview);
+    CHECK(noCoverageRetainedView.kind == SciencePanelResultKind::NoCoverage);
+    CHECK(noCoverageRetainedView.severity == SciencePanelSeverity::Warning);
+    CHECK(noCoverageRetainedView.title.find("No coverage") !=
+          std::string::npos);
+    CHECK(noCoverageRetainedView.stageText.find("Failed") !=
+          std::string::npos);
+    CHECK(noCoverageRetainedView.detail == noCoverageRetained.message);
+    CHECK(noCoverageRetainedView.retention.present);
+    CHECK(noCoverageRetainedView.retention.mode == SciencePanelMode::Preview);
+    CHECK(noCoverageRetainedView.retention.severity ==
+          SciencePanelSeverity::Warning);
+    CHECK(noCoverageRetainedView.retention.title.find("Preview") !=
+          std::string::npos);
+    CHECK(noCoverageRetainedView.retention.reason.find("No coverage") !=
+          std::string::npos);
+    CHECK(noCoverageRetainedView.retention.reason.find(
+              "preview-no-coverage-retained") != std::string::npos);
+
+    earthscience::ScienceJobSnapshot providerFailureRetained = snapshot(
+        earthscience::ScienceJobState::Failed,
+        earthscience::ScienceProgressStage::Failed,
+        "provider read failed: checksum mismatch");
+    providerFailureRetained.lastSuccessfulPreviewArtifact =
+        artifact("preview-provider-failure-retained");
+    const SciencePanelPresentation providerFailureRetainedView =
+        describeScienceSnapshot(
+            providerFailureRetained, SciencePanelMode::Preview);
+    CHECK(providerFailureRetainedView.kind == SciencePanelResultKind::Failed);
+    CHECK(providerFailureRetainedView.severity == SciencePanelSeverity::Error);
+    CHECK(providerFailureRetainedView.title.find("Request failed") !=
+          std::string::npos);
+    CHECK(providerFailureRetainedView.stageText.find("Failed") !=
+          std::string::npos);
+    CHECK(providerFailureRetainedView.detail == providerFailureRetained.message);
+    CHECK(providerFailureRetainedView.retention.present);
+    CHECK(providerFailureRetainedView.retention.mode == SciencePanelMode::Preview);
+    CHECK(providerFailureRetainedView.retention.severity ==
+          SciencePanelSeverity::Warning);
+    CHECK(providerFailureRetainedView.retention.title.find("Preview") !=
+          std::string::npos);
+    CHECK(providerFailureRetainedView.retention.reason.find(
+              "Provider failure") != std::string::npos);
+    CHECK(providerFailureRetainedView.retention.reason.find(
+              "preview-provider-failure-retained") != std::string::npos);
+
+    earthscience::ScienceJobSnapshot cancelledRetained = snapshot(
+        earthscience::ScienceJobState::Cancelled,
+        earthscience::ScienceProgressStage::Cancelled, "cancelled by user");
+    cancelledRetained.lastSuccessfulAnalysisArtifact = artifact(
+        "point-cancelled-retained", earthscience::ScienceOutputKind::TimeSeries,
+        earthscience::ScienceAnalysisKind::PointSeries);
+    const SciencePanelPresentation cancelledRetainedView =
+        describeScienceSnapshot(cancelledRetained,
+                                SciencePanelMode::PointSeries);
+    CHECK(cancelledRetainedView.kind == SciencePanelResultKind::Cancelled);
+    CHECK(cancelledRetainedView.severity == SciencePanelSeverity::Warning);
+    CHECK(cancelledRetainedView.title.find("Request cancelled") !=
+          std::string::npos);
+    CHECK(cancelledRetainedView.stageText.find("Cancelled") !=
+          std::string::npos);
+    CHECK(cancelledRetainedView.detail == cancelledRetained.message);
+    CHECK(cancelledRetainedView.retention.present);
+    CHECK(cancelledRetainedView.retention.mode ==
+          SciencePanelMode::PointSeries);
+    CHECK(cancelledRetainedView.retention.severity ==
+          SciencePanelSeverity::Warning);
+    CHECK(cancelledRetainedView.retention.title.find("Point series") !=
+          std::string::npos);
+    CHECK(cancelledRetainedView.retention.reason.find("Cancelled") !=
+          std::string::npos);
+    CHECK(cancelledRetainedView.retention.reason.find(
+              "point-cancelled-retained") != std::string::npos);
+
+    earthscience::ScienceJobSnapshot staleRetained = snapshot(
+        earthscience::ScienceJobState::Cancelled,
+        earthscience::ScienceProgressStage::Cancelled,
+        "stale generation discarded after a newer request");
+    staleRetained.lastSuccessfulAnalysisArtifact = artifact(
+        "regional-stale-retained", earthscience::ScienceOutputKind::Analysis,
+        earthscience::ScienceAnalysisKind::RegionalChange);
+    const SciencePanelPresentation staleRetainedView =
+        describeScienceSnapshot(staleRetained,
+                                SciencePanelMode::RegionalChange);
+    CHECK(staleRetainedView.kind == SciencePanelResultKind::Stale);
+    CHECK(staleRetainedView.severity == SciencePanelSeverity::Warning);
+    CHECK(staleRetainedView.title.find("Stale result discarded") !=
+          std::string::npos);
+    CHECK(staleRetainedView.stageText.find("Cancelled") != std::string::npos);
+    CHECK(staleRetainedView.detail == staleRetained.message);
+    CHECK(staleRetainedView.retention.present);
+    CHECK(staleRetainedView.retention.mode ==
+          SciencePanelMode::RegionalChange);
+    CHECK(staleRetainedView.retention.severity == SciencePanelSeverity::Warning);
+    CHECK(staleRetainedView.retention.title.find("Regional change") !=
+          std::string::npos);
+    CHECK(staleRetainedView.retention.reason.find("Stale") !=
+          std::string::npos);
+    CHECK(staleRetainedView.retention.reason.find("regional-stale-retained") !=
+          std::string::npos);
+
+    CHECK(noCoverageRetainedView.title != providerFailureRetainedView.title);
+    CHECK(providerFailureRetainedView.title != cancelledRetainedView.title);
+    CHECK(cancelledRetainedView.title != staleRetainedView.title);
+    CHECK(noCoverageRetainedView.retention.reason !=
+          providerFailureRetainedView.retention.reason);
+    CHECK(providerFailureRetainedView.retention.reason !=
+          cancelledRetainedView.retention.reason);
+    CHECK(cancelledRetainedView.retention.reason !=
+          staleRetainedView.retention.reason);
 
     earthscience::ScienceQueryCost unknownDuration;
     unknownDuration.sourceBytesUpperBound = 4096;

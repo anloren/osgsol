@@ -51,9 +51,6 @@ enum class SciencePanelResultKind
     Cancelled,
     Stale,
     Ready,
-    RetainedPreview,
-    RetainedPointSeries,
-    RetainedRegionalChange,
 };
 
 enum class SciencePanelSeverity
@@ -65,6 +62,15 @@ enum class SciencePanelSeverity
     Error,
 };
 
+struct SciencePanelRetentionPresentation
+{
+    bool present = false;
+    SciencePanelMode mode = SciencePanelMode::Preview;
+    SciencePanelSeverity severity = SciencePanelSeverity::Neutral;
+    std::string title;
+    std::string reason;
+};
+
 struct SciencePanelPresentation
 {
     SciencePanelResultKind kind = SciencePanelResultKind::Idle;
@@ -73,7 +79,7 @@ struct SciencePanelPresentation
     std::string stageText;
     std::string detail;
     std::string progressText;
-    std::string retentionReason;
+    SciencePanelRetentionPresentation retention;
     bool busy = false;
     bool progressDeterminate = false;
 };
