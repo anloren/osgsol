@@ -31,14 +31,17 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
         self.assertIn("new SciencePreviewLayer(scienceService.get())", source)
 
     def test_ui_catalog_exposes_meaning_health_and_provenance(self):
-        source = read("applications/earth_explorer/EarthControlUI.h")
-        marker = "// ScienceEarth is a dedicated preview layer."
-        self.assertIn(marker, source)
-        science_block = source[source.index(marker):]
-        science_block = science_block[:science_block.index("#endif")]
+        control = read("applications/earth_explorer/EarthControlUI.h")
+        source = read("applications/earth_explorer/science_earth_panel.cpp")
+        self.assertIn("_sciencePanel.drawOperations(", control)
+        self.assertIn("_sciencePanel.drawResults(", control)
+        self.assertLess(
+            control.index("ImGui::End();"),
+            control.index("_sciencePanel.drawResults("),
+        )
 
         for token in (
-            "_scienceService",
+            "ScienceQueryService",
             "listSources()",
             "source.health",
             "source.healthMessage",
@@ -52,7 +55,7 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
             "computeViewPointLatLonHeight",
             "requestedSpanMeters",
         ):
-            self.assertIn(token, science_block, token)
+            self.assertIn(token, source, token)
 
         for camera_writer in (
             "setByEye",
@@ -61,7 +64,7 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
             "setDistance",
             "flyTo",
         ):
-            self.assertNotIn(camera_writer, science_block, camera_writer)
+            self.assertNotIn(camera_writer, source, camera_writer)
 
     def test_agent_tools_keep_stable_names_and_camera_authority(self):
         header = read("applications/earth_explorer/science_ai_tools.h")

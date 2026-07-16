@@ -14,7 +14,8 @@ SET(EXECUTABLE_FILES
 IF(OSGSOL_BUILD_SCIENCE)
     LIST(APPEND EXECUTABLE_FILES
          science_preview_layer.cpp science_preview_layer.h
-         science_ai_tools.cpp science_ai_tools.h science_query_builder.h)
+         science_ai_tools.cpp science_ai_tools.h science_query_builder.h
+         science_earth_panel.cpp science_earth_panel.h)
 ENDIF()
 
 IF(APPLE)
@@ -54,6 +55,25 @@ IF(APPLE)
 ENDIF(APPLE)
 
 IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_ScienceEarthPanel
+        science_earth_panel_test.cpp
+        science_earth_panel.cpp
+        science_preview_layer.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceEarthPanel PRIVATE cxx_std_17)
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceEarthPanel PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceEarthPanel
+        osgSolSciencePreview osgVerseReaderWriter osgVersePipeline
+        osgVerseModeling osgVerseDependency)
+    LINK_OSG_LIBRARY(osgSol_Test_ScienceEarthPanel
+        OpenThreads osg osgDB osgGA osgUtil osgViewer)
+    ADD_TEST(NAME osgSol_Test_ScienceEarthPanel
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceEarthPanel>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceEarthPanel PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 30)
+
     ADD_EXECUTABLE(osgSol_Test_ScienceAiTools
         science_ai_tools_test.cpp
         science_ai_tools.cpp

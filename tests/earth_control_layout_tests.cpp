@@ -36,10 +36,22 @@ int main()
         earthui::computeEarthControlPanelLayout(1024.0f, 576.0f);
     CHECK(nearlyEqual(compact.defaultWidth, 337.92f));
     CHECK(compact.defaultWidth <= 1024.0f * 0.34f);
-    CHECK(compact.maxWidth <= 1024.0f * 0.42f);
+    CHECK(compact.maxWidth <= 1024.0f * 0.34f);
     CHECK(compact.defaultHeight <= 576.0f * 0.72f + 0.01f);
     CHECK(compact.maxHeight <= 480.0f);
     CHECK(compact.maxHeight <= 576.0f - 20.0f - 76.0f);
+
+    const earthui::ScienceWorkspaceLayout scienceCompact =
+        earthui::computeScienceWorkspaceLayout(1024.0f, 576.0f, true);
+    CHECK(scienceCompact.leftWidth <= 1024.0f * 0.34f);
+    CHECK(scienceCompact.resultWidth <= 1024.0f * 0.32f);
+    CHECK(scienceCompact.centerMapWidth >= 1024.0f * 0.30f);
+    CHECK(scienceCompact.resultHeight <= 576.0f - 20.0f - 76.0f);
+
+    const earthui::ScienceWorkspaceLayout scienceCollapsed =
+        earthui::computeScienceWorkspaceLayout(1024.0f, 576.0f, false);
+    CHECK(scienceCollapsed.resultWidth <= 44.0f);
+    CHECK(scienceCollapsed.centerMapWidth > scienceCompact.centerMapWidth);
 
     // A large desktop should not make the panel grow with the viewport.
     const earthui::EarthControlPanelLayout large =
@@ -96,6 +108,26 @@ int main()
     CHECK(countOccurrences(source, "panelCheckbox(") >= 8);
     CHECK(source.find("ImGui::PushTextWrapPos(0.0f)") != std::string::npos);
     CHECK(source.find("ImGui::PopTextWrapPos()") != std::string::npos);
+
+    std::ifstream panelInput(std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/science_earth_panel.cpp");
+    std::ostringstream panelBuffer;
+    panelBuffer << panelInput.rdbuf();
+    const std::string panel = panelBuffer.str();
+    CHECK(panelInput.good() || panelInput.eof());
+    CHECK(panel.find("ImGui::TextWrapped") != std::string::npos);
+    CHECK(panel.find("ImGui::PlotLines") != std::string::npos);
+    CHECK(panel.find("AlwaysAutoResize") == std::string::npos);
+    CHECK(panel.find("NoScrollbar") == std::string::npos);
+    CHECK(panel.find("SliderInt") == std::string::npos);
+    CHECK(panel.find("ProgressBar") == std::string::npos);
+    CHECK(panel.find(u8"潜在嵌入关系") != std::string::npos);
+    CHECK(panel.find(u8"不是物理量") != std::string::npos);
+    CHECK(panel.find(u8"不是自然色") != std::string::npos);
+    CHECK(panel.find("\"R = \"") != std::string::npos);
+    CHECK(panel.find("\"G = \"") != std::string::npos);
+    CHECK(panel.find("\"B = \"") != std::string::npos);
+    CHECK(panel.find(u8"尚无可测时长") != std::string::npos);
 
     std::cout << "[OK] Earth control panel responsive layout\n";
     return 0;

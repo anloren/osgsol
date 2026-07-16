@@ -129,7 +129,6 @@ namespace earthscience
         double elapsedSeconds = 0.0;
 
         float legacyFraction() const;
-        operator float() const { return legacyFraction(); }
     };
 
     struct ScienceAnalysisOptions
