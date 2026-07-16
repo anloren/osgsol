@@ -4,6 +4,7 @@
 #include <ScienceQueryTypes.h>
 
 #include <string>
+#include <vector>
 
 class LayerManager;
 class SciencePreviewLayer;
@@ -50,6 +51,9 @@ enum class SciencePanelResultKind
     Cancelled,
     Stale,
     Ready,
+    RetainedPreview,
+    RetainedPointSeries,
+    RetainedRegionalChange,
 };
 
 enum class SciencePanelSeverity
@@ -85,11 +89,26 @@ struct ScienceCostPresentation
 
 SciencePanelPresentation describeScienceSnapshot(
     const earthscience::ScienceJobSnapshot& snapshot);
+SciencePanelPresentation describeScienceSnapshot(
+    const earthscience::ScienceJobSnapshot& snapshot,
+    SciencePanelMode mode);
 ScienceCostPresentation describeScienceCost(
     const earthscience::ScienceQueryCost& cost);
 std::shared_ptr<const earthscience::ScienceArtifact> selectSciencePanelArtifact(
     const earthscience::ScienceJobSnapshot& snapshot,
     SciencePanelMode mode);
+bool sciencePanelEstimateRequiresConfirmation(
+    const earthscience::GeoTemporalQuery& query,
+    const earthscience::ScienceQueryCost& cost);
+std::string sciencePanelEstimateBindingKey(
+    const earthscience::GeoTemporalQuery& query,
+    const earthscience::ScienceQueryCost& cost);
+bool sciencePanelEstimateConfirmationMatches(
+    const earthscience::GeoTemporalQuery& query,
+    const earthscience::ScienceQueryCost& cost,
+    const std::string& confirmedBindingKey);
+std::vector<std::string> describeScienceArtifactEvidence(
+    const earthscience::ScienceArtifact& artifact);
 
 class ScienceEarthPanel
 {
@@ -109,7 +128,7 @@ private:
     earthscience::ScienceQueryCost _displayedCost;
     std::string _displayedEstimateKey;
     bool _estimateVisible = false;
-    bool _estimateConfirmed = false;
+    std::string _confirmedEstimateKey;
 };
 
 #endif

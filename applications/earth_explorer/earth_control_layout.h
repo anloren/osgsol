@@ -24,6 +24,15 @@ struct ScienceWorkspaceLayout
     float centerMapWidth;
 };
 
+template<typename EndLeftPanel, typename DrawScienceResults>
+inline void finishLeftThenDrawScienceResults(
+    EndLeftPanel endLeftPanel,
+    DrawScienceResults drawScienceResults)
+{
+    endLeftPanel();
+    drawScienceResults();
+}
+
 inline EarthControlPanelLayout computeEarthControlPanelLayout(float viewportWidth,
                                                                float viewportHeight)
 {

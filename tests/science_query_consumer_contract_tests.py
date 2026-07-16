@@ -35,10 +35,13 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
         source = read("applications/earth_explorer/science_earth_panel.cpp")
         self.assertIn("_sciencePanel.drawOperations(", control)
         self.assertIn("_sciencePanel.drawResults(", control)
-        self.assertLess(
-            control.index("ImGui::End();"),
-            control.index("_sciencePanel.drawResults("),
-        )
+        self.assertIn("finishLeftThenDrawScienceResults(", control)
+
+        executable_contract = read("tests/earth_control_layout_tests.cpp")
+        self.assertIn("finishLeftThenDrawScienceResults(", executable_contract)
+        self.assertIn('scienceFrameOrder[0] == "end-left"', executable_contract)
+        self.assertIn('scienceFrameOrder[1] == "draw-results"',
+                      executable_contract)
 
         for token in (
             "ScienceQueryService",

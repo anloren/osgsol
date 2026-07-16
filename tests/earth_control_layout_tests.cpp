@@ -5,6 +5,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ << ": " #x "\n"; \
@@ -52,6 +53,14 @@ int main()
         earthui::computeScienceWorkspaceLayout(1024.0f, 576.0f, false);
     CHECK(scienceCollapsed.resultWidth <= 44.0f);
     CHECK(scienceCollapsed.centerMapWidth > scienceCompact.centerMapWidth);
+
+    std::vector<std::string> scienceFrameOrder;
+    earthui::finishLeftThenDrawScienceResults(
+        [&scienceFrameOrder]() { scienceFrameOrder.push_back("end-left"); },
+        [&scienceFrameOrder]() { scienceFrameOrder.push_back("draw-results"); });
+    CHECK(scienceFrameOrder.size() == 2);
+    CHECK(scienceFrameOrder[0] == "end-left");
+    CHECK(scienceFrameOrder[1] == "draw-results");
 
     // A large desktop should not make the panel grow with the viewport.
     const earthui::EarthControlPanelLayout large =

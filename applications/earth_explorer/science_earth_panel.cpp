@@ -61,14 +61,30 @@ const char* stageLabel(earthscience::ScienceProgressStage stage)
     return u8"未知阶段 / Unknown";
 }
 
-std::shared_ptr<const earthscience::ScienceArtifact> retainedArtifact(
-    const earthscience::ScienceJobSnapshot& snapshot)
+bool artifactMatchesMode(const earthscience::ScienceArtifact& artifact,
+                         SciencePanelMode mode)
 {
-    if (snapshot.lastSuccessfulAnalysisArtifact)
-        return snapshot.lastSuccessfulAnalysisArtifact;
-    if (snapshot.lastSuccessfulPreviewArtifact)
-        return snapshot.lastSuccessfulPreviewArtifact;
-    return snapshot.lastSuccessfulArtifact;
+    using AnalysisKind = earthscience::ScienceAnalysisKind;
+    using OutputKind = earthscience::ScienceOutputKind;
+    switch (mode)
+    {
+    case SciencePanelMode::Preview:
+        return artifact.query.outputKind == OutputKind::RasterLayer;
+    case SciencePanelMode::PointSeries:
+        return artifact.query.outputKind == OutputKind::TimeSeries &&
+            artifact.analysis.kind == AnalysisKind::PointSeries;
+    case SciencePanelMode::RegionalChange:
+        return artifact.query.outputKind == OutputKind::Analysis &&
+            artifact.analysis.kind == AnalysisKind::RegionalChange;
+    }
+    return false;
+}
+
+std::shared_ptr<const earthscience::ScienceArtifact> matchingArtifact(
+    const std::shared_ptr<const earthscience::ScienceArtifact>& artifact,
+    SciencePanelMode mode)
+{
+    return artifact && artifactMatchesMode(*artifact, mode) ? artifact : nullptr;
 }
 
 std::string formatBytes(std::uint64_t bytes)
@@ -99,6 +115,29 @@ std::string formatInteger(std::uint64_t value)
         result.push_back(digits[index]);
     }
     return result;
+}
+
+bool hasGeographicExtent(const earthscience::ScienceWgs84Bounds& bounds)
+{
+    return std::isfinite(bounds.west) && std::isfinite(bounds.south) &&
+        std::isfinite(bounds.east) && std::isfinite(bounds.north) &&
+        bounds.east > bounds.west && bounds.north > bounds.south;
+}
+
+std::string formatBounds(const earthscience::ScienceWgs84Bounds& bounds)
+{
+    std::ostringstream text;
+    text << std::fixed << std::setprecision(4)
+         << "W " << bounds.west << " · S " << bounds.south
+         << " · E " << bounds.east << " · N " << bounds.north;
+    return text.str();
+}
+
+std::string formatResolution(double meters)
+{
+    std::ostringstream text;
+    text << std::fixed << std::setprecision(1) << meters << " m";
+    return text.str();
 }
 
 ImVec4 severityColor(SciencePanelSeverity severity)
@@ -208,8 +247,22 @@ std::string queryEstimateKey(
         << query.geometry.point.longitude << '|'
         << query.geometry.bounds.west << '|' << query.geometry.bounds.south << '|'
         << query.geometry.bounds.east << '|' << query.geometry.bounds.north << '|'
-        << query.analysis.gridSize << '|' << query.analysis.enablePca << '|'
+        << query.geometry.requestedSpanMeters << '|'
+        << static_cast<int>(query.time.mode) << '|'
+        << query.targetResolutionMeters << '|'
+        << static_cast<int>(query.aggregation) << '|'
+        << static_cast<int>(query.priority) << '|'
+        << query.visualizationId << '|' << query.purpose << '|'
+        << static_cast<int>(query.analysis.kind) << '|'
+        << query.analysis.baselineYear << '|'
+        << query.analysis.comparisonYear << '|'
+        << query.analysis.gridSize << '|' << query.analysis.hotspotQuantile << '|'
+        << query.analysis.enablePca << '|' << query.analysis.pcaComponents << '|'
         << query.analysis.enableClustering << '|' << query.analysis.clusterCount;
+    for (const std::string& variable : query.variables)
+        key << "|variable:" << variable;
+    for (earthscience::ScienceMetric metric : query.analysis.metrics)
+        key << "|metric:" << static_cast<int>(metric);
     for (int year : query.time.explicitYears) key << '|' << year;
     key << '|' << cost.sourceBytesUpperBound << '|'
         << cost.residentBytesUpperBound << '|' << cost.resultCells << '|'
@@ -490,15 +543,44 @@ SciencePanelPresentation describeScienceSnapshot(
         }
     }
 
+    return view;
+}
+
+SciencePanelPresentation describeScienceSnapshot(
+    const earthscience::ScienceJobSnapshot& snapshot,
+    SciencePanelMode mode)
+{
+    SciencePanelPresentation view = describeScienceSnapshot(snapshot);
+    const bool replacementFailed =
+        view.kind == SciencePanelResultKind::NoCoverage ||
+        view.kind == SciencePanelResultKind::Failed ||
+        view.kind == SciencePanelResultKind::Cancelled ||
+        view.kind == SciencePanelResultKind::Stale;
     const std::shared_ptr<const earthscience::ScienceArtifact> retained =
-        retainedArtifact(snapshot);
-    if (retained && (view.kind == SciencePanelResultKind::NoCoverage ||
-                     view.kind == SciencePanelResultKind::Failed ||
-                     view.kind == SciencePanelResultKind::Cancelled ||
-                     view.kind == SciencePanelResultKind::Stale))
-        view.retentionReason = std::string(
-            u8"上一次成功结果仍保留 / Prior successful result retained: ") +
-            retained->artifactId;
+        replacementFailed ? selectSciencePanelArtifact(snapshot, mode) : nullptr;
+    if (!retained) return view;
+
+    view.severity = SciencePanelSeverity::Warning;
+    switch (mode)
+    {
+    case SciencePanelMode::Preview:
+        view.kind = SciencePanelResultKind::RetainedPreview;
+        view.title = u8"保留已载入预览 / Retained Preview after failed request";
+        break;
+    case SciencePanelMode::PointSeries:
+        view.kind = SciencePanelResultKind::RetainedPointSeries;
+        view.title =
+            u8"保留点位序列 / Retained Point series after failed request";
+        break;
+    case SciencePanelMode::RegionalChange:
+        view.kind = SciencePanelResultKind::RetainedRegionalChange;
+        view.title =
+            u8"保留区域变化 / Retained Regional change after failed request";
+        break;
+    }
+    view.retentionReason = std::string(
+        u8"本次请求未替换已验证结果 / Current failure did not replace artifact: ") +
+        retained->artifactId;
     return view;
 }
 
@@ -528,16 +610,135 @@ std::shared_ptr<const earthscience::ScienceArtifact> selectSciencePanelArtifact(
 {
     if (mode == SciencePanelMode::Preview)
     {
-        if (snapshot.displayArtifact &&
-            snapshot.displayArtifact->query.outputKind ==
-                earthscience::ScienceOutputKind::RasterLayer)
-            return snapshot.displayArtifact;
-        if (snapshot.lastSuccessfulPreviewArtifact)
-            return snapshot.lastSuccessfulPreviewArtifact;
+        std::shared_ptr<const earthscience::ScienceArtifact> selected =
+            matchingArtifact(snapshot.displayArtifact, mode);
+        if (selected) return selected;
+        selected = matchingArtifact(snapshot.lastSuccessfulPreviewArtifact, mode);
+        if (selected) return selected;
+        return matchingArtifact(snapshot.lastSuccessfulArtifact, mode);
     }
-    else if (snapshot.lastSuccessfulAnalysisArtifact)
-        return snapshot.lastSuccessfulAnalysisArtifact;
-    return retainedArtifact(snapshot);
+    return matchingArtifact(snapshot.lastSuccessfulAnalysisArtifact, mode);
+}
+
+bool sciencePanelEstimateRequiresConfirmation(
+    const earthscience::GeoTemporalQuery& query,
+    const earthscience::ScienceQueryCost& cost)
+{
+    const bool retainedMultiYearPointSeries =
+        query.outputKind == earthscience::ScienceOutputKind::TimeSeries &&
+        query.analysis.kind == earthscience::ScienceAnalysisKind::PointSeries &&
+        query.time.explicitYears.size() > 1;
+    const bool highResolutionRegional =
+        query.outputKind == earthscience::ScienceOutputKind::Analysis &&
+        query.analysis.kind == earthscience::ScienceAnalysisKind::RegionalChange &&
+        query.analysis.gridSize >= 256;
+    return cost.requiresConfirmation || retainedMultiYearPointSeries ||
+        highResolutionRegional;
+}
+
+std::string sciencePanelEstimateBindingKey(
+    const earthscience::GeoTemporalQuery& query,
+    const earthscience::ScienceQueryCost& cost)
+{
+    return queryEstimateKey(query, cost);
+}
+
+bool sciencePanelEstimateConfirmationMatches(
+    const earthscience::GeoTemporalQuery& query,
+    const earthscience::ScienceQueryCost& cost,
+    const std::string& confirmedBindingKey)
+{
+    if (!sciencePanelEstimateRequiresConfirmation(query, cost)) return true;
+    return !confirmedBindingKey.empty() &&
+        confirmedBindingKey == sciencePanelEstimateBindingKey(query, cost);
+}
+
+std::vector<std::string> describeScienceArtifactEvidence(
+    const earthscience::ScienceArtifact& artifact)
+{
+    const std::string unavailable = u8"未记录 / not recorded";
+    std::vector<std::string> lines;
+
+    std::ostringstream years;
+    years << u8"已载入结果年份 / Loaded artifact year(s): ";
+    if (artifact.query.time.explicitYears.empty())
+        years << unavailable;
+    else
+    {
+        for (std::size_t index = 0;
+             index < artifact.query.time.explicitYears.size(); ++index)
+        {
+            if (index > 0) years << ", ";
+            years << artifact.query.time.explicitYears[index];
+        }
+    }
+    lines.push_back(years.str());
+
+    earthscience::ScienceWgs84Bounds payloadBounds;
+    double actualResolutionMeters = 0.0;
+    bool hasPayloadBounds = false;
+    if (artifact.query.outputKind == earthscience::ScienceOutputKind::RasterLayer)
+    {
+        payloadBounds = artifact.raster.bounds;
+        hasPayloadBounds = hasGeographicExtent(payloadBounds);
+    }
+    else if (artifact.query.outputKind ==
+             earthscience::ScienceOutputKind::TimeSeries)
+    {
+        payloadBounds = artifact.embedding.bounds;
+        hasPayloadBounds = hasGeographicExtent(payloadBounds);
+        actualResolutionMeters = artifact.embedding.actualResolutionMeters;
+    }
+    else if (artifact.query.outputKind == earthscience::ScienceOutputKind::Analysis)
+    {
+        if (hasGeographicExtent(artifact.analysis.regionalChange.bounds))
+        {
+            payloadBounds = artifact.analysis.regionalChange.bounds;
+            actualResolutionMeters =
+                artifact.analysis.regionalChange.actualResolutionMeters;
+            hasPayloadBounds = true;
+        }
+        else
+        {
+            payloadBounds = artifact.analysis.scalarChangeRaster.bounds;
+            actualResolutionMeters =
+                artifact.analysis.scalarChangeRaster.actualResolutionMeters;
+            hasPayloadBounds = hasGeographicExtent(payloadBounds);
+        }
+    }
+
+    lines.push_back(std::string(u8"结果范围 / Artifact bounds: ") +
+        (hasPayloadBounds ? formatBounds(payloadBounds) : unavailable));
+
+    const earthscience::ScienceWgs84Bounds* actualCoverage = nullptr;
+    for (const earthscience::ScienceSourceReference& reference :
+         artifact.sourceReferences)
+    {
+        if (hasGeographicExtent(reference.actualCoverage))
+        {
+            actualCoverage = &reference.actualCoverage;
+            break;
+        }
+    }
+    lines.push_back(std::string(u8"实际数据覆盖 / Actual source coverage: ") +
+        (actualCoverage ? formatBounds(*actualCoverage) : unavailable));
+
+    if (artifact.query.outputKind == earthscience::ScienceOutputKind::RasterLayer)
+    {
+        lines.push_back(std::string(u8"源数据分辨率 / Source resolution: ") +
+            (artifact.raster.sourceResolutionMeters > 0.0
+                ? formatResolution(artifact.raster.sourceResolutionMeters)
+                : unavailable));
+        lines.push_back(std::string(u8"显示分辨率 / Display resolution: ") +
+            (artifact.raster.displayResolutionMeters > 0.0
+                ? formatResolution(artifact.raster.displayResolutionMeters)
+                : unavailable));
+    }
+    else
+        lines.push_back(std::string(u8"实际分析分辨率 / Actual resolution: ") +
+            (actualResolutionMeters > 0.0
+                ? formatResolution(actualResolutionMeters) : unavailable));
+    return lines;
 }
 
 void ScienceEarthPanel::drawOperations(
@@ -720,14 +921,18 @@ void ScienceEarthPanel::drawOperations(
         }
     }
     const std::string estimateKey = estimateFailed
-        ? std::string() : queryEstimateKey(query, cost);
+        ? std::string() : sciencePanelEstimateBindingKey(query, cost);
     if (estimateKey != _displayedEstimateKey)
     {
         _displayedEstimateKey = estimateKey;
-        _estimateConfirmed = false;
+        _confirmedEstimateKey.clear();
     }
     _displayedCost = cost;
-    _estimateVisible = !estimateFailed && cost.requiresConfirmation;
+    _estimateVisible = !estimateFailed &&
+        sciencePanelEstimateRequiresConfirmation(query, cost);
+    bool estimateConfirmed = !estimateFailed &&
+        sciencePanelEstimateConfirmationMatches(
+            query, cost, _confirmedEstimateKey);
     if (_estimateVisible)
     {
         const ScienceCostPresentation estimate = describeScienceCost(cost);
@@ -741,9 +946,11 @@ void ScienceEarthPanel::drawOperations(
         ImGui::TextWrapped(u8"结果单元 / Result cells: %s",
                            estimate.resultCells.c_str());
         ImGui::TextWrapped(u8"时长 / Duration: %s", estimate.duration.c_str());
-        drawWrappedCheckbox("##confirm_science_cost",
+        if (drawWrappedCheckbox("##confirm_science_cost",
             u8"我确认按以上估算提交 / Confirm this exact estimate",
-            &_estimateConfirmed);
+            &estimateConfirmed))
+            _confirmedEstimateKey = estimateConfirmed
+                ? _displayedEstimateKey : std::string();
     }
     if (estimateFailed)
     {
@@ -754,15 +961,16 @@ void ScienceEarthPanel::drawOperations(
     }
 
     const SciencePanelPresentation presentation =
-        describeScienceSnapshot(snapshot);
+        describeScienceSnapshot(snapshot, _state.mode);
     const bool invalidPreview =
         _state.mode == SciencePanelMode::Preview && !visualization;
     const bool blocked = sourceUnavailable || invalidPreview || estimateFailed ||
-        presentation.busy || (_estimateVisible && !_estimateConfirmed);
+        presentation.busy || (_estimateVisible && !estimateConfirmed);
     if (blocked) ImGui::BeginDisabled();
     if (ImGui::Button(u8"开始分析 / Start analysis", ImVec2(-1.0f, 0.0f)))
     {
-        query.analysis.confirmedLargeRequest = _estimateConfirmed;
+        query.analysis.confirmedLargeRequest =
+            _estimateVisible && estimateConfirmed;
         if (_state.mode == SciencePanelMode::Preview)
         {
             previewLayer->setVisible(true);
@@ -826,7 +1034,7 @@ void ScienceEarthPanel::drawResults(
 
     const earthscience::ScienceJobSnapshot snapshot = service->snapshot();
     const SciencePanelPresentation presentation =
-        describeScienceSnapshot(snapshot);
+        describeScienceSnapshot(snapshot, _state.mode);
     drawColoredWrapped(severityColor(presentation.severity),
                        presentation.title.c_str());
     ImGui::TextWrapped("%s", presentation.stageText.c_str());
@@ -854,6 +1062,18 @@ void ScienceEarthPanel::drawResults(
         else
             ImGui::TextWrapped(
                 u8"伪彩预览用于定位潜在嵌入差异，不是自然影像。");
+
+        ImGui::SeparatorText(u8"地理证据 / Geographic evidence");
+        const std::vector<std::string> evidence =
+            describeScienceArtifactEvidence(*artifact);
+        for (std::size_t index = 0; index < evidence.size(); ++index)
+        {
+            if (index == 0)
+                drawColoredWrapped(ImVec4(0.35f, 0.85f, 1.0f, 1.0f),
+                                   evidence[index].c_str());
+            else
+                ImGui::TextWrapped("%s", evidence[index].c_str());
+        }
 
         drawPrimaryMetrics(*artifact);
         ImGui::SeparatorText(u8"图表或图例 / Chart or legend");

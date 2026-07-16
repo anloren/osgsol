@@ -474,10 +474,16 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 if (_viewer) _viewer->setDone(true);
             ImGui::PopTextWrapPos();
         }
-        ImGui::End();
-
 #if OSGSOL_BUILD_SCIENCE
-        _sciencePanel.drawResults(_scienceService, _scienceLayer, _layers);
+        earthui::finishLeftThenDrawScienceResults(
+            []() { ImGui::End(); },
+            [this]()
+            {
+                _sciencePanel.drawResults(
+                    _scienceService, _scienceLayer, _layers);
+            });
+#else
+        ImGui::End();
 #endif
 
         // ===== 信息呈现面板:统一锚定右上角,与左上角操作面板分离;可关闭 =====
