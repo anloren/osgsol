@@ -38,7 +38,7 @@ namespace
         artifact.query.time.mode =
             earthscience::ScienceTimeMode::ExplicitYears;
         artifact.query.time.explicitYears = {2020, 2021};
-        artifact.query.variables = {"A01-A64"};
+        artifact.query.variables = {"A00-A63"};
         artifact.query.analysis.pcaComponents = 2;
         artifact.query.analysis.clusterCount = 2;
         artifact.warnings = {"coverage, partial", "quote: \"check\""};
@@ -336,7 +336,7 @@ namespace
                     source.at("providerVersion").get<std::string>() ==
                         "preview-\"v1\"",
                 "JSON escaping changed source provenance");
-        require(first.find("\"A01\"") == std::string::npos &&
+        require(first.find("\"A00\"") == std::string::npos &&
                     first.find("rgba") == std::string::npos,
                 "default JSON leaked raw components or RGB display bytes");
     }
@@ -352,8 +352,8 @@ namespace
                 "CSV evidence changed on deterministic replay");
         std::cout << "[REPLAY] evidence CSV FNV-1a "
                   << replayHash(defaultCsv) << '\n';
-        require(firstLine(defaultCsv).find("A01") == std::string::npos &&
-                    firstLine(defaultCsv).find("A64") == std::string::npos,
+        require(firstLine(defaultCsv).find("A00") == std::string::npos &&
+                    firstLine(defaultCsv).find("A63") == std::string::npos,
                 "default CSV included raw embedding components");
         require(defaultCsv.find("\"alpha,earth\"") != std::string::npos &&
                     defaultCsv.find("\"dataset\nA-01\"") !=
@@ -397,7 +397,7 @@ namespace
         const std::string rawJson =
             earthscience::exportAnalysisJson(artifact, rawOptions);
         const std::string rawHeader = firstLine(rawCsv);
-        for (int component = 1; component <= 64; ++component)
+        for (int component = 0; component < 64; ++component)
         {
             const std::string name = componentName(component);
             require(rawHeader.find(name) != std::string::npos,
@@ -406,6 +406,9 @@ namespace
                         std::string::npos,
                     "raw JSON did not contain all 64 components");
         }
+        require(rawHeader.find("A64") == std::string::npos &&
+                    rawJson.find("\"A64\"") == std::string::npos,
+                "raw export invented a non-existent A64 component");
     }
 
     void testCsvUsesNaForEveryNonFiniteGeometryCoordinate()

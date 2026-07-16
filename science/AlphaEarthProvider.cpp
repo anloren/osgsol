@@ -105,7 +105,7 @@ ScienceSourceDescriptor describeAlphaEarth(
                                   : ScienceSourceHealth::Unavailable;
     descriptor.healthMessage = healthMessage;
     descriptor.variables.reserve(65);
-    for (int component = 1; component <= 64; ++component)
+    for (int component = 0; component < 64; ++component)
     {
         char id[4] = {};
         std::snprintf(id, sizeof(id), "A%02d", component);
@@ -113,7 +113,7 @@ ScienceSourceDescriptor describeAlphaEarth(
             {id, "Embedding " + std::string(id), "1", "embedding", 1});
     }
     descriptor.variables.push_back(
-        {"embedding64", "Embedding A01-A64", "1", "embedding", 64});
+        {"embedding64", "Embedding A00-A63", "1", "embedding", 64});
 
     ScienceVisualizationDescriptor visualization;
     visualization.id = "false-color-a01-a16-a09";

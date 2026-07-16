@@ -151,12 +151,12 @@ namespace
         {
             GDALRasterBand* band = dataset.GetRasterBand(index);
             char expected[4] = {};
-            std::snprintf(expected, sizeof(expected), "A%02d", index);
+            std::snprintf(expected, sizeof(expected), "A%02d", index - 1);
             if (!band || band->GetRasterDataType() != GDT_Int8 ||
                 std::string(band->GetDescription()) != expected)
             {
                 error = std::string("AlphaEarth band metadata mismatch at ") +
-                    expected + "; expected ordered Int8 A01-A64";
+                    expected + "; expected ordered Int8 A00-A63";
                 return false;
             }
         }
@@ -691,8 +691,8 @@ namespace
         reference.actualCoverage = plan.bounds;
         reference.variables.reserve(COMPONENT_COUNT);
         reference.units.reserve(COMPONENT_COUNT);
-        for (int component = 1;
-             component <= static_cast<int>(COMPONENT_COUNT); ++component)
+        for (int component = 0;
+             component < static_cast<int>(COMPONENT_COUNT); ++component)
         {
             char name[4] = {};
             std::snprintf(name, sizeof(name), "A%02d", component);
@@ -700,7 +700,7 @@ namespace
             reference.units.emplace_back("1");
         }
         reference.processingSteps = {
-            "ordered Int8 A01-A64 read in eight-band batches",
+            "ordered Int8 A00-A63 read in eight-band batches",
             "nearest-neighbour sampling on one shared ground grid",
             "official signed AlphaEarth dequantization",
             "complete-vector NoData masking and norm calculation"};

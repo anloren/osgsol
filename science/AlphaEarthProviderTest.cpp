@@ -57,8 +57,8 @@ namespace
                     source.componentCount == 64,
                 "AlphaEarth resolution or component count was lost");
         require(source.variables.size() == 65 &&
-                    source.variables[0].id == "A01" &&
-                    source.variables[63].id == "A64" &&
+                    source.variables[0].id == "A00" &&
+                    source.variables[63].id == "A63" &&
                     source.variables[64].id == "embedding64" &&
                     source.variables[64].componentCount == 64,
                 "AlphaEarth complete 64D variables were not advertised");

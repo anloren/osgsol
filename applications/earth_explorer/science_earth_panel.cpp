@@ -450,7 +450,7 @@ void drawTechnicalDetails(const earthscience::ScienceArtifact& artifact)
     {
         ImGui::TextWrapped(
             u8"64 个分量是潜在表征维度，"
-            u8"单个 A01–A64 没有获验证的物理名称。");
+            u8"单个 A00–A63 没有获验证的物理名称。");
         ImGui::TextWrapped(
             u8"证据导出使用 CSV/JSON，并保留查询、算法、覆盖、"
             u8"处理步骤与限制；"

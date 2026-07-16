@@ -47,7 +47,7 @@ namespace
             {"A01", "Embedding A01", "1", "embedding", 1},
             {"A16", "Embedding A16", "1", "embedding", 1},
             {"A09", "Embedding A09", "1", "embedding", 1},
-            {"embedding64", "Embedding A01-A64", "1", "embedding", 64},
+            {"embedding64", "Embedding A00-A63", "1", "embedding", 64},
         };
         earthscience::ScienceVisualizationDescriptor visualization;
         visualization.id = "false-color-a01-a16-a09";
@@ -170,7 +170,7 @@ namespace
                 artifact->embedding.processingSteps =
                     std::make_shared<const std::vector<std::string>>(
                         std::initializer_list<std::string>{
-                            "dequantize A01-A64"});
+                            "dequantize A00-A63"});
             }
             artifact->analysis.kind = lastQuery.analysis.kind;
             std::vector<earthscience::ScienceMetricResult> metrics;
@@ -268,7 +268,7 @@ namespace
     {
         earthscience::ScienceSourceDescriptor source = makeDescriptor();
         source.variables.push_back(
-            {"embedding64", "Embedding A01-A64", "1", "embedding", 64});
+            {"embedding64", "Embedding A00-A63", "1", "embedding", 64});
         source.capabilities.boundingBoxQuery = true;
         source.capabilities.timeSeriesOutput = true;
         source.capabilities.analysisOutput = true;

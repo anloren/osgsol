@@ -229,8 +229,8 @@ std::string exportAnalysisCsv(
         header.push_back("PC" + std::to_string(component + 1));
     if (options.includeRawComponents)
     {
-        for (int component = 1;
-             component <= ScienceEmbeddingPayload::componentCount;
+        for (int component = 0;
+             component < ScienceEmbeddingPayload::componentCount;
              ++component)
             header.push_back(componentName(component));
     }

@@ -320,7 +320,7 @@ namespace
                      component < ScienceEmbeddingPayload::componentCount;
                      ++component)
                 {
-                    raw[componentName(component + 1)] = valid && rawShape
+                    raw[componentName(component)] = valid && rawShape
                         ? numberOrNull(artifact.embedding.values->at(
                             sample * ScienceEmbeddingPayload::componentCount +
                             static_cast<std::size_t>(component)))

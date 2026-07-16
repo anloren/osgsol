@@ -49,7 +49,8 @@ namespace
     class LocalFixture
     {
     public:
-        explicit LocalFixture(bool rotated = false)
+        explicit LocalFixture(bool rotated = false,
+                              int firstComponent = 0)
         {
             static std::atomic<unsigned int> sequence{0};
             const std::string name = "osgsol-alphaearth-64d-" +
@@ -84,7 +85,7 @@ namespace
                 GDALRasterBand* band = dataset->GetRasterBand(bandIndex);
                 char description[4] = {};
                 std::snprintf(description, sizeof(description),
-                              "A%02d", bandIndex);
+                              "A%02d", bandIndex - 1 + firstComponent);
                 band->SetDescription(description);
                 band->SetNoDataValue(-128.0);
                 for (int y = 0; y < 8; ++y)
@@ -204,7 +205,7 @@ namespace
         source.nativeResolutionMeters = 10.0;
         source.health = earthscience::ScienceSourceHealth::Ready;
         source.variables = {
-            {"embedding64", "Embedding A01-A64", "1", "embedding", 64}};
+            {"embedding64", "Embedding A00-A63", "1", "embedding", 64}};
         source.capabilities.pointQuery = true;
         source.capabilities.explicitYears = true;
         source.capabilities.timeSeriesOutput = true;
@@ -567,8 +568,25 @@ namespace
         const earthscience::ScienceProviderSnapshot invalid = waitForTerminal(
             metadata, metadata.submit(pointQuery()));
         require(invalid.state == earthscience::ScienceJobState::Failed &&
-                    invalid.message.find("A64") != std::string::npos,
-                "ordered A01-A64 metadata was not validated before reads");
+                    invalid.message.find("A63") != std::string::npos,
+                "ordered A00-A63 metadata was not validated before reads");
+
+        LocalFixture oneBasedFixture(false, 1);
+        earthscience::AlphaEarthEmbeddingRuntime oneBasedMetadata(
+            [&oneBasedFixture](double, double, int year,
+                               earthscience::AlphaEarthAsset& asset,
+                               std::string& error)
+            {
+                asset = oneBasedFixture.asset(year);
+                error.clear();
+                return true;
+            });
+        const earthscience::ScienceProviderSnapshot oneBased =
+            waitForTerminal(
+                oneBasedMetadata, oneBasedMetadata.submit(pointQuery()));
+        require(oneBased.state == earthscience::ScienceJobState::Failed &&
+                    oneBased.message.find("A00") != std::string::npos,
+                "one-based A01-A64 metadata was accepted as AlphaEarth");
     }
 
     void testProductionResolverUsesImmutableIndexSchemaAndSourceCoopPrefix()
