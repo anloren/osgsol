@@ -27,6 +27,10 @@ SET_TARGET_PROPERTIES(osgSolScienceCore PROPERTIES
     CXX_VISIBILITY_PRESET hidden)
 
 ADD_LIBRARY(osgSolSciencePreview STATIC
+    AlphaEarthEmbeddingReader.cpp
+    AlphaEarthEmbeddingReader.h
+    AlphaEarthEmbeddingRuntime.cpp
+    AlphaEarthEmbeddingRuntime.h
     AlphaEarthProvider.cpp
     AlphaEarthProvider.h
     SciencePreviewSupport.cpp
@@ -155,6 +159,20 @@ IF(BUILD_TESTING)
     SET_TESTS_PROPERTIES(osgSol_Test_AlphaEarthProvider PROPERTIES
         LABELS "offline;scienceearth"
         TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_AlphaEarthEmbeddingRuntime
+        AlphaEarthEmbeddingRuntimeTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_AlphaEarthEmbeddingRuntime
+        PRIVATE cxx_std_17)
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_AlphaEarthEmbeddingRuntime
+        PRIVATE "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
+    TARGET_LINK_LIBRARIES(osgSol_Test_AlphaEarthEmbeddingRuntime
+        PRIVATE osgSolSciencePreview)
+    ADD_TEST(NAME osgSol_Test_AlphaEarthEmbeddingRuntime
+             COMMAND $<TARGET_FILE:osgSol_Test_AlphaEarthEmbeddingRuntime>)
+    SET_TESTS_PROPERTIES(osgSol_Test_AlphaEarthEmbeddingRuntime PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 30)
 
     ADD_EXECUTABLE(osgSol_Test_SciencePreviewRegression
         SciencePreviewRegressionTest.cpp
