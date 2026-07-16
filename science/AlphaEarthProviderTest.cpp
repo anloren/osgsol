@@ -29,6 +29,18 @@ namespace
         return query;
     }
 
+    earthscience::GeoTemporalQuery makeAnalysisQuery()
+    {
+        earthscience::GeoTemporalQuery query = makeQuery();
+        query.time.explicitYears = {2017, 2018};
+        query.variables = {"embedding64"};
+        query.visualizationId.clear();
+        query.outputKind = earthscience::ScienceOutputKind::TimeSeries;
+        query.analysis.kind =
+            earthscience::ScienceAnalysisKind::PointSeries;
+        return query;
+    }
+
     void testDescriptorTranslationIsComplete()
     {
         earthscience::AlphaEarthSourceDescriptor legacy;
@@ -44,11 +56,12 @@ namespace
         require(source.nativeResolutionMeters == 10.0 &&
                     source.componentCount == 64,
                 "AlphaEarth resolution or component count was lost");
-        require(source.variables.size() == 3 &&
+        require(source.variables.size() == 65 &&
                     source.variables[0].id == "A01" &&
-                    source.variables[1].id == "A16" &&
-                    source.variables[2].id == "A09",
-                "AlphaEarth supported variables changed");
+                    source.variables[63].id == "A64" &&
+                    source.variables[64].id == "embedding64" &&
+                    source.variables[64].componentCount == 64,
+                "AlphaEarth complete 64D variables were not advertised");
         require(source.visualizations.size() == 1 &&
                     source.visualizations[0].id ==
                         "false-color-a01-a16-a09" &&
@@ -62,8 +75,14 @@ namespace
                     source.healthMessage == "Ready",
                 "available AlphaEarth health was not translated");
         require(source.capabilities.pointQuery &&
+                    source.capabilities.boundingBoxQuery &&
+                    source.capabilities.currentViewQuery &&
                     source.capabilities.explicitYears &&
                     source.capabilities.rasterLayerOutput &&
+                    source.capabilities.embeddingOutput &&
+                    source.capabilities.timeSeriesOutput &&
+                    source.capabilities.analysisOutput &&
+                    source.capabilities.exportOutput &&
                     source.capabilities.minimumSpanMeters == 2560.0 &&
                     source.capabilities.maximumSpanMeters == 81920.0,
                 "AlphaEarth bounded capabilities were not advertised");
@@ -76,6 +95,54 @@ namespace
                     unavailable.healthMessage ==
                         "AlphaEarth index is missing",
                 "unavailable AlphaEarth disappeared behind a generic status");
+    }
+
+    void testOnlyExactLegacyRasterSignatureUsesPreview()
+    {
+        const earthscience::GeoTemporalQuery preview = makeQuery();
+        require(earthscience::isAlphaEarthLegacyPreviewQuery(preview),
+                "exact A01/A16/A09 raster query stopped using preview");
+
+        earthscience::GeoTemporalQuery changed = preview;
+        changed.variables = {"embedding64"};
+        require(!earthscience::isAlphaEarthLegacyPreviewQuery(changed),
+                "embedding64 request was routed to preview");
+        changed = preview;
+        changed.outputKind = earthscience::ScienceOutputKind::Embedding;
+        require(!earthscience::isAlphaEarthLegacyPreviewQuery(changed),
+                "embedding output was routed to preview");
+        changed = preview;
+        changed.time.explicitYears = {2024, 2025};
+        require(!earthscience::isAlphaEarthLegacyPreviewQuery(changed),
+                "multi-year request was routed to preview");
+        changed = preview;
+        changed.geometry.kind = earthscience::ScienceGeometryKind::BoundingBox;
+        require(!earthscience::isAlphaEarthLegacyPreviewQuery(changed),
+                "regional request was routed to preview");
+        changed = preview;
+        changed.visualizationId.clear();
+        require(!earthscience::isAlphaEarthLegacyPreviewQuery(changed),
+                "unidentified raster request was routed to preview");
+
+        earthscience::AlphaEarthProvider provider(
+            "/definitely/missing/alphaearth.sqlite");
+        const std::uint64_t previewGeneration = provider.submit(preview);
+        const earthscience::ScienceProviderSnapshot previewState =
+            provider.snapshot();
+        require(previewGeneration != 0 &&
+                    previewState.state ==
+                        earthscience::ScienceJobState::Unavailable &&
+                    previewState.message == "AlphaEarth index is missing",
+                "provider did not dispatch exact legacy query to preview");
+
+        const std::uint64_t analysisGeneration =
+            provider.submit(makeAnalysisQuery());
+        const earthscience::ScienceProviderSnapshot analysisState =
+            provider.snapshot();
+        require(analysisGeneration != 0 &&
+                    analysisState.generation == analysisGeneration &&
+                    analysisState.message != "AlphaEarth index is missing",
+                "provider did not dispatch embedding64 query to 64D runtime");
     }
 
     void testEveryRuntimeStateTranslatesExactly()
@@ -234,6 +301,7 @@ namespace
 int main()
 {
     testDescriptorTranslationIsComplete();
+    testOnlyExactLegacyRasterSignatureUsesPreview();
     testEveryRuntimeStateTranslatesExactly();
     testReadyArtifactTranslationSharesPayloadAndProvenance();
     testMissingIndexRemainsVisibleWithoutNetworkAccess();

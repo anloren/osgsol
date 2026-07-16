@@ -1,5 +1,6 @@
 #include "AlphaEarthProvider.h"
 
+#include <cstdio>
 #include <utility>
 
 namespace earthscience
@@ -102,13 +103,16 @@ ScienceSourceDescriptor describeAlphaEarth(
     descriptor.health = available ? ScienceSourceHealth::Ready
                                   : ScienceSourceHealth::Unavailable;
     descriptor.healthMessage = healthMessage;
-    descriptor.variables = {
-        {source.redBand, "Embedding " + source.redBand, "1", "embedding", 1},
-        {source.greenBand, "Embedding " + source.greenBand, "1",
-         "embedding", 1},
-        {source.blueBand, "Embedding " + source.blueBand, "1",
-         "embedding", 1},
-    };
+    descriptor.variables.reserve(65);
+    for (int component = 1; component <= 64; ++component)
+    {
+        char id[4] = {};
+        std::snprintf(id, sizeof(id), "A%02d", component);
+        descriptor.variables.push_back(
+            {id, "Embedding " + std::string(id), "1", "embedding", 1});
+    }
+    descriptor.variables.push_back(
+        {"embedding64", "Embedding A01-A64", "1", "embedding", 64});
 
     ScienceVisualizationDescriptor visualization;
     visualization.id = "false-color-a01-a16-a09";
@@ -123,11 +127,32 @@ ScienceSourceDescriptor describeAlphaEarth(
     descriptor.visualizations.push_back(std::move(visualization));
 
     descriptor.capabilities.pointQuery = true;
+    descriptor.capabilities.boundingBoxQuery = true;
+    descriptor.capabilities.currentViewQuery = true;
     descriptor.capabilities.explicitYears = true;
     descriptor.capabilities.rasterLayerOutput = true;
+    descriptor.capabilities.embeddingOutput = true;
+    descriptor.capabilities.timeSeriesOutput = true;
+    descriptor.capabilities.analysisOutput = true;
+    descriptor.capabilities.exportOutput = true;
+    descriptor.capabilities.aggregation = true;
     descriptor.capabilities.minimumSpanMeters = 2560.0;
     descriptor.capabilities.maximumSpanMeters = 81920.0;
     return descriptor;
+}
+
+bool isAlphaEarthLegacyPreviewQuery(const GeoTemporalQuery& query)
+{
+    return query.sourceId == "alphaearth-foundations" &&
+           query.geometry.kind == ScienceGeometryKind::Point &&
+           query.time.mode == ScienceTimeMode::ExplicitYears &&
+           query.time.explicitYears.size() == 1 &&
+           query.variables ==
+               std::vector<std::string>({"A01", "A16", "A09"}) &&
+           query.aggregation == ScienceAggregation::None &&
+           query.outputKind == ScienceOutputKind::RasterLayer &&
+           query.visualizationId == "false-color-a01-a16-a09" &&
+           query.analysis.kind == ScienceAnalysisKind::None;
 }
 
 ScienceProviderSnapshot translateAlphaEarthSnapshot(
@@ -171,7 +196,8 @@ ScienceProviderSnapshot translateAlphaEarthSnapshot(
 }
 
 AlphaEarthProvider::AlphaEarthProvider(const std::string& indexPath)
-    : _runtime(new SciencePreviewRuntime(indexPath))
+    : _previewRuntime(new SciencePreviewRuntime(indexPath)),
+      _embeddingRuntime(new AlphaEarthEmbeddingRuntime(indexPath))
 {
 }
 
@@ -179,36 +205,55 @@ AlphaEarthProvider::~AlphaEarthProvider() = default;
 
 ScienceSourceDescriptor AlphaEarthProvider::descriptor() const
 {
-    const AlphaEarthPreviewSnapshot state = _runtime->snapshot();
+    const AlphaEarthPreviewSnapshot state = _previewRuntime->snapshot();
     ScienceSourceDescriptor result = describeAlphaEarth(
-        _runtime->source(), _runtime->available(), state.message);
-    if (_runtime->available() &&
+        _previewRuntime->source(), _previewRuntime->available(), state.message);
+    const ScienceProviderSnapshot embeddingState =
+        _embeddingRuntime->snapshot();
+    const bool previewBusy = _activeRuntime == RuntimeKind::Preview &&
         (state.state == AlphaEarthPreviewState::Queued ||
-         state.state == AlphaEarthPreviewState::Fetching))
+         state.state == AlphaEarthPreviewState::Fetching);
+    const bool embeddingBusy = _activeRuntime == RuntimeKind::Embedding64 &&
+        (embeddingState.state == ScienceJobState::Queued ||
+         embeddingState.state == ScienceJobState::Fetching);
+    if (previewBusy || embeddingBusy)
         result.health = ScienceSourceHealth::Busy;
     return result;
 }
 
 std::uint64_t AlphaEarthProvider::submit(const GeoTemporalQuery& query)
 {
-    if (query.sourceId != "alphaearth-foundations" ||
-        query.geometry.kind != ScienceGeometryKind::Point ||
-        query.time.mode != ScienceTimeMode::ExplicitYears ||
-        query.time.explicitYears.size() != 1)
-        return 0;
+    if (query.sourceId != "alphaearth-foundations") return 0;
 
     _activeQuery = query;
-    _activeGeneration = _runtime->queryPoint(
-        query.geometry.point.latitude, query.geometry.point.longitude,
-        query.time.explicitYears.front(),
-        query.geometry.requestedSpanMeters);
+    if (isAlphaEarthLegacyPreviewQuery(query))
+    {
+        if (_embeddingGeneration != 0)
+            _embeddingRuntime->cancel(_embeddingGeneration);
+        _activeRuntime = RuntimeKind::Preview;
+        _activeGeneration = _previewRuntime->queryPoint(
+            query.geometry.point.latitude, query.geometry.point.longitude,
+            query.time.explicitYears.front(),
+            query.geometry.requestedSpanMeters);
+    }
+    else
+    {
+        _previewRuntime->cancel();
+        _activeRuntime = RuntimeKind::Embedding64;
+        _embeddingGeneration = _embeddingRuntime->submit(query);
+        _activeGeneration = _embeddingGeneration;
+    }
     return _activeGeneration;
 }
 
 ScienceProviderSnapshot AlphaEarthProvider::snapshot() const
 {
-    const AlphaEarthPreviewSnapshot state = _runtime->snapshot();
-    if (_activeGeneration != 0 && state.generation != _activeGeneration)
+    if (_activeRuntime == RuntimeKind::Embedding64)
+        return _embeddingRuntime->snapshot();
+
+    const AlphaEarthPreviewSnapshot state = _previewRuntime->snapshot();
+    if (_activeRuntime == RuntimeKind::Preview &&
+        _activeGeneration != 0 && state.generation != _activeGeneration)
     {
         ScienceProviderSnapshot waiting;
         waiting.generation = _activeGeneration;
@@ -222,13 +267,21 @@ ScienceProviderSnapshot AlphaEarthProvider::snapshot() const
 
 void AlphaEarthProvider::cancel(std::uint64_t generation)
 {
-    if (generation == _activeGeneration) _runtime->cancel();
+    if (generation != _activeGeneration) return;
+    if (_activeRuntime == RuntimeKind::Preview)
+        _previewRuntime->cancel();
+    else if (_activeRuntime == RuntimeKind::Embedding64)
+        _embeddingRuntime->cancel(generation);
 }
 
 void AlphaEarthProvider::clear()
 {
-    _runtime->clear();
+    _previewRuntime->clear();
+    if (_embeddingGeneration != 0)
+        _embeddingRuntime->cancel(_embeddingGeneration);
+    _activeRuntime = RuntimeKind::None;
     _activeGeneration = 0;
+    _embeddingGeneration = 0;
     _activeQuery = GeoTemporalQuery();
 }
 }

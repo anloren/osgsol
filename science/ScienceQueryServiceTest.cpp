@@ -47,6 +47,7 @@ namespace
             {"A01", "Embedding A01", "1", "embedding", 1},
             {"A16", "Embedding A16", "1", "embedding", 1},
             {"A09", "Embedding A09", "1", "embedding", 1},
+            {"embedding64", "Embedding A01-A64", "1", "embedding", 64},
         };
         earthscience::ScienceVisualizationDescriptor visualization;
         visualization.id = "false-color-a01-a16-a09";
@@ -56,8 +57,14 @@ namespace
         visualization.channelVariables = {"A01", "A16", "A09"};
         source.visualizations.push_back(visualization);
         source.capabilities.pointQuery = true;
+        source.capabilities.boundingBoxQuery = true;
+        source.capabilities.currentViewQuery = true;
         source.capabilities.explicitYears = true;
         source.capabilities.rasterLayerOutput = true;
+        source.capabilities.embeddingOutput = true;
+        source.capabilities.timeSeriesOutput = true;
+        source.capabilities.analysisOutput = true;
+        source.capabilities.exportOutput = true;
         source.capabilities.minimumSpanMeters = 2560.0;
         source.capabilities.maximumSpanMeters = 81920.0;
         return source;
@@ -82,6 +89,24 @@ namespace
         return query;
     }
 
+    earthscience::GeoTemporalQuery makeAnalysisQuery()
+    {
+        earthscience::GeoTemporalQuery query = makeQuery();
+        query.geometry.kind = earthscience::ScienceGeometryKind::BoundingBox;
+        query.geometry.bounds = {138.60, 35.20, 138.86, 35.46};
+        query.time.explicitYears = {2017, 2018};
+        query.variables = {"embedding64"};
+        query.outputKind = earthscience::ScienceOutputKind::Analysis;
+        query.priority = earthscience::SciencePriority::InteractiveResearch;
+        query.visualizationId.clear();
+        query.analysis.kind =
+            earthscience::ScienceAnalysisKind::RegionalChange;
+        query.analysis.baselineYear = 2017;
+        query.analysis.comparisonYear = 2018;
+        query.analysis.gridSize = 4;
+        return query;
+    }
+
     std::shared_ptr<const earthscience::ScienceArtifact> makeArtifact(
         const std::string& id, std::uint64_t providerGeneration)
     {
@@ -96,7 +121,8 @@ namespace
     earthscience::ScienceProgress makeProgress(
         earthscience::ScienceProgressStage stage,
         std::uint64_t completedUnits = 0, std::uint64_t totalUnits = 0,
-        const std::string& unit = std::string())
+        const std::string& unit = std::string(),
+        double elapsedSeconds = 0.0)
     {
         earthscience::ScienceProgress progress;
         progress.stage = stage;
@@ -104,6 +130,7 @@ namespace
         progress.totalUnits = totalUnits;
         progress.determinate = totalUnits != 0;
         progress.unit = unit;
+        progress.elapsedSeconds = elapsedSeconds;
         return progress;
     }
 
@@ -352,6 +379,8 @@ namespace
                 "stale provider completion changed the current service job");
         require(!snapshot.lastSuccessfulArtifact,
                 "stale provider completion published an artifact");
+        require(!fixture.service->findArtifact("stale"),
+                "stale provider completion entered the artifact store");
 
         fixture.service->cancel(firstJob);
         require(fixture.events.cancellations.size() == 1,
@@ -424,8 +453,11 @@ namespace
 
         fixture.service->clearArtifact();
         snapshot = fixture.service->snapshot();
-        require(!snapshot.lastSuccessfulArtifact,
-                "explicit artifact clear did not remove the last result");
+        require(!snapshot.lastSuccessfulArtifact &&
+                    !snapshot.lastSuccessfulPreviewArtifact &&
+                    !snapshot.lastSuccessfulAnalysisArtifact &&
+                    !snapshot.displayArtifact,
+                "compatibility artifact clear did not remove all results");
         require(fixture.events.clears == 0,
                 "artifact clear altered provider transient state");
     }
@@ -450,6 +482,160 @@ namespace
         require(events.destroyed,
                 "service destruction did not release provider ownership");
     }
+
+    void testRetainsPreviewAnalysisAndDisplayIndependently()
+    {
+        ServiceFixture fixture;
+        fixture.service->submit(makeQuery());
+        const std::uint64_t previewGeneration = fixture.provider->generation();
+        fixture.provider->publish(
+            previewGeneration, earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready, 1, 1,
+                         "artifact"),
+            "Ready", makeArtifact("preview", previewGeneration));
+        earthscience::ScienceJobSnapshot snapshot = fixture.service->snapshot();
+        require(snapshot.lastSuccessfulPreviewArtifact &&
+                    snapshot.lastSuccessfulPreviewArtifact->artifactId ==
+                        "preview" &&
+                    !snapshot.lastSuccessfulAnalysisArtifact &&
+                    snapshot.displayArtifact ==
+                        snapshot.lastSuccessfulPreviewArtifact &&
+                    snapshot.lastSuccessfulArtifact == snapshot.displayArtifact,
+                "preview success did not become last-good and display");
+        require(fixture.service->findArtifact("preview") ==
+                    snapshot.displayArtifact,
+                "preview success was not retained in the artifact store");
+
+        fixture.service->submit(makeAnalysisQuery());
+        const std::uint64_t analysisGeneration = fixture.provider->generation();
+        fixture.provider->publish(
+            analysisGeneration, earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready, 1, 1,
+                         "artifact"),
+            "Ready", makeArtifact("analysis", analysisGeneration));
+        snapshot = fixture.service->snapshot();
+        require(snapshot.lastSuccessfulPreviewArtifact &&
+                    snapshot.lastSuccessfulPreviewArtifact->artifactId ==
+                        "preview" &&
+                    snapshot.lastSuccessfulAnalysisArtifact &&
+                    snapshot.lastSuccessfulAnalysisArtifact->artifactId ==
+                        "analysis" &&
+                    snapshot.displayArtifact &&
+                    snapshot.displayArtifact->artifactId == "preview",
+                "analysis success changed preview or display retention");
+
+        require(fixture.service->showArtifact("analysis"),
+                "stored analysis could not be selected for display");
+        snapshot = fixture.service->snapshot();
+        require(snapshot.displayArtifact &&
+                    snapshot.displayArtifact->artifactId == "analysis" &&
+                    snapshot.lastSuccessfulArtifact == snapshot.displayArtifact &&
+                    snapshot.lastSuccessfulPreviewArtifact->artifactId ==
+                        "preview" &&
+                    snapshot.lastSuccessfulAnalysisArtifact->artifactId ==
+                        "analysis",
+                "showArtifact changed last-good state or missed display");
+        require(!fixture.service->showArtifact("missing") &&
+                    fixture.service->snapshot().displayArtifact ==
+                        snapshot.displayArtifact,
+                "unknown showArtifact request changed display");
+
+        fixture.service->submit(makeQuery());
+        const std::uint64_t failedGeneration = fixture.provider->generation();
+        fixture.provider->publish(
+            failedGeneration, earthscience::ScienceJobState::Failed,
+            makeProgress(earthscience::ScienceProgressStage::Failed),
+            "replacement failure");
+        snapshot = fixture.service->snapshot();
+        require(snapshot.lastSuccessfulPreviewArtifact->artifactId ==
+                    "preview" &&
+                    snapshot.lastSuccessfulAnalysisArtifact->artifactId ==
+                        "analysis" &&
+                    snapshot.displayArtifact->artifactId == "analysis",
+                "replacement failure erased independent retained state");
+
+        fixture.service->clearArtifacts();
+        snapshot = fixture.service->snapshot();
+        require(!snapshot.lastSuccessfulPreviewArtifact &&
+                    !snapshot.lastSuccessfulAnalysisArtifact &&
+                    !snapshot.displayArtifact &&
+                    !snapshot.lastSuccessfulArtifact &&
+                    !fixture.service->findArtifact("preview") &&
+                    !fixture.service->findArtifact("analysis"),
+                "clearArtifacts did not remove every retained artifact");
+    }
+
+    void testEstimatesExactCostAndRequiresEvidenceForDuration()
+    {
+        ServiceFixture fixture;
+        earthscience::GeoTemporalQuery query = makeAnalysisQuery();
+        const earthscience::ScienceQueryCost before =
+            fixture.service->estimate(query);
+        require(before.resultCells == 32 &&
+                    before.sourceBytesUpperBound > 2048 &&
+                    before.residentBytesUpperBound == 43456,
+                "analysis cell or memory upper bound is not exact");
+        require(!before.durationDeterminate &&
+                    before.estimatedDurationSeconds == 0.0,
+                "cost estimate fabricated duration before throughput evidence");
+
+        fixture.service->submit(query);
+        const std::uint64_t generation = fixture.provider->generation();
+        fixture.provider->publish(
+            generation, earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready, 1, 1,
+                         "artifact", 2.0),
+            "Ready", makeArtifact("timed-analysis", generation));
+        fixture.service->snapshot();
+        const earthscience::ScienceQueryCost after =
+            fixture.service->estimate(query);
+        require(after.durationDeterminate &&
+                    std::abs(after.estimatedDurationSeconds - 2.0) < 1.0e-9,
+                "successful provider throughput did not enable duration");
+    }
+
+    void testPreviewThroughputDoesNotFabricateAnalysisDuration()
+    {
+        ServiceFixture fixture;
+        fixture.service->submit(makeQuery());
+        const std::uint64_t generation = fixture.provider->generation();
+        fixture.provider->publish(
+            generation, earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready, 1, 1,
+                         "artifact", 1.0),
+            "Ready", makeArtifact("timed-preview", generation));
+        fixture.service->snapshot();
+
+        const earthscience::ScienceQueryCost analysis =
+            fixture.service->estimate(makeAnalysisQuery());
+        require(!analysis.durationDeterminate &&
+                    analysis.estimatedDurationSeconds == 0.0,
+                "preview throughput fabricated a 64D analysis duration");
+    }
+
+    void testRequiresConfirmationAndEnforcesEstimatedBudgets()
+    {
+        ServiceFixture fixture;
+        earthscience::GeoTemporalQuery query = makeAnalysisQuery();
+        query.analysis.gridSize = 256;
+        query.analysis.confirmedLargeRequest = false;
+        requireRejectedWithoutDispatch(
+            *fixture.service, *fixture.provider, query,
+            "256x256 analysis requires explicit confirmation");
+
+        query.analysis.confirmedLargeRequest = true;
+        query.limits.maximumMemoryBytes = 1024;
+        requireRejectedWithoutDispatch(
+            *fixture.service, *fixture.provider, query,
+            "analysis exceeds maximum memory");
+
+        query = makeAnalysisQuery();
+        query.time.explicitYears = {2017, 2018, 2019};
+        query.analysis.confirmedLargeRequest = false;
+        requireRejectedWithoutDispatch(
+            *fixture.service, *fixture.provider, query,
+            "multi-year regional analysis requires explicit confirmation");
+    }
 }
 
 int main()
@@ -457,6 +643,10 @@ int main()
     testRejectsUnknownUnavailableAndUnsupportedQueries();
     testReplacementRejectsStaleResultsAndOldCancellation();
     testRetainsLastGoodAcrossFetchingFailureAndCancellation();
+    testRetainsPreviewAnalysisAndDisplayIndependently();
+    testEstimatesExactCostAndRequiresEvidenceForDuration();
+    testPreviewThroughputDoesNotFabricateAnalysisDuration();
+    testRequiresConfirmationAndEnforcesEstimatedBudgets();
     testDestructionCancelsBeforeProviderDestruction();
     std::cout << "[OK] ScienceEarth single-active-job query service\n";
     return 0;

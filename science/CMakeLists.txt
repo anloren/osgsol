@@ -11,6 +11,8 @@ ADD_LIBRARY(osgSolScienceCore STATIC
     ScienceEmbedding.cpp
     ScienceEmbedding.h
     ScienceProvider.h
+    ScienceArtifactStore.cpp
+    ScienceArtifactStore.h
     ScienceQueryService.cpp
     ScienceQueryService.h
     ScienceQueryTypes.cpp
@@ -76,6 +78,18 @@ INSTALL(TARGETS osgSolScienceCore osgSolSciencePreview
         ARCHIVE DESTINATION ${INSTALL_LIBDIR})
 
 IF(BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_ScienceArtifactStore
+        ScienceArtifactStoreTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceArtifactStore
+        PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceArtifactStore
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceArtifactStore
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceArtifactStore>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceArtifactStore PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
     ADD_EXECUTABLE(osgSol_Test_ScienceQueryTypes
         ScienceQueryTypesTest.cpp)
     TARGET_COMPILE_FEATURES(osgSol_Test_ScienceQueryTypes PRIVATE cxx_std_17)

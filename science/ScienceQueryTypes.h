@@ -185,6 +185,10 @@ namespace earthscience
         bool rasterLayerOutput = false;
         bool tableOutput = false;
         bool vectorOutput = false;
+        bool embeddingOutput = false;
+        bool timeSeriesOutput = false;
+        bool analysisOutput = false;
+        bool exportOutput = false;
         bool aggregation = false;
         double minimumSpanMeters = 0.0;
         double maximumSpanMeters = 0.0;
@@ -439,6 +443,9 @@ namespace earthscience
         ScienceProgress progress;
         std::string message;
         std::shared_ptr<const ScienceArtifact> lastSuccessfulArtifact;
+        std::shared_ptr<const ScienceArtifact> lastSuccessfulPreviewArtifact;
+        std::shared_ptr<const ScienceArtifact> lastSuccessfulAnalysisArtifact;
+        std::shared_ptr<const ScienceArtifact> displayArtifact;
     };
 
     std::uint64_t estimatedArtifactBytes(const ScienceArtifact& artifact);
