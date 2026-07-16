@@ -12,6 +12,11 @@
 **Protected rollback boundary:** `v0.2.0` / `ScienceEarth` / commit
 `0e91c7c4b121d80b929d595ea711d3dd0833ee67`
 
+**Verified source naming correction (2026-07-16):** the production Source Cooperative COGs
+contain exactly 64 signed-Int8 components named `A00` through `A63`; GDAL band number `n` maps to
+component `A(n-1)`. The existing false-color preview remains `A01/A16/A09` and therefore reads
+GDAL bands `2/17/10`. `A64` is not an AlphaEarth source component.
+
 ## 1. Decision
 
 ScienceEarth will add a scientifically bounded analysis engine for the complete 64-dimensional
@@ -199,7 +204,7 @@ the core target. A science-off build links neither target.
 The existing `GeoTemporalQuery` gains supported combinations for:
 
 ```text
-variables       alphaearth/A01 ... alphaearth/A64 | alphaearth/embedding64
+variables       alphaearth/A00 ... alphaearth/A63 | alphaearth/embedding64
 time            one year | explicit year list | inclusive annual interval
 output           raster | embedding | timeseries | analysis | export
 purpose          visualize | research | compare | change | export

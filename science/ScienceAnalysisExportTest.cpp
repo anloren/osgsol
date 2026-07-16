@@ -57,12 +57,15 @@ namespace
         artifact.embedding.width = 2;
         artifact.embedding.height = 1;
         std::vector<float> values(
-            4 * earthscience::ScienceEmbeddingPayload::componentCount, 0.0f);
+            4 * earthscience::ScienceEmbeddingPayload::componentCount);
         for (std::size_t sample = 0; sample < 4; ++sample)
         {
             const std::size_t offset = sample * 64;
-            values[offset] = static_cast<float>(sample + 1);
-            values[offset + 1] = static_cast<float>(sample) * 0.25f;
+            for (std::size_t component = 0; component < 64; ++component)
+            {
+                values[offset + component] = static_cast<float>(
+                    sample * 1000 + component) + 0.5f;
+            }
         }
         artifact.embedding.values =
             std::make_shared<const std::vector<float>>(std::move(values));
@@ -138,6 +141,13 @@ namespace
         if (component < 10) stream << '0';
         stream << component;
         return stream.str();
+    }
+
+    bool isEmbeddingComponentColumn(const std::string& name)
+    {
+        return name.size() == 3 && name[0] == 'A' &&
+            name[1] >= '0' && name[1] <= '9' &&
+            name[2] >= '0' && name[2] <= '9';
     }
 
     std::string replayHash(const std::string& serialized)
@@ -396,19 +406,61 @@ namespace
             earthscience::exportAnalysisCsv(artifact, rawOptions);
         const std::string rawJson =
             earthscience::exportAnalysisJson(artifact, rawOptions);
-        const std::string rawHeader = firstLine(rawCsv);
+        picojson::value rawDocument;
+        const std::string rawParseError =
+            picojson::parse(rawDocument, rawJson);
+        require(rawParseError.empty() &&
+                    rawDocument.is<picojson::object>(),
+                "raw JSON evidence is not parseable");
+        const picojson::object& rawRoot =
+            rawDocument.get<picojson::object>();
+        const picojson::array& rawSamples =
+            rawRoot.at("samples").get<picojson::array>();
+        require(rawSamples.size() == 4 &&
+                    rawSamples.front().is<picojson::object>(),
+                "raw JSON sample collection changed shape");
+        const picojson::object& firstRawSample =
+            rawSamples.front().get<picojson::object>();
+        const picojson::object& rawComponents =
+            firstRawSample.at("embeddingComponents").get<picojson::object>();
+        require(rawComponents.size() == 64,
+                "raw JSON did not contain exactly 64 unique components");
         for (int component = 0; component < 64; ++component)
         {
             const std::string name = componentName(component);
-            require(rawHeader.find(name) != std::string::npos,
-                    "raw CSV did not contain all 64 components");
-            require(rawJson.find("\"" + name + "\"") !=
-                        std::string::npos,
-                    "raw JSON did not contain all 64 components");
+            const auto found = rawComponents.find(name);
+            require(found != rawComponents.end() &&
+                        found->second.is<double>() &&
+                        found->second.get<double>() ==
+                            static_cast<double>(component) + 0.5,
+                    "raw JSON component name/value mapping changed");
         }
-        require(rawHeader.find("A64") == std::string::npos &&
-                    rawJson.find("\"A64\"") == std::string::npos,
-                "raw export invented a non-existent A64 component");
+        require(rawComponents.count("A64") == 0,
+                "raw JSON invented a non-existent A64 component");
+
+        const std::vector<std::vector<std::string>> rawRecords =
+            parseCsv(rawCsv);
+        require(rawRecords.size() == 5,
+                "raw CSV sample collection changed shape");
+        const std::vector<std::string>& rawHeader = rawRecords.front();
+        const std::size_t componentColumnCount =
+            static_cast<std::size_t>(std::count_if(
+                rawHeader.begin(), rawHeader.end(),
+                isEmbeddingComponentColumn));
+        require(componentColumnCount == 64,
+                "raw CSV did not contain exactly 64 component columns");
+        for (int component = 0; component < 64; ++component)
+        {
+            const std::string name = componentName(component);
+            require(std::count(rawHeader.begin(), rawHeader.end(), name) == 1,
+                    "raw CSV component name is missing or duplicated");
+            require(std::stod(csvField(rawRecords, 1, name)) ==
+                        static_cast<double>(component) + 0.5,
+                    "raw CSV component name/value mapping changed");
+        }
+        require(std::find(rawHeader.begin(), rawHeader.end(), "A64") ==
+                    rawHeader.end(),
+                "raw CSV invented a non-existent A64 component");
     }
 
     void testCsvUsesNaForEveryNonFiniteGeometryCoordinate()

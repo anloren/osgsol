@@ -16,6 +16,10 @@ Quit, window close, and `Cmd+Q`.
 **Tech Stack:** C++17, CMake/CTest, OpenSceneGraph 3.6.5, Eigen 3, ImGui, picojson, SQLite RTree,
 private static GDAL 3.13.1 v5 prefix, macOS CGL testing, codesign, and shell package contracts.
 
+**Verified source naming correction (2026-07-16):** complete AlphaEarth data is `A00` through
+`A63`, with GDAL band number `n` mapping to `A(n-1)`. The existing `A01/A16/A09` false-color
+preview remains unchanged and reads GDAL bands `2/17/10`; `A64` does not exist in the source.
+
 ## Global Constraints
 
 - Work only in `/Users/USER/osgsol/.worktrees/v0.2-runtime-safety` on
@@ -526,7 +530,7 @@ non-empty clusters, convergence, lexicographically sorted centroids, and stable 
 - [ ] **Step 2: Write failing export tests**
 
 Require JSON to parse and contain geometry, years, dataset/provider/processing versions,
-algorithms, parameters, warnings, limitations, and upstream ids. Default CSV must omit A01-A64;
+algorithms, parameters, warnings, limitations, and upstream ids. Default CSV must omit A00-A63;
 raw export must contain all 64 only when `includeRawComponents=true`.
 
 - [ ] **Step 3: Build to observe RED**
@@ -592,7 +596,7 @@ git commit -m "feat(scienceearth): add latent structure analysis"
 
 - [ ] **Step 1: Write the local 64-band fixture test**
 
-Create a temporary 8 by 8 GeoTIFF with 64 `GDT_Int8` bands named A01-A64, EPSG:4326 transform,
+Create a temporary 8 by 8 GeoTIFF with 64 `GDT_Int8` bands named A00-A63, EPSG:4326 transform,
 one `-128` sample, and deterministic values. Inject a resolver returning it for 2017 and 2018.
 
 Require point mode to return `2*64` floats and two validity entries. Require region mode to return
@@ -743,7 +747,7 @@ requires `confirmedLargeRequest` for 256 by 256 or retained multi-year regional 
 
 - [ ] **Step 5: Implement provider routing and capabilities**
 
-Advertise A01-A64 plus `embedding64`, time series, analysis, and export. Route only the exact legacy
+Advertise A00-A63 plus `embedding64`, time series, analysis, and export. Route only the exact legacy
 raster signature to `SciencePreviewRuntime`. Cancel the inactive runtime before starting the
 selected one and translate both to generic progress/artifacts.
 
@@ -830,7 +834,7 @@ Require legacy `{lat,lon,year}` to submit the same preview. Add `point_series` a
 
 For analysis JSON require artifact id, kind, years, primary metrics, coverage, source/version,
 processing, warnings, and limitations. Require output to omit `embedding_values`, `change_values`,
-`rgba`, and raw A01-A64. Record manipulator matrix before/after and require equality.
+`rgba`, and raw A00-A63. Record manipulator matrix before/after and require equality.
 
 - [ ] **Step 2: Run to observe RED**
 
@@ -1148,7 +1152,7 @@ Ask the user to verify:
 3. point series shows 2017-2025 with gaps explicit;
 4. 2018/2025 region shows footprint, scale, legend, and limitation;
 5. PCA/clusters remain mathematical and unlabeled;
-6. CSV/JSON export preserves provenance and raw A01-A64 appears only after explicit raw export;
+6. CSV/JSON export preserves provenance and raw A00-A63 appears only after explicit raw export;
 7. failure/no coverage/cancel retains the prior result with explanation;
 8. explicit Show changes map; analysis alone does not move camera;
 9. Agent runs series/change, cites evidence, and does not navigate;
