@@ -13,7 +13,7 @@ namespace earthscience
     {
         std::uint64_t generation = 0;
         ScienceJobState state = ScienceJobState::Unavailable;
-        float progress = 0.0f;
+        ScienceProgress progress;
         std::string message;
         std::shared_ptr<const ScienceArtifact> artifact;
     };

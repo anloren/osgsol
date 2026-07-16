@@ -24,6 +24,42 @@ namespace
         return ScienceJobState::Failed;
     }
 
+    ScienceProgressStage translateProgressStage(AlphaEarthPreviewState state)
+    {
+        switch (state)
+        {
+        case AlphaEarthPreviewState::Unavailable:
+        case AlphaEarthPreviewState::Idle:
+            return ScienceProgressStage::Idle;
+        case AlphaEarthPreviewState::Queued:
+            return ScienceProgressStage::Queued;
+        case AlphaEarthPreviewState::Fetching:
+            return ScienceProgressStage::Reading;
+        case AlphaEarthPreviewState::Ready:
+            return ScienceProgressStage::Ready;
+        case AlphaEarthPreviewState::Failed:
+            return ScienceProgressStage::Failed;
+        case AlphaEarthPreviewState::Cancelled:
+            return ScienceProgressStage::Cancelled;
+        }
+        return ScienceProgressStage::Failed;
+    }
+
+    ScienceProgress translateProgress(const AlphaEarthPreviewSnapshot& snapshot)
+    {
+        ScienceProgress progress;
+        progress.stage = translateProgressStage(snapshot.state);
+        if (snapshot.state == AlphaEarthPreviewState::Ready &&
+            snapshot.progress >= 1.0f)
+        {
+            progress.completedUnits = 1;
+            progress.totalUnits = 1;
+            progress.determinate = true;
+            progress.unit = "artifact";
+        }
+        return progress;
+    }
+
     ScienceSourceReference sourceReference(
         const AlphaEarthPreviewArtifact& legacy,
         const GeoTemporalQuery& query)
@@ -101,7 +137,7 @@ ScienceProviderSnapshot translateAlphaEarthSnapshot(
     ScienceProviderSnapshot translated;
     translated.generation = snapshot.generation;
     translated.state = translateState(snapshot.state);
-    translated.progress = snapshot.progress;
+    translated.progress = translateProgress(snapshot);
     translated.message = snapshot.message;
     if (snapshot.state != AlphaEarthPreviewState::Ready) return translated;
 
@@ -177,6 +213,7 @@ ScienceProviderSnapshot AlphaEarthProvider::snapshot() const
         ScienceProviderSnapshot waiting;
         waiting.generation = _activeGeneration;
         waiting.state = ScienceJobState::Queued;
+        waiting.progress.stage = ScienceProgressStage::Queued;
         waiting.message = "Waiting for AlphaEarth generation";
         return waiting;
     }

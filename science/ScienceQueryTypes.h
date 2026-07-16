@@ -30,6 +30,23 @@ namespace earthscience
         Cancelled,
     };
 
+    enum class ScienceProgressStage
+    {
+        Idle,
+        Queued,
+        Locating,
+        Reading,
+        Decoding,
+        Validating,
+        Aligning,
+        Analyzing,
+        Materializing,
+        Cancelling,
+        Ready,
+        Failed,
+        Cancelled,
+    };
+
     enum class ScienceGeometryKind
     {
         Point,
@@ -57,6 +74,28 @@ namespace earthscience
         RasterLayer,
         Table,
         VectorFeatures,
+        Embedding,
+        TimeSeries,
+        Analysis,
+        Export,
+    };
+
+    enum class ScienceAnalysisKind
+    {
+        None,
+        PointSeries,
+        RegionalChange,
+        PrincipalComponents,
+        SphericalClusters,
+    };
+
+    enum class ScienceMetric
+    {
+        DotProduct,
+        CosineSimilarity,
+        CosineDistance,
+        EuclideanDistance,
+        AngularDistance,
     };
 
     enum class SciencePriority
@@ -76,6 +115,44 @@ namespace earthscience
 
     const char* scienceSourceHealthName(ScienceSourceHealth health);
     const char* scienceJobStateName(ScienceJobState state);
+    const char* scienceProgressStageName(ScienceProgressStage stage);
+    const char* scienceOutputKindName(ScienceOutputKind kind);
+    const char* scienceAnalysisKindName(ScienceAnalysisKind kind);
+    const char* scienceMetricName(ScienceMetric metric);
+
+    struct ScienceProgress
+    {
+        ScienceProgressStage stage = ScienceProgressStage::Idle;
+        std::uint64_t completedUnits = 0, totalUnits = 0;
+        bool determinate = false;
+        std::string unit;
+        double elapsedSeconds = 0.0;
+
+        float legacyFraction() const;
+        operator float() const { return legacyFraction(); }
+    };
+
+    struct ScienceAnalysisOptions
+    {
+        ScienceAnalysisKind kind = ScienceAnalysisKind::None;
+        std::vector<ScienceMetric> metrics = {ScienceMetric::CosineSimilarity,
+                                              ScienceMetric::CosineDistance};
+        int baselineYear = 0, comparisonYear = 0, gridSize = 128;
+        double hotspotQuantile = 0.90;
+        bool enablePca = false, enableClustering = false;
+        bool confirmedLargeRequest = false;
+        int pcaComponents = 3, clusterCount = 4;
+    };
+
+    struct ScienceQueryCost
+    {
+        std::uint64_t sourceBytesUpperBound = 0;
+        std::uint64_t residentBytesUpperBound = 0;
+        std::uint64_t resultCells = 0;
+        double estimatedDurationSeconds = 0.0;
+        bool durationDeterminate = false;
+        bool requiresConfirmation = false;
+    };
 
     struct ScienceVariableDescriptor
     {
@@ -188,6 +265,7 @@ namespace earthscience
         std::string purpose;
         SciencePriority priority = SciencePriority::Visible;
         std::string visualizationId;
+        ScienceAnalysisOptions analysis;
     };
 
     struct ScienceSourceReference
@@ -220,6 +298,87 @@ namespace earthscience
         std::shared_ptr<const ScienceGroundGrid> groundGrid;
     };
 
+    struct ScienceEmbeddingPayload
+    {
+        std::shared_ptr<const std::vector<int>> years;
+        int width = 0;
+        int height = 0;
+        int componentCount = 64;
+        std::shared_ptr<const std::vector<float>> values;
+        std::shared_ptr<const std::vector<unsigned char>> mask;
+        ScienceWgs84Bounds bounds;
+        std::shared_ptr<const ScienceGroundGrid> groundGrid;
+        double actualResolutionMeters = 0.0;
+        std::shared_ptr<const std::vector<std::string>> processingSteps;
+        std::uint64_t validCellCount = 0;
+        std::uint64_t noDataCellCount = 0;
+        double coverageFraction = 0.0;
+        std::shared_ptr<const std::vector<float>> norms;
+        std::shared_ptr<const std::vector<std::string>> warnings;
+    };
+
+    struct ScienceMetricResult
+    {
+        ScienceMetric metric = ScienceMetric::CosineSimilarity;
+        int baselineYear = 0;
+        int comparisonYear = 0;
+        double value = 0.0;
+        std::string unit;
+    };
+
+    struct ScienceAnnualSeries
+    {
+        ScienceMetric metric = ScienceMetric::CosineSimilarity;
+        std::shared_ptr<const std::vector<int>> years;
+        std::shared_ptr<const std::vector<double>> values;
+        std::string unit;
+    };
+
+    struct ScienceScalarChangeRaster
+    {
+        ScienceMetric metric = ScienceMetric::CosineDistance;
+        int width = 0;
+        int height = 0;
+        ScienceWgs84Bounds bounds;
+        std::shared_ptr<const ScienceGroundGrid> groundGrid;
+        double actualResolutionMeters = 0.0;
+        std::shared_ptr<const std::vector<float>> values;
+        std::shared_ptr<const std::vector<unsigned char>> mask;
+        std::uint64_t validCellCount = 0;
+        std::uint64_t noDataCellCount = 0;
+        double coverageFraction = 0.0;
+    };
+
+    struct SciencePcaResult
+    {
+        int inputComponentCount = 64;
+        int componentCount = 0;
+        std::shared_ptr<const std::vector<float>> components;
+        std::shared_ptr<const std::vector<float>> scores;
+        std::shared_ptr<const std::vector<double>> explainedVarianceRatios;
+    };
+
+    struct ScienceClusterResult
+    {
+        ScienceMetric metric = ScienceMetric::CosineDistance;
+        int clusterCount = 0;
+        std::shared_ptr<const std::vector<int>> assignments;
+        std::shared_ptr<const std::vector<float>> centroids;
+        std::shared_ptr<const std::vector<std::uint64_t>> populations;
+    };
+
+    struct ScienceAnalysisPayload
+    {
+        ScienceAnalysisKind kind = ScienceAnalysisKind::None;
+        std::shared_ptr<const std::vector<ScienceMetricResult>> metrics;
+        std::shared_ptr<const std::vector<ScienceAnnualSeries>> annualSeries;
+        ScienceScalarChangeRaster scalarChangeRaster;
+        SciencePcaResult pca;
+        ScienceClusterResult clusters;
+        std::shared_ptr<const std::vector<std::string>> interpretation;
+        std::shared_ptr<const std::vector<std::string>> limitations;
+    };
+
     struct ScienceArtifact
     {
         std::string artifactId;
@@ -227,6 +386,8 @@ namespace earthscience
         std::uint64_t generation = 0;
         std::vector<ScienceSourceReference> sourceReferences;
         ScienceRasterPayload raster;
+        ScienceEmbeddingPayload embedding;
+        ScienceAnalysisPayload analysis;
         std::string visualizationId;
         std::vector<std::string> warnings;
         std::string processingVersion;
@@ -238,10 +399,12 @@ namespace earthscience
         std::uint64_t jobId = 0;
         ScienceJobState state = ScienceJobState::Idle;
         GeoTemporalQuery query;
-        float progress = 0.0f;
+        ScienceProgress progress;
         std::string message;
         std::shared_ptr<const ScienceArtifact> lastSuccessfulArtifact;
     };
+
+    std::uint64_t estimatedArtifactBytes(const ScienceArtifact& artifact);
 }
 
 #endif

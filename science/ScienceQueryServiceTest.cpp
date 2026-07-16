@@ -93,6 +93,20 @@ namespace
         return artifact;
     }
 
+    earthscience::ScienceProgress makeProgress(
+        earthscience::ScienceProgressStage stage,
+        std::uint64_t completedUnits = 0, std::uint64_t totalUnits = 0,
+        const std::string& unit = std::string())
+    {
+        earthscience::ScienceProgress progress;
+        progress.stage = stage;
+        progress.completedUnits = completedUnits;
+        progress.totalUnits = totalUnits;
+        progress.determinate = totalUnits != 0;
+        progress.unit = unit;
+        return progress;
+    }
+
     class ControlledProvider : public earthscience::IScienceProvider
     {
     public:
@@ -147,7 +161,8 @@ namespace
 
         void publish(std::uint64_t generation,
                      earthscience::ScienceJobState state,
-                     float progress, const std::string& message,
+                     const earthscience::ScienceProgress& progress,
+                     const std::string& message,
                      std::shared_ptr<const earthscience::ScienceArtifact>
                          artifact = nullptr)
         {
@@ -300,10 +315,20 @@ namespace
         const std::uint64_t firstJob = fixture.service->submit(makeQuery());
         const std::uint64_t firstGeneration = fixture.provider->generation();
         fixture.provider->publish(firstGeneration,
-            earthscience::ScienceJobState::Fetching, 0.25f, "Fetching first");
-        require(fixture.service->snapshot().state ==
-                    earthscience::ScienceJobState::Fetching,
+            earthscience::ScienceJobState::Fetching,
+            makeProgress(earthscience::ScienceProgressStage::Reading,
+                         1, 4, "tiles"),
+            "Fetching first");
+        const earthscience::ScienceJobSnapshot firstProgress =
+            fixture.service->snapshot();
+        require(firstProgress.state == earthscience::ScienceJobState::Fetching,
                 "provider progress was not reconciled");
+        require(firstProgress.progress.determinate &&
+                    firstProgress.progress.completedUnits == 1 &&
+                    firstProgress.progress.totalUnits == 4 &&
+                    firstProgress.progress.unit == "tiles" &&
+                    firstProgress.progress.legacyFraction() == 0.25f,
+                "measurable provider progress lost its evidence");
 
         earthscience::GeoTemporalQuery secondQuery = makeQuery();
         secondQuery.time.explicitYears = {2018};
@@ -316,7 +341,10 @@ namespace
                 "replacement did not cancel the previous provider generation");
 
         fixture.provider->publish(firstGeneration,
-            earthscience::ScienceJobState::Ready, 1.0f, "stale",
+            earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready, 1, 1,
+                         "artifact"),
+            "stale",
             makeArtifact("stale", firstGeneration));
         earthscience::ScienceJobSnapshot snapshot = fixture.service->snapshot();
         require(snapshot.jobId == secondJob &&
@@ -330,7 +358,10 @@ namespace
                 "old job id cancelled the newer provider generation");
 
         fixture.provider->publish(secondGeneration,
-            earthscience::ScienceJobState::Ready, 1.0f, "Ready",
+            earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready, 1, 1,
+                         "artifact"),
+            "Ready",
             makeArtifact("current", secondGeneration));
         snapshot = fixture.service->snapshot();
         require(snapshot.state == earthscience::ScienceJobState::Ready &&
@@ -347,7 +378,10 @@ namespace
         const std::uint64_t firstJob = fixture.service->submit(makeQuery());
         const std::uint64_t firstGeneration = fixture.provider->generation();
         fixture.provider->publish(firstGeneration,
-            earthscience::ScienceJobState::Ready, 1.0f, "Ready",
+            earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready, 1, 1,
+                         "artifact"),
+            "Ready",
             makeArtifact("last-good", firstGeneration));
         require(fixture.service->snapshot().lastSuccessfulArtifact != nullptr,
                 "initial successful artifact was not retained");
@@ -357,15 +391,21 @@ namespace
         const std::uint64_t secondJob = fixture.service->submit(replacement);
         const std::uint64_t secondGeneration = fixture.provider->generation();
         fixture.provider->publish(secondGeneration,
-            earthscience::ScienceJobState::Fetching, 0.5f, "Fetching");
+            earthscience::ScienceJobState::Fetching,
+            makeProgress(earthscience::ScienceProgressStage::Decoding),
+            "Fetching");
         earthscience::ScienceJobSnapshot snapshot = fixture.service->snapshot();
         require(snapshot.state == earthscience::ScienceJobState::Fetching &&
+                    !snapshot.progress.determinate &&
+                    snapshot.progress.legacyFraction() == 0.0f &&
                     snapshot.lastSuccessfulArtifact &&
                     snapshot.lastSuccessfulArtifact->artifactId == "last-good",
                 "replacement fetch erased the last successful artifact");
 
         fixture.provider->publish(secondGeneration,
-            earthscience::ScienceJobState::Failed, 0.0f, "controlled failure");
+            earthscience::ScienceJobState::Failed,
+            makeProgress(earthscience::ScienceProgressStage::Failed),
+            "controlled failure");
         snapshot = fixture.service->snapshot();
         require(snapshot.state == earthscience::ScienceJobState::Failed &&
                     snapshot.lastSuccessfulArtifact &&

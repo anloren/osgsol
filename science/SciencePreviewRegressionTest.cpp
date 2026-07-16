@@ -119,7 +119,8 @@ namespace
             _snapshot = earthscience::ScienceProviderSnapshot();
         }
 
-        void publish(earthscience::ScienceJobState state, float progress,
+        void publish(earthscience::ScienceJobState state,
+                     const earthscience::ScienceProgress& progress,
                      const std::string& message,
                      std::shared_ptr<const earthscience::ScienceArtifact>
                          artifact = nullptr)
@@ -142,6 +143,19 @@ namespace
     {
         osgUtil::UpdateVisitor visitor;
         layer.accept(visitor);
+    }
+
+    earthscience::ScienceProgress layerProgress(
+        earthscience::ScienceProgressStage stage,
+        std::uint64_t completed = 0, std::uint64_t total = 0)
+    {
+        earthscience::ScienceProgress progress;
+        progress.stage = stage;
+        progress.completedUnits = completed;
+        progress.totalUnits = total;
+        progress.determinate = total != 0;
+        progress.unit = total == 0 ? std::string() : "artifact";
+        return progress;
     }
 
     void testSouthUpRasterStaysSouthAtTextureBottom()
@@ -352,7 +366,9 @@ namespace
 
         const std::uint64_t firstJob = service.submit(makeLayerQuery(2025));
         providerPointer->publish(
-            earthscience::ScienceJobState::Ready, 1.0f, "Ready",
+            earthscience::ScienceJobState::Ready,
+            layerProgress(earthscience::ScienceProgressStage::Ready, 1, 1),
+            "Ready",
             makeLayerArtifact("first", providerPointer->generation()));
         require(service.snapshot().state ==
                     earthscience::ScienceJobState::Ready,
@@ -364,7 +380,9 @@ namespace
 
         const std::uint64_t secondJob = service.submit(makeLayerQuery(2018));
         providerPointer->publish(
-            earthscience::ScienceJobState::Fetching, 0.5f, "Fetching");
+            earthscience::ScienceJobState::Fetching,
+            layerProgress(earthscience::ScienceProgressStage::Reading),
+            "Fetching");
         require(service.snapshot().lastSuccessfulArtifact != nullptr,
                 "replacement fetch lost the service artifact");
         updateLayer(*layer);
@@ -372,7 +390,9 @@ namespace
                 "replacement fetch removed the visible last-good artifact");
 
         providerPointer->publish(
-            earthscience::ScienceJobState::Failed, 0.0f, "Failure");
+            earthscience::ScienceJobState::Failed,
+            layerProgress(earthscience::ScienceProgressStage::Failed),
+            "Failure");
         require(service.snapshot().state ==
                     earthscience::ScienceJobState::Failed,
                 "replacement failure was not published");
@@ -382,7 +402,9 @@ namespace
 
         const std::uint64_t thirdJob = service.submit(makeLayerQuery(2019));
         providerPointer->publish(
-            earthscience::ScienceJobState::Ready, 1.0f, "Ready",
+            earthscience::ScienceJobState::Ready,
+            layerProgress(earthscience::ScienceProgressStage::Ready, 1, 1),
+            "Ready",
             makeLayerArtifact("third", providerPointer->generation()));
         service.snapshot();
         updateLayer(*layer);

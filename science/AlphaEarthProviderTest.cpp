@@ -80,40 +80,69 @@ namespace
 
     void testEveryRuntimeStateTranslatesExactly()
     {
-        const std::vector<std::pair<
-            earthscience::AlphaEarthPreviewState,
-            earthscience::ScienceJobState>> states = {
+        struct StateTranslation
+        {
+            earthscience::AlphaEarthPreviewState previewState;
+            earthscience::ScienceJobState jobState;
+            earthscience::ScienceProgressStage progressStage;
+        };
+        const std::vector<StateTranslation> states = {
             {earthscience::AlphaEarthPreviewState::Unavailable,
-             earthscience::ScienceJobState::Unavailable},
+             earthscience::ScienceJobState::Unavailable,
+             earthscience::ScienceProgressStage::Idle},
             {earthscience::AlphaEarthPreviewState::Idle,
-             earthscience::ScienceJobState::Idle},
+             earthscience::ScienceJobState::Idle,
+             earthscience::ScienceProgressStage::Idle},
             {earthscience::AlphaEarthPreviewState::Queued,
-             earthscience::ScienceJobState::Queued},
+             earthscience::ScienceJobState::Queued,
+             earthscience::ScienceProgressStage::Queued},
             {earthscience::AlphaEarthPreviewState::Fetching,
-             earthscience::ScienceJobState::Fetching},
+             earthscience::ScienceJobState::Fetching,
+             earthscience::ScienceProgressStage::Reading},
             {earthscience::AlphaEarthPreviewState::Ready,
-             earthscience::ScienceJobState::Ready},
+             earthscience::ScienceJobState::Ready,
+             earthscience::ScienceProgressStage::Ready},
             {earthscience::AlphaEarthPreviewState::Failed,
-             earthscience::ScienceJobState::Failed},
+             earthscience::ScienceJobState::Failed,
+             earthscience::ScienceProgressStage::Failed},
             {earthscience::AlphaEarthPreviewState::Cancelled,
-             earthscience::ScienceJobState::Cancelled},
+             earthscience::ScienceJobState::Cancelled,
+             earthscience::ScienceProgressStage::Cancelled},
         };
 
         for (const auto& state : states)
         {
             earthscience::AlphaEarthPreviewSnapshot legacy;
             legacy.generation = 9;
-            legacy.state = state.first;
+            legacy.state = state.previewState;
             legacy.progress = 0.4f;
             legacy.message = "state message";
             const earthscience::ScienceProviderSnapshot translated =
                 earthscience::translateAlphaEarthSnapshot(
                     legacy, makeQuery());
             require(translated.generation == 9 &&
-                        translated.state == state.second &&
-                        translated.progress == 0.4f &&
+                        translated.state == state.jobState &&
+                        translated.progress.stage == state.progressStage &&
+                        !translated.progress.determinate &&
+                        translated.progress.completedUnits == 0 &&
+                        translated.progress.totalUnits == 0 &&
                         translated.message == "state message",
-                    "AlphaEarth runtime state translation changed");
+                    "preview phase hints became fabricated generic progress");
+        }
+
+        for (const float phaseHint : {0.05f, 0.2f})
+        {
+            earthscience::AlphaEarthPreviewSnapshot fetching;
+            fetching.state = earthscience::AlphaEarthPreviewState::Fetching;
+            fetching.progress = phaseHint;
+            const earthscience::ScienceProviderSnapshot translated =
+                earthscience::translateAlphaEarthSnapshot(
+                    fetching, makeQuery());
+            require(translated.progress.stage ==
+                        earthscience::ScienceProgressStage::Reading &&
+                        !translated.progress.determinate &&
+                        translated.progress.legacyFraction() == 0.0f,
+                    "preview fetching hint fabricated measurable progress");
         }
     }
 
@@ -156,6 +185,12 @@ namespace
 
         const earthscience::ScienceProviderSnapshot translated =
             earthscience::translateAlphaEarthSnapshot(legacy, makeQuery());
+        require(translated.progress.stage ==
+                    earthscience::ScienceProgressStage::Ready &&
+                    translated.progress.determinate &&
+                    translated.progress.completedUnits == 1 &&
+                    translated.progress.totalUnits == 1,
+                "ready preview did not publish measurable completion");
         require(translated.artifact != nullptr,
                 "ready AlphaEarth snapshot lost its artifact");
         require(translated.artifact->artifactId ==

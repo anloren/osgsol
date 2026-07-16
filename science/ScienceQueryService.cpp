@@ -44,17 +44,6 @@ namespace
         return "unknown";
     }
 
-    const char* outputName(ScienceOutputKind output)
-    {
-        switch (output)
-        {
-        case ScienceOutputKind::RasterLayer: return "raster-layer";
-        case ScienceOutputKind::Table: return "table";
-        case ScienceOutputKind::VectorFeatures: return "vector-features";
-        }
-        return "unknown";
-    }
-
     std::string integerRange(double minimum, double maximum)
     {
         std::ostringstream stream;
@@ -71,6 +60,7 @@ ScienceQueryService::ScienceQueryService(
     if (!_registry)
     {
         _state.state = ScienceJobState::Unavailable;
+        _state.progress.stage = ScienceProgressStage::Failed;
         _state.message = "science source registry is missing";
     }
 }
@@ -118,6 +108,7 @@ std::uint64_t ScienceQueryService::submit(const GeoTemporalQuery& query)
     if (!error.empty())
     {
         next.state = ScienceJobState::Failed;
+        next.progress.stage = ScienceProgressStage::Failed;
         next.message = error;
         _state = std::move(next);
         return jobId;
@@ -127,6 +118,7 @@ std::uint64_t ScienceQueryService::submit(const GeoTemporalQuery& query)
     if (providerGeneration == 0)
     {
         next.state = ScienceJobState::Failed;
+        next.progress.stage = ScienceProgressStage::Failed;
         next.message = "science provider rejected query";
         _state = std::move(next);
         return jobId;
@@ -137,6 +129,7 @@ std::uint64_t ScienceQueryService::submit(const GeoTemporalQuery& query)
     _activeProviderGeneration = providerGeneration;
     _providerActive = true;
     next.state = ScienceJobState::Queued;
+    next.progress.stage = ScienceProgressStage::Queued;
     next.message = "Queued";
     _state = std::move(next);
     return jobId;
@@ -148,7 +141,8 @@ void ScienceQueryService::cancel(std::uint64_t jobId)
     if (!_providerActive || jobId != _state.jobId) return;
     cancelActiveProvider();
     _state.state = ScienceJobState::Cancelled;
-    _state.progress = 0.0f;
+    _state.progress = ScienceProgress();
+    _state.progress.stage = ScienceProgressStage::Cancelled;
     _state.message = "Cancelled";
 }
 
@@ -169,7 +163,7 @@ ScienceJobSnapshot ScienceQueryService::snapshot()
         return _state;
 
     _state.state = providerSnapshot.state;
-    _state.progress = std::clamp(providerSnapshot.progress, 0.0f, 1.0f);
+    _state.progress = providerSnapshot.progress;
     _state.message = providerSnapshot.message;
 
     if (providerSnapshot.state == ScienceJobState::Ready)
@@ -177,7 +171,8 @@ ScienceJobSnapshot ScienceQueryService::snapshot()
         if (!providerSnapshot.artifact)
         {
             _state.state = ScienceJobState::Failed;
-            _state.progress = 0.0f;
+            _state.progress = ScienceProgress();
+            _state.progress.stage = ScienceProgressStage::Failed;
             _state.message =
                 "science provider reported ready without an artifact";
         }
@@ -298,7 +293,7 @@ bool ScienceQueryService::validate(
     if (query.outputKind != ScienceOutputKind::RasterLayer)
     {
         error = "unsupported science output: " +
-            std::string(outputName(query.outputKind));
+            std::string(scienceOutputKindName(query.outputKind));
         return false;
     }
     if (!source.capabilities.rasterLayerOutput)

@@ -92,6 +92,9 @@ namespace
         {
             if (generation != _snapshot.generation) return;
             _snapshot.state = earthscience::ScienceJobState::Cancelled;
+            _snapshot.progress = earthscience::ScienceProgress();
+            _snapshot.progress.stage =
+                earthscience::ScienceProgressStage::Cancelled;
             _snapshot.message = "Cancelled";
         }
 
@@ -119,7 +122,12 @@ namespace
                 "Google / Google DeepMind / source.coop";
             artifact->sourceReferences.push_back(reference);
             _snapshot.state = earthscience::ScienceJobState::Ready;
-            _snapshot.progress = 1.0f;
+            _snapshot.progress.stage =
+                earthscience::ScienceProgressStage::Ready;
+            _snapshot.progress.completedUnits = 1;
+            _snapshot.progress.totalUnits = 1;
+            _snapshot.progress.determinate = true;
+            _snapshot.progress.unit = "artifact";
             _snapshot.message = "Ready";
             _snapshot.artifact = std::move(artifact);
         }
@@ -127,7 +135,9 @@ namespace
         void publishFailure()
         {
             _snapshot.state = earthscience::ScienceJobState::Failed;
-            _snapshot.progress = 0.0f;
+            _snapshot.progress = earthscience::ScienceProgress();
+            _snapshot.progress.stage =
+                earthscience::ScienceProgressStage::Failed;
             _snapshot.message = "Replacement failed";
             _snapshot.artifact.reset();
         }
