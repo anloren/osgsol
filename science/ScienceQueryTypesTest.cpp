@@ -1,5 +1,6 @@
 #include "ScienceQueryTypes.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -103,6 +104,25 @@ namespace
                 "unknown science metrics must remain machine-readable");
     }
 
+    void testIncompleteLargeProgressNeverRoundsToComplete()
+    {
+        earthscience::ScienceProgress progress;
+        progress.determinate = true;
+        progress.completedUnits =
+            std::numeric_limits<std::uint64_t>::max() - 1;
+        progress.totalUnits = std::numeric_limits<std::uint64_t>::max();
+
+        const float fraction = progress.legacyFraction();
+        require(std::isfinite(fraction) && fraction >= 0.0f &&
+                    fraction < 1.0f,
+                "incomplete large progress rounded to complete");
+
+        progress.completedUnits = 1;
+        progress.totalUnits = 1;
+        require(progress.legacyFraction() == 1.0f,
+                "ready 1/1 progress stopped reporting completion");
+    }
+
     void testArtifactSharesImmutablePixelsAndExactGroundGrid()
     {
         static_assert(std::is_same<
@@ -141,6 +161,13 @@ namespace
 
     void testArtifactSharesImmutableEmbeddingAndAnalysisBacking()
     {
+        static_assert(
+            earthscience::ScienceEmbeddingPayload::componentCount == 64,
+            "embedding component count must remain exactly 64");
+        static_assert(!std::is_assignable<
+            decltype((static_cast<earthscience::ScienceEmbeddingPayload*>(
+                nullptr)->componentCount)), int>::value,
+            "embedding component count must not be mutable");
         static_assert(std::is_same<
             decltype(earthscience::ScienceEmbeddingPayload::years),
             std::shared_ptr<const std::vector<int>>>::value,
@@ -201,33 +228,112 @@ namespace
             "analysis limitations must be immutable");
 
         earthscience::ScienceArtifact artifact;
-        artifact.embedding.componentCount = 64;
+        artifact.embedding.years =
+            std::make_shared<const std::vector<int>>(
+                std::initializer_list<int>{2024, 2025});
         artifact.embedding.values =
             std::make_shared<const std::vector<float>>(128, 0.25f);
         artifact.embedding.mask =
             std::make_shared<const std::vector<unsigned char>>(2, 1);
         artifact.embedding.norms =
             std::make_shared<const std::vector<float>>(2, 1.0f);
+        artifact.embedding.processingSteps =
+            std::make_shared<const std::vector<std::string>>(
+                std::initializer_list<std::string>{"align", "normalize"});
+        artifact.embedding.warnings =
+            std::make_shared<const std::vector<std::string>>(
+                1, "coverage warning");
+        auto embeddingGrid =
+            std::make_shared<earthscience::ScienceGroundGrid>();
+        embeddingGrid->columns = 1;
+        embeddingGrid->rows = 1;
+        embeddingGrid->points = {{138.70, 35.34}};
+        artifact.embedding.groundGrid = embeddingGrid;
+
+        earthscience::ScienceMetricResult metric;
+        metric.metric = earthscience::ScienceMetric::CosineDistance;
+        metric.value = 0.5;
+        artifact.analysis.metrics =
+            std::make_shared<const std::vector<
+                earthscience::ScienceMetricResult>>(
+                    std::initializer_list<earthscience::ScienceMetricResult>{
+                        metric});
+        earthscience::ScienceAnnualSeries annual;
+        annual.years = artifact.embedding.years;
+        annual.values =
+            std::make_shared<const std::vector<double>>(
+                std::initializer_list<double>{0.25, 0.5});
+        artifact.analysis.annualSeries =
+            std::make_shared<const std::vector<
+                earthscience::ScienceAnnualSeries>>(
+                    std::initializer_list<earthscience::ScienceAnnualSeries>{
+                        annual});
         artifact.analysis.scalarChangeRaster.values =
             std::make_shared<const std::vector<float>>(2, 0.5f);
         artifact.analysis.scalarChangeRaster.mask = artifact.embedding.mask;
+        artifact.analysis.scalarChangeRaster.groundGrid = embeddingGrid;
+        artifact.analysis.pca.components =
+            std::make_shared<const std::vector<float>>(192, 0.0f);
         artifact.analysis.pca.scores =
             std::make_shared<const std::vector<float>>(6, 0.0f);
+        artifact.analysis.pca.explainedVarianceRatios =
+            std::make_shared<const std::vector<double>>(
+                std::initializer_list<double>{0.6, 0.3, 0.1});
         artifact.analysis.clusters.assignments =
             std::make_shared<const std::vector<int>>(2, 1);
+        artifact.analysis.clusters.centroids =
+            std::make_shared<const std::vector<float>>(256, 0.0f);
+        artifact.analysis.clusters.populations =
+            std::make_shared<const std::vector<std::uint64_t>>(
+                std::initializer_list<std::uint64_t>{1, 1, 0, 0});
+        artifact.analysis.interpretation =
+            std::make_shared<const std::vector<std::string>>(
+                1, "change is localized");
+        artifact.analysis.limitations =
+            std::make_shared<const std::vector<std::string>>(
+                1, "coverage is incomplete");
 
         const earthscience::ScienceArtifact copied = artifact;
-        require(copied.embedding.values == artifact.embedding.values &&
+        require(copied.embedding.years == artifact.embedding.years &&
+                    copied.embedding.values == artifact.embedding.values &&
                     copied.embedding.mask == artifact.embedding.mask &&
-                    copied.embedding.norms == artifact.embedding.norms,
+                    copied.embedding.norms == artifact.embedding.norms &&
+                    copied.embedding.processingSteps ==
+                        artifact.embedding.processingSteps &&
+                    copied.embedding.warnings ==
+                        artifact.embedding.warnings &&
+                    copied.embedding.groundGrid ==
+                        artifact.embedding.groundGrid,
                 "artifact copy duplicated immutable embedding backing");
+        require(copied.analysis.metrics == artifact.analysis.metrics &&
+                    copied.analysis.annualSeries ==
+                        artifact.analysis.annualSeries &&
+                    copied.analysis.annualSeries->at(0).years ==
+                        artifact.analysis.annualSeries->at(0).years &&
+                    copied.analysis.annualSeries->at(0).values ==
+                        artifact.analysis.annualSeries->at(0).values,
+                "artifact copy duplicated immutable analysis records");
         require(copied.analysis.scalarChangeRaster.values ==
                     artifact.analysis.scalarChangeRaster.values &&
                     copied.analysis.scalarChangeRaster.mask ==
                         artifact.analysis.scalarChangeRaster.mask &&
+                    copied.analysis.scalarChangeRaster.groundGrid ==
+                        artifact.analysis.scalarChangeRaster.groundGrid &&
+                    copied.analysis.pca.components ==
+                        artifact.analysis.pca.components &&
                     copied.analysis.pca.scores == artifact.analysis.pca.scores &&
+                    copied.analysis.pca.explainedVarianceRatios ==
+                        artifact.analysis.pca.explainedVarianceRatios &&
                     copied.analysis.clusters.assignments ==
-                        artifact.analysis.clusters.assignments,
+                        artifact.analysis.clusters.assignments &&
+                    copied.analysis.clusters.centroids ==
+                        artifact.analysis.clusters.centroids &&
+                    copied.analysis.clusters.populations ==
+                        artifact.analysis.clusters.populations &&
+                    copied.analysis.interpretation ==
+                        artifact.analysis.interpretation &&
+                    copied.analysis.limitations ==
+                        artifact.analysis.limitations,
                 "artifact copy duplicated immutable analysis backing");
     }
 
@@ -238,7 +344,6 @@ namespace
             std::make_shared<const std::vector<int>>(2, 2025);
         artifact.embedding.width = std::numeric_limits<int>::max();
         artifact.embedding.height = std::numeric_limits<int>::max();
-        artifact.embedding.componentCount = 64;
 
         bool rejected = false;
         try
@@ -252,12 +357,82 @@ namespace
         require(rejected, "artifact byte estimate accepted integer overflow");
     }
 
+    void requireInvalidEmbedding(
+        const earthscience::ScienceArtifact& artifact, const char* message)
+    {
+        bool rejected = false;
+        try
+        {
+            static_cast<void>(earthscience::estimatedArtifactBytes(artifact));
+        }
+        catch (const std::invalid_argument&)
+        {
+            rejected = true;
+        }
+        require(rejected, message);
+    }
+
+    earthscience::ScienceArtifact makeOneCellEmbedding()
+    {
+        earthscience::ScienceArtifact artifact;
+        artifact.embedding.years =
+            std::make_shared<const std::vector<int>>(1, 2025);
+        artifact.embedding.width = 1;
+        artifact.embedding.height = 1;
+        artifact.embedding.values =
+            std::make_shared<const std::vector<float>>(64, 0.25f);
+        return artifact;
+    }
+
+    void testEmbeddingShapeContractRejectsPartialPayloads()
+    {
+        earthscience::ScienceArtifact missingYears;
+        missingYears.embedding.width = 1;
+        missingYears.embedding.height = 1;
+        missingYears.embedding.values =
+            std::make_shared<const std::vector<float>>(64, 0.25f);
+        requireInvalidEmbedding(
+            missingYears, "embedding values without years were accepted");
+
+        earthscience::ScienceArtifact zeroWidth = makeOneCellEmbedding();
+        zeroWidth.embedding.width = 0;
+        requireInvalidEmbedding(
+            zeroWidth, "embedding payload with zero width was accepted");
+
+        earthscience::ScienceArtifact missingValues = makeOneCellEmbedding();
+        missingValues.embedding.values.reset();
+        requireInvalidEmbedding(
+            missingValues, "embedding dimensions without values were accepted");
+    }
+
+    void testEmbeddingShapeContractRejectsInconsistentBacking()
+    {
+        earthscience::ScienceArtifact wrongValues = makeOneCellEmbedding();
+        wrongValues.embedding.values =
+            std::make_shared<const std::vector<float>>(63, 0.25f);
+        requireInvalidEmbedding(
+            wrongValues, "embedding value shape did not enforce 64 components");
+
+        earthscience::ScienceArtifact wrongMask = makeOneCellEmbedding();
+        wrongMask.embedding.mask =
+            std::make_shared<const std::vector<unsigned char>>(2, 1);
+        requireInvalidEmbedding(
+            wrongMask, "embedding mask shape was not validated");
+
+        earthscience::ScienceArtifact wrongNorms = makeOneCellEmbedding();
+        wrongNorms.embedding.norms =
+            std::make_shared<const std::vector<float>>(2, 1.0f);
+        requireInvalidEmbedding(
+            wrongNorms, "embedding norm shape was not validated");
+    }
+
     void testArtifactByteEstimateIncludesOwnedStrings()
     {
         earthscience::ScienceArtifact artifact;
         artifact.artifactId = std::string(4096, 'a');
         artifact.processingVersion = std::string(8192, 'p');
         artifact.warnings.push_back(std::string(16384, 'w'));
+        artifact.embedding = makeOneCellEmbedding().embedding;
         artifact.embedding.processingSteps =
             std::make_shared<const std::vector<std::string>>(
                 1, std::string(32768, 's'));
@@ -278,9 +453,12 @@ int main()
     testStableStateNames();
     testGenericDefaultsAreUnavailableAndBounded();
     testStableAnalysisContractNames();
+    testIncompleteLargeProgressNeverRoundsToComplete();
     testArtifactSharesImmutablePixelsAndExactGroundGrid();
     testArtifactSharesImmutableEmbeddingAndAnalysisBacking();
     testArtifactByteEstimateRejectsOverflow();
+    testEmbeddingShapeContractRejectsPartialPayloads();
+    testEmbeddingShapeContractRejectsInconsistentBacking();
     testArtifactByteEstimateIncludesOwnedStrings();
     std::cout << "[OK] ScienceEarth generic query type contract\n";
     return 0;

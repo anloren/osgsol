@@ -300,10 +300,11 @@ namespace earthscience
 
     struct ScienceEmbeddingPayload
     {
+        static constexpr int componentCount = 64;
+
         std::shared_ptr<const std::vector<int>> years;
         int width = 0;
         int height = 0;
-        int componentCount = 64;
         std::shared_ptr<const std::vector<float>> values;
         std::shared_ptr<const std::vector<unsigned char>> mask;
         ScienceWgs84Bounds bounds;

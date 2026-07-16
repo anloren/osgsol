@@ -1,5 +1,6 @@
 #include "ScienceQueryTypes.h"
 
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 
@@ -99,8 +100,11 @@ float ScienceProgress::legacyFraction() const
 {
     if (!determinate || totalUnits == 0) return 0.0f;
     if (completedUnits >= totalUnits) return 1.0f;
-    return static_cast<float>(
+    const float fraction = static_cast<float>(
         static_cast<double>(completedUnits) / static_cast<double>(totalUnits));
+    if (!std::isfinite(fraction) || fraction >= 1.0f)
+        return std::nextafter(1.0f, 0.0f);
+    return fraction;
 }
 
 namespace
@@ -198,6 +202,63 @@ namespace
         addStringBytes(total, reference.forecastReferenceTime);
         addStringBytes(total, reference.attribution);
     }
+
+    bool hasEmbeddingContent(const ScienceEmbeddingPayload& embedding)
+    {
+        const ScienceWgs84Bounds& bounds = embedding.bounds;
+        return embedding.years || embedding.width != 0 ||
+               embedding.height != 0 || embedding.values || embedding.mask ||
+               bounds.west != 0.0 || bounds.south != 0.0 ||
+               bounds.east != 0.0 || bounds.north != 0.0 ||
+               embedding.groundGrid ||
+               embedding.actualResolutionMeters != 0.0 ||
+               embedding.processingSteps || embedding.validCellCount != 0 ||
+               embedding.noDataCellCount != 0 ||
+               embedding.coverageFraction != 0.0 || embedding.norms ||
+               embedding.warnings;
+    }
+
+    bool vectorSizeMatches(std::size_t actual, std::uint64_t expected)
+    {
+        if (expected > std::numeric_limits<std::size_t>::max()) return false;
+        return actual == static_cast<std::size_t>(expected);
+    }
+
+    std::uint64_t validatedEmbeddingValueBytes(
+        const ScienceEmbeddingPayload& embedding)
+    {
+        if (!hasEmbeddingContent(embedding)) return 0;
+        if (!embedding.years || embedding.years->empty())
+            throw std::invalid_argument(
+                "science embedding payload requires non-empty years");
+        if (embedding.width <= 0 || embedding.height <= 0)
+            throw std::invalid_argument(
+                "science embedding payload requires positive dimensions");
+
+        std::uint64_t cellCount = checkedMultiply(
+            embedding.years->size(),
+            static_cast<std::uint64_t>(embedding.width));
+        cellCount = checkedMultiply(
+            cellCount, static_cast<std::uint64_t>(embedding.height));
+        const std::uint64_t valueCount = checkedMultiply(
+            cellCount, ScienceEmbeddingPayload::componentCount);
+        const std::uint64_t valueBytes =
+            checkedMultiply(valueCount, sizeof(float));
+
+        if (!embedding.values ||
+            !vectorSizeMatches(embedding.values->size(), valueCount))
+            throw std::invalid_argument(
+                "science embedding values do not match the 64D shape");
+        if (embedding.mask &&
+            !vectorSizeMatches(embedding.mask->size(), cellCount))
+            throw std::invalid_argument(
+                "science embedding mask does not match the cell shape");
+        if (embedding.norms &&
+            !vectorSizeMatches(embedding.norms->size(), cellCount))
+            throw std::invalid_argument(
+                "science embedding norms do not match the cell shape");
+        return valueBytes;
+    }
 }
 
 std::uint64_t estimatedArtifactBytes(const ScienceArtifact& artifact)
@@ -220,23 +281,12 @@ std::uint64_t estimatedArtifactBytes(const ScienceArtifact& artifact)
     addVectorBytes(total, embedding.norms);
     addStringVectorBytes(total, embedding.warnings);
 
-    if (embedding.years && embedding.width > 0 && embedding.height > 0)
-    {
-        if (embedding.componentCount != 64)
-            throw std::invalid_argument(
-                "science embedding payload must have exactly 64 components");
-        std::uint64_t logicalValues = checkedMultiply(
-            embedding.years->size(), static_cast<std::uint64_t>(embedding.width));
-        logicalValues = checkedMultiply(
-            logicalValues, static_cast<std::uint64_t>(embedding.height));
-        logicalValues = checkedMultiply(logicalValues, 64);
-        const std::uint64_t logicalBytes =
-            checkedMultiply(logicalValues, sizeof(float));
-        const std::uint64_t actualBytes = embedding.values
-            ? checkedMultiply(embedding.values->capacity(), sizeof(float)) : 0;
-        if (logicalBytes > actualBytes)
-            checkedAdd(total, logicalBytes - actualBytes);
-    }
+    const std::uint64_t logicalBytes =
+        validatedEmbeddingValueBytes(embedding);
+    const std::uint64_t actualBytes = embedding.values
+        ? checkedMultiply(embedding.values->capacity(), sizeof(float)) : 0;
+    if (logicalBytes > actualBytes)
+        checkedAdd(total, logicalBytes - actualBytes);
 
     const ScienceAnalysisPayload& analysis = artifact.analysis;
     addVectorBytes(total, analysis.metrics);
