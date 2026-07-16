@@ -177,5 +177,6 @@ if find "$APP" -name imgui.ini -print -quit | grep -q .; then
     echo "FAIL: runtime wrote imgui.ini into signed bundle" >&2
     exit 1
 fi
+bash "$ROOT/tests/macos_normal_exit_tests.sh" "$APP"
 codesign --verify --deep --strict "$APP"
 echo "[OK] formal macOS staging identity, credential, smoke, and signature checks"

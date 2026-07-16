@@ -181,6 +181,8 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_ImGuiThreading PRIVATE
 NEW_CTEST(osgVerse_Test_MediaThreading media_threading_tests.cpp offline 30)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_MediaThreading PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+NEW_CTEST(osgVerse_Test_OsgApplicationUsageExit osg_application_usage_exit_test.cpp
+          "offline;macos-exit" 10)
 
 IF(BUILD_TESTING)
     FIND_PROGRAM(OSGSOL_PYTHON3_EXECUTABLE NAMES python3)

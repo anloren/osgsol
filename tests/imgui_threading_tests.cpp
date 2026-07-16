@@ -51,6 +51,19 @@ int main()
     CHECK(imgui2DSource.find("resolveImGuiWheelAmount") != std::string::npos);
     CHECK(source.find("resolveImGuiWheelAmount") != std::string::npos);
 
+    // The camera draw callbacks retain raw application pointers.  Earth must stop viewer threads
+    // after viewer.run() returns and before function-local callback owners are destroyed.
+    std::ifstream earthFile(std::string(OSGVERSE_SOURCE_DIR) +
+                            "/applications/earth_explorer/earth_main.cpp");
+    std::ostringstream earthBuffer; earthBuffer << earthFile.rdbuf();
+    const std::string earthSource = earthBuffer.str();
+    const size_t stopGuard = earthSource.find(
+        "ViewerThreadStopGuard stopViewerThreads(viewer);");
+    const size_t viewerRun = earthSource.rfind("return viewer.run();");
+    CHECK(stopGuard != std::string::npos);
+    CHECK(viewerRun != std::string::npos);
+    CHECK(stopGuard < viewerRun);
+
     osg::ref_ptr<osgGA::GUIEventAdapter> scrollEvent = new osgGA::GUIEventAdapter;
     scrollEvent->setScrollingMotion(osgGA::GUIEventAdapter::SCROLL_UP);
     CHECK(osgVerse::resolveImGuiWheelAmount(*scrollEvent) == 1.0f);

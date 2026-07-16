@@ -418,6 +418,36 @@ public:
     }
 };
 
+class AutoQuitAfterFramesHandler : public osgGA::GUIEventHandler
+{
+public:
+    explicit AutoQuitAfterFramesHandler(unsigned int frames) : _remaining(frames) {}
+    bool handle(const osgGA::GUIEventAdapter& ea,
+                osgGA::GUIActionAdapter& action) override
+    {
+        if (ea.getEventType() != osgGA::GUIEventAdapter::FRAME || _remaining == 0)
+            return false;
+        if (--_remaining == 0)
+        {
+            osgViewer::View* view = dynamic_cast<osgViewer::View*>(action.asView());
+            if (view && view->getViewerBase()) view->getViewerBase()->setDone(true);
+        }
+        return false;
+    }
+private:
+    unsigned int _remaining;
+};
+
+class ViewerThreadStopGuard
+{
+public:
+    explicit ViewerThreadStopGuard(osgViewer::ViewerBase& viewer) : _viewer(viewer) {}
+    ~ViewerThreadStopGuard() { _viewer.stopThreading(); }
+
+private:
+    osgViewer::ViewerBase& _viewer;
+};
+
 // TEMPORARY DIAGNOSTIC (investigation only, not a fix) — "全部" 预设深色瓦片补丁 bug 排查。
 // EARTH_PAGER_DEBUG=1:每隔 EARTH_PAGER_DEBUG_INTERVAL 帧(默认 30,~0.5s@60fps)打印一次
 // osgDB::DatabasePager 的队列深度(getFileRequestListSize=file+http 请求队列合计、
@@ -839,6 +869,11 @@ int main(int argc, char** argv)
     // 保证聊天框打字时 handled 标记先于一切键位处理器置位(原理见类注释)。
     viewer.addEventHandler(new GlobalKeyboardGate);
     viewer.addEventHandler(new CloseWindowQuitHandler);   // 关窗=退出(见类注释)
+    const char* autoQuitFramesEnv = getenv("EARTH_AUTOQUIT_FRAMES");
+    int autoQuitFrames = autoQuitFramesEnv ? atoi(autoQuitFramesEnv) : 0;
+    if (autoQuitFrames > 0)
+        viewer.addEventHandler(new AutoQuitAfterFramesHandler(
+            static_cast<unsigned int>(autoQuitFrames)));
     // Esc 不再整个退出程序:默认 _keyEventSetsDone=Escape 在 eventTraversal 里先于
     // 所有 handler 判定,闸拦不住——聊天框里按 Esc(ImGui 语义=撤销输入并失焦)会直接
     // 杀掉 app。退出改走窗口关闭按钮 / Cmd+Q,Esc 专职"输入框失焦/取消"。
@@ -1578,5 +1613,6 @@ int main(int argc, char** argv)
         }
         return 0;
     }
+    ViewerThreadStopGuard stopViewerThreads(viewer);
     return viewer.run();
 }
