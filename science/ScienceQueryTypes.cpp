@@ -302,12 +302,17 @@ std::uint64_t estimatedArtifactBytes(const ScienceArtifact& artifact)
         {
             addVectorBytes(total, series.years);
             addVectorBytes(total, series.values);
+            addVectorBytes(total, series.validity);
             addStringBytes(total, series.unit);
         }
     }
     addVectorBytes(total, analysis.scalarChangeRaster.values);
     addVectorBytes(total, analysis.scalarChangeRaster.mask);
     addGroundGridBytes(total, analysis.scalarChangeRaster.groundGrid);
+    addVectorBytes(total, analysis.regionalChange.quantiles);
+    addVectorBytes(total, analysis.regionalChange.hotspotMask);
+    addVectorBytes(total, analysis.regionalChange.hotspotIndices);
+    addGroundGridBytes(total, analysis.regionalChange.groundGrid);
     addVectorBytes(total, analysis.pca.components);
     addVectorBytes(total, analysis.pca.scores);
     addVectorBytes(total, analysis.pca.explainedVarianceRatios);

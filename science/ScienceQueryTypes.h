@@ -332,7 +332,14 @@ namespace earthscience
         ScienceMetric metric = ScienceMetric::CosineSimilarity;
         std::shared_ptr<const std::vector<int>> years;
         std::shared_ptr<const std::vector<double>> values;
+        std::shared_ptr<const std::vector<unsigned char>> validity;
         std::string unit;
+    };
+
+    struct ScienceQuantileResult
+    {
+        double probability = 0.0;
+        double value = 0.0;
     };
 
     struct ScienceScalarChangeRaster
@@ -348,6 +355,30 @@ namespace earthscience
         std::uint64_t validCellCount = 0;
         std::uint64_t noDataCellCount = 0;
         double coverageFraction = 0.0;
+    };
+
+    struct ScienceRegionalChangeSummary
+    {
+        ScienceMetric metric = ScienceMetric::CosineDistance;
+        int baselineYear = 0;
+        int comparisonYear = 0;
+        std::uint64_t totalCellCount = 0;
+        std::uint64_t validOverlapCount = 0;
+        std::uint64_t noDataCellCount = 0;
+        double coverageFraction = 0.0;
+        double mean = 0.0;
+        double median = 0.0;
+        double standardDeviation = 0.0;
+        double minimum = 0.0;
+        double maximum = 0.0;
+        std::shared_ptr<const std::vector<ScienceQuantileResult>> quantiles;
+        double hotspotQuantile = 0.90;
+        double hotspotThreshold = 0.0;
+        std::shared_ptr<const std::vector<unsigned char>> hotspotMask;
+        std::shared_ptr<const std::vector<std::uint64_t>> hotspotIndices;
+        ScienceWgs84Bounds bounds;
+        std::shared_ptr<const ScienceGroundGrid> groundGrid;
+        double actualResolutionMeters = 0.0;
     };
 
     struct SciencePcaResult
@@ -374,6 +405,7 @@ namespace earthscience
         std::shared_ptr<const std::vector<ScienceMetricResult>> metrics;
         std::shared_ptr<const std::vector<ScienceAnnualSeries>> annualSeries;
         ScienceScalarChangeRaster scalarChangeRaster;
+        ScienceRegionalChangeSummary regionalChange;
         SciencePcaResult pca;
         ScienceClusterResult clusters;
         std::shared_ptr<const std::vector<std::string>> interpretation;

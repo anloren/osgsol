@@ -203,6 +203,23 @@ namespace
                 earthscience::ScienceAnnualSeries>>>::value,
             "analysis annual series must be immutable");
         static_assert(std::is_same<
+            decltype(earthscience::ScienceAnnualSeries::validity),
+            std::shared_ptr<const std::vector<unsigned char>>>::value,
+            "analysis annual validity must be immutable");
+        static_assert(std::is_same<
+            decltype(earthscience::ScienceRegionalChangeSummary::quantiles),
+            std::shared_ptr<const std::vector<
+                earthscience::ScienceQuantileResult>>>::value,
+            "regional quantiles must be immutable");
+        static_assert(std::is_same<
+            decltype(earthscience::ScienceRegionalChangeSummary::hotspotMask),
+            std::shared_ptr<const std::vector<unsigned char>>>::value,
+            "regional hotspot mask must be immutable");
+        static_assert(std::is_same<
+            decltype(earthscience::ScienceRegionalChangeSummary::hotspotIndices),
+            std::shared_ptr<const std::vector<std::uint64_t>>>::value,
+            "regional hotspot indices must be immutable");
+        static_assert(std::is_same<
             decltype(earthscience::SciencePcaResult::components),
             std::shared_ptr<const std::vector<float>>>::value,
             "PCA components must be immutable");
@@ -263,6 +280,7 @@ namespace
         annual.values =
             std::make_shared<const std::vector<double>>(
                 std::initializer_list<double>{0.25, 0.5});
+        annual.validity = artifact.embedding.mask;
         artifact.analysis.annualSeries =
             std::make_shared<const std::vector<
                 earthscience::ScienceAnnualSeries>>(
@@ -272,6 +290,16 @@ namespace
             std::make_shared<const std::vector<float>>(2, 0.5f);
         artifact.analysis.scalarChangeRaster.mask = artifact.embedding.mask;
         artifact.analysis.scalarChangeRaster.groundGrid = embeddingGrid;
+        artifact.analysis.regionalChange.quantiles =
+            std::make_shared<const std::vector<
+                earthscience::ScienceQuantileResult>>(
+                    std::initializer_list<
+                        earthscience::ScienceQuantileResult>{{0.5, 0.5}});
+        artifact.analysis.regionalChange.hotspotMask = artifact.embedding.mask;
+        artifact.analysis.regionalChange.hotspotIndices =
+            std::make_shared<const std::vector<std::uint64_t>>(
+                std::initializer_list<std::uint64_t>{1});
+        artifact.analysis.regionalChange.groundGrid = embeddingGrid;
         artifact.analysis.pca.components =
             std::make_shared<const std::vector<float>>(192, 0.0f);
         artifact.analysis.pca.scores =
@@ -311,7 +339,9 @@ namespace
                     copied.analysis.annualSeries->at(0).years ==
                         artifact.analysis.annualSeries->at(0).years &&
                     copied.analysis.annualSeries->at(0).values ==
-                        artifact.analysis.annualSeries->at(0).values,
+                        artifact.analysis.annualSeries->at(0).values &&
+                    copied.analysis.annualSeries->at(0).validity ==
+                        artifact.analysis.annualSeries->at(0).validity,
                 "artifact copy duplicated immutable analysis records");
         require(copied.analysis.scalarChangeRaster.values ==
                     artifact.analysis.scalarChangeRaster.values &&
@@ -319,6 +349,14 @@ namespace
                         artifact.analysis.scalarChangeRaster.mask &&
                     copied.analysis.scalarChangeRaster.groundGrid ==
                         artifact.analysis.scalarChangeRaster.groundGrid &&
+                    copied.analysis.regionalChange.quantiles ==
+                        artifact.analysis.regionalChange.quantiles &&
+                    copied.analysis.regionalChange.hotspotMask ==
+                        artifact.analysis.regionalChange.hotspotMask &&
+                    copied.analysis.regionalChange.hotspotIndices ==
+                        artifact.analysis.regionalChange.hotspotIndices &&
+                    copied.analysis.regionalChange.groundGrid ==
+                        artifact.analysis.regionalChange.groundGrid &&
                     copied.analysis.pca.components ==
                         artifact.analysis.pca.components &&
                     copied.analysis.pca.scores == artifact.analysis.pca.scores &&
@@ -335,6 +373,27 @@ namespace
                     copied.analysis.limitations ==
                         artifact.analysis.limitations,
                 "artifact copy duplicated immutable analysis backing");
+    }
+
+    void testArtifactByteEstimateIncludesRegionalAnalysisBacking()
+    {
+        earthscience::ScienceArtifact artifact;
+        const std::uint64_t before =
+            earthscience::estimatedArtifactBytes(artifact);
+        artifact.analysis.regionalChange.quantiles =
+            std::make_shared<const std::vector<
+                earthscience::ScienceQuantileResult>>(1024);
+        artifact.analysis.regionalChange.hotspotMask =
+            std::make_shared<const std::vector<unsigned char>>(2048, 1);
+        artifact.analysis.regionalChange.hotspotIndices =
+            std::make_shared<const std::vector<std::uint64_t>>(512, 1);
+        const std::uint64_t after =
+            earthscience::estimatedArtifactBytes(artifact);
+        const std::uint64_t minimumAdded =
+            1024 * sizeof(earthscience::ScienceQuantileResult) + 2048 +
+            512 * sizeof(std::uint64_t);
+        require(after >= before + minimumAdded,
+                "artifact byte estimate omitted regional analysis backing");
     }
 
     void testArtifactByteEstimateRejectsOverflow()
@@ -456,6 +515,7 @@ int main()
     testIncompleteLargeProgressNeverRoundsToComplete();
     testArtifactSharesImmutablePixelsAndExactGroundGrid();
     testArtifactSharesImmutableEmbeddingAndAnalysisBacking();
+    testArtifactByteEstimateIncludesRegionalAnalysisBacking();
     testArtifactByteEstimateRejectsOverflow();
     testEmbeddingShapeContractRejectsPartialPayloads();
     testEmbeddingShapeContractRejectsInconsistentBacking();
