@@ -207,6 +207,8 @@ bool ScienceAnalysisEngine::computeLocalPca(
                    static_cast<std::size_t>(axis)] = score;
         }
     }
+    if (isCancelled(cancelled))
+        return fail(error, "local PCA was cancelled");
 
     ScienceAnalysisPayload candidate;
     candidate.kind = ScienceAnalysisKind::PrincipalComponents;
@@ -228,6 +230,8 @@ bool ScienceAnalysisEngine::computeLocalPca(
             std::initializer_list<std::string>{
                 "PCA loadings have no assigned physical labels.",
                 "Components were centered per dimension and were not standardized."});
+    if (isCancelled(cancelled))
+        return fail(error, "local PCA was cancelled");
     output = std::move(candidate);
     return true;
 }
@@ -291,10 +295,14 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
     seeded[0] = true;
     for (int cluster = 1; cluster < clusterCount; ++cluster)
     {
+        if (isCancelled(cancelled))
+            return fail(error, "spherical clustering was cancelled");
         std::size_t selected = sampleIndices.size();
         double farthestDistance = -1.0;
         for (std::size_t row = 0; row < sampleIndices.size(); ++row)
         {
+            if ((row & 255u) == 0u && isCancelled(cancelled))
+                return fail(error, "spherical clustering was cancelled");
             if (seeded[row]) continue;
             double nearestCosine = -std::numeric_limits<double>::infinity();
             for (int existing = 0; existing < cluster; ++existing)
@@ -338,6 +346,8 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
             static_cast<std::size_t>(clusterCount), 0);
         for (std::size_t row = 0; row < sampleIndices.size(); ++row)
         {
+            if ((row & 255u) == 0u && isCancelled(cancelled))
+                return fail(error, "spherical clustering was cancelled");
             int bestCluster = 0;
             double bestCosine = dotDirection(directions, row, centroids[0]);
             for (int cluster = 1; cluster < clusterCount; ++cluster)
@@ -362,6 +372,9 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
             double farthestDistance = -1.0;
             for (std::size_t row = 0; row < sampleIndices.size(); ++row)
             {
+                if ((row & 255u) == 0u && isCancelled(cancelled))
+                    return fail(error,
+                                "spherical clustering was cancelled");
                 const int donor = assignments[row];
                 if (counts[static_cast<std::size_t>(donor)] <= 1) continue;
                 const double distance = 1.0 - dotDirection(
@@ -387,6 +400,8 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
             std::vector<double>(COMPONENT_COUNT, 0.0));
         for (std::size_t row = 0; row < sampleIndices.size(); ++row)
         {
+            if ((row & 255u) == 0u && isCancelled(cancelled))
+                return fail(error, "spherical clustering was cancelled");
             const std::size_t offset = row * COMPONENT_COUNT;
             std::vector<double>& sum =
                 updated[static_cast<std::size_t>(assignments[row])];
@@ -398,6 +413,8 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
         double maximumShift = 0.0;
         for (int cluster = 0; cluster < clusterCount; ++cluster)
         {
+            if (isCancelled(cancelled))
+                return fail(error, "spherical clustering was cancelled");
             std::vector<double>& centroid =
                 updated[static_cast<std::size_t>(cluster)];
             double squaredNorm = 0.0;
@@ -454,6 +471,8 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
         std::vector<double>(COMPONENT_COUNT, 0.0));
     for (std::size_t row = 0; row < sampleIndices.size(); ++row)
     {
+        if ((row & 255u) == 0u && isCancelled(cancelled))
+            return fail(error, "spherical clustering was cancelled");
         const std::size_t cluster =
             static_cast<std::size_t>(assignments[row]);
         ++populations[cluster];
@@ -468,6 +487,8 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
         static_cast<std::size_t>(clusterCount) * COMPONENT_COUNT, 0.0f);
     for (int cluster = 0; cluster < clusterCount; ++cluster)
     {
+        if (isCancelled(cancelled))
+            return fail(error, "spherical clustering was cancelled");
         double squaredNorm = 0.0;
         for (double value : sums[static_cast<std::size_t>(cluster)])
             squaredNorm += value * value;
@@ -487,10 +508,14 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
 
     std::vector<int> order(static_cast<std::size_t>(clusterCount));
     std::iota(order.begin(), order.end(), 0);
+    if (isCancelled(cancelled))
+        return fail(error, "spherical clustering was cancelled");
     std::sort(order.begin(), order.end(),
               [&unsortedCentroids](int left, int right) {
                   return centroidLess(unsortedCentroids, left, right);
               });
+    if (isCancelled(cancelled))
+        return fail(error, "spherical clustering was cancelled");
     std::vector<int> remap(static_cast<std::size_t>(clusterCount), -1);
     std::vector<float> sortedCentroids;
     std::vector<std::uint64_t> sortedPopulations;
@@ -501,6 +526,8 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
     sortedConcentrations.reserve(static_cast<std::size_t>(clusterCount));
     for (int sorted = 0; sorted < clusterCount; ++sorted)
     {
+        if (isCancelled(cancelled))
+            return fail(error, "spherical clustering was cancelled");
         const int old = order[static_cast<std::size_t>(sorted)];
         remap[static_cast<std::size_t>(old)] = sorted;
         const std::size_t offset =
@@ -518,6 +545,8 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
     std::vector<int> fullAssignments(sampleCount, -1);
     for (std::size_t row = 0; row < sampleIndices.size(); ++row)
     {
+        if ((row & 255u) == 0u && isCancelled(cancelled))
+            return fail(error, "spherical clustering was cancelled");
         fullAssignments[sampleIndices[row]] =
             remap[static_cast<std::size_t>(assignments[row])];
     }
@@ -551,6 +580,8 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
     candidate.limitations =
         std::make_shared<const std::vector<std::string>>(
             std::move(limitations));
+    if (isCancelled(cancelled))
+        return fail(error, "spherical clustering was cancelled");
     output = std::move(candidate);
     return true;
 }

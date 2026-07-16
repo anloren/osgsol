@@ -282,6 +282,40 @@ namespace
                   << replayHash(serializeLatentResult(first)) << '\n';
     }
 
+    void testLocalPcaSignTieUsesLowestComponentIndex()
+    {
+        earthscience::ScienceEmbeddingPayload embedding =
+            makeLowRankFixture();
+        embedding.width = 4;
+        const std::array<std::array<float, 2>, 4> samples = {{
+            {{1.0f, -1.0f}}, {{-1.0f, 1.0f}},
+            {{2.0f, -2.0f}}, {{-2.0f, 2.0f}},
+        }};
+        std::vector<float> values(
+            samples.size() * earthscience::SCIENCE_EMBEDDING_COMPONENTS,
+            0.0f);
+        for (std::size_t sample = 0; sample < samples.size(); ++sample)
+        {
+            values[sample * 64] = samples[sample][0];
+            values[sample * 64 + 1] = samples[sample][1];
+        }
+        embedding.values = std::make_shared<const std::vector<float>>(
+            std::move(values));
+        embedding.mask =
+            std::make_shared<const std::vector<unsigned char>>(4, 1);
+        earthscience::ScienceAnalysisPayload output;
+        std::string error;
+
+        require(earthscience::ScienceAnalysisEngine::computeLocalPca(
+                    embedding, 1, output, [] { return false; }, error),
+                "equal-loading PCA fixture failed");
+        require(nearlyEqual(std::abs(output.pca.components->at(0)),
+                            std::abs(output.pca.components->at(1))) &&
+                    output.pca.components->at(0) > 0.0f &&
+                    output.pca.components->at(1) < 0.0f,
+                "PCA sign tie did not prefer the lowest component index");
+    }
+
     earthscience::ScienceEmbeddingPayload makeDirectionalGroupsFixture()
     {
         earthscience::ScienceEmbeddingPayload embedding;
@@ -362,6 +396,29 @@ namespace
         require(centroidLexicographicallyLessOrEqual(
                     *first.clusters.centroids, 0, 1),
                 "final centroids were not lexicographically ordered");
+        for (std::size_t sample = 0; sample < 8; ++sample)
+        {
+            int bestCluster = 0;
+            double bestCosine =
+                -std::numeric_limits<double>::infinity();
+            for (int cluster = 0; cluster < 2; ++cluster)
+            {
+                double cosine = 0.0;
+                for (std::size_t component = 0; component < 64; ++component)
+                {
+                    cosine += embedding.values->at(sample * 64 + component) *
+                        first.clusters.centroids->at(
+                            static_cast<std::size_t>(cluster) * 64 + component);
+                }
+                if (cosine > bestCosine)
+                {
+                    bestCosine = cosine;
+                    bestCluster = cluster;
+                }
+            }
+            require(first.clusters.assignments->at(sample) == bestCluster,
+                    "assignment id was not remapped with its sorted centroid");
+        }
         for (double concentration : *first.clusters.concentrations)
             require(concentration > 0.99 && concentration <= 1.0,
                     "cluster concentration is outside its directional range");
@@ -465,6 +522,18 @@ namespace
                         [] { return false; }, error) &&
                     error.find("2 through 8") != std::string::npos,
                 "spherical clustering accepted k outside 2 through 8");
+        earthscience::ScienceEmbeddingPayload tooFewDirections =
+            makeDirectionalGroupsFixture();
+        tooFewDirections.mask =
+            std::make_shared<const std::vector<unsigned char>>(
+                std::initializer_list<unsigned char>{1, 1, 0, 0, 0, 0, 0, 0});
+        require(!earthscience::ScienceAnalysisEngine::
+                    computeSphericalClusters(
+                        tooFewDirections, 3, output,
+                        [] { return false; }, error) &&
+                    error.find("at least k valid samples") !=
+                        std::string::npos,
+                "spherical clustering accepted k above valid sample count");
         earthscience::ScienceEmbeddingPayload zeroNorm =
             makeDirectionalGroupsFixture();
         zeroNorm.values = std::make_shared<const std::vector<float>>(
@@ -481,6 +550,71 @@ namespace
                     output.kind ==
                         earthscience::ScienceAnalysisKind::PointSeries,
                 "cancelled PCA published output or returned an imprecise error");
+    }
+
+    void testLateLatentCancellationPublishesNothing()
+    {
+        int pcaPollCount = 0;
+        earthscience::ScienceAnalysisPayload completedPca;
+        std::string error;
+        require(earthscience::ScienceAnalysisEngine::computeLocalPca(
+                    makeLowRankFixture(), 2, completedPca,
+                    [&] {
+                        ++pcaPollCount;
+                        return false;
+                    }, error),
+                "PCA cancellation checkpoint count setup failed");
+        require(pcaPollCount >= 7,
+                "PCA omitted final score or pre-publication cancellation polls");
+
+        earthscience::ScienceAnalysisPayload pcaOutput;
+        pcaOutput.kind = earthscience::ScienceAnalysisKind::PointSeries;
+        const auto sentinelMetrics =
+            std::make_shared<const std::vector<
+                earthscience::ScienceMetricResult>>(1);
+        pcaOutput.metrics = sentinelMetrics;
+        int latePcaPoll = 0;
+        require(!earthscience::ScienceAnalysisEngine::computeLocalPca(
+                    makeLowRankFixture(), 2, pcaOutput,
+                    [&] { return ++latePcaPoll == pcaPollCount; }, error) &&
+                    error.find("cancelled") != std::string::npos &&
+                    pcaOutput.kind ==
+                        earthscience::ScienceAnalysisKind::PointSeries &&
+                    pcaOutput.metrics == sentinelMetrics &&
+                    !pcaOutput.pca.components,
+                "late-cancelled PCA published over existing output");
+
+        int clusterPollCount = 0;
+        earthscience::ScienceAnalysisPayload completedClusters;
+        require(earthscience::ScienceAnalysisEngine::
+                    computeSphericalClusters(
+                        makeDirectionalGroupsFixture(), 2,
+                        completedClusters,
+                        [&] {
+                            ++clusterPollCount;
+                            return false;
+                        }, error),
+                "cluster cancellation checkpoint count setup failed");
+        require(clusterPollCount >= 12,
+                "clustering omitted bounded final-phase cancellation polls");
+
+        earthscience::ScienceAnalysisPayload clusterOutput;
+        clusterOutput.kind =
+            earthscience::ScienceAnalysisKind::RegionalChange;
+        clusterOutput.metrics = sentinelMetrics;
+        int lateClusterPoll = 0;
+        require(!earthscience::ScienceAnalysisEngine::
+                    computeSphericalClusters(
+                        makeDirectionalGroupsFixture(), 2, clusterOutput,
+                        [&] {
+                            return ++lateClusterPoll == clusterPollCount;
+                        }, error) &&
+                    error.find("cancelled") != std::string::npos &&
+                    clusterOutput.kind ==
+                        earthscience::ScienceAnalysisKind::RegionalChange &&
+                    clusterOutput.metrics == sentinelMetrics &&
+                    !clusterOutput.clusters.centroids,
+                "late-cancelled clustering published over existing output");
     }
 
     void testPointSeriesPreservesGapAndFindsLargestConsecutiveChange()
@@ -873,9 +1007,11 @@ namespace
 int main()
 {
     testLocalPcaIsCenteredLowRankAndReplayStable();
+    testLocalPcaSignTieUsesLowestComponentIndex();
     testSphericalClustersAreOrderedConvergedAndReplayStable();
     testSphericalClustersRecoverEmptyGroupsDeterministically();
     testLatentAnalysisRejectsInvalidSamplesAndCancellationPrecisely();
+    testLateLatentCancellationPublishesNothing();
     testPointSeriesPreservesGapAndFindsLargestConsecutiveChange();
     testRegionalChangeReportsExactOverlapDistributionAndHotspots();
     testRegionalValidationRejectsGridOverlapAndFiniteFailures();

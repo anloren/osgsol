@@ -14,10 +14,16 @@ namespace earthscience
 namespace
 {
     using analysisexportdetail::componentName;
+    using analysisexportdetail::CLUSTER_ASSIGNMENT;
+    using analysisexportdetail::CLUSTER_EMPTY_HANDLING;
+    using analysisexportdetail::CLUSTER_FINAL_ORDER;
+    using analysisexportdetail::CLUSTER_INITIALIZATION;
     using analysisexportdetail::CSV_MISSING_VALUE;
     using analysisexportdetail::evidenceWarnings;
     using analysisexportdetail::evidenceYears;
     using analysisexportdetail::geometryKindName;
+    using analysisexportdetail::PCA_EIGENPAIR_ORDER;
+    using analysisexportdetail::PCA_SIGN_CONVENTION;
     using analysisexportdetail::sampleCount;
     using analysisexportdetail::SCHEMA_VERSION;
     using analysisexportdetail::sortedSourceIndices;
@@ -169,11 +175,12 @@ namespace
             parameters["centeredPerComponent"] = picojson::value(true);
             parameters["componentCount"] =
                 picojson::value(static_cast<double>(pca.componentCount));
-            parameters["eigenpairOrder"] = picojson::value("descending");
+            parameters["eigenpairOrder"] =
+                picojson::value(PCA_EIGENPAIR_ORDER);
             parameters["inputComponentCount"] =
                 picojson::value(static_cast<double>(pca.inputComponentCount));
-            parameters["signConvention"] = picojson::value(
-                "largest-absolute-loading-positive; ties use lowest component index");
+            parameters["signConvention"] =
+                picojson::value(PCA_SIGN_CONVENTION);
             parameters["standardized"] = picojson::value(false);
             parameters["validSamplesOnly"] = picojson::value(true);
 
@@ -204,16 +211,18 @@ namespace
         {
             picojson::object parameters;
             parameters["assignment"] =
-                picojson::value("double-precision cosine");
-            parameters["emptyClusterHandling"] = picojson::value(
-                "farthest assigned sample from a donor with population greater than one");
+                picojson::value(CLUSTER_ASSIGNMENT);
+            parameters["assignmentRemap"] = picojson::value(true);
+            parameters["emptyClusterHandling"] =
+                picojson::value(CLUSTER_EMPTY_HANDLING);
             parameters["finalIdOrder"] =
-                picojson::value("lexicographic centroid order");
-            parameters["initialization"] = picojson::value(
-                "deterministic farthest-first in input traversal order");
+                picojson::value(CLUSTER_FINAL_ORDER);
+            parameters["initialization"] =
+                picojson::value(CLUSTER_INITIALIZATION);
             parameters["k"] = picojson::value(
                 static_cast<double>(clusters.clusterCount));
             parameters["maxIterations"] = picojson::value(100.0);
+            parameters["normalizedCentroidUpdates"] = picojson::value(true);
             parameters["normalizedDirections"] = picojson::value(true);
             parameters["tolerance"] = picojson::value(1.0e-6);
 

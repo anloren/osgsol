@@ -15,10 +15,16 @@ namespace earthscience
 namespace
 {
     using analysisexportdetail::componentName;
+    using analysisexportdetail::CLUSTER_ASSIGNMENT;
+    using analysisexportdetail::CLUSTER_EMPTY_HANDLING;
+    using analysisexportdetail::CLUSTER_FINAL_ORDER;
+    using analysisexportdetail::CLUSTER_INITIALIZATION;
     using analysisexportdetail::CSV_MISSING_VALUE;
     using analysisexportdetail::evidenceWarnings;
     using analysisexportdetail::evidenceYears;
     using analysisexportdetail::geometryKindName;
+    using analysisexportdetail::PCA_EIGENPAIR_ORDER;
+    using analysisexportdetail::PCA_SIGN_CONVENTION;
     using analysisexportdetail::providerVersions;
     using analysisexportdetail::sampleCount;
     using analysisexportdetail::SCHEMA_VERSION;
@@ -122,15 +128,14 @@ namespace
     std::string geometryCsv(const ScienceArtifact& artifact)
     {
         const ScienceWgs84Bounds& bounds = artifact.query.geometry.bounds;
-        std::ostringstream stream;
-        stream.imbue(std::locale::classic());
-        stream << std::setprecision(
-                   std::numeric_limits<double>::max_digits10)
-               << "west=" << bounds.west << ";south=" << bounds.south
-               << ";east=" << bounds.east << ";north=" << bounds.north
-               << ";latitude=" << artifact.query.geometry.point.latitude
-               << ";longitude=" << artifact.query.geometry.point.longitude;
-        return stream.str();
+        return "west=" + numericText(bounds.west) +
+            ";south=" + numericText(bounds.south) +
+            ";east=" + numericText(bounds.east) +
+            ";north=" + numericText(bounds.north) +
+            ";latitude=" +
+                numericText(artifact.query.geometry.point.latitude) +
+            ";longitude=" +
+                numericText(artifact.query.geometry.point.longitude);
     }
 
     std::vector<std::string> algorithmNames(
@@ -153,9 +158,11 @@ namespace
             artifact.analysis.pca.eigenvalues)
         {
             parameters.push_back(
-                "pca:centered-per-component=true;standardized=false;"
-                "solver=Eigen-SelfAdjointEigenSolver;order=descending;"
-                "sign=largest-absolute-positive-tie-lowest-index;components=" +
+                std::string("pca:valid-samples-only=true;") +
+                "centered-per-component=true;standardized=false;"
+                "solver=Eigen-SelfAdjointEigenSolver;order=" +
+                PCA_EIGENPAIR_ORDER + ";sign=" + PCA_SIGN_CONVENTION +
+                ";components=" +
                 std::to_string(artifact.analysis.pca.componentCount));
         }
         if (artifact.analysis.clusters.clusterCount > 0 ||
@@ -164,9 +171,12 @@ namespace
             parameters.push_back(
                 "spherical-k-means:k=" +
                 std::to_string(artifact.analysis.clusters.clusterCount) +
-                ";init=deterministic-farthest-first;cosine=double;"
-                "tolerance=1e-6;max-iterations=100;"
-                "final-order=lexicographic-centroid");
+                ";directions=normalized;centroid-updates=normalized;init=" +
+                CLUSTER_INITIALIZATION + ";assignment=" +
+                CLUSTER_ASSIGNMENT + ";empty-clusters=" +
+                CLUSTER_EMPTY_HANDLING +
+                ";tolerance=1e-6;max-iterations=100;final-order=" +
+                CLUSTER_FINAL_ORDER + ";assignment-remap=true");
         }
         return join(parameters, "|");
     }

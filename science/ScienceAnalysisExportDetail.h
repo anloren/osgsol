@@ -22,6 +22,17 @@ namespace analysisexportdetail
     inline constexpr const char* SCHEMA_VERSION =
         "osgsol-science-analysis-evidence-v1";
     inline constexpr const char* CSV_MISSING_VALUE = "NA";
+    inline constexpr const char* PCA_EIGENPAIR_ORDER = "descending";
+    inline constexpr const char* PCA_SIGN_CONVENTION =
+        "largest-absolute-loading-positive-tie-lowest-component-index";
+    inline constexpr const char* CLUSTER_ASSIGNMENT =
+        "double-precision-cosine";
+    inline constexpr const char* CLUSTER_EMPTY_HANDLING =
+        "deterministic-farthest-donor-population-gt-one";
+    inline constexpr const char* CLUSTER_FINAL_ORDER =
+        "lexicographic-centroid";
+    inline constexpr const char* CLUSTER_INITIALIZATION =
+        "deterministic-farthest-first-input-traversal";
 
     inline std::vector<int> evidenceYears(const ScienceArtifact& artifact)
     {

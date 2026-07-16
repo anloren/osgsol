@@ -2,6 +2,8 @@
 
 #include "picojson.h"
 
+#include <algorithm>
+#include <clocale>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -151,23 +153,110 @@ namespace
         return stream.str();
     }
 
-    class CommaNumpunct : public std::numpunct<char>
+    std::vector<std::vector<std::string>> parseCsv(
+        const std::string& csv)
     {
-    protected:
-        char do_decimal_point() const override { return ','; }
+        std::vector<std::vector<std::string>> records;
+        std::vector<std::string> record;
+        std::string field;
+        bool quoted = false;
+        for (std::size_t index = 0; index < csv.size(); ++index)
+        {
+            const char character = csv[index];
+            if (quoted)
+            {
+                if (character == '"')
+                {
+                    if (index + 1 < csv.size() && csv[index + 1] == '"')
+                    {
+                        field.push_back('"');
+                        ++index;
+                    }
+                    else
+                        quoted = false;
+                }
+                else
+                    field.push_back(character);
+            }
+            else if (character == '"')
+                quoted = true;
+            else if (character == ',')
+            {
+                record.push_back(std::move(field));
+                field.clear();
+            }
+            else if (character == '\n')
+            {
+                record.push_back(std::move(field));
+                field.clear();
+                records.push_back(std::move(record));
+                record.clear();
+            }
+            else if (character != '\r')
+                field.push_back(character);
+        }
+        if (!field.empty() || !record.empty())
+        {
+            record.push_back(std::move(field));
+            records.push_back(std::move(record));
+        }
+        require(!quoted, "CSV parser ended inside a quoted field");
+        return records;
+    }
+
+    const std::string& csvField(
+        const std::vector<std::vector<std::string>>& records,
+        std::size_t recordIndex, const std::string& name)
+    {
+        require(records.size() > recordIndex && !records.empty(),
+                "CSV record is missing");
+        const std::vector<std::string>& header = records.front();
+        const auto found = std::find(header.begin(), header.end(), name);
+        require(found != header.end(), "CSV field is missing");
+        const std::size_t fieldIndex = static_cast<std::size_t>(
+            std::distance(header.begin(), found));
+        require(records[recordIndex].size() == header.size(),
+                "CSV record shape does not match its header");
+        return records[recordIndex][fieldIndex];
+    }
+
+    class ScopedNumericLocale
+    {
+    public:
+        explicit ScopedNumericLocale(const char* localeName)
+        {
+            const char* current = std::setlocale(LC_NUMERIC, nullptr);
+            require(current != nullptr,
+                    "could not read the current C numeric locale");
+            _previous = current;
+            require(std::setlocale(LC_NUMERIC, localeName) != nullptr,
+                    "required non-C numeric locale is unavailable");
+        }
+
+        ~ScopedNumericLocale()
+        {
+            std::setlocale(LC_NUMERIC, _previous.c_str());
+        }
+
+        ScopedNumericLocale(const ScopedNumericLocale&) = delete;
+        ScopedNumericLocale& operator=(const ScopedNumericLocale&) = delete;
+
+    private:
+        std::string _previous;
     };
 
     void testJsonIsParseableCompleteEscapedAndDeterministic()
     {
         const earthscience::ScienceArtifact artifact = makeEvidenceFixture();
-        const std::locale previous = std::locale();
-        std::locale::global(std::locale(
-            std::locale::classic(), new CommaNumpunct));
+        const ScopedNumericLocale numericLocale("de_DE.UTF-8");
+        require(std::string(std::localeconv()->decimal_point) == ",",
+                "selected C numeric locale does not use a decimal comma");
         const std::string first = earthscience::exportAnalysisJson(
             artifact, earthscience::ScienceExportOptions{});
         const std::string second = earthscience::exportAnalysisJson(
             artifact, earthscience::ScienceExportOptions{});
-        std::locale::global(previous);
+        const std::string csv = earthscience::exportAnalysisCsv(
+            artifact, earthscience::ScienceExportOptions{});
 
         require(first == second,
                 "JSON evidence changed on deterministic replay");
@@ -175,6 +264,8 @@ namespace
                   << replayHash(first) << '\n';
         require(first.find("100.25") != std::string::npos,
                 "JSON numeric formatting followed the process locale");
+        require(csv.find("west=100.25") != std::string::npos,
+                "CSV numeric formatting followed the C numeric locale");
         picojson::value document;
         const std::string parseError = picojson::parse(document, first);
         require(parseError.empty() && document.is<picojson::object>(),
@@ -203,6 +294,40 @@ namespace
                         algorithm.get<picojson::object>().count(
                             "parameters") == 1,
                     "JSON algorithm omitted reproducibility parameters");
+            const picojson::object& algorithmObject =
+                algorithm.get<picojson::object>();
+            const picojson::object& parameters =
+                algorithmObject.at("parameters").get<picojson::object>();
+            if (algorithmObject.at("name").get<std::string>() ==
+                "centered-pca")
+            {
+                require(parameters.at("validSamplesOnly").get<bool>() &&
+                            parameters.at("centeredPerComponent").get<bool>() &&
+                            !parameters.at("standardized").get<bool>() &&
+                            parameters.at("eigenpairOrder").get<std::string>() ==
+                                "descending" &&
+                            parameters.at("signConvention").get<std::string>() ==
+                                "largest-absolute-loading-positive-tie-"
+                                "lowest-component-index",
+                        "JSON PCA contract is incomplete");
+            }
+            else
+            {
+                require(parameters.at("normalizedDirections").get<bool>() &&
+                            parameters.count("normalizedCentroidUpdates") == 1 &&
+                            parameters.at("normalizedCentroidUpdates").get<bool>() &&
+                            parameters.at("initialization").get<std::string>() ==
+                                "deterministic-farthest-first-input-traversal" &&
+                            parameters.at("assignment").get<std::string>() ==
+                                "double-precision-cosine" &&
+                            parameters.at("emptyClusterHandling").get<std::string>() ==
+                                "deterministic-farthest-donor-population-gt-one" &&
+                            parameters.at("finalIdOrder").get<std::string>() ==
+                                "lexicographic-centroid" &&
+                            parameters.count("assignmentRemap") == 1 &&
+                            parameters.at("assignmentRemap").get<bool>(),
+                        "JSON spherical k-means contract is incomplete");
+            }
         }
         const picojson::object& source = root.at("sources")
             .get<picojson::array>().front().get<picojson::object>();
@@ -248,6 +373,22 @@ namespace
                     firstLine(defaultCsv).find("cluster_converged") !=
                         std::string::npos,
                 "CSV evidence omitted aggregate latent diagnostics");
+        const std::vector<std::vector<std::string>> records =
+            parseCsv(defaultCsv);
+        const std::string expectedParameters =
+            "pca:valid-samples-only=true;centered-per-component=true;"
+            "standardized=false;solver=Eigen-SelfAdjointEigenSolver;"
+            "order=descending;"
+            "sign=largest-absolute-loading-positive-tie-lowest-component-index;"
+            "components=2|spherical-k-means:k=2;directions=normalized;"
+            "centroid-updates=normalized;"
+            "init=deterministic-farthest-first-input-traversal;"
+            "assignment=double-precision-cosine;"
+            "empty-clusters=deterministic-farthest-donor-population-gt-one;"
+            "tolerance=1e-6;max-iterations=100;"
+            "final-order=lexicographic-centroid;assignment-remap=true";
+        require(csvField(records, 1, "parameters") == expectedParameters,
+                "CSV reproducibility parameters drifted from the approved contract");
 
         earthscience::ScienceExportOptions rawOptions;
         rawOptions.includeRawComponents = true;
@@ -266,12 +407,39 @@ namespace
                     "raw JSON did not contain all 64 components");
         }
     }
+
+    void testCsvUsesNaForEveryNonFiniteGeometryCoordinate()
+    {
+        earthscience::ScienceArtifact artifact = makeEvidenceFixture();
+        artifact.query.geometry.bounds.west =
+            std::numeric_limits<double>::quiet_NaN();
+        artifact.query.geometry.bounds.north =
+            std::numeric_limits<double>::infinity();
+        artifact.query.geometry.point.latitude =
+            -std::numeric_limits<double>::infinity();
+        artifact.query.geometry.point.longitude =
+            std::numeric_limits<double>::quiet_NaN();
+
+        const std::vector<std::vector<std::string>> records = parseCsv(
+            earthscience::exportAnalysisCsv(
+                artifact, earthscience::ScienceExportOptions{}));
+
+        require(records.size() == 5,
+                "CSV parser did not preserve four sample records");
+        require(csvField(records, 1, "geometry") ==
+                    "west=NA;south=20.5;east=101.25;north=NA;"
+                    "latitude=NA;longitude=NA" &&
+                    csvField(records, 1, "year") == "2020" &&
+                    csvField(records, 1, "missing_representation") == "NA",
+                "CSV geometry did not use the declared NA representation");
+    }
 }
 
 int main()
 {
     testJsonIsParseableCompleteEscapedAndDeterministic();
     testCsvEscapesFieldsAndRawComponentsAreExplicitOptIn();
+    testCsvUsesNaForEveryNonFiniteGeometryCoordinate();
     std::cout << "Science analysis export tests passed\n";
     return 0;
 }
