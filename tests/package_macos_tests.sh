@@ -110,6 +110,45 @@ assert_unique_family_arch()
     ' "$records"
 }
 
+assert_bundle_dependency_closure()
+{
+    local app="$1"
+    local binary dependency dependency_name dependencies load_commands
+    dependencies="$TMP_ROOT/closure-dependencies"
+    load_commands="$TMP_ROOT/closure-load-commands"
+    while IFS= read -r -d '' binary; do
+        if ! file -b "$binary" | grep -q 'Mach-O'; then
+            continue
+        fi
+        codesign --verify --strict "$binary"
+        otool -L "$binary" > "$dependencies"
+        while IFS= read -r dependency; do
+            case "$dependency" in
+                /System/Library/*|/usr/lib/*)
+                    ;;
+                @rpath/*)
+                    dependency_name="${dependency#@rpath/}"
+                    if [ ! -e "$app/Contents/lib/$dependency_name" ]; then
+                        echo "FAIL: unresolved packaged @rpath dependency: $dependency in $binary" >&2
+                        return 1
+                    fi
+                    ;;
+                *)
+                    echo "FAIL: packaged Mach-O retains a non-system dependency: $dependency in $binary" >&2
+                    return 1
+                    ;;
+            esac
+        done < <(tail -n +2 "$dependencies" | awk '{print $1}')
+        otool -l "$binary" > "$load_commands"
+        if awk '$1 == "cmd" && $2 == "LC_RPATH" { wanted = 1; next }
+                wanted && $1 == "path" { print $2; wanted = 0 }' "$load_commands" |
+           grep -E '^/' >/dev/null; then
+            echo "FAIL: packaged Mach-O retains an absolute LC_RPATH: $binary" >&2
+            return 1
+        fi
+    done < <(find "$app/Contents" -type f -print0)
+}
+
 # A rejected invocation must leave an existing output untouched.
 mkdir -p "$APP"
 printf '%s\n' "known-good" > "$APP/keep"
@@ -265,6 +304,57 @@ expect_rejected_profile "Duplicate Mach-O UUID in packaged bundle" \
         OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
         bash "$ROOT/packaging/package_macos.sh"
 
+# A formal package must recursively close non-system dependencies instead of retaining paths to
+# the build host. Build a three-library chain entirely inside this test: the install SDK contains
+# only the root, while its middle and leaf dependencies live outside the SDK.
+EXTERNAL_INSTALL="$TMP_ROOT/external-install"
+EXTERNAL_SOURCE="$TMP_ROOT/external-source"
+EXTERNAL_OUTPUT="$TMP_ROOT/external-output/osgSol Earth.app"
+make_install_fixture "$EXTERNAL_INSTALL"
+mkdir -p "$EXTERNAL_SOURCE" "$(dirname "$EXTERNAL_OUTPUT")"
+printf '%s\n' 'int task12_leaf(void) { return 12; }' > "$EXTERNAL_SOURCE/leaf.c"
+clang -dynamiclib "$EXTERNAL_SOURCE/leaf.c" \
+    -Wl,-install_name,"$EXTERNAL_SOURCE/libtask12-leaf.dylib" \
+    -o "$EXTERNAL_SOURCE/libtask12-leaf.dylib"
+printf '%s\n' \
+    'extern int task12_leaf(void);' \
+    'int task12_middle(void) { return task12_leaf(); }' > "$EXTERNAL_SOURCE/middle.c"
+clang -dynamiclib "$EXTERNAL_SOURCE/middle.c" "$EXTERNAL_SOURCE/libtask12-leaf.dylib" \
+    -Wl,-install_name,"$EXTERNAL_SOURCE/libtask12-middle.dylib" \
+    -o "$EXTERNAL_SOURCE/libtask12-middle.dylib"
+printf '%s\n' \
+    'extern int task12_middle(void);' \
+    'int task12_root(void) { return task12_middle(); }' > "$EXTERNAL_SOURCE/root.c"
+clang -dynamiclib "$EXTERNAL_SOURCE/root.c" "$EXTERNAL_SOURCE/libtask12-middle.dylib" \
+    -Wl,-install_name,@rpath/libtask12-root.dylib \
+    -o "$EXTERNAL_INSTALL/lib/libtask12-root.dylib"
+: > "$LOG"
+env -u EARTH_AI_KEY OSGVERSE_SDK="$EXTERNAL_INSTALL" \
+    OSG_RUNTIME_SDK="$RUNTIME_SDK" OSGSOL_PACKAGE_OUTPUT="$EXTERNAL_OUTPUT" \
+    OSGSOL_PACKAGE_VERSION="$VERSION" OSGSOL_BUILD_CHANNEL="$CHANNEL" \
+    OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+    OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+    bash "$ROOT/packaging/package_macos.sh"
+if [ ! -f "$EXTERNAL_OUTPUT/Contents/lib/libtask12-middle.dylib" ]; then
+    echo "FAIL: direct non-system dependency was not copied into the package" >&2
+    exit 1
+fi
+if [ ! -f "$EXTERNAL_OUTPUT/Contents/lib/libtask12-leaf.dylib" ]; then
+    echo "FAIL: transitive non-system dependency was not copied into the package" >&2
+    exit 1
+fi
+if ! otool -L "$EXTERNAL_OUTPUT/Contents/lib/libtask12-root.dylib" |
+   awk 'NR > 1 {print $1}' | grep -qx '@rpath/libtask12-middle.dylib'; then
+    echo "FAIL: direct non-system dependency was not closed as @rpath" >&2
+    exit 1
+fi
+if ! otool -L "$EXTERNAL_OUTPUT/Contents/lib/libtask12-middle.dylib" |
+   awk 'NR > 1 {print $1}' | grep -qx '@rpath/libtask12-leaf.dylib'; then
+    echo "FAIL: transitive non-system dependency was not closed as @rpath" >&2
+    exit 1
+fi
+assert_bundle_dependency_closure "$EXTERNAL_OUTPUT"
+
 rm -rf "$APP"
 package_candidate
 
@@ -325,6 +415,7 @@ while IFS= read -r -d '' binary; do
         fi
     fi
 done < <(find "$APP/Contents" -type f -print0)
+assert_bundle_dependency_closure "$APP"
 
 collect_osg_uuid_records "$RUNTIME_SDK/lib" | sort -u > "$TMP_ROOT/runtime-uuids"
 collect_osg_uuid_records "$APP/Contents/lib" | sort -u > "$TMP_ROOT/package-uuids"
