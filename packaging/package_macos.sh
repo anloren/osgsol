@@ -4,7 +4,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDK="${OSGVERSE_SDK:-$REPO/build/sdk_core}"
-OSG_RUNTIME_SDK="${OSG_RUNTIME_SDK:-${OSG_ROOT:-}}"
+OSG_RUNTIME_SDK="${OSG_RUNTIME_SDK:-}"
 APP="${OSGSOL_PACKAGE_OUTPUT:-$REPO/dist/osgSol Earth.app}"
 VERSION="${OSGSOL_PACKAGE_VERSION:-0.3.0}"
 BUILD_CHANNEL="${OSGSOL_BUILD_CHANNEL:-developer}"
@@ -20,6 +20,39 @@ fail()
     shift
     echo "[error] $*" >&2
     exit "$code"
+}
+
+collect_osg_uuid_records()
+{
+    local root="$1"
+    local output="$2"
+    local files="$3"
+    local dylib name family
+    find -L "$root" -maxdepth 1 -type f \
+        \( -name 'libOpenThreads*.dylib' -o -name 'libosg*.dylib' \) -print0 > "$files"
+    : > "$output"
+    while IFS= read -r -d '' dylib; do
+        name="$(basename "$dylib")"
+        family="${name%%.*}"
+        dwarfdump --uuid "$dylib" |
+            awk -v family="$family" \
+                '$1 == "UUID:" {gsub(/[()]/, "", $3); print family "\t" $3 "\t" $2}' \
+                >> "$output"
+    done < "$files"
+    sort -u "$output" -o "$output"
+}
+
+assert_unique_osg_family_arch()
+{
+    local records="$1"
+    awk -F '\t' '
+        {
+            key = $1 FS $2
+            if (key in seen && seen[key] != $3) bad = 1
+            seen[key] = $3
+        }
+        END { exit bad }
+    ' "$records"
 }
 
 # Reject every invalid invocation before creating, deleting, or moving output.
@@ -112,28 +145,36 @@ APP_PARENT="$(cd "$APP_PARENT" && pwd)"
 APP="$APP_PARENT/osgSol Earth.app"
 BUILD_APP="$APP_PARENT/.osgSol Earth.app.packaging.$$"
 PREVIOUS_APP="$APP_PARENT/.osgSol Earth.app.previous.$$"
+AUDIT_DIR="$APP_PARENT/.osgSol Earth.app.audit.$$"
 
 cleanup()
 {
     rm -rf "$BUILD_APP"
+    rm -rf "$AUDIT_DIR"
     if [ -e "$PREVIOUS_APP" ] && [ ! -e "$APP" ]; then
         mv "$PREVIOUS_APP" "$APP"
     fi
 }
 trap cleanup EXIT
 
-rm -rf "$BUILD_APP" "$PREVIOUS_APP"
+rm -rf "$BUILD_APP" "$PREVIOUS_APP" "$AUDIT_DIR"
 mkdir -p "$BUILD_APP/Contents/MacOS"
 mkdir -p "$BUILD_APP/Contents/lib/$PLUGVER"
 mkdir -p "$BUILD_APP/Contents/bin"
+mkdir -p "$AUDIT_DIR"
 
 # Executable and all runtime libraries come only from the explicit install/runtime trees.
 cp "$SDK/bin/$SOURCE_EXECUTABLE" "$BUILD_APP/Contents/MacOS/$PRODUCT_EXECUTABLE"
-for lib_root in "$OSG_RUNTIME_SDK/lib" "$SDK/lib"; do
-    for file in "$lib_root/"*.dylib "$lib_root/"*.so; do
-        [ -e "$file" ] || continue
-        cp -a "$file" "$BUILD_APP/Contents/lib/"
-    done
+for file in "$SDK/lib/"*.dylib "$SDK/lib/"*.so; do
+    [ -e "$file" ] || continue
+    cp -a "$file" "$BUILD_APP/Contents/lib/"
+done
+# Only the OSG/OpenThreads closure comes authoritatively from the explicit runtime. Overwriting
+# osgVerse libraries here would mix an older application ABI into the freshly built candidate.
+for file in "$OSG_RUNTIME_SDK/lib/"libOpenThreads*.dylib \
+            "$OSG_RUNTIME_SDK/lib/"libosg*.dylib; do
+    [ -e "$file" ] || continue
+    cp -a "$file" "$BUILD_APP/Contents/lib/"
 done
 
 for plugin_root in "$OSG_RUNTIME_SDK/lib/$PLUGVER" "$SDK/lib/$PLUGVER"; do
@@ -180,29 +221,37 @@ done
 # A runtime SDK may be reached through a symlink while its binaries retain the real build path.
 # Remove every absolute LC_RPATH; the bundle-local @loader_path/@executable_path entries above are
 # the complete runtime search policy for the packaged application.
+find "$BUILD_APP/Contents" -type f -print0 > "$AUDIT_DIR/macho-files"
+: > "$AUDIT_DIR/all-macho-uuids"
 while IFS= read -r -d '' binary; do
-    if ! file -b "$binary" | grep -q 'Mach-O'; then
+    file_description="$(file -b "$binary")"
+    if [[ "$file_description" != *Mach-O* ]]; then
         continue
     fi
+    dwarfdump --uuid "$binary" >> "$AUDIT_DIR/all-macho-uuids"
+    otool -l "$binary" > "$AUDIT_DIR/load-commands"
+    awk '$1 == "cmd" && $2 == "LC_RPATH" { wanted = 1; next }
+         wanted && $1 == "path" { print $2; wanted = 0 }' \
+        "$AUDIT_DIR/load-commands" > "$AUDIT_DIR/rpaths"
     while IFS= read -r rpath; do
         case "$rpath" in
             /*)
                 install_name_tool -delete_rpath "$rpath" "$binary"
                 ;;
         esac
-    done < <(otool -l "$binary" |
-        awk '$1 == "cmd" && $2 == "LC_RPATH" { wanted = 1; next }
-             wanted && $1 == "path" { print $2; wanted = 0 }')
-done < <(find "$BUILD_APP/Contents" -type f -print0)
+    done < "$AUDIT_DIR/rpaths"
+done < "$AUDIT_DIR/macho-files"
 
 # A fresh CMake build may encode absolute Homebrew OSG paths while osgVerse libraries use @rpath.
 # Loading both identities creates two OSG runtimes in one process and corrupts GL dispatch. Rewrite
 # every dependency whose basename is already bundled to the single bundle-local @rpath identity.
 while IFS= read -r -d '' binary; do
-    if ! file -b "$binary" | grep -q 'Mach-O'; then
+    file_description="$(file -b "$binary")"
+    if [[ "$file_description" != *Mach-O* ]]; then
         continue
     fi
-    dylib_id="$(otool -D "$binary" 2>/dev/null | sed -n '2p')"
+    otool -D "$binary" > "$AUDIT_DIR/dylib-id"
+    dylib_id="$(sed -n '2p' "$AUDIT_DIR/dylib-id")"
     if [ -n "$dylib_id" ]; then
         dylib_id_name="$(basename "$dylib_id")"
         if [ -e "$BUILD_APP/Contents/lib/$dylib_id_name" ] &&
@@ -210,6 +259,8 @@ while IFS= read -r -d '' binary; do
             install_name_tool -id "@rpath/$dylib_id_name" "$binary" 2>/dev/null
         fi
     fi
+    otool -L "$binary" > "$AUDIT_DIR/dependencies"
+    awk 'NR > 1 {print $1}' "$AUDIT_DIR/dependencies" > "$AUDIT_DIR/dependency-list"
     while IFS= read -r dependency; do
         dependency_name="$(basename "$dependency")"
         if [ -e "$BUILD_APP/Contents/lib/$dependency_name" ] &&
@@ -217,23 +268,61 @@ while IFS= read -r -d '' binary; do
             install_name_tool -change "$dependency" "@rpath/$dependency_name" "$binary" \
                 2>/dev/null
         fi
-    done < <(otool -L "$binary" | awk 'NR > 1 {print $1}')
-done < <(find "$BUILD_APP/Contents" -type f -print0)
+    done < "$AUDIT_DIR/dependency-list"
+done < "$AUDIT_DIR/macho-files"
+
+if [ ! -s "$AUDIT_DIR/all-macho-uuids" ]; then
+    fail 67 "Packaged bundle contains no auditable Mach-O UUIDs"
+fi
+DUPLICATE_UUIDS="$(awk '$1 == "UUID:" {print $2}' "$AUDIT_DIR/all-macho-uuids" |
+    sort | uniq -d)"
+if [ -n "$DUPLICATE_UUIDS" ]; then
+    fail 67 "Duplicate Mach-O UUID in packaged bundle: $DUPLICATE_UUIDS"
+fi
+
+collect_osg_uuid_records "$OSG_RUNTIME_SDK/lib" "$AUDIT_DIR/runtime-osg-uuids" \
+    "$AUDIT_DIR/runtime-osg-files"
+collect_osg_uuid_records "$BUILD_APP/Contents/lib" "$AUDIT_DIR/package-osg-uuids" \
+    "$AUDIT_DIR/package-osg-files"
+if [ ! -s "$AUDIT_DIR/runtime-osg-uuids" ] || [ ! -s "$AUDIT_DIR/package-osg-uuids" ]; then
+    fail 67 "OSG runtime UUID audit produced no records"
+fi
+if ! assert_unique_osg_family_arch "$AUDIT_DIR/runtime-osg-uuids" ||
+   ! assert_unique_osg_family_arch "$AUDIT_DIR/package-osg-uuids"; then
+    fail 67 "Multiple OSG UUIDs found for one family and architecture"
+fi
+if ! cmp -s "$AUDIT_DIR/runtime-osg-uuids" "$AUDIT_DIR/package-osg-uuids"; then
+    fail 67 "Packaged OSG UUIDs do not match the explicit runtime SDK"
+fi
 
 # Every relocated @rpath edge must resolve and no packaged Mach-O may retain an install-tree or
 # OSG-runtime-tree path. Python remains a separately recorded clean-machine distribution debt.
 while IFS= read -r -d '' binary; do
-    if ! file -b "$binary" | grep -q 'Mach-O'; then
+    file_description="$(file -b "$binary")"
+    if [[ "$file_description" != *Mach-O* ]]; then
         continue
     fi
-    dylib_id="$(otool -D "$binary" 2>/dev/null | sed -n '2p')"
-    if otool -l "$binary" |
-       awk '$1 == "cmd" && $2 == "LC_RPATH" { wanted = 1; next }
-            wanted && $1 == "path" { print $2; wanted = 0 }' |
-       grep -E '^/' >/dev/null; then
+    otool -D "$binary" > "$AUDIT_DIR/dylib-id"
+    dylib_id="$(sed -n '2p' "$AUDIT_DIR/dylib-id")"
+    otool -l "$binary" > "$AUDIT_DIR/load-commands"
+    awk '$1 == "cmd" && $2 == "LC_RPATH" { wanted = 1; next }
+         wanted && $1 == "path" { print $2; wanted = 0 }' \
+        "$AUDIT_DIR/load-commands" > "$AUDIT_DIR/rpaths"
+    if grep -E '^/' "$AUDIT_DIR/rpaths" >/dev/null; then
         fail 67 "Absolute LC_RPATH remains in packaged binary: $binary"
     fi
+    otool -L "$binary" > "$AUDIT_DIR/dependencies"
+    awk 'NR > 1 {print $1}' "$AUDIT_DIR/dependencies" > "$AUDIT_DIR/dependency-list"
     while IFS= read -r dependency; do
+        if [[ "$dependency" == "$SDK"/* ]] ||
+           [[ "$dependency" == "$OSG_RUNTIME_SDK"/* ]]; then
+            fail 67 "Unrelocated SDK dependency: $dependency in $binary"
+        fi
+        case "$dependency" in
+            /Users/*|/private/*)
+                fail 67 "Private dependency remains in packaged binary: $dependency in $binary"
+                ;;
+        esac
         if [ -n "$dylib_id" ] && [ "$dependency" = "$dylib_id" ]; then
             continue
         fi
@@ -244,12 +333,8 @@ while IFS= read -r -d '' binary; do
                 fi
                 ;;
         esac
-        if [[ "$dependency" == "$SDK"/* ]] ||
-           [[ "$dependency" == "$OSG_RUNTIME_SDK"/* ]]; then
-            fail 67 "Unrelocated SDK dependency: $dependency in $binary"
-        fi
-    done < <(otool -L "$binary" | awk 'NR > 1 {print $1}')
-done < <(find "$BUILD_APP/Contents" -type f -print0)
+    done < "$AUDIT_DIR/dependency-list"
+done < "$AUDIT_DIR/macho-files"
 
 cat > "$BUILD_APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -298,6 +383,7 @@ if [ -e "$APP" ]; then
 fi
 mv "$BUILD_APP" "$APP"
 rm -rf "$PREVIOUS_APP"
+rm -rf "$AUDIT_DIR"
 trap - EXIT
 
 echo "Built and verified staging bundle: $APP"

@@ -8,14 +8,11 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SDK="${OSGVERSE_SDK:-$ROOT/build/sdk_core}"
-DEFAULT_RUNTIME_SDK="$SDK"
-if command -v brew >/dev/null 2>&1; then
-    BREW_RUNTIME_SDK="$(brew --prefix open-scene-graph 2>/dev/null || true)"
-    if [ -n "$BREW_RUNTIME_SDK" ]; then
-        DEFAULT_RUNTIME_SDK="$BREW_RUNTIME_SDK"
-    fi
+RUNTIME_SDK="${OSG_RUNTIME_SDK:-}"
+if [ -z "$RUNTIME_SDK" ]; then
+    echo "FAIL: OSG_RUNTIME_SDK must be explicit for the packaging contract" >&2
+    exit 64
 fi
-RUNTIME_SDK="${OSG_RUNTIME_SDK:-${OSG_ROOT:-$DEFAULT_RUNTIME_SDK}}"
 TMP_ROOT="$(mktemp -d -t osgsol-package-contract.XXXXXX)"
 APP="$TMP_ROOT/osgSol Earth.app"
 LOG="$TMP_ROOT/package.log"
@@ -67,6 +64,22 @@ expect_rejected_profile()
     grep -q "known-good" "$APP/keep"
 }
 
+make_install_fixture()
+{
+    local root="$1"
+    local directory file
+    mkdir -p "$root/bin" "$root/lib"
+    ln -s "$SDK/bin/osgVerse_EarthExplorer" "$root/bin/osgVerse_EarthExplorer"
+    cp "$SDK/lib/libosgVersePipeline.a" "$root/lib/libosgVersePipeline.a"
+    for file in "$SDK/lib/"*.dylib "$SDK/lib/"*.so; do
+        [ -e "$file" ] || continue
+        cp -a "$file" "$root/lib/"
+    done
+    for directory in shaders skyboxes textures misc models; do
+        mkdir -p "$root/$directory"
+    done
+}
+
 collect_osg_uuid_records()
 {
     local root="$1"
@@ -97,25 +110,22 @@ assert_unique_family_arch()
     ' "$records"
 }
 
-audit_unique_macho_uuids()
-{
-    local app="$1"
-    local records="$TMP_ROOT/all-macho-uuids"
-    local binary duplicates
-    : > "$records"
-    while IFS= read -r -d '' binary; do
-        if file -b "$binary" | grep -q 'Mach-O'; then
-            dwarfdump --uuid "$binary" >> "$records"
-        fi
-    done < <(find "$app/Contents" -type f -print0)
-    test -s "$records"
-    duplicates="$(awk '$1 == "UUID:" {print $2}' "$records" | sort | uniq -d)"
-    test -z "$duplicates"
-}
-
 # A rejected invocation must leave an existing output untouched.
 mkdir -p "$APP"
 printf '%s\n' "known-good" > "$APP/keep"
+if env -u EARTH_AI_KEY -u OSG_RUNTIME_SDK \
+   OSG_ROOT="$RUNTIME_SDK" OSGVERSE_SDK="$SDK" \
+   OSGSOL_PACKAGE_OUTPUT="$APP" OSGSOL_PACKAGE_VERSION="$VERSION" \
+   OSGSOL_BUILD_CHANNEL="$CHANNEL" OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" \
+   OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+   OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+   bash "$ROOT/packaging/package_macos.sh" >"$LOG" 2>&1; then
+    echo "FAIL: packaging accepted inherited OSG_ROOT without explicit OSG_RUNTIME_SDK" >&2
+    exit 1
+fi
+grep -q "OSG_RUNTIME_SDK must explicitly select" "$LOG"
+grep -q "known-good" "$APP/keep"
+
 if EARTH_AI_KEY="wave0-secret-must-not-ship" \
    OSGVERSE_SDK="$SDK" OSG_RUNTIME_SDK="$RUNTIME_SDK" \
    OSGSOL_PACKAGE_OUTPUT="$APP" OSGSOL_PACKAGE_VERSION="$VERSION" \
@@ -206,6 +216,55 @@ expect_rejected_profile "OSG runtime SDK is not GLCore" \
         OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
         bash "$ROOT/packaging/package_macos.sh"
 
+# A generic private dependency must be rejected by the production pre-publication audit, not only
+# by this test's post-package inspection.
+PRIVATE_INSTALL="$TMP_ROOT/private-install"
+make_install_fixture "$PRIVATE_INSTALL"
+private_source="$(find "$PRIVATE_INSTALL/lib" -maxdepth 1 -type f -name '*.so' -print -quit)"
+test -n "$private_source"
+private_probe="$private_source"
+private_dependency="$(otool -L "$private_probe" |
+    awk 'NR > 1 && $1 ~ "^/(usr|System)/" { print $1; exit }')"
+test -n "$private_dependency"
+install_name_tool -change "$private_dependency" \
+    "/private/osgsol-task12/libtask12-missing.dylib" "$private_probe"
+expect_rejected_profile "Private dependency remains in packaged binary" \
+    env -u EARTH_AI_KEY OSGVERSE_SDK="$PRIVATE_INSTALL" \
+        OSG_RUNTIME_SDK="$RUNTIME_SDK" OSGSOL_PACKAGE_OUTPUT="$APP" \
+        OSGSOL_PACKAGE_VERSION="$VERSION" OSGSOL_BUILD_CHANNEL="$CHANNEL" \
+        OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+        OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+        bash "$ROOT/packaging/package_macos.sh"
+
+PRIVATE_ID_INSTALL="$TMP_ROOT/private-id-install"
+make_install_fixture "$PRIVATE_ID_INSTALL"
+private_id_probe="$(find "$PRIVATE_ID_INSTALL/lib" -maxdepth 1 -type f -name '*.so' -print -quit)"
+test -n "$private_id_probe"
+install_name_tool -id "/private/osgsol-task12/libtask12-private-id.dylib" "$private_id_probe"
+expect_rejected_profile "Private dependency remains in packaged binary" \
+    env -u EARTH_AI_KEY OSGVERSE_SDK="$PRIVATE_ID_INSTALL" \
+        OSG_RUNTIME_SDK="$RUNTIME_SDK" OSGSOL_PACKAGE_OUTPUT="$APP" \
+        OSGSOL_PACKAGE_VERSION="$VERSION" OSGSOL_BUILD_CHANNEL="$CHANNEL" \
+        OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+        OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+        bash "$ROOT/packaging/package_macos.sh"
+
+# A second file with an existing Mach-O UUID must be rejected by the production audit before the
+# known-good output is replaced.
+DUPLICATE_INSTALL="$TMP_ROOT/duplicate-install"
+make_install_fixture "$DUPLICATE_INSTALL"
+duplicate_fixture_source="$(find "$RUNTIME_SDK/lib" -maxdepth 1 -type f \
+    -name 'libosg*.dylib' -print -quit)"
+test -n "$duplicate_fixture_source"
+cp "$duplicate_fixture_source" "$DUPLICATE_INSTALL/lib/task12-duplicate-uuid.dylib"
+expect_rejected_profile "Duplicate Mach-O UUID in packaged bundle" \
+    env -u EARTH_AI_KEY OSGVERSE_SDK="$DUPLICATE_INSTALL" \
+        OSG_RUNTIME_SDK="$RUNTIME_SDK" OSGSOL_PACKAGE_OUTPUT="$APP" \
+        OSGSOL_PACKAGE_VERSION="$VERSION" OSGSOL_BUILD_CHANNEL="$CHANNEL" \
+        OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+        OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+        bash "$ROOT/packaging/package_macos.sh"
+
 rm -rf "$APP"
 package_candidate
 
@@ -278,18 +337,6 @@ if ! cmp -s "$TMP_ROOT/runtime-uuids" "$TMP_ROOT/package-uuids"; then
     diff -u "$TMP_ROOT/runtime-uuids" "$TMP_ROOT/package-uuids" >&2 || true
     exit 1
 fi
-
-# Mutation proof: the UUID gate must reject a second copy of any packaged Mach-O identity.
-duplicate_source="$(find "$APP/Contents/lib" -type f -name 'libosg*.dylib' -print -quit)"
-test -n "$duplicate_source"
-mkdir -p "$APP/Contents/lib/task12-duplicate"
-cp "$duplicate_source" "$APP/Contents/lib/task12-duplicate/$(basename "$duplicate_source")"
-if audit_unique_macho_uuids "$APP"; then
-    echo "FAIL: duplicate Mach-O UUID mutation was accepted" >&2
-    exit 1
-fi
-rm -rf "$APP/Contents/lib/task12-duplicate"
-audit_unique_macho_uuids "$APP"
 
 env -u EARTH_AI_KEY -u OSG_LIBRARY_PATH HOME="$HOME_DIR" EARTH_IME=0 \
     EARTH_OFFSCREEN=1 EARTH_AUTOCAP=100 \
