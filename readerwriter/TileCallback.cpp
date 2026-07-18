@@ -141,6 +141,14 @@ osg::Texture* TileCallback::createLayerImage(LayerType id, bool& emptyPath, cons
         osg::ref_ptr<osg::Image> image = rw ? rw->readImage(url, opt).takeImage() : NULL;
         //osg::ref_ptr<osg::Image> image = osgDB::readImageFile(url, opt);
         if (!image) return NULL;
+        if (isUnsupportedGoogleZoomImage(url, *image))
+        {
+            static std::atomic<bool> reported(false);
+            if (!reported.exchange(true))
+                OSG_NOTICE << "[TileCallback] rejected decoded Google unsupported-zoom "
+                           << "placeholder; keeping parent LOD" << std::endl;
+            return NULL;
+        }
         if (id == ELEVATION && _elevationEncoding == TERRARIUM_ELEVATION &&
             image->getDataType() == GL_UNSIGNED_BYTE)
         {

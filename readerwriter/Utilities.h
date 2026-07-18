@@ -4,6 +4,7 @@
 #include <osg/Transform>
 #include <osg/Geometry>
 #include <osg/Camera>
+#include <osg/Image>
 #include <osgDB/ReaderWriter>
 #ifdef __EMSCRIPTEN__
 #   include <emscripten/fetch.h>
@@ -446,6 +447,10 @@ namespace osgVerse
     /** True only for the exact known Google "Zoom Level Not Supported" PNG response. */
     OSGVERSE_RW_EXPORT bool isUnsupportedGoogleZoomTile(
             const std::string& url, const std::vector<unsigned char>& bytes);
+
+    /** Same known Google placeholder after decoding, independent of the HTTPS/cache reader. */
+    OSGVERSE_RW_EXPORT bool isUnsupportedGoogleZoomImage(
+            const std::string& url, const osg::Image& image);
 
     /** Get [mimetype, extension] map data, or reversed [extension, mimetype] */
     OSGVERSE_RW_EXPORT std::map<std::string, std::string> createMimeTypeMapper(bool reversed = false);

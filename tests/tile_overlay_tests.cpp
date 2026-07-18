@@ -89,6 +89,21 @@ public:
     mutable std::vector<std::string> requests;
 };
 
+class FixedImageReader : public osgDB::ReaderWriter
+{
+public:
+    explicit FixedImageReader(osg::Image* image) : _image(image)
+    { supportsProtocol("https", "Decoded placeholder fixture"); }
+    virtual const char* className() const { return "Decoded placeholder fixture reader"; }
+    virtual ReadResult readImage(const std::string&, const Options*) const
+    {
+        if (!_image.valid()) return ReadResult::FILE_NOT_FOUND;
+        return new osg::Image(*_image, osg::CopyOp::DEEP_COPY_IMAGES);
+    }
+private:
+    osg::ref_ptr<osg::Image> _image;
+};
+
 class TestableTileCallback : public osgVerse::TileCallback
 {
 public:
@@ -243,6 +258,60 @@ int main(int, char**)
         std::cout << "[tile_overlay_tests] Google unsupported-zoom negative cache OK"
                   << std::endl;
     }
+
+    // ---- 已解码的 Google 占位图也必须在贴到瓦片前拒绝 ----
+    // osgDB FileCache 或另一 https ReaderWriter 可以绕过 loadFileData 的原始字节过滤；
+    // 这里模拟该生产路径，确保 Google 占位图不成为底图纹理，自定义源的相同图像不误伤。
+#if defined(OSGVERSE_IMAGE_PLUGIN_PATH)
+    {
+        CHECK(osgDB::Registry::instance()->loadLibrary(OSGVERSE_IMAGE_PLUGIN_PATH) !=
+              osgDB::Registry::NOT_LOADED);
+        osgDB::ReaderWriter* imageReader =
+            osgDB::Registry::instance()->getReaderWriterForExtension("verse_image");
+        CHECK(imageReader != NULL);
+
+        const std::vector<unsigned char> unsupported =
+            decodeBase64(googleUnsupportedZoomPngBase64());
+        std::string encoded((const char*)unsupported.data(), unsupported.size());
+        std::stringstream stream(encoded, std::ios::in | std::ios::binary);
+        osg::ref_ptr<osgDB::Options> decodeOptions = new osgDB::Options;
+        decodeOptions->setPluginStringData("STREAM_FILENAME", "unsupported.png");
+        osg::ref_ptr<osg::Image> decoded =
+            imageReader->readImage(stream, decodeOptions.get()).takeImage();
+        CHECK(decoded.valid());
+        CHECK(decoded->s() == 256 && decoded->t() == 256);
+
+        osg::ref_ptr<FixedImageReader> fixture = new FixedImageReader(decoded.get());
+        osgDB::Registry::instance()->addReaderWriter(fixture.get());
+
+        osg::ref_ptr<osgVerse::TileCallback> google =
+            new osgVerse::TileCallback(false);
+        google->setLayerPath(osgVerse::TileCallback::ORTHOPHOTO,
+            "https://mt1.google.com/vt/lyrs=s&x=1&y=2&z=99");
+        google->setTileNumber(1, 2, 99);
+        bool emptyPath = false;
+        osg::ref_ptr<osg::Texture> rejected = google->createLayerImage(
+            osgVerse::TileCallback::ORTHOPHOTO, emptyPath, NULL);
+        CHECK(!emptyPath);
+        CHECK(!rejected.valid());
+
+        osg::ref_ptr<osgVerse::TileCallback> custom =
+            new osgVerse::TileCallback(false);
+        custom->setLayerPath(osgVerse::TileCallback::ORTHOPHOTO,
+            "https://tiles.example.invalid/vt/lyrs=s&x=1&y=2&z=99");
+        custom->setTileNumber(1, 2, 99);
+        osg::ref_ptr<osg::Texture> preserved = custom->createLayerImage(
+            osgVerse::TileCallback::ORTHOPHOTO, emptyPath, NULL);
+        CHECK(!emptyPath);
+        CHECK(preserved.valid());
+
+        osgDB::Registry::instance()->removeReaderWriter(fixture.get());
+        std::cout << "[tile_overlay_tests] decoded Google unsupported-zoom tile rejected OK"
+                  << std::endl;
+    }
+#else
+    CHECK(false && "OSGVERSE_IMAGE_PLUGIN_PATH is required");
+#endif
 
     // ---- 活动可见性不得由 UpdateVisitor 代表 ----
     // UpdateVisitor 会走 PagedLOD 的所有已加载子级；这里的深层瓦片

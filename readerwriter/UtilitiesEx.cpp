@@ -584,14 +584,19 @@ namespace osgVerse
         return fanned;
     }
 
-    bool isUnsupportedGoogleZoomTile(const std::string& url,
-                                     const std::vector<unsigned char>& bytes)
+    static bool isDefaultGoogleVisualTileUrl(const std::string& url)
     {
         static const std::string prefix = "https://mt1.google.com/vt/lyrs=";
         if (url.compare(0, prefix.size(), prefix) != 0 || url.size() <= prefix.size() + 1)
             return false;
         const char layer = url[prefix.size()];
-        if ((layer != 's' && layer != 'h') || url[prefix.size() + 1] != '&') return false;
+        return (layer == 's' || layer == 'h') && url[prefix.size() + 1] == '&';
+    }
+
+    bool isUnsupportedGoogleZoomTile(const std::string& url,
+                                     const std::vector<unsigned char>& bytes)
+    {
+        if (!isDefaultGoogleVisualTileUrl(url)) return false;
 
         // Exact byte identity, not dimensions/file size/text OCR: normal 256x256 PNGs and
         // other providers are untouched. This is the response observed repeatedly in the
@@ -605,6 +610,44 @@ namespace osgVerse
         };
         unsigned char digest[32] = {};
         if (mbedtls_sha256(bytes.data(), bytes.size(), digest, 0) != 0) return false;
+        return std::memcmp(digest, expected, sizeof(expected)) == 0;
+    }
+
+    bool isUnsupportedGoogleZoomImage(const std::string& url, const osg::Image& image)
+    {
+        if (!isDefaultGoogleVisualTileUrl(url) || image.s() != 256 || image.t() != 256 ||
+            image.r() != 1)
+            return false;
+
+        // A protocol plugin or osgDB::FileCache may return an already-decoded image and bypass
+        // loadFileData's encoded-byte check. Hash canonical top-left RGBA pixels so stb RGB,
+        // ImageIO BGRA, and either OSG origin convention identify the same known placeholder.
+        std::vector<unsigned char> rgba;
+        rgba.reserve(256u * 256u * 4u);
+        for (int displayY = 0; displayY < 256; ++displayY)
+        {
+            const int imageY = image.getOrigin() == osg::Image::TOP_LEFT
+                ? displayY : 255 - displayY;
+            for (int x = 0; x < 256; ++x)
+            {
+                const osg::Vec4 color = image.getColor((unsigned int)x,
+                                                       (unsigned int)imageY, 0u);
+                for (int component = 0; component < 4; ++component)
+                {
+                    const float value = std::max(0.0f, std::min(1.0f, color[component]));
+                    rgba.push_back((unsigned char)(value * 255.0f + 0.5f));
+                }
+            }
+        }
+
+        static const unsigned char expected[32] = {
+            0x60, 0xea, 0x2b, 0xab, 0xb8, 0x46, 0x18, 0x11,
+            0xdd, 0xb3, 0x3b, 0x24, 0xa4, 0xad, 0xbe, 0xc4,
+            0x33, 0xca, 0x1e, 0x04, 0xda, 0x3c, 0x03, 0x13,
+            0xd0, 0x98, 0x36, 0x9b, 0x4f, 0xbf, 0x1f, 0x7f
+        };
+        unsigned char digest[32] = {};
+        if (mbedtls_sha256(rgba.data(), rgba.size(), digest, 0) != 0) return false;
         return std::memcmp(digest, expected, sizeof(expected)) == 0;
     }
 
