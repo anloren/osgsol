@@ -135,6 +135,12 @@ namespace
         osg::ref_ptr<osg::DrawElementsUInt> indices =
             new osg::DrawElementsUInt(GL_TRIANGLES);
         indices->reserve((columns - 1) * (rows - 1) * 6);
+        const osg::Vec3d first((*vertices)[0]);
+        const osg::Vec3d east((*vertices)[1]);
+        const osg::Vec3d diagonal((*vertices)[columns + 1]);
+        const bool reverseWinding =
+            (((east - first) ^ (diagonal - first)) *
+             (first + east + diagonal)) < 0.0;
         for (int y = 0; y < rows - 1; ++y)
         {
             for (int x = 0; x < columns - 1; ++x)
@@ -143,8 +149,12 @@ namespace
                 const unsigned int b = a + 1;
                 const unsigned int c = a + columns;
                 const unsigned int d = c + 1;
-                indices->push_back(a); indices->push_back(b); indices->push_back(d);
-                indices->push_back(a); indices->push_back(d); indices->push_back(c);
+                indices->push_back(a);
+                indices->push_back(reverseWinding ? d : b);
+                indices->push_back(reverseWinding ? b : d);
+                indices->push_back(a);
+                indices->push_back(reverseWinding ? c : d);
+                indices->push_back(reverseWinding ? d : c);
             }
         }
 

@@ -141,3 +141,26 @@ full-object fallback         none
 
 After the correction, the complete safe science-enabled offline set passed **32 of 32** tests in
 `7.04 s` real time without opening the Desktop app or creating a local listener.
+
+## Manual-candidate correction: invisible north-up preview
+
+The next `0.5.0 manual-test` candidate reached Ready and produced a valid Sentinel-2 raster, but
+manual testing showed no visible overlay at any camera height. The defect was in the final render
+mesh, not in query coverage, camera height, the COG read, or the layer switch.
+
+AlphaEarth preview fixtures use a south-up ground-grid row order, while Sentinel-2 COGs use the
+standard north-up row order. The preview mesh previously emitted one fixed triangle winding and
+enabled back-face culling. For a north-up Sentinel grid that winding points every triangle toward
+the globe center, so the GPU culls the complete result before fragment shading.
+
+An offline renderer regression first reproduced the defect by requiring a north-up Tokyo
+Sentinel quad to have an outward ECEF normal; it failed with the old index order. The mesh builder
+now detects the actual grid winding and reverses the indices only when necessary. The same test
+also requires the existing south-up AlphaEarth quad to remain outward-facing, preserving the
+protected preview behavior while retaining back-face culling so overlays cannot leak through the
+far side of the globe.
+
+The focused renderer regression passed after the correction. The complete safe science-enabled
+offline set then passed **32 of 32** tests in `26.33 s` without launching the app, creating a
+window, or opening a local listener. Visibility in the packaged Desktop app remains a separate
+manual acceptance gate.

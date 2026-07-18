@@ -13,6 +13,7 @@
 #include <osg/CullFace>
 #include <osg/Depth>
 #include <osg/Geode>
+#include <osg/Geometry>
 #include <osgUtil/UpdateVisitor>
 #include <readerwriter/EarthManipulator.h>
 #include <applications/earth_explorer/science_preview_layer.h>
@@ -377,6 +378,62 @@ namespace
             state->getAttribute(osg::StateAttribute::CULLFACE));
         require(cull && cull->getMode() == osg::CullFace::BACK,
                 "depth-independent artifact can leak through the globe back face");
+
+        osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(
+            geode->getDrawable(0));
+        osg::Vec3Array* vertices = geometry
+            ? dynamic_cast<osg::Vec3Array*>(geometry->getVertexArray()) : nullptr;
+        osg::DrawElementsUInt* indices = geometry &&
+            geometry->getNumPrimitiveSets() == 1
+            ? dynamic_cast<osg::DrawElementsUInt*>(
+                geometry->getPrimitiveSet(0)) : nullptr;
+        require(vertices && indices && indices->size() == 6,
+                "south-up AlphaEarth artifact lost its render geometry");
+        const osg::Vec3d a((*vertices)[indices->at(0)]);
+        const osg::Vec3d b((*vertices)[indices->at(1)]);
+        const osg::Vec3d c((*vertices)[indices->at(2)]);
+        require(((b - a) ^ (c - a)) * (a + b + c) > 0.0,
+                "south-up AlphaEarth triangles no longer face the camera");
+    }
+
+    void testNorthUpSentinelRasterFacesTheCamera()
+    {
+        earthscience::ScienceArtifact artifact;
+        artifact.query.sourceId = "sentinel-2-l2a";
+        artifact.raster.width = 2;
+        artifact.raster.height = 2;
+        artifact.raster.rgba =
+            std::make_shared<const std::vector<unsigned char>>(16, 210);
+        auto grid = std::make_shared<earthscience::ScienceGroundGrid>();
+        grid->columns = 2;
+        grid->rows = 2;
+        grid->points = {
+            {139.70, 35.75}, {139.82, 35.75},
+            {139.70, 35.63}, {139.82, 35.63},
+        };
+        artifact.raster.groundGrid = grid;
+
+        osg::ref_ptr<osg::Node> node = createSciencePreviewArtifactNode(artifact);
+        osg::Geode* geode = dynamic_cast<osg::Geode*>(node.get());
+        osg::Geometry* geometry = geode && geode->getNumDrawables() == 1
+            ? dynamic_cast<osg::Geometry*>(geode->getDrawable(0)) : nullptr;
+        osg::Vec3Array* vertices = geometry
+            ? dynamic_cast<osg::Vec3Array*>(geometry->getVertexArray()) : nullptr;
+        osg::DrawElementsUInt* indices = geometry &&
+            geometry->getNumPrimitiveSets() == 1
+            ? dynamic_cast<osg::DrawElementsUInt*>(
+                geometry->getPrimitiveSet(0)) : nullptr;
+        require(vertices && vertices->size() == 4 &&
+                    indices && indices->size() == 6,
+                "north-up Sentinel artifact did not build one complete quad");
+
+        const osg::Vec3d a((*vertices)[indices->at(0)]);
+        const osg::Vec3d b((*vertices)[indices->at(1)]);
+        const osg::Vec3d c((*vertices)[indices->at(2)]);
+        const osg::Vec3d outward = (a + b + c) / 3.0;
+        const osg::Vec3d triangleNormal = (b - a) ^ (c - a);
+        require(triangleNormal * outward > 0.0,
+                "north-up Sentinel triangles face the globe and are back-face culled");
     }
 
     void testLayerRetainsLastGoodUntilExplicitReplacementOrRemoval()
@@ -522,6 +579,7 @@ int main()
     testViewTargetDoesNotMoveWhenOnlyCameraHeightChanges();
     testFalseColorMeaningIsMachineReadable();
     testTerrainCannotHideAReadyScienceArtifact();
+    testNorthUpSentinelRasterFacesTheCamera();
     testLayerRetainsLastGoodUntilExplicitReplacementOrRemoval();
     testLayerRendersOnlyTheExplicitDisplayArtifact();
     std::cout << "[OK] ScienceEarth preview georeference, orientation, target and legend\n";
