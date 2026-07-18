@@ -142,9 +142,13 @@ int main()
     CHECK(panel.find("\"G = \"") != std::string::npos);
     CHECK(panel.find("\"B = \"") != std::string::npos);
     CHECK(panel.find(u8"尚无可测时长") != std::string::npos);
-    CHECK(panel.find("sciencePanelModeCapabilities(_state.mode)") !=
+    CHECK(panel.find("sciencePanelModeCapabilities(activeMode)") !=
           std::string::npos);
-    CHECK(panel.find("sciencePanelPrimaryActionLabel(_state.mode)") !=
+    CHECK(panel.find("sciencePanelPrimaryActionLabel(activeMode, source.id)") !=
+          std::string::npos);
+    CHECK(panel.find("resolveSciencePanelSource(sources, _state.sourceId)") !=
+          std::string::npos);
+    CHECK(panel.find("sciencePanelModesForSource(source)") !=
           std::string::npos);
     CHECK(panel.find("describeScienceArtifactUi") != std::string::npos);
     CHECK(panel.find("ImGui::OpenPopup") != std::string::npos);

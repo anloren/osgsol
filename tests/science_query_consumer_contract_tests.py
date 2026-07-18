@@ -26,6 +26,7 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
         source = read("applications/earth_explorer/earth_main.cpp")
         self.assertIn("ScienceSourceRegistry", source)
         self.assertIn("AlphaEarthProvider", source)
+        self.assertIn("Sentinel2Provider", source)
         self.assertIn("ScienceQueryService", source)
         self.assertNotIn("new earthscience::SciencePreviewRuntime", source)
         self.assertIn("new SciencePreviewLayer(scienceService.get())", source)
@@ -33,6 +34,8 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
     def test_ui_catalog_exposes_meaning_health_and_provenance(self):
         control = read("applications/earth_explorer/EarthControlUI.h")
         source = read("applications/earth_explorer/science_earth_panel.cpp")
+        query_builder = read(
+            "applications/earth_explorer/science_query_builder.h")
         self.assertIn("_sciencePanel.drawOperations(", control)
         self.assertIn("_sciencePanel.drawResults(", control)
         self.assertIn("finishLeftThenDrawScienceResults(", control)
@@ -53,12 +56,18 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
             "source.lastYear",
             "source.nativeResolutionMeters",
             "source.componentCount",
-            "source.visualizations",
             "source.attribution",
             "computeViewPointLatLonHeight",
             "requestedSpanMeters",
+            "resolveSciencePanelSource",
+            "sciencePanelModesForSource",
+            "expectedVisualizationId",
+            "sciencePanelPrimaryActionLabel(activeMode, source.id)",
         ):
             self.assertIn(token, source, token)
+
+        self.assertIn("source.visualizations", query_builder)
+        self.assertIn("visualization->id != expectedVisualizationId", source)
 
         for camera_writer in (
             "setByEye",

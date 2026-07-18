@@ -1,4 +1,5 @@
 #include "science_earth_panel.h"
+#include "science_query_builder.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -71,6 +72,9 @@ int main()
     ScienceEarthPanel panel;
     const SciencePanelState& defaults = panel.state();
     CHECK(defaults.mode == SciencePanelMode::Preview);
+    CHECK(defaults.sourceId == "alphaearth-foundations");
+    CHECK(defaults.sentinelWindowDays == 30);
+    CHECK(defaults.sentinelMaximumCloudPercent == 20.0);
     CHECK(defaults.locationMode == SciencePanelLocationMode::CurrentLocation);
     CHECK(defaults.firstYear == 2017);
     CHECK(defaults.lastYear == 2025);
@@ -81,6 +85,85 @@ int main()
     CHECK(!defaults.resultExpanded);
     CHECK(!defaults.enablePca);
     CHECK(!defaults.enableClustering);
+
+    earthscience::ScienceSourceDescriptor alphaSource;
+    alphaSource.id = "alphaearth-foundations";
+    alphaSource.name = "AlphaEarth Foundations";
+    alphaSource.firstYear = 2017;
+    alphaSource.lastYear = 2025;
+    alphaSource.nativeResolutionMeters = 10.0;
+    alphaSource.capabilities.pointQuery = true;
+    alphaSource.capabilities.explicitYears = true;
+    alphaSource.capabilities.rasterLayerOutput = true;
+    alphaSource.capabilities.timeSeriesOutput = true;
+    alphaSource.capabilities.analysisOutput = true;
+    alphaSource.capabilities.minimumSpanMeters = 2560.0;
+    alphaSource.capabilities.maximumSpanMeters = 81920.0;
+    earthscience::ScienceVisualizationDescriptor alphaVisualization;
+    alphaVisualization.id = "false-color-a01-a16-a09";
+    alphaVisualization.channelVariables = {"A01", "A16", "A09"};
+    alphaSource.visualizations.push_back(alphaVisualization);
+
+    earthscience::ScienceSourceDescriptor sentinelSource;
+    sentinelSource.id = "sentinel-2-l2a";
+    sentinelSource.name = "Sentinel-2 Level-2A";
+    sentinelSource.nativeResolutionMeters = 10.0;
+    sentinelSource.capabilities.pointQuery = true;
+    sentinelSource.capabilities.intervalTime = true;
+    sentinelSource.capabilities.rasterLayerOutput = true;
+    sentinelSource.capabilities.minimumSpanMeters = 2560.0;
+    sentinelSource.capabilities.maximumSpanMeters = 81920.0;
+    earthscience::ScienceVisualizationDescriptor sentinelVisualization;
+    sentinelVisualization.id = "natural-color-visual";
+    sentinelVisualization.channelVariables = {"visual"};
+    sentinelSource.visualizations.push_back(sentinelVisualization);
+
+    const std::vector<earthscience::ScienceSourceDescriptor> reorderedSources =
+        {sentinelSource, alphaSource};
+    CHECK(resolveSciencePanelSource(
+              reorderedSources, "alphaearth-foundations")->id ==
+          "alphaearth-foundations");
+    CHECK(resolveSciencePanelSource(reorderedSources, "missing")->id ==
+          "alphaearth-foundations");
+    const std::vector<SciencePanelMode> alphaModes =
+        sciencePanelModesForSource(alphaSource);
+    const std::vector<SciencePanelMode> sentinelModes =
+        sciencePanelModesForSource(sentinelSource);
+    CHECK(alphaModes.size() == 3);
+    CHECK(sentinelModes ==
+          std::vector<SciencePanelMode>({SciencePanelMode::Preview}));
+    CHECK(activeSciencePanelMode(
+              sentinelSource, SciencePanelMode::RegionalChange) ==
+          SciencePanelMode::Preview);
+    CHECK(activeSciencePanelMode(
+              alphaSource, SciencePanelMode::RegionalChange) ==
+          SciencePanelMode::RegionalChange);
+    CHECK(std::string(sciencePanelPrimaryActionLabel(
+              SciencePanelMode::Preview, sentinelSource.id)) ==
+          u8"加载 Sentinel-2 真彩场景");
+
+    const earthscience::GeoTemporalQuery sentinel7 =
+        makeSentinel2PreviewQuery(
+            sentinelSource, 35.68, 139.76,
+            "2026-07-18T23:59:59Z", 7, 10.0, 10000.0);
+    CHECK(sentinel7.sourceId == "sentinel-2-l2a");
+    CHECK(sentinel7.time.mode == earthscience::ScienceTimeMode::Interval);
+    CHECK(sentinel7.time.intervalStart == "2026-07-11T23:59:59Z");
+    CHECK(sentinel7.time.intervalEnd == "2026-07-18T23:59:59Z");
+    CHECK(sentinel7.sceneFilters.maximumCloudCoverPercent == 10.0);
+    CHECK(sentinel7.sceneFilters.maximumScenes == 10);
+    CHECK(sentinel7.variables == std::vector<std::string>({"visual"}));
+    CHECK(sentinel7.visualizationId == "natural-color-visual");
+    const earthscience::GeoTemporalQuery sentinel30 =
+        makeSentinel2PreviewQuery(
+            sentinelSource, 35.68, 139.76,
+            "2026-07-18T23:59:59Z", 30, 20.0, 10000.0);
+    CHECK(sentinel30.time.intervalStart == "2026-06-18T23:59:59Z");
+    const earthscience::GeoTemporalQuery sentinel90 =
+        makeSentinel2PreviewQuery(
+            sentinelSource, 35.68, 139.76,
+            "2026-07-18T23:59:59Z", 90, 100.0, 10000.0);
+    CHECK(sentinel90.time.intervalStart == "2026-04-19T23:59:59Z");
 
     const SciencePanelModeCapabilities previewCapabilities =
         sciencePanelModeCapabilities(SciencePanelMode::Preview);
@@ -280,9 +363,47 @@ int main()
     CHECK(compactPointScope.scopeLabel.find("2025") != std::string::npos);
     CHECK(compactPointScope.scopeLabel.find("2018") == std::string::npos);
 
+    earthscience::ScienceArtifact sentinelArtifact;
+    sentinelArtifact.query = sentinel30;
+    sentinelArtifact.raster.bounds = {139.74, 35.66, 139.78, 35.70};
+    sentinelArtifact.raster.sourceResolutionMeters = 10.0;
+    sentinelArtifact.raster.displayResolutionMeters = 10.0;
+    earthscience::ScienceSourceReference sentinelReference;
+    sentinelReference.datasetId = "S2C_54SUE_20260710_0_L2A";
+    sentinelReference.acquisitionTime = "2026-07-10T01:37:22.464000Z";
+    sentinelReference.actualCoverage = sentinelArtifact.raster.bounds;
+    sentinelReference.fields = {
+        {"scene_id", "Scene ID", sentinelReference.datasetId, ""},
+        {"scene_cloud_cover", "Scene cloud cover", "11.17", "%"},
+    };
+    sentinelArtifact.sourceReferences.push_back(sentinelReference);
+    ScienceArtifactUiPresentation sentinelUi = describeScienceArtifactUi(
+        sentinelArtifact, sentinel30);
+    CHECK(sentinelUi.matchesDraft);
+    CHECK(sentinelUi.scopeLabel.find("Sentinel-2") != std::string::npos);
+    CHECK(sentinelUi.scopeLabel.find(u8"真彩") != std::string::npos);
+    CHECK(sentinelUi.scopeLabel.find("2026-07-10") != std::string::npos);
+    CHECK(sentinelUi.scopeLabel.find(u8"伪彩") == std::string::npos);
+    sentinelUi = describeScienceArtifactUi(sentinelArtifact, sentinel7);
+    CHECK(!sentinelUi.matchesDraft);
+    CHECK(!sentinelUi.pendingSettingsLabel.empty());
+    const std::string sentinelEvidence = joined(
+        describeScienceArtifactEvidence(sentinelArtifact));
+    CHECK(sentinelEvidence.find("2026-06-18T23:59:59Z") !=
+          std::string::npos);
+    CHECK(sentinelEvidence.find("2026-07-10T01:37:22.464000Z") !=
+          std::string::npos);
+    CHECK(sentinelEvidence.find("S2C_54SUE_20260710_0_L2A") !=
+          std::string::npos);
+    CHECK(sentinelEvidence.find("11.17 %") != std::string::npos);
+
     const ScienceHelpTopic helpTopics[] = {
         ScienceHelpTopic::DataMeaning,
         ScienceHelpTopic::PreviewColors,
+        ScienceHelpTopic::Sentinel2Meaning,
+        ScienceHelpTopic::Sentinel2NaturalColor,
+        ScienceHelpTopic::Sentinel2Cloud,
+        ScienceHelpTopic::Sentinel2Limits,
         ScienceHelpTopic::Pca,
         ScienceHelpTopic::Clusters,
         ScienceHelpTopic::ScientificLimits,
@@ -302,6 +423,22 @@ int main()
     CHECK(std::string(scienceHelpTopicBody(
               ScienceHelpTopic::ScientificLimits)).find(u8"不能单独证明") !=
           std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::Sentinel2NaturalColor)).find(
+                  u8"不是原始反射率") != std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::Sentinel2Cloud)).find(
+                  u8"不是当前") != std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::Sentinel2Limits)).find(
+                  u8"不做") != std::string::npos);
+
+    const SciencePanelPresentation sentinelNoScene = describeScienceSnapshot(
+        snapshot(earthscience::ScienceJobState::Failed,
+                 earthscience::ScienceProgressStage::Failed,
+                 "No Sentinel-2 scene satisfies the cloud threshold"));
+    CHECK(sentinelNoScene.kind == SciencePanelResultKind::NoCoverage);
+    CHECK(sentinelNoScene.severity == SciencePanelSeverity::Warning);
 
     earthscience::ScienceJobSnapshot previewReplacementFailure = snapshot(
         earthscience::ScienceJobState::Failed,

@@ -1019,9 +1019,10 @@ int main(int argc, char** argv)
 #if OSGSOL_BUILD_SCIENCE
         OverlayLayer alphaearth;
         alphaearth.id = "alphaearth";
-        alphaearth.displayName = u8"AlphaEarth 科学预览";
+        alphaearth.displayName = u8"ScienceEarth 科学影像";
         alphaearth.group = "ScienceEarth";
-        alphaearth.subtitle = u8"64 维地表嵌入 · 10 m · 2017–2025 · Experimental";
+        alphaearth.subtitle =
+            u8"当前科学结果 · 数据源和证据见 ScienceEarth 结果面板";
         alphaearth.type = OverlayLayer::Grid;
         alphaearth.enabled = false;
         alphaearth.shape = earthmark::MarkerShape::Square;

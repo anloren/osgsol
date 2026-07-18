@@ -3,6 +3,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -46,6 +49,75 @@ inline earthscience::GeoTemporalQuery makeSciencePointQuery(
     query.purpose = "visible ScienceEarth research layer";
     query.priority = earthscience::SciencePriority::Visible;
     query.visualizationId = visualization.id;
+    return query;
+}
+
+inline std::string scienceCurrentUtcDayEnd()
+{
+    const std::time_t now = std::time(nullptr);
+    std::tm utc = {};
+    if (!gmtime_r(&now, &utc)) return std::string();
+    char value[21] = {};
+    if (std::strftime(value, sizeof(value), "%Y-%m-%dT23:59:59Z", &utc) == 0)
+        return std::string();
+    return value;
+}
+
+inline std::string scienceSubtractUtcDays(
+    const std::string& timestamp, int days)
+{
+    std::tm utc = {};
+    std::istringstream input(timestamp);
+    input >> std::get_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+    if (input.fail() || !input.eof() || days < 0) return std::string();
+    const std::time_t parsed = timegm(&utc);
+    if (parsed == static_cast<std::time_t>(-1)) return std::string();
+    const std::time_t shifted = parsed -
+        static_cast<std::time_t>(days) * 24 * 60 * 60;
+    std::tm result = {};
+    if (!gmtime_r(&shifted, &result)) return std::string();
+    char value[21] = {};
+    if (std::strftime(value, sizeof(value), "%Y-%m-%dT%H:%M:%SZ", &result) == 0)
+        return std::string();
+    return value;
+}
+
+inline earthscience::GeoTemporalQuery makeSentinel2PreviewQuery(
+    const earthscience::ScienceSourceDescriptor& source,
+    double latitude, double longitude,
+    const std::string& intervalEndUtc,
+    int windowDays,
+    double maximumCloudCoverPercent,
+    double requestedSpanMeters)
+{
+    const double minimumSpan = source.capabilities.minimumSpanMeters > 0.0
+        ? source.capabilities.minimumSpanMeters : 2560.0;
+    const double maximumSpan = source.capabilities.maximumSpanMeters >= minimumSpan
+        ? source.capabilities.maximumSpanMeters : 81920.0;
+    if (windowDays != 7 && windowDays != 30 && windowDays != 90)
+        windowDays = 30;
+
+    earthscience::GeoTemporalQuery query;
+    query.sourceId = source.id;
+    query.geometry.kind = earthscience::ScienceGeometryKind::Point;
+    query.geometry.point.latitude = latitude;
+    query.geometry.point.longitude = longitude;
+    query.geometry.requestedSpanMeters = std::clamp(
+        requestedSpanMeters, minimumSpan, maximumSpan);
+    query.time.mode = earthscience::ScienceTimeMode::Interval;
+    query.time.intervalStart = scienceSubtractUtcDays(
+        intervalEndUtc, windowDays);
+    query.time.intervalEnd = intervalEndUtc;
+    query.variables = {"visual"};
+    query.targetResolutionMeters = source.nativeResolutionMeters;
+    query.aggregation = earthscience::ScienceAggregation::None;
+    query.outputKind = earthscience::ScienceOutputKind::RasterLayer;
+    query.purpose = "visible Sentinel-2 natural-color scene";
+    query.priority = earthscience::SciencePriority::Visible;
+    query.visualizationId = "natural-color-visual";
+    query.sceneFilters.maximumCloudCoverPercent = std::clamp(
+        maximumCloudCoverPercent, 0.0, 100.0);
+    query.sceneFilters.maximumScenes = 10;
     return query;
 }
 

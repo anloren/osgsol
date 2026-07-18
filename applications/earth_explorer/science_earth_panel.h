@@ -29,6 +29,10 @@ enum class ScienceHelpTopic
 {
     DataMeaning,
     PreviewColors,
+    Sentinel2Meaning,
+    Sentinel2NaturalColor,
+    Sentinel2Cloud,
+    Sentinel2Limits,
     Pca,
     Clusters,
     ScientificLimits,
@@ -47,6 +51,7 @@ struct SciencePanelModeCapabilities
 
 struct SciencePanelState
 {
+    std::string sourceId = "alphaearth-foundations";
     SciencePanelMode mode = SciencePanelMode::Preview;
     SciencePanelLocationMode locationMode = SciencePanelLocationMode::CurrentLocation;
     int firstYear = 2017;
@@ -59,6 +64,8 @@ struct SciencePanelState
     bool enablePca = false;
     bool enableClustering = false;
     int clusterCount = 4;
+    int sentinelWindowDays = 30;
+    double sentinelMaximumCloudPercent = 20.0;
 };
 
 enum class SciencePanelResultKind
@@ -129,7 +136,17 @@ SciencePanelPresentation describeScienceSnapshot(
     SciencePanelMode mode);
 SciencePanelModeCapabilities sciencePanelModeCapabilities(
     SciencePanelMode mode);
+const earthscience::ScienceSourceDescriptor* resolveSciencePanelSource(
+    const std::vector<earthscience::ScienceSourceDescriptor>& sources,
+    const std::string& sourceId);
+std::vector<SciencePanelMode> sciencePanelModesForSource(
+    const earthscience::ScienceSourceDescriptor& source);
+SciencePanelMode activeSciencePanelMode(
+    const earthscience::ScienceSourceDescriptor& source,
+    SciencePanelMode requested);
 const char* sciencePanelPrimaryActionLabel(SciencePanelMode mode);
+const char* sciencePanelPrimaryActionLabel(
+    SciencePanelMode mode, const std::string& sourceId);
 ScienceArtifactUiPresentation describeScienceArtifactUi(
     const earthscience::ScienceArtifact& artifact,
     const earthscience::GeoTemporalQuery& currentDraft);

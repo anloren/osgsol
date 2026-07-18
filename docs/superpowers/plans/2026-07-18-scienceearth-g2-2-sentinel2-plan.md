@@ -314,34 +314,39 @@ git commit -m "feat(scienceearth): register Sentinel-2 provider"
 - Modify: `applications/earth_explorer/science_earth_panel.cpp`
 - Modify: `applications/earth_explorer/science_earth_panel_test.cpp`
 - Modify: `applications/earth_explorer/earth_main.cpp`
+- Modify: `tests/earth_control_layout_tests.cpp`
+- Modify: `tests/science_query_consumer_contract_tests.py`
 
 **Interfaces:**
 - Produces: deterministic `makeSentinel2PreviewQuery(...)` and selected source state.
 
-- [ ] **Step 1: Write RED source-selection and copy tests**
+- [x] **Step 1: Write RED source-selection and copy tests**
 
 Require the default source to remain AlphaEarth; selecting Sentinel exposes only preview; its
 primary action reads `加载 Sentinel-2 真彩场景`; 7/30/90 day and 10/20/40/100 cloud choices produce
 exact intervals/filters; switching back restores AlphaEarth modes without stale Sentinel settings.
 
-- [ ] **Step 2: Implement a full-width source selector**
+- [x] **Step 2: Implement a full-width source selector**
 
 Persist source id, not vector index. Resolve it against the current catalog each frame. Do not show
 AlphaEarth PCA/year controls for Sentinel. Put stable definitions behind source-specific help.
 
-- [ ] **Step 3: Generalize the overlay copy**
+- [x] **Step 3: Generalize the overlay copy**
 
 Rename the visible layer label to `ScienceEarth 科学影像` while retaining the existing internal
 layer id and render path. The result border and evidence identify the actual source.
 
-- [ ] **Step 4: Run panel/layout/preview GREEN and commit**
+- [x] **Step 4: Run panel/layout/preview GREEN and commit**
 
 ```bash
 git add applications/earth_explorer/science_query_builder.h \
   applications/earth_explorer/science_earth_panel.h \
   applications/earth_explorer/science_earth_panel.cpp \
   applications/earth_explorer/science_earth_panel_test.cpp \
-  applications/earth_explorer/earth_main.cpp
+  applications/earth_explorer/earth_main.cpp \
+  tests/earth_control_layout_tests.cpp \
+  tests/science_query_consumer_contract_tests.py \
+  docs/superpowers/plans/2026-07-18-scienceearth-g2-2-sentinel2-plan.md
 git commit -m "feat(scienceearth): add Sentinel-2 source workflow"
 ```
 

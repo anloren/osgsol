@@ -105,8 +105,14 @@ earthscience::GeoTemporalQuery buildSciencePanelDraft(
     const SciencePanelState& state,
     double latitude,
     double longitude,
-    double requestedSpanMeters)
+    double requestedSpanMeters,
+    const std::string& sentinelIntervalEndUtc)
 {
+    if (source.id == "sentinel-2-l2a")
+        return makeSentinel2PreviewQuery(
+            source, latitude, longitude, sentinelIntervalEndUtc,
+            state.sentinelWindowDays,
+            state.sentinelMaximumCloudPercent, requestedSpanMeters);
     if (state.mode == SciencePanelMode::Preview && visualization)
         return makeSciencePointQuery(
             source, *visualization, latitude, longitude,
@@ -334,6 +340,9 @@ std::string queryEstimateKey(
         << query.geometry.bounds.east << '|' << query.geometry.bounds.north << '|'
         << query.geometry.requestedSpanMeters << '|'
         << static_cast<int>(query.time.mode) << '|'
+        << query.time.instant << '|'
+        << query.time.intervalStart << '|'
+        << query.time.intervalEnd << '|'
         << query.targetResolutionMeters << '|'
         << static_cast<int>(query.aggregation) << '|'
         << static_cast<int>(query.priority) << '|'
@@ -343,7 +352,9 @@ std::string queryEstimateKey(
         << query.analysis.comparisonYear << '|'
         << query.analysis.gridSize << '|' << query.analysis.hotspotQuantile << '|'
         << query.analysis.enablePca << '|' << query.analysis.pcaComponents << '|'
-        << query.analysis.enableClustering << '|' << query.analysis.clusterCount;
+        << query.analysis.enableClustering << '|' << query.analysis.clusterCount
+        << '|' << query.sceneFilters.maximumCloudCoverPercent
+        << '|' << query.sceneFilters.maximumScenes;
     for (const std::string& variable : query.variables)
         key << "|variable:" << variable;
     for (earthscience::ScienceMetric metric : query.analysis.metrics)
@@ -367,8 +378,49 @@ const char* modeLabel(SciencePanelMode mode)
     return u8"未知 / Unknown";
 }
 
+const char* modeLabel(SciencePanelMode mode, const std::string& sourceId)
+{
+    if (sourceId == "sentinel-2-l2a" && mode == SciencePanelMode::Preview)
+        return u8"真彩场景 / True-color scene";
+    return modeLabel(mode);
+}
+
 void drawPrimaryMetrics(const earthscience::ScienceArtifact& artifact)
 {
+    if (artifact.query.sourceId == "sentinel-2-l2a")
+    {
+        if (!artifact.sourceReferences.empty())
+        {
+            const earthscience::ScienceSourceReference& reference =
+                artifact.sourceReferences.front();
+            if (!reference.acquisitionTime.empty())
+                ImGui::TextWrapped(u8"实际采集 / Acquisition: %s",
+                                   reference.acquisitionTime.c_str());
+            for (const earthscience::ScienceEvidenceField& field :
+                 reference.fields)
+                if (field.id == "scene_cloud_cover")
+                {
+                    ImGui::TextWrapped(u8"场景云量 / Scene cloud: %s %s",
+                        field.value.c_str(), field.unit.c_str());
+                    break;
+                }
+        }
+        if (artifact.raster.width > 0)
+            ImGui::TextWrapped(u8"显示网格 / Display grid: %d × %d",
+                               artifact.raster.width, artifact.raster.height);
+        if (hasGeographicExtent(artifact.raster.bounds))
+            ImGui::TextWrapped(u8"实际范围 / Footprint: %s",
+                formatBounds(artifact.raster.bounds).c_str());
+        if (artifact.raster.sourceResolutionMeters > 0.0 &&
+            artifact.raster.displayResolutionMeters > 0.0)
+            ImGui::TextWrapped(
+                u8"分辨率 / Resolution: 源 %s · 显示 %s",
+                formatResolution(
+                    artifact.raster.sourceResolutionMeters).c_str(),
+                formatResolution(
+                    artifact.raster.displayResolutionMeters).c_str());
+        return;
+    }
     int shown = 0;
     if (artifact.analysis.metrics)
     {
@@ -447,7 +499,12 @@ bool drawMetricSeries(const earthscience::ScienceArtifact& artifact)
 
 void drawEmbeddingLegend(const earthscience::ScienceArtifact& artifact)
 {
-    if (artifact.analysis.kind == earthscience::ScienceAnalysisKind::None &&
+    if (artifact.query.sourceId == "sentinel-2-l2a")
+    {
+        ImGui::TextWrapped(
+            u8"自然色通道 / Natural color: R = B4 · G = B3 · B = B2");
+    }
+    else if (artifact.analysis.kind == earthscience::ScienceAnalysisKind::None &&
         artifact.query.variables.size() >= 3)
     {
         const std::string red = "R = " + artifact.query.variables[0];
@@ -538,6 +595,16 @@ void drawTechnicalDetails(const earthscience::ScienceArtifact& artifact)
                                source.providerVersion.c_str());
             ImGui::TextWrapped(u8"署名：%s",
                                source.attribution.c_str());
+            if (!source.originalUrl.empty())
+                ImGui::TextWrapped(u8"原始资产：%s",
+                                   source.originalUrl.c_str());
+            for (const earthscience::ScienceEvidenceField& field :
+                 source.fields)
+            {
+                ImGui::TextWrapped("%s: %s%s%s",
+                    field.displayName.c_str(), field.value.c_str(),
+                    field.unit.empty() ? "" : " ", field.unit.c_str());
+            }
         }
     }
 }
@@ -573,7 +640,8 @@ SciencePanelPresentation describeScienceSnapshot(
             u8"● 正在处理；此阶段没有可验证的总量，不显示百分比";
 
     const bool noCoverage = containsAny(snapshot.message,
-        {"no coverage", "no alphaearth tile", "does not cover", "covers this point"});
+        {"no coverage", "no alphaearth tile", "does not cover",
+         "covers this point", "no sentinel-2 scene", "cloud threshold"});
     const bool stale = containsAny(snapshot.message,
         {"stale", "newer request", "newer generation"});
     if (stale)
@@ -651,6 +719,41 @@ SciencePanelModeCapabilities sciencePanelModeCapabilities(SciencePanelMode mode)
     return capabilities;
 }
 
+const earthscience::ScienceSourceDescriptor* resolveSciencePanelSource(
+    const std::vector<earthscience::ScienceSourceDescriptor>& sources,
+    const std::string& sourceId)
+{
+    for (const earthscience::ScienceSourceDescriptor& source : sources)
+        if (source.id == sourceId) return &source;
+    for (const earthscience::ScienceSourceDescriptor& source : sources)
+        if (source.id == "alphaearth-foundations") return &source;
+    return sources.empty() ? nullptr : &sources.front();
+}
+
+std::vector<SciencePanelMode> sciencePanelModesForSource(
+    const earthscience::ScienceSourceDescriptor& source)
+{
+    std::vector<SciencePanelMode> modes;
+    if (source.capabilities.rasterLayerOutput)
+        modes.push_back(SciencePanelMode::Preview);
+    if (source.capabilities.timeSeriesOutput)
+        modes.push_back(SciencePanelMode::PointSeries);
+    if (source.capabilities.analysisOutput)
+        modes.push_back(SciencePanelMode::RegionalChange);
+    return modes;
+}
+
+SciencePanelMode activeSciencePanelMode(
+    const earthscience::ScienceSourceDescriptor& source,
+    SciencePanelMode requested)
+{
+    const std::vector<SciencePanelMode> modes =
+        sciencePanelModesForSource(source);
+    return std::find(modes.begin(), modes.end(), requested) != modes.end()
+        ? requested
+        : (modes.empty() ? SciencePanelMode::Preview : modes.front());
+}
+
 const char* sciencePanelPrimaryActionLabel(SciencePanelMode mode)
 {
     switch (mode)
@@ -660,6 +763,14 @@ const char* sciencePanelPrimaryActionLabel(SciencePanelMode mode)
     case SciencePanelMode::RegionalChange: return u8"分析当前视野变化";
     }
     return u8"开始分析";
+}
+
+const char* sciencePanelPrimaryActionLabel(
+    SciencePanelMode mode, const std::string& sourceId)
+{
+    if (sourceId == "sentinel-2-l2a" && mode == SciencePanelMode::Preview)
+        return u8"加载 Sentinel-2 真彩场景";
+    return sciencePanelPrimaryActionLabel(mode);
 }
 
 ScienceArtifactUiPresentation describeScienceArtifactUi(
@@ -674,15 +785,27 @@ ScienceArtifactUiPresentation describeScienceArtifactUi(
     view.showClusterSummary = artifact.analysis.clusters.clusterCount > 0;
 
     std::ostringstream scope;
-    if (artifactMatchesMode(artifact, SciencePanelMode::Preview))
-        scope << u8"伪彩预览";
+    if (artifact.query.sourceId == "sentinel-2-l2a")
+        scope << u8"Sentinel-2 · 真彩场景";
+    else if (artifactMatchesMode(artifact, SciencePanelMode::Preview))
+        scope << u8"AlphaEarth · 伪彩预览";
     else if (artifactMatchesMode(artifact, SciencePanelMode::PointSeries))
         scope << u8"点位年度变化";
     else if (artifactMatchesMode(artifact, SciencePanelMode::RegionalChange))
         scope << u8"区域年度变化";
     else
         scope << u8"ScienceEarth 结果";
-    if (!artifact.query.time.explicitYears.empty())
+    if (artifact.query.sourceId == "sentinel-2-l2a")
+    {
+        for (const earthscience::ScienceSourceReference& reference :
+             artifact.sourceReferences)
+            if (!reference.acquisitionTime.empty())
+            {
+                scope << u8" · 采集 " << reference.acquisitionTime;
+                break;
+            }
+    }
+    else if (!artifact.query.time.explicitYears.empty())
     {
         scope << u8" · ";
         scope << artifact.query.time.explicitYears.front();
@@ -710,6 +833,14 @@ const char* scienceHelpTopicTitle(ScienceHelpTopic topic)
     {
     case ScienceHelpTopic::DataMeaning: return u8"64 维数据是什么？";
     case ScienceHelpTopic::PreviewColors: return u8"伪彩颜色表示什么？";
+    case ScienceHelpTopic::Sentinel2Meaning:
+        return u8"Sentinel-2 L2A 是什么？";
+    case ScienceHelpTopic::Sentinel2NaturalColor:
+        return u8"真彩场景表示什么？";
+    case ScienceHelpTopic::Sentinel2Cloud:
+        return u8"最大场景云量是什么？";
+    case ScienceHelpTopic::Sentinel2Limits:
+        return u8"Sentinel-2 科学边界";
     case ScienceHelpTopic::Pca: return u8"PCA 与右侧结果";
     case ScienceHelpTopic::Clusters: return u8"无标签聚类是什么？";
     case ScienceHelpTopic::ScientificLimits: return u8"科学解释边界";
@@ -728,6 +859,20 @@ const char* scienceHelpTopicBody(ScienceHelpTopic topic)
     case ScienceHelpTopic::PreviewColors:
         return u8"伪彩把选定分量映射到红、绿、蓝通道，帮助定位"
                u8"潜在嵌入关系差异；它不是自然色，也不是物理量。";
+    case ScienceHelpTopic::Sentinel2Meaning:
+        return u8"Sentinel-2 Level-2A 是经大气校正的地表反射率产品。"
+               u8"本功能先搜索一个时间窗口，再从符合云量阈值的候选中"
+               u8"确定性选择单个场景。";
+    case ScienceHelpTopic::Sentinel2NaturalColor:
+        return u8"这里显示官方 visual/TCI 真彩显示产品：红、绿、蓝来自"
+               u8"可见光波段。它便于目视判读，但不是原始反射率数值，"
+               u8"也不是无云合成图。";
+    case ScienceHelpTopic::Sentinel2Cloud:
+        return u8"云量是整个卫星场景的 eo:cloud_cover 元数据，不是当前"
+               u8"256×256 范围内逐像素的云掩膜。阈值越低，可用场景可能越少。";
+    case ScienceHelpTopic::Sentinel2Limits:
+        return u8"当前切片只选择一个日期、一个场景和一个 COG，不做"
+               u8"多景镶嵌、逐像素云检测、光谱指数或变化归因。";
     case ScienceHelpTopic::Pca:
         return u8"PCA 只适用于区域年度变化。勾选后重新运行，右侧才会显示"
                u8"本次结果内的局部数学方向；它不代表具体地物。";
@@ -891,20 +1036,46 @@ std::vector<std::string> describeScienceArtifactEvidence(
     const std::string unavailable = u8"未记录 / not recorded";
     std::vector<std::string> lines;
 
-    std::ostringstream years;
-    years << u8"已载入结果年份 / Loaded artifact year(s): ";
-    if (artifact.query.time.explicitYears.empty())
-        years << unavailable;
+    std::ostringstream time;
+    if (artifact.query.time.mode == earthscience::ScienceTimeMode::Interval)
+    {
+        time << u8"请求时间 / Requested interval: ";
+        if (artifact.query.time.intervalStart.empty() ||
+            artifact.query.time.intervalEnd.empty())
+            time << unavailable;
+        else
+            time << artifact.query.time.intervalStart << " — "
+                 << artifact.query.time.intervalEnd;
+    }
     else
     {
-        for (std::size_t index = 0;
-             index < artifact.query.time.explicitYears.size(); ++index)
+        time << u8"已载入结果年份 / Loaded artifact year(s): ";
+        if (artifact.query.time.explicitYears.empty())
+            time << unavailable;
+        else for (std::size_t index = 0;
+                  index < artifact.query.time.explicitYears.size(); ++index)
         {
-            if (index > 0) years << ", ";
-            years << artifact.query.time.explicitYears[index];
+            if (index > 0) time << ", ";
+            time << artifact.query.time.explicitYears[index];
         }
     }
-    lines.push_back(years.str());
+    lines.push_back(time.str());
+
+    for (const earthscience::ScienceSourceReference& reference :
+         artifact.sourceReferences)
+    {
+        if (!reference.acquisitionTime.empty())
+            lines.push_back(std::string(
+                u8"实际采集 / Acquisition: ") + reference.acquisitionTime);
+        for (const earthscience::ScienceEvidenceField& field : reference.fields)
+            if (field.id == "scene_id" ||
+                field.id == "scene_cloud_cover")
+            {
+                std::string value = field.displayName + ": " + field.value;
+                if (!field.unit.empty()) value += ' ' + field.unit;
+                lines.push_back(std::move(value));
+            }
+    }
 
     earthscience::ScienceWgs84Bounds payloadBounds;
     double actualResolutionMeters = 0.0;
@@ -992,9 +1163,48 @@ void ScienceEarthPanel::drawOperations(
                                u8"没有注册科学数据源 / No science source");
         return;
     }
-    const earthscience::ScienceSourceDescriptor& source = sources.front();
+    const earthscience::ScienceSourceDescriptor* selectedSource =
+        resolveSciencePanelSource(sources, _state.sourceId);
+    if (!selectedSource) return;
+    if (operationsExpanded)
+    {
+        ImGui::TextWrapped(u8"数据源 / Source");
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo(
+                "##science_source", selectedSource->name.c_str()))
+        {
+            for (const earthscience::ScienceSourceDescriptor& candidate :
+                 sources)
+            {
+                const bool selected = candidate.id == selectedSource->id;
+                if (ImGui::Selectable(candidate.name.c_str(), selected))
+                {
+                    const earthscience::ScienceJobSnapshot active =
+                        service->snapshot();
+                    if (active.state == earthscience::ScienceJobState::Queued ||
+                        active.state == earthscience::ScienceJobState::Fetching)
+                        service->cancel(active.jobId);
+                    selectedSource = &candidate;
+                    _state.sourceId = candidate.id;
+                    _displayedEstimateKey.clear();
+                    _confirmedEstimateKey.clear();
+                    _hasCurrentDraft = false;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    }
+    const earthscience::ScienceSourceDescriptor& source = *selectedSource;
+    _state.sourceId = source.id;
+    SciencePanelMode activeMode = activeSciencePanelMode(source, _state.mode);
+    const std::string expectedVisualizationId =
+        source.id == "sentinel-2-l2a"
+            ? "natural-color-visual" : "false-color-a01-a16-a09";
     const earthscience::ScienceVisualizationDescriptor* visualization =
-        source.visualizations.empty() ? nullptr : &source.visualizations.front();
+        findScienceVisualization(source, expectedVisualizationId);
+    if (visualization && visualization->id != expectedVisualizationId)
+        visualization = nullptr;
     const osg::Vec3d target = manipulator->computeViewPointLatLonHeight();
     const osg::Vec3d eye = manipulator->computeEyeLatLonHeight();
     const double latitude = osg::RadiansToDegrees(target[0]);
@@ -1002,21 +1212,27 @@ void ScienceEarthPanel::drawOperations(
     const double requestedSpanMeters = std::clamp(
         eye[2] * 0.85, 2560.0, 81920.0);
 
-    _state.firstYear = std::clamp(
-        _state.firstYear, source.firstYear, source.lastYear);
-    _state.lastYear = std::clamp(
-        _state.lastYear, source.firstYear, source.lastYear);
-    _state.baselineYear = std::clamp(
-        _state.baselineYear, source.firstYear, source.lastYear);
-    _state.comparisonYear = std::clamp(
-        _state.comparisonYear, source.firstYear, source.lastYear);
-    _state.locationMode = _state.mode == SciencePanelMode::RegionalChange
+    if (source.capabilities.explicitYears)
+    {
+        _state.firstYear = std::clamp(
+            _state.firstYear, source.firstYear, source.lastYear);
+        _state.lastYear = std::clamp(
+            _state.lastYear, source.firstYear, source.lastYear);
+        _state.baselineYear = std::clamp(
+            _state.baselineYear, source.firstYear, source.lastYear);
+        _state.comparisonYear = std::clamp(
+            _state.comparisonYear, source.firstYear, source.lastYear);
+    }
+    _state.locationMode = activeMode == SciencePanelMode::RegionalChange
         ? SciencePanelLocationMode::CurrentViewFootprint
         : SciencePanelLocationMode::CurrentLocation;
 
+    SciencePanelState draftState = _state;
+    draftState.mode = activeMode;
+    const std::string sentinelIntervalEndUtc = scienceCurrentUtcDayEnd();
     _currentDraft = buildSciencePanelDraft(
-        source, visualization, _state, latitude, longitude,
-        requestedSpanMeters);
+        source, visualization, draftState, latitude, longitude,
+        requestedSpanMeters, sentinelIntervalEndUtc);
     _hasCurrentDraft = !_currentDraft.sourceId.empty();
     if (!operationsExpanded) return;
 
@@ -1024,12 +1240,18 @@ void ScienceEarthPanel::drawOperations(
 
     drawColoredWrapped(ImVec4(0.35f, 0.85f, 1.0f, 1.0f),
                        source.name.c_str());
-    drawHelpButton("data_meaning", ScienceHelpTopic::DataMeaning, false);
+    drawHelpButton("data_meaning",
+        source.id == "sentinel-2-l2a"
+            ? ScienceHelpTopic::Sentinel2Meaning
+            : ScienceHelpTopic::DataMeaning,
+        false);
     if (ImGui::CollapsingHeader(u8"数据源详情 / Source details"))
     {
         ImGui::TextWrapped(u8"原始分辨率：%.1f m",
                            source.nativeResolutionMeters);
-        ImGui::TextWrapped(u8"潜在分量：%d", source.componentCount);
+        ImGui::TextWrapped(source.id == "sentinel-2-l2a"
+                ? u8"显示通道：%d" : u8"潜在分量：%d",
+            source.componentCount);
         ImGui::TextWrapped(u8"提供方版本：%s",
                            source.providerVersion.c_str());
         ImGui::TextWrapped(u8"署名：%s", source.attribution.c_str());
@@ -1057,24 +1279,83 @@ void ScienceEarthPanel::drawOperations(
             latitude, longitude, requestedSpanMeters / 1000.0);
 
     ImGui::TextWrapped(u8"研究类型 / Research mode");
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::BeginCombo("##science_mode", modeLabel(_state.mode)))
+    const std::vector<SciencePanelMode> modes =
+        sciencePanelModesForSource(source);
+    if (modes.size() == 1)
+        ImGui::TextWrapped("%s", modeLabel(modes.front(), source.id));
+    else
     {
-        for (int index = 0; index < 3; ++index)
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo(
+                "##science_mode", modeLabel(activeMode, source.id)))
         {
-            const SciencePanelMode candidate = static_cast<SciencePanelMode>(index);
-            const bool selected = candidate == _state.mode;
-            if (ImGui::Selectable(modeLabel(candidate), selected))
-                _state.mode = candidate;
-            if (selected) ImGui::SetItemDefaultFocus();
+            for (SciencePanelMode candidate : modes)
+            {
+                const bool selected = candidate == activeMode;
+                if (ImGui::Selectable(
+                        modeLabel(candidate, source.id), selected))
+                {
+                    _state.mode = candidate;
+                    activeMode = candidate;
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
         }
-        ImGui::EndCombo();
     }
 
     const SciencePanelModeCapabilities capabilities =
-        sciencePanelModeCapabilities(_state.mode);
+        sciencePanelModeCapabilities(activeMode);
 
-    if (capabilities.showsSingleYear)
+    if (source.id == "sentinel-2-l2a")
+    {
+        static const int WINDOWS[] = {7, 30, 90};
+        ImGui::TextWrapped(u8"时间窗口 / Time window");
+        const std::string windowPreview =
+            std::to_string(_state.sentinelWindowDays) + u8" 天 / days";
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##sentinel_window", windowPreview.c_str()))
+        {
+            for (int window : WINDOWS)
+            {
+                const bool selected = _state.sentinelWindowDays == window;
+                const std::string label =
+                    std::to_string(window) + u8" 天 / days";
+                if (ImGui::Selectable(label.c_str(), selected))
+                    _state.sentinelWindowDays = window;
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextWrapped(u8"最大场景云量 / Maximum scene cloud");
+        drawHelpButton(
+            "sentinel_cloud", ScienceHelpTopic::Sentinel2Cloud);
+        static const double CLOUDS[] = {10.0, 20.0, 40.0, 100.0};
+        const std::string cloudPreview =
+            _state.sentinelMaximumCloudPercent >= 100.0
+                ? std::string(u8"不限 / Any (100%)")
+                : std::to_string(static_cast<int>(
+                      _state.sentinelMaximumCloudPercent)) + "%";
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo(
+                "##sentinel_cloud", cloudPreview.c_str()))
+        {
+            for (double cloud : CLOUDS)
+            {
+                const bool selected =
+                    _state.sentinelMaximumCloudPercent == cloud;
+                const std::string label = cloud >= 100.0
+                    ? std::string(u8"不限 / Any (100%)")
+                    : std::to_string(static_cast<int>(cloud)) + "%";
+                if (ImGui::Selectable(label.c_str(), selected))
+                    _state.sentinelMaximumCloudPercent = cloud;
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextDisabled(u8"截至 UTC 今日；选择不会移动相机");
+    }
+    else if (capabilities.showsSingleYear)
         drawDiscreteYear("preview", u8"年份 / Year", &_state.lastYear,
                          source.firstYear, source.lastYear);
     else if (capabilities.showsYearRange)
@@ -1146,9 +1427,11 @@ void ScienceEarthPanel::drawOperations(
         }
     }
 
+    draftState = _state;
+    draftState.mode = activeMode;
     earthscience::GeoTemporalQuery query = buildSciencePanelDraft(
-        source, visualization, _state, latitude, longitude,
-        requestedSpanMeters);
+        source, visualization, draftState, latitude, longitude,
+        requestedSpanMeters, sentinelIntervalEndUtc);
     _currentDraft = query;
     _hasCurrentDraft = !query.sourceId.empty();
 
@@ -1208,18 +1491,19 @@ void ScienceEarthPanel::drawOperations(
     }
 
     const SciencePanelPresentation presentation =
-        describeScienceSnapshot(snapshot, _state.mode);
+        describeScienceSnapshot(snapshot, activeMode);
     const bool invalidPreview =
-        _state.mode == SciencePanelMode::Preview && !visualization;
+        activeMode == SciencePanelMode::Preview && !visualization;
     const bool blocked = sourceUnavailable || invalidPreview || estimateFailed ||
         presentation.busy || (_estimateVisible && !estimateConfirmed);
     if (blocked) ImGui::BeginDisabled();
-    if (ImGui::Button(sciencePanelPrimaryActionLabel(_state.mode),
+    if (ImGui::Button(
+            sciencePanelPrimaryActionLabel(activeMode, source.id),
                       ImVec2(-1.0f, 0.0f)))
     {
         query.analysis.confirmedLargeRequest =
             _estimateVisible && estimateConfirmed;
-        if (_state.mode == SciencePanelMode::Preview)
+        if (activeMode == SciencePanelMode::Preview)
         {
             previewLayer->setVisible(true);
             if (layers) layers->setEnabled("alphaearth", true);
@@ -1285,10 +1569,17 @@ void ScienceEarthPanel::drawResults(
     ImGui::Separator();
 
     const earthscience::ScienceJobSnapshot snapshot = service->snapshot();
+    const std::vector<earthscience::ScienceSourceDescriptor> sources =
+        service->listSources();
+    const earthscience::ScienceSourceDescriptor* source =
+        resolveSciencePanelSource(sources, _state.sourceId);
+    const SciencePanelMode activeMode = source
+        ? activeSciencePanelMode(*source, _state.mode)
+        : SciencePanelMode::Preview;
     const SciencePanelPresentation presentation =
-        describeScienceSnapshot(snapshot, _state.mode);
+        describeScienceSnapshot(snapshot, activeMode);
     const std::shared_ptr<const earthscience::ScienceArtifact> artifact =
-        selectSciencePanelArtifact(snapshot, _state.mode);
+        selectSciencePanelArtifact(snapshot, activeMode);
     const bool activeOrProblem = presentation.busy ||
         presentation.kind == SciencePanelResultKind::NoCoverage ||
         presentation.kind == SciencePanelResultKind::Failed ||
@@ -1328,18 +1619,25 @@ void ScienceEarthPanel::drawResults(
 
         const std::vector<std::string> evidence =
             describeScienceArtifactEvidence(*artifact);
-        if (evidence.size() > 1)
+        if (artifact->query.sourceId != "sentinel-2-l2a" &&
+            evidence.size() > 1)
             ImGui::TextWrapped("%s", evidence[1].c_str());
 
         drawPrimaryMetrics(*artifact);
         ImGui::SeparatorText(u8"图表或图例");
         if (!drawMetricSeries(*artifact)) drawEmbeddingLegend(*artifact);
-        drawHelpButton("preview_colors", ScienceHelpTopic::PreviewColors,
+        drawHelpButton("preview_colors",
+            artifact->query.sourceId == "sentinel-2-l2a"
+                ? ScienceHelpTopic::Sentinel2NaturalColor
+                : ScienceHelpTopic::PreviewColors,
                        false);
 
         ImGui::TextDisabled(u8"科学解释边界");
         drawHelpButton(
-            "scientific_limits", ScienceHelpTopic::ScientificLimits);
+            "scientific_limits",
+            artifact->query.sourceId == "sentinel-2-l2a"
+                ? ScienceHelpTopic::Sentinel2Limits
+                : ScienceHelpTopic::ScientificLimits);
 
         drawTechnicalDetails(*artifact);
         if (artifact->raster.width > 0)
