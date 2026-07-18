@@ -278,26 +278,26 @@ git commit -m "feat(scienceearth): read bounded Sentinel-2 scenes"
 **Interfaces:**
 - Produces: `Sentinel2Provider` with id `sentinel-2-l2a`.
 
-- [ ] **Step 1: Write descriptor and adapter RED cases**
+- [x] **Step 1: Write descriptor and adapter RED cases**
 
 Require natural-color visualization, 10 m resolution, interval/raster capabilities, no 64D
 capabilities, exact query validation, generation translation, cancel, clear, and clean worker join.
 
-- [ ] **Step 2: Implement the provider**
+- [x] **Step 2: Implement the provider**
 
 Describe `visual` as an RGB display product, mark the source experimental, and explain that raw
 surface reflectance and per-pixel cloud masking are not part of this slice.
 
-- [ ] **Step 3: Register after AlphaEarth**
+- [x] **Step 3: Register after AlphaEarth**
 
 Construct `Sentinel2Provider` without probing the network at startup. Registration failure disables
 only Sentinel-2 and writes one warning.
 
-- [ ] **Step 4: Run provider, registry, service, and science-off GREEN**
+- [x] **Step 4: Run provider, registry, service, and science-off GREEN**
 
 Run focused executables and the existing science-off target selection check.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add science/Sentinel2Provider.h science/Sentinel2Provider.cpp \

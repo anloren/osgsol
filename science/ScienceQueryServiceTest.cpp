@@ -78,7 +78,7 @@ namespace
         source.category = "optical imagery";
         source.providerVersion = "earth-search-v1";
         source.attribution = "Copernicus Sentinel data / Element 84 / AWS";
-        source.firstYear = 2018;
+        source.firstYear = 2015;
         source.lastYear = 2026;
         source.nativeResolutionMeters = 10.0;
         source.componentCount = 3;

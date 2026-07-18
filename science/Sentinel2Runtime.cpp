@@ -304,25 +304,6 @@ namespace
         }
     };
 
-    ScienceWgs84Bounds queryBounds(const GeoTemporalQuery& query)
-    {
-        constexpr double METERS_PER_LATITUDE_DEGREE = 110574.0;
-        constexpr double METERS_PER_LONGITUDE_DEGREE = 111320.0;
-        constexpr double PI = 3.14159265358979323846;
-        const double halfSpan = query.geometry.requestedSpanMeters * 0.5;
-        const double latitudeSpan = halfSpan / METERS_PER_LATITUDE_DEGREE;
-        const double longitudeScale = METERS_PER_LONGITUDE_DEGREE *
-            std::max(0.01, std::cos(
-                query.geometry.point.latitude * PI / 180.0));
-        const double longitudeSpan = halfSpan / longitudeScale;
-        return {
-            query.geometry.point.longitude - longitudeSpan,
-            query.geometry.point.latitude - latitudeSpan,
-            query.geometry.point.longitude + longitudeSpan,
-            query.geometry.point.latitude + latitudeSpan,
-        };
-    }
-
     std::string number(double value)
     {
         std::ostringstream stream;
@@ -406,8 +387,11 @@ struct Sentinel2Runtime::Impl
                 ScienceProgressStage::Locating,
                 "Searching Sentinel-2 scenes");
         std::string url, error;
-        if (!buildSentinel2SearchUrl(
-                queryBounds(request.query), request.query.time.intervalStart,
+        ScienceWgs84Bounds bounds;
+        if (!makeSentinel2PointSearchBounds(
+                request.query.geometry, bounds, error) ||
+            !buildSentinel2SearchUrl(
+                bounds, request.query.time.intervalStart,
                 request.query.time.intervalEnd,
                 request.query.sceneFilters.maximumScenes, url, error))
         {

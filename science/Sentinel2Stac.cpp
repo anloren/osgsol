@@ -243,6 +243,55 @@ namespace
     }
 }
 
+bool makeSentinel2PointSearchBounds(
+    const ScienceGeometry& geometry,
+    ScienceWgs84Bounds& bounds,
+    std::string& error)
+{
+    constexpr double MINIMUM_SPAN_METERS = 2560.0;
+    constexpr double MAXIMUM_SPAN_METERS = 81920.0;
+    constexpr double METERS_PER_LATITUDE_DEGREE = 110574.0;
+    constexpr double METERS_PER_LONGITUDE_DEGREE = 111320.0;
+    constexpr double PI = 3.14159265358979323846;
+    bounds = ScienceWgs84Bounds();
+    if (geometry.kind != ScienceGeometryKind::Point)
+        error = "Sentinel-2 preview requires point geometry";
+    else if (!std::isfinite(geometry.point.latitude) ||
+             !std::isfinite(geometry.point.longitude) ||
+             geometry.point.latitude < -90.0 ||
+             geometry.point.latitude > 90.0 ||
+             geometry.point.longitude < -180.0 ||
+             geometry.point.longitude > 180.0)
+        error = "Sentinel-2 point must be valid WGS84 coordinates";
+    else if (!std::isfinite(geometry.requestedSpanMeters) ||
+             geometry.requestedSpanMeters < MINIMUM_SPAN_METERS ||
+             geometry.requestedSpanMeters > MAXIMUM_SPAN_METERS)
+        error = "Sentinel-2 span must be inside [2560, 81920] meters";
+    else
+    {
+        const double halfSpan = geometry.requestedSpanMeters * 0.5;
+        const double latitudeSpan =
+            halfSpan / METERS_PER_LATITUDE_DEGREE;
+        const double longitudeScale = METERS_PER_LONGITUDE_DEGREE *
+            std::max(0.01, std::cos(geometry.point.latitude * PI / 180.0));
+        const double longitudeSpan = halfSpan / longitudeScale;
+        bounds = {
+            geometry.point.longitude - longitudeSpan,
+            geometry.point.latitude - latitudeSpan,
+            geometry.point.longitude + longitudeSpan,
+            geometry.point.latitude + latitudeSpan,
+        };
+        if (validBounds(bounds))
+        {
+            error.clear();
+            return true;
+        }
+        bounds = ScienceWgs84Bounds();
+        error = "Sentinel-2 search bounds cross the antimeridian or a pole";
+    }
+    return false;
+}
+
 bool buildSentinel2SearchUrl(
     const ScienceWgs84Bounds& bounds,
     const std::string& intervalStart,
@@ -371,4 +420,3 @@ bool selectSentinel2Item(
     return true;
 }
 }
-

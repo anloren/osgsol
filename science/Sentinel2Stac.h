@@ -20,6 +20,11 @@ namespace earthscience
         double resolutionMeters = 10.0;
     };
 
+    bool makeSentinel2PointSearchBounds(
+        const ScienceGeometry& geometry,
+        ScienceWgs84Bounds& bounds,
+        std::string& error);
+
     bool buildSentinel2SearchUrl(
         const ScienceWgs84Bounds& bounds,
         const std::string& intervalStart,
@@ -41,4 +46,3 @@ namespace earthscience
 }
 
 #endif
-
