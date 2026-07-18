@@ -1,8 +1,8 @@
 # macOS normal-exit root cause
 
-CHANGED_OWNER_FILE=applications/earth_explorer/earth_main.cpp
+CHANGED_OWNER_FILE=plugins/osgdb_tms/ReaderWriterTMS.cpp
 
-## Selected evidence branch
+## First repair and its limit
 
 AddressSanitizer named an application owner. The minimal
 `osgVerse_Test_OsgApplicationUsageExit` control returned zero, so the basic OSG 3.6.5
@@ -37,6 +37,32 @@ The inert `AutoQuitAfterFramesHandler` is registered only when `EARTH_AUTOQUIT_F
 positive value. On its requested FRAME it calls `setDone(true)` through the current view's
 `ViewerBase` and does not consume the event.
 
+That repair was necessary, but a current-binary manual session proved that it was not sufficient.
+The earlier statement that the later `ApplicationUsage` report was stale was incorrect.
+
+## Current real-session evidence
+
+- Incident `113A04F6-6652-4D48-8243-26867F35AB43` is from the current Desktop executable UUID
+  `45af404d-b4d8-3ae1-b29d-963110499a94`, launched at 18:40:36 and crashed during normal Quit at
+  18:49:23 on 2026-07-18.
+- The main thread reached `exit` and crashed while `ApplicationUsage` maps were being finalized.
+- Eight other threads were still blocked in `std::condition_variable::wait`, all with the same
+  return address in anonymous image index 28. The report no longer listed `osgdb_verse_tms.so` as
+  a loaded image.
+- `osgdb_tms` was the only Earth runtime owner matching both observations exactly: its
+  `LayerLoadPool` created eight workers by default, detached them, leaked the singleton, and made
+  every worker wait forever on one `std::condition_variable` inside the plugin.
+- The previous offscreen exit test disabled or shortened the normal tile path, so it never
+  exercised plugin unload with those eight persistent workers.
+
+## Current repair
+
+`LayerLoadPool` is now `osgVerse::TmsLayerLoadPool`, an owned function-local object inside the TMS
+plugin. Its workers remain reusable during the session, but are joinable. At plugin destruction it
+sets a stop predicate, wakes every idle worker, drains any already queued work, joins all worker
+threads, and only then permits `dlclose` to unload their code. The repair does not use `_Exit`, kill
+signals, crash suppression, macOS setting changes, or a packaging workaround.
+
 ## GREEN evidence
 
 - Focused owner-order test: `osgVerse_Test_ImGuiThreading` passed after failing on the absent
@@ -48,3 +74,6 @@ positive value. On its requested FRAME it calls `setDone(true)` through the curr
   crash report.
 - Normal staging audit: 127 Mach-O files, 127 UUID records, zero duplicate UUIDs, and zero
   non-canonical dylib install IDs.
+- Current owner regression: `osgVerse_Test_TmsLayerLoadPool` creates eight workers, executes the
+  parallel task path, shuts the pool down twice safely, verifies zero remaining owned workers, and
+  verifies that post-shutdown work falls back to the caller thread.

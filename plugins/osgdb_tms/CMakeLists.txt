@@ -1,6 +1,7 @@
 SET(LIB_NAME osgdb_verse_tms)
 SET(LIBRARY_FILES
     ReaderWriterTMS.cpp
+    TmsLayerLoadPool.h
 )
 
 SET_PROPERTY(GLOBAL APPEND PROPERTY VERSE_PLUGIN_LIBRARIES "${LIB_NAME}")
