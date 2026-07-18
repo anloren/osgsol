@@ -255,6 +255,12 @@ namespace earthscience
         bool allowUpsampling = false;
     };
 
+    struct ScienceSceneFilters
+    {
+        double maximumCloudCoverPercent = 100.0;
+        std::uint32_t maximumScenes = 10;
+    };
+
     struct GeoTemporalQuery
     {
         std::string sourceId;
@@ -265,10 +271,19 @@ namespace earthscience
         ScienceAggregation aggregation = ScienceAggregation::None;
         ScienceOutputKind outputKind = ScienceOutputKind::RasterLayer;
         ScienceQueryLimits limits;
+        ScienceSceneFilters sceneFilters;
         std::string purpose;
         SciencePriority priority = SciencePriority::Visible;
         std::string visualizationId;
         ScienceAnalysisOptions analysis;
+    };
+
+    struct ScienceEvidenceField
+    {
+        std::string id;
+        std::string displayName;
+        std::string value;
+        std::string unit;
     };
 
     struct ScienceSourceReference
@@ -286,6 +301,7 @@ namespace earthscience
         std::string publicationTime;
         std::string forecastReferenceTime;
         std::string attribution;
+        std::vector<ScienceEvidenceField> fields;
     };
 
     struct ScienceRasterPayload

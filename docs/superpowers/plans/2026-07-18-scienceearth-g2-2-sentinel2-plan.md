@@ -56,12 +56,12 @@ OpenSceneGraph, CMake/CTest, macOS arm64 packaging.
 **Interfaces:**
 - Produces: `ScienceSceneFilters`, `ScienceEvidenceField`, and byte accounting used by all later tasks.
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Add assertions that defaults are `maximumCloudCoverPercent=100.0`, `maximumScenes=10`; copied
 artifacts keep evidence fields; and `estimatedArtifactBytes()` counts every evidence-field string.
 
-- [ ] **Step 2: Run the focused executable and observe RED**
+- [x] **Step 2: Run the focused executable and observe RED**
 
 Run:
 
@@ -71,7 +71,7 @@ cmake --build build/science_64d_final_verify --target osgSol_Test_ScienceQueryTy
 
 Expected: compile failure because the two structs and fields do not exist.
 
-- [ ] **Step 3: Add the minimal types**
+- [x] **Step 3: Add the minimal types**
 
 Add:
 
@@ -95,7 +95,7 @@ Add `ScienceSceneFilters sceneFilters` to `GeoTemporalQuery` and
 `std::vector<ScienceEvidenceField> fields` to `ScienceSourceReference`. Count their strings in
 `estimatedArtifactBytes()`.
 
-- [ ] **Step 4: Build and run GREEN**
+- [x] **Step 4: Build and run GREEN**
 
 Run the target and then:
 
@@ -105,7 +105,7 @@ build/science_64d_final_verify/science/osgSol_Test_ScienceQueryTypes
 
 Expected: exit 0 with no GUI or crash report.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add science/ScienceQueryTypes.h science/ScienceQueryTypes.cpp \

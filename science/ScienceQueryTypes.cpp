@@ -201,6 +201,14 @@ namespace
         addStringBytes(total, reference.publicationTime);
         addStringBytes(total, reference.forecastReferenceTime);
         addStringBytes(total, reference.attribution);
+        addVectorBytes(total, reference.fields);
+        for (const ScienceEvidenceField& field : reference.fields)
+        {
+            addStringBytes(total, field.id);
+            addStringBytes(total, field.displayName);
+            addStringBytes(total, field.value);
+            addStringBytes(total, field.unit);
+        }
     }
 
     bool hasEmbeddingContent(const ScienceEmbeddingPayload& embedding)

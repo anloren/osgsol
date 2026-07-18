@@ -64,6 +64,10 @@ namespace
                 "analysis defaults changed");
         require(options.pcaComponents == 3 && options.clusterCount == 4,
                 "advanced defaults changed");
+        require(query.sceneFilters.maximumCloudCoverPercent == 100.0,
+                "scene cloud default must accept the complete range");
+        require(query.sceneFilters.maximumScenes == 10,
+                "scene candidate default must remain bounded at ten");
         require(progress.stage == earthscience::ScienceProgressStage::Idle &&
                     !progress.determinate && progress.completedUnits == 0 &&
                     progress.totalUnits == 0,
@@ -544,6 +548,32 @@ namespace
                     minimumOwnedCharacters,
                 "artifact byte estimate omitted owned string storage");
     }
+
+    void testSceneEvidenceFieldsAreCopiedAndCounted()
+    {
+        earthscience::ScienceArtifact artifact;
+        earthscience::ScienceSourceReference reference;
+        reference.sourceId = "sentinel-2-l2a";
+        reference.fields.push_back({
+            std::string(4096, 'i'), std::string(8192, 'n'),
+            std::string(16384, 'v'), std::string(32768, 'u')});
+        artifact.sourceReferences.push_back(reference);
+
+        const earthscience::ScienceArtifact copied = artifact;
+        require(copied.sourceReferences.size() == 1 &&
+                    copied.sourceReferences.front().fields.size() == 1 &&
+                    copied.sourceReferences.front().fields.front().id ==
+                        reference.fields.front().id &&
+                    copied.sourceReferences.front().fields.front().value ==
+                        reference.fields.front().value,
+                "scene evidence fields were not preserved by artifact copy");
+
+        const std::uint64_t minimumOwnedCharacters =
+            4096 + 8192 + 16384 + 32768;
+        require(earthscience::estimatedArtifactBytes(artifact) >=
+                    minimumOwnedCharacters,
+                "artifact byte estimate omitted scene evidence strings");
+    }
 }
 
 int main()
@@ -560,6 +590,7 @@ int main()
     testEmbeddingShapeContractRejectsPartialPayloads();
     testEmbeddingShapeContractRejectsInconsistentBacking();
     testArtifactByteEstimateIncludesOwnedStrings();
+    testSceneEvidenceFieldsAreCopiedAndCounted();
     std::cout << "[OK] ScienceEarth generic query type contract\n";
     return 0;
 }
