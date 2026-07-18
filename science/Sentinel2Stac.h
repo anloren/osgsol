@@ -29,6 +29,7 @@ namespace earthscience
         const ScienceWgs84Bounds& bounds,
         const std::string& intervalStart,
         const std::string& intervalEnd,
+        double maximumCloudCoverPercent,
         std::uint32_t maximumScenes,
         std::string& url,
         std::string& error);

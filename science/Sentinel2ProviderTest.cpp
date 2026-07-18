@@ -252,6 +252,25 @@ namespace
                     earthscience::ScienceJobState::Idle,
                 "provider clear did not restore ready-on-demand state");
     }
+
+    void testNoMatchingSceneDoesNotDegradeTheSource()
+    {
+        earthscience::Sentinel2Provider provider(
+            std::make_unique<FakeIo>());
+        earthscience::GeoTemporalQuery strict = query();
+        strict.sceneFilters.maximumCloudCoverPercent = 1.0;
+        provider.submit(strict);
+        const earthscience::ScienceProviderSnapshot missing =
+            waitForTerminal(provider);
+        const earthscience::ScienceSourceDescriptor source =
+            provider.descriptor();
+        require(missing.state == earthscience::ScienceJobState::Failed &&
+                    missing.message.find("cloud threshold") !=
+                        std::string::npos,
+                "no-match query did not remain an honest query result");
+        require(source.health == earthscience::ScienceSourceHealth::Ready,
+                "no matching scene incorrectly degraded the whole source");
+    }
 }
 
 int main()
@@ -259,6 +278,7 @@ int main()
     testDescriptorIsTruthfulAndConstructionDoesNotUseNetwork();
     testProviderRejectsEveryNonSliceSignature();
     testProviderDispatchesCancelsClearsAndJoinsCleanly();
+    testNoMatchingSceneDoesNotDegradeTheSource();
     std::cout << "[OK] ScienceEarth Sentinel-2 provider contract\n";
     return 0;
 }

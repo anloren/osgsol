@@ -84,12 +84,14 @@ namespace
         std::atomic<bool> readStarted{false};
         std::atomic<int> fetches{0};
         std::atomic<int> reads{0};
+        std::string lastUrl;
 
         bool fetchStac(const std::string& url, std::size_t maximumBytes,
                        const std::function<bool()>& cancelled,
                        std::string& body, std::string& error) override
         {
             ++fetches;
+            lastUrl = url;
             fetchStarted.store(true, std::memory_order_release);
             while (blockFetch && !cancelled()) std::this_thread::yield();
             if (cancelled())
@@ -173,6 +175,14 @@ namespace
                 "Sentinel runtime did not reach Ready");
         require(observed->fetches == 1 && observed->reads == 1,
                 "Sentinel runtime repeated a bounded request");
+        require(observed->lastUrl.find(
+                    "query=%7B%22eo%3Acloud_cover%22%3A%7B%22lte%22%3A20%7D%7D") !=
+                    std::string::npos,
+                "Sentinel runtime did not push the cloud threshold into STAC");
+        require(observed->lastUrl.find(
+                    "sortby=%2Bproperties.eo%3Acloud_cover%2C-properties.datetime") !=
+                    std::string::npos,
+                "Sentinel runtime did not request deterministic cloud/time sorting");
         require(ready.artifact && ready.artifact->raster.width == 256 &&
                     ready.artifact->raster.height == 256 &&
                     ready.artifact->sourceReferences.size() == 1,
@@ -259,9 +269,12 @@ namespace
         const earthscience::ScienceProviderSnapshot missing =
             waitForTerminal(noCoverage);
         require(missing.state == earthscience::ScienceJobState::Failed &&
-                    missing.message.find("cloud") != std::string::npos &&
+                    missing.message.find("raise maximum cloud") !=
+                        std::string::npos &&
+                    missing.message.find("widen time window") !=
+                        std::string::npos &&
                     !missing.artifact,
-                "no matching cloud threshold was not exposed honestly");
+                "no matching scene did not provide actionable filter guidance");
     }
 
     void testNewGenerationAndClearRejectStaleRead()

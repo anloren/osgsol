@@ -393,6 +393,7 @@ struct Sentinel2Runtime::Impl
             !buildSentinel2SearchUrl(
                 bounds, request.query.time.intervalStart,
                 request.query.time.intervalEnd,
+                request.query.sceneFilters.maximumCloudCoverPercent,
                 request.query.sceneFilters.maximumScenes, url, error))
         {
             publish(request.generation, ScienceJobState::Failed,

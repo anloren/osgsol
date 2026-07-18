@@ -15,6 +15,12 @@ namespace
         std::tm utc = {};
         return gmtime_r(&now, &utc) ? utc.tm_year + 1900 : 2026;
     }
+
+    bool isNoMatchingScene(const ScienceProviderSnapshot& state)
+    {
+        return state.state == ScienceJobState::Failed &&
+            state.message.rfind("No Sentinel-2 scene", 0) == 0;
+    }
 }
 
 ScienceSourceDescriptor describeSentinel2()
@@ -78,7 +84,8 @@ ScienceSourceDescriptor Sentinel2Provider::descriptor() const
         result.health = ScienceSourceHealth::Busy;
         result.healthMessage = state.message;
     }
-    else if (state.state == ScienceJobState::Failed)
+    else if (state.state == ScienceJobState::Failed &&
+             !isNoMatchingScene(state))
     {
         result.health = ScienceSourceHealth::Degraded;
         result.healthMessage = state.message;
@@ -123,6 +130,7 @@ bool Sentinel2Provider::validateQuery(
         std::string url;
         if (!buildSentinel2SearchUrl(
                 bounds, query.time.intervalStart, query.time.intervalEnd,
+                query.sceneFilters.maximumCloudCoverPercent,
                 query.sceneFilters.maximumScenes, url, error))
             return false;
         error.clear();

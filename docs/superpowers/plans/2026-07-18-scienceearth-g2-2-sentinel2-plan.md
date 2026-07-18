@@ -428,13 +428,13 @@ new Sentinel test failure to an ordinary nonzero exit before running it.
 Run all Sentinel tests, query/service/registry/AlphaEarth/UI/Agent/preview tests, the safe
 science-enabled offline set, and a fresh science-off build. Record exact counts.
 
-- [ ] **Step 3: Build and audit staging**
+- [x] **Step 3: Build and audit staging**
 
 Build Release from a clean committed source, package version `0.5.0` as an untagged `manual-test`
 candidate, verify exact source metadata, dependencies, UUIDs, credentials, mutable files, and
 codesign without launching it.
 
-- [ ] **Step 4: Atomically update the fixed app**
+- [x] **Step 4: Atomically update the fixed app**
 
 Back up the previous app outside Desktop, then replace only
 `/Users/USER/Desktop/osgSol Earth.app`. Do not run, open, focus, or foreground it.

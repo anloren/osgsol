@@ -74,7 +74,7 @@ int main()
     CHECK(defaults.mode == SciencePanelMode::Preview);
     CHECK(defaults.sourceId == "alphaearth-foundations");
     CHECK(defaults.sentinelWindowDays == 30);
-    CHECK(defaults.sentinelMaximumCloudPercent == 20.0);
+    CHECK(defaults.sentinelMaximumCloudPercent == 40.0);
     CHECK(defaults.locationMode == SciencePanelLocationMode::CurrentLocation);
     CHECK(defaults.firstYear == 2017);
     CHECK(defaults.lastYear == 2025);

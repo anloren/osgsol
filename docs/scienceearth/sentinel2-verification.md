@@ -105,3 +105,39 @@ paths call `std::abort()`. `OsgApplicationUsageExit` was excluded because it lau
 process. Those exclusions avoid generating a macOS crash report or taking focus; they are not
 claims that the excluded runtime behaviors were automated in this pass. The new Sentinel-2 tests
 use ordinary nonzero exits on failure.
+
+## Manual-candidate correction: false source degradation
+
+The first `0.5.0 manual-test` candidate exposed a real usability defect: a normal no-match result
+could leave the source labelled `degraded`, and cloudy regions could appear unable to load.
+
+Root-cause reproduction showed that the client requested an arbitrary first page of ten STAC
+items and applied the cloud threshold only after download. It also mapped every failed query,
+including “no scene satisfies this threshold”, to whole-source degradation. The corrected request
+pushes `eo:cloud_cover <= selected threshold` into Earth Search and asks for deterministic cloud
+ascending / acquisition descending sorting before the ten-scene bound. The local threshold check
+remains as defense in depth.
+
+The UI now defaults to a 40 percent scene-wide cloud threshold. A no-match result keeps the source
+Ready and tells the user to raise the threshold or widen the time window; actual transport, STAC
+parsing, and COG failures still degrade the source.
+
+The behavior was checked against live Earth Search data for Hong Kong (`22.3193, 114.1694`). The
+30-day catalog contained no scene at or below 20 percent; its least-cloudy scene was approximately
+31.16 percent. With the corrected 40 percent default, the complete production path reached Ready
+in `3.87905337 s` with:
+
+```text
+scene id                     S2B_50QKK_20260712_0_L2A
+acquisition                  2026-07-12T03:11:43.272000Z
+scene cloud cover            31.16 percent
+artifact                     256 x 256 RGBA
+source/display resolution    10.0 m / 10.0 m per pixel
+actual WGS84 bounds          114.15678411, 22.30756341, 114.18207704, 22.33109638
+STAC requests                1
+selected COG assets          1
+full-object fallback         none
+```
+
+After the correction, the complete safe science-enabled offline set passed **32 of 32** tests in
+`7.04 s` real time without opening the Desktop app or creating a local listener.

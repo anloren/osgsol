@@ -65,7 +65,7 @@ struct SciencePanelState
     bool enableClustering = false;
     int clusterCount = 4;
     int sentinelWindowDays = 30;
-    double sentinelMaximumCloudPercent = 20.0;
+    double sentinelMaximumCloudPercent = 40.0;
 };
 
 enum class SciencePanelResultKind

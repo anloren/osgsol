@@ -296,6 +296,7 @@ bool buildSentinel2SearchUrl(
     const ScienceWgs84Bounds& bounds,
     const std::string& intervalStart,
     const std::string& intervalEnd,
+    double maximumCloudCoverPercent,
     std::uint32_t maximumScenes,
     std::string& url,
     std::string& error)
@@ -308,6 +309,10 @@ bool buildSentinel2SearchUrl(
              !normalizeUtc(intervalEnd, normalizedEnd) ||
              normalizedStart > normalizedEnd)
         error = "Sentinel-2 search interval must be ordered RFC 3339 UTC";
+    else if (!std::isfinite(maximumCloudCoverPercent) ||
+             maximumCloudCoverPercent < 0.0 ||
+             maximumCloudCoverPercent > 100.0)
+        error = "Sentinel-2 cloud threshold must be inside [0, 100]";
     else if (maximumScenes == 0 || maximumScenes > MAX_SCENES)
         error = "Sentinel-2 search scene limit must be inside [1, 10]";
     else
@@ -316,10 +321,17 @@ bool buildSentinel2SearchUrl(
         bbox << std::fixed << std::setprecision(8)
              << bounds.west << ',' << bounds.south << ','
              << bounds.east << ',' << bounds.north;
+        std::ostringstream cloudQuery;
+        cloudQuery << std::setprecision(15)
+                   << "{\"eo:cloud_cover\":{\"lte\":"
+                   << maximumCloudCoverPercent << "}}";
         url = std::string(SEARCH_ENDPOINT) +
             "?collections=sentinel-2-l2a&bbox=" +
             percentEncode(bbox.str()) + "&datetime=" +
             percentEncode(intervalStart + '/' + intervalEnd) +
+            "&query=" + percentEncode(cloudQuery.str()) +
+            "&sortby=" + percentEncode(
+                "+properties.eo:cloud_cover,-properties.datetime") +
             "&limit=" + std::to_string(maximumScenes);
         error.clear();
         return true;
@@ -402,7 +414,8 @@ bool selectSentinel2Item(
             candidates.push_back(&scene);
     if (candidates.empty())
     {
-        error = "No Sentinel-2 scene satisfies the cloud threshold";
+        error = "No Sentinel-2 scene satisfies the selected cloud threshold; "
+                "raise maximum cloud or widen time window";
         return false;
     }
     std::sort(candidates.begin(), candidates.end(),

@@ -57,7 +57,7 @@ namespace
         require(earthscience::buildSentinel2SearchUrl(
                     {139.60, 35.50, 139.95, 35.85},
                     "2026-06-18T00:00:00Z", "2026-07-18T23:59:59Z",
-                    10, url, error),
+                    20.0, 10, url, error),
                 "valid Sentinel-2 search URL was rejected");
         require(error.empty(), "valid search URL returned an error");
         require(url.find("https://earth-search.aws.element84.com/v1/search?") == 0,
@@ -69,22 +69,35 @@ namespace
                 "search interval was not percent encoded");
         require(url.find("limit=10") != std::string::npos,
                 "search URL lost the scene bound");
+        require(url.find(
+                    "query=%7B%22eo%3Acloud_cover%22%3A%7B%22lte%22%3A20%7D%7D") !=
+                    std::string::npos,
+                "search URL did not push down the cloud threshold");
+        require(url.find(
+                    "sortby=%2Bproperties.eo%3Acloud_cover%2C-properties.datetime") !=
+                    std::string::npos,
+                "search URL lost deterministic cloud/time sorting");
 
         require(!earthscience::buildSentinel2SearchUrl(
                     {170.0, -10.0, -170.0, 10.0},
                     "2026-06-18T00:00:00Z", "2026-07-18T23:59:59Z",
-                    10, url, error),
+                    20.0, 10, url, error),
                 "antimeridian-crossing bbox was accepted");
         require(!earthscience::buildSentinel2SearchUrl(
                     {139.60, 35.50, 139.95, 35.85},
                     "2026-07-18T00:00:00Z", "2026-06-18T23:59:59Z",
-                    10, url, error),
+                    20.0, 10, url, error),
                 "reversed interval was accepted");
         require(!earthscience::buildSentinel2SearchUrl(
                     {139.60, 35.50, 139.95, 35.85},
                     "2026-06-18T00:00:00Z", "2026-07-18T23:59:59Z",
-                    11, url, error),
+                    20.0, 11, url, error),
                 "unbounded scene request was accepted");
+        require(!earthscience::buildSentinel2SearchUrl(
+                    {139.60, 35.50, 139.95, 35.85},
+                    "2026-06-18T00:00:00Z", "2026-07-18T23:59:59Z",
+                    101.0, 10, url, error),
+                "invalid cloud threshold was accepted");
     }
 
     void testParseAndDeterministicSelection()
@@ -186,4 +199,3 @@ int main()
     std::cout << "[OK] Sentinel-2 STAC contract\n";
     return 0;
 }
-
