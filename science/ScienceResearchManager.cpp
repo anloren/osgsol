@@ -228,12 +228,23 @@ bool ScienceResearchManager::observe(
             error = "ready research step has no matching artifact";
             return false;
         }
-        ScienceEvidenceRecord evidence;
-        if (!makeScienceEvidence(*artifact, source, evidence, error) ||
-            !_store.saveEvidence(evidence, error))
-            return false;
-        found->artifactId = artifact->artifactId;
-        found->evidenceId = evidence.evidenceId;
+        if (!found->evidenceId.empty())
+        {
+            if (found->artifactId != artifact->artifactId)
+            {
+                error = "ready research step changed its attached artifact";
+                return false;
+            }
+        }
+        else
+        {
+            ScienceEvidenceRecord evidence;
+            if (!makeScienceEvidence(*artifact, source, evidence, error) ||
+                !_store.saveEvidence(evidence, error))
+                return false;
+            found->artifactId = artifact->artifactId;
+            found->evidenceId = evidence.evidenceId;
+        }
     }
     updateState(*record);
     if (!persistUnlocked(*record, error)) return false;

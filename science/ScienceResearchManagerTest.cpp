@@ -149,6 +149,7 @@ int main()
                 record.state == earthscience::ScienceResearchState::Running,
             "ready artifact was not persisted while another step ran");
     const std::string sentinelEvidence = record.steps.front().evidenceId;
+    sentinelArtifact->createdAt.clear();
     require(manager.observe(
                 researchId,
                 snapshot(11, "sentinel-2-l2a",

@@ -4,11 +4,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 #include <ScienceQueryService.h>
 #include <osg/Math>
@@ -27,6 +30,31 @@ namespace
         std::cerr << "[FAIL] " << message << '\n';
         std::exit(1);
     }
+
+    class TempDirectory
+    {
+    public:
+        TempDirectory()
+        {
+            std::string pattern =
+                (std::filesystem::temp_directory_path() /
+                 "osgsol-agent-research-XXXXXX").string();
+            std::vector<char> writable(pattern.begin(), pattern.end());
+            writable.push_back('\0');
+            char* created = mkdtemp(writable.data());
+            require(created != nullptr, "temporary research root failed");
+            _path = created;
+        }
+        ~TempDirectory()
+        {
+            std::error_code ignored;
+            std::filesystem::remove_all(_path, ignored);
+        }
+        const std::string& path() const { return _path; }
+
+    private:
+        std::string _path;
+    };
 
     earthscience::ScienceSourceDescriptor makeDescriptor()
     {
@@ -499,7 +527,8 @@ namespace
         const std::vector<std::string> expectedNames = {
             "search_science_sources", "start_science_research",
             "get_research_job", "show_science_artifact",
-            "compare_science_artifacts", "run_change_analysis"};
+            "compare_science_artifacts", "run_change_analysis",
+            "build_research_brief"};
         require(tools.tools().size() == expectedNames.size(),
                 "science tool count changed");
         for (std::size_t i = 0; i < expectedNames.size(); ++i)
@@ -549,6 +578,10 @@ namespace
                     start.parametersJson.find("time_start") != std::string::npos &&
                     start.parametersJson.find("time_end") != std::string::npos &&
                     start.parametersJson.find("max_cloud_percent") !=
+                        std::string::npos &&
+                    start.parametersJson.find("research_question") !=
+                        std::string::npos &&
+                    start.parametersJson.find("research_id") !=
                         std::string::npos,
                 "start schema omitted compatible preview or 64D research options");
         layer->setVisible(false);
@@ -1116,12 +1149,203 @@ namespace
                 "show did not enable only the science layer");
         requireMatrixUnchanged(originalMatrix, *manipulator);
     }
+
+    void testPersistentResearchSurvivesRestartAndStaysCompact()
+    {
+        TempDirectory temporary;
+        auto registry =
+            std::make_unique<earthscience::ScienceSourceRegistry>();
+        auto alphaProvider = std::make_unique<ToolProvider>();
+        ToolProvider* alpha = alphaProvider.get();
+        auto sentinelProvider =
+            std::make_unique<ToolProvider>(makeSentinelDescriptor());
+        ToolProvider* sentinel = sentinelProvider.get();
+        auto demProvider =
+            std::make_unique<ToolProvider>(makeDemDescriptor());
+        ToolProvider* dem = demProvider.get();
+        std::string registrationError;
+        require(registry->add(std::move(alphaProvider), registrationError) &&
+                    registry->add(
+                        std::move(sentinelProvider), registrationError) &&
+                    registry->add(std::move(demProvider), registrationError),
+                "persistent research providers failed to register");
+        earthscience::ScienceQueryService service(std::move(registry));
+        osg::ref_ptr<SciencePreviewLayer> layer =
+            new SciencePreviewLayer(&service);
+        LayerManager layers;
+        OverlayLayer catalogLayer;
+        catalogLayer.id = "alphaearth";
+        catalogLayer.displayName = "AlphaEarth";
+        catalogLayer.group = "Science";
+        catalogLayer.apply = [](const OverlayLayer&) {};
+        layers.add(catalogLayer);
+        layer->setVisible(false);
+        layers.setEnabled("alphaearth", false);
+        osg::ref_ptr<osgVerse::EarthManipulator> manipulator =
+            new osgVerse::EarthManipulator;
+        manipulator->setByEye(
+            osg::inDegrees(35.68), osg::inDegrees(139.76), 150000.0);
+        const osg::Matrixd originalMatrix = manipulator->getMatrix();
+
+        earthai::ToolRegistry tools;
+        registerScienceResearchTools(
+            &tools, &service, layer.get(), &layers, manipulator.get(),
+            temporary.path());
+        picojson::value result;
+        picojson::object alphaArgs;
+        alphaArgs["source_id"] = picojson::value("alphaearth-foundations");
+        alphaArgs["visualization_id"] =
+            picojson::value("false-color-a01-a16-a09");
+        alphaArgs["lat"] = picojson::value(35.68);
+        alphaArgs["lon"] = picojson::value(139.76);
+        alphaArgs["year"] = picojson::value(2025.0);
+        alphaArgs["research_question"] = picojson::value(
+            "Compare latent, visible-image, and static elevation evidence");
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(alphaArgs),
+                    result) && result.contains("research_id"),
+                "persistent research creation failed");
+        const std::string researchId =
+            result.get("research_id").get<std::string>();
+        require(researchId.rfind("research-", 0) == 0,
+                "persistent research id is not stable");
+        alpha->publishReady("persistent-alpha");
+        picojson::object researchArgs;
+        researchArgs["research_id"] = picojson::value(researchId);
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(researchArgs),
+                    result) &&
+                    result.get("state").get<std::string>() == "ready" &&
+                    result.get("evidence_count").get<double>() == 1.0,
+                "AlphaEarth evidence was not persisted");
+
+        picojson::object sentinelArgs;
+        sentinelArgs["source_id"] = picojson::value("sentinel-2-l2a");
+        sentinelArgs["visualization_id"] =
+            picojson::value("natural-color-visual");
+        sentinelArgs["lat"] = picojson::value(35.68);
+        sentinelArgs["lon"] = picojson::value(139.76);
+        sentinelArgs["time_start"] =
+            picojson::value("2026-06-18T00:00:00Z");
+        sentinelArgs["time_end"] =
+            picojson::value("2026-07-18T00:00:00Z");
+        sentinelArgs["research_id"] = picojson::value(researchId);
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(sentinelArgs),
+                    result) &&
+                    result.get("research_id").get<std::string>() == researchId,
+                "Sentinel evidence did not attach to existing research");
+        sentinel->publishReady("persistent-sentinel");
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(researchArgs), result) &&
+                    result.get("evidence_count").get<double>() == 2.0,
+                "Sentinel evidence was not persisted");
+
+        picojson::object demArgs;
+        demArgs["source_id"] = picojson::value("copernicus-dem-glo-30");
+        demArgs["visualization_id"] =
+            picojson::value("surface-elevation-hypsometric");
+        demArgs["lat"] = picojson::value(35.68);
+        demArgs["lon"] = picojson::value(139.76);
+        demArgs["research_id"] = picojson::value(researchId);
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(demArgs),
+                    result),
+                "DEM evidence did not attach to existing research");
+        dem->publishReady("persistent-dem", 0,
+                          "copernicus-dem-hypsometric-v1",
+                          "aws-glo30-2021");
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(researchArgs), result) &&
+                    result.get("state").get<std::string>() == "ready" &&
+                    result.get("steps").get<picojson::array>().size() == 3 &&
+                    result.get("evidence_count").get<double>() == 3.0,
+                "three-source research did not become ready");
+
+        require(tools.dispatch(
+                    "build_research_brief", picojson::value(researchArgs),
+                    result) && !result.contains("error") &&
+                    result.get("observations").get<picojson::array>().size() ==
+                        3 &&
+                    result.get("citations").get<picojson::array>().size() == 3,
+                "three-source Agent brief failed");
+        const std::string markdown =
+            result.get("markdown").get<std::string>();
+        const std::string compactJson = result.serialize(false);
+        require(markdown.find("latent representation") != std::string::npos &&
+                    markdown.find("selected acquisition") !=
+                        std::string::npos &&
+                    markdown.find("static EGM2008 DSM") !=
+                        std::string::npos &&
+                    compactJson.find("rgba") == std::string::npos &&
+                    compactJson.find("embedding.values") ==
+                        std::string::npos &&
+                    compactJson.find("hotspotMask") == std::string::npos &&
+                    compactJson.find("pca.scores") == std::string::npos,
+                "Agent brief is unbounded or scientifically ambiguous");
+        require(!layer->isVisible() && layers.find("alphaearth") &&
+                    !layers.find("alphaearth")->enabled,
+                "persistent research changed map visibility");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        earthai::ToolRegistry restartedTools;
+        registerScienceResearchTools(
+            &restartedTools, &service, layer.get(), &layers,
+            manipulator.get(), temporary.path());
+        require(restartedTools.dispatch(
+                    "build_research_brief", picojson::value(researchArgs),
+                    result) &&
+                    result.get("markdown").get<std::string>() == markdown,
+                "research brief did not survive manager restart byte-stably");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        picojson::object partialAlpha = alphaArgs;
+        partialAlpha.erase("research_id");
+        partialAlpha["research_question"] =
+            picojson::value("Partial-source test");
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(partialAlpha),
+                    result),
+                "partial research creation failed");
+        const std::string partialId =
+            result.get("research_id").get<std::string>();
+        alpha->publishReady("partial-alpha");
+        picojson::object partialGet;
+        partialGet["research_id"] = picojson::value(partialId);
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(partialGet), result),
+                "partial AlphaEarth evidence did not persist");
+        sentinelArgs["research_id"] = picojson::value(partialId);
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(sentinelArgs),
+                    result),
+                "partial Sentinel step did not attach");
+        sentinel->publishFailure();
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(partialGet), result) &&
+                    result.get("state").get<std::string>() == "partial" &&
+                    tools.dispatch(
+                        "build_research_brief", picojson::value(partialGet),
+                        result) &&
+                    result.get("markdown").get<std::string>().find(
+                        "Replacement failed") != std::string::npos,
+                "partial provider failure was not preserved honestly");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        picojson::object missing;
+        missing["research_id"] = picojson::value("research-missing");
+        require(tools.dispatch(
+                    "build_research_brief", picojson::value(missing), result) &&
+                    result.contains("error"),
+                "missing research record was not reported");
+    }
 }
 
 int main()
 {
     testAnalysisQueryBuildersKeepExactScientificIntent();
     testScienceToolsUseServiceAndPreserveCamera();
+    testPersistentResearchSurvivesRestartAndStaysCompact();
     std::cout << "[OK] ScienceEarth Agent tools use the query service without camera writes\n";
     return 0;
 }

@@ -12,6 +12,8 @@
 
 #include <ScienceEmbedding.h>
 #include <ScienceQueryService.h>
+#include <ScienceResearchBrief.h>
+#include <ScienceResearchManager.h>
 #include <modeling/Math.h>
 #include <readerwriter/EarthManipulator.h>
 
@@ -617,6 +619,115 @@ namespace
         }
         return picojson::value(result);
     }
+
+    picojson::value researchJson(
+        const earthscience::ScienceResearchRecord& research)
+    {
+        picojson::object result;
+        result["research_id"] = picojson::value(research.researchId);
+        result["question"] = picojson::value(research.question);
+        result["state"] = picojson::value(std::string(
+            earthscience::scienceResearchStateName(research.state)));
+        result["created_at"] = picojson::value(research.createdAt);
+        result["updated_at"] = picojson::value(research.updatedAt);
+        picojson::array steps;
+        std::size_t evidenceCount = 0;
+        for (const earthscience::ScienceResearchStep& step : research.steps)
+        {
+            picojson::object item;
+            item["job_id"] = picojson::value(
+                static_cast<double>(step.liveJobId));
+            item["source_id"] = picojson::value(step.sourceId);
+            item["state"] = picojson::value(std::string(
+                earthscience::scienceJobStateName(step.state)));
+            item["artifact_id"] = picojson::value(step.artifactId);
+            item["evidence_id"] = picojson::value(step.evidenceId);
+            item["message"] = picojson::value(step.message);
+            if (!step.evidenceId.empty()) ++evidenceCount;
+            steps.emplace_back(item);
+        }
+        result["steps"] = picojson::value(steps);
+        result["evidence_count"] = picojson::value(
+            static_cast<double>(evidenceCount));
+        result["camera_changed"] = picojson::value(false);
+        result["layer_changed"] = picojson::value(false);
+        return picojson::value(result);
+    }
+
+    picojson::array statementsJson(
+        const std::vector<earthscience::ScienceBriefStatement>& statements)
+    {
+        picojson::array result;
+        for (const earthscience::ScienceBriefStatement& statement : statements)
+        {
+            picojson::object item;
+            item["label"] = picojson::value(statement.label);
+            item["text"] = picojson::value(statement.text);
+            item["evidence_ids"] = picojson::value(
+                stringsJson(statement.evidenceIds));
+            result.emplace_back(item);
+        }
+        return result;
+    }
+
+    picojson::value briefJson(
+        const earthscience::ScienceResearchBrief& brief)
+    {
+        picojson::object result;
+        result["research_id"] = picojson::value(brief.researchId);
+        result["question"] = picojson::value(brief.question);
+        result["state"] = picojson::value(std::string(
+            earthscience::scienceResearchStateName(brief.state)));
+        result["observations"] = picojson::value(
+            statementsJson(brief.observations));
+        result["inferences"] = picojson::value(
+            statementsJson(brief.inferences));
+        result["limitations"] = picojson::value(
+            statementsJson(brief.limitations));
+
+        picojson::array sources;
+        for (const earthscience::ScienceBriefSourceRow& source : brief.sources)
+        {
+            picojson::object item;
+            item["citation_number"] = picojson::value(
+                static_cast<double>(source.citationNumber));
+            item["evidence_id"] = picojson::value(source.evidenceId);
+            item["source_id"] = picojson::value(source.sourceId);
+            item["source_name"] = picojson::value(source.sourceName);
+            item["dataset_id"] = picojson::value(source.datasetId);
+            item["selected_time"] = picojson::value(source.selectedTime);
+            picojson::object coverage;
+            coverage["west"] = picojson::value(source.coverage.west);
+            coverage["south"] = picojson::value(source.coverage.south);
+            coverage["east"] = picojson::value(source.coverage.east);
+            coverage["north"] = picojson::value(source.coverage.north);
+            item["coverage"] = picojson::value(coverage);
+            sources.emplace_back(item);
+        }
+        result["sources"] = picojson::value(sources);
+
+        picojson::array citations;
+        for (const earthscience::ScienceBriefCitation& citation :
+             brief.citations)
+        {
+            picojson::object item;
+            item["number"] = picojson::value(
+                static_cast<double>(citation.number));
+            item["evidence_id"] = picojson::value(citation.evidenceId);
+            item["source_name"] = picojson::value(citation.sourceName);
+            item["dataset_id"] = picojson::value(citation.datasetId);
+            item["provider_version"] =
+                picojson::value(citation.providerVersion);
+            item["url"] = picojson::value(citation.originalUrl);
+            item["attribution"] = picojson::value(citation.attribution);
+            citations.emplace_back(item);
+        }
+        result["citations"] = picojson::value(citations);
+        result["markdown"] = picojson::value(brief.markdown);
+        result["camera_changed"] = picojson::value(false);
+        result["layer_changed"] = picojson::value(false);
+        return picojson::value(result);
+    }
 }
 
 void registerScienceResearchTools(
@@ -624,9 +735,15 @@ void registerScienceResearchTools(
     earthscience::ScienceQueryService* service,
     SciencePreviewLayer* layer,
     LayerManager* layers,
-    osgVerse::EarthManipulator* manipulator)
+    osgVerse::EarthManipulator* manipulator,
+    const std::string& researchRoot)
 {
     if (!tools || !service || !layer || !layers || !manipulator) return;
+    const auto researchManager =
+        std::make_shared<earthscience::ScienceResearchManager>(
+            researchRoot.empty()
+                ? earthscience::defaultScienceResearchRoot()
+                : researchRoot);
 
     earthai::Tool search;
     search.name = "search_science_sources";
@@ -671,8 +788,10 @@ void registerScienceResearchTools(
             "\"minimum\":0,\"maximum\":100},"
         "\"grid_size\":{\"type\":\"integer\"},"
         "\"enable_pca\":{\"type\":\"boolean\"},"
-        "\"cluster_count\":{\"type\":\"integer\"}}}";
-    start.execute = [service, manipulator](
+        "\"cluster_count\":{\"type\":\"integer\"},"
+        "\"research_question\":{\"type\":\"string\"},"
+        "\"research_id\":{\"type\":\"string\"}}}";
+    start.execute = [service, manipulator, researchManager](
         const picojson::value& args)
     {
         if (!args.is<picojson::object>())
@@ -829,9 +948,48 @@ void registerScienceResearchTools(
                 source, latitude, longitude, eyeLla[2] * 0.85,
                 baselineYear, comparisonYear, options);
         }
+
+        std::string persistentId, question;
+        const bool hasResearchId = args.contains("research_id");
+        const bool hasQuestion = args.contains("research_question");
+        if (hasResearchId &&
+            !requiredString(args, "research_id", persistentId))
+            return errorJson("research_id must be a non-empty string");
+        if (hasQuestion &&
+            !requiredString(args, "research_question", question))
+            return errorJson("research_question must be a non-empty string");
+        if (hasResearchId && hasQuestion)
+            return errorJson(
+                "use research_id to attach or research_question to create, not both");
+
+        earthscience::ScienceResearchRecord research;
+        std::string persistenceError;
+        if (hasResearchId && !researchManager->get(
+                persistentId, research, persistenceError))
+            return errorJson("research record unavailable: " + persistenceError);
+        if (hasQuestion && !researchManager->create(
+                question, research, persistenceError))
+            return errorJson("research record could not be created: " +
+                             persistenceError);
+        if (hasQuestion) persistentId = research.researchId;
+
         service->submit(query);
         const earthscience::ScienceJobSnapshot snapshot = service->snapshot();
-        return snapshotJson(snapshot);
+        picojson::value result = snapshotJson(snapshot);
+        if (!persistentId.empty())
+        {
+            if (!researchManager->addStep(
+                    persistentId, snapshot.jobId, source.id, research,
+                    persistenceError))
+                return errorJson("research step could not be saved: " +
+                                 persistenceError);
+            result.get<picojson::object>()["research_id"] =
+                picojson::value(persistentId);
+            result.get<picojson::object>()["research_state"] =
+                picojson::value(std::string(
+                    earthscience::scienceResearchStateName(research.state)));
+        }
+        return result;
     };
     tools->add(start);
 
@@ -839,10 +997,46 @@ void registerScienceResearchTools(
     get.name = "get_research_job";
     get.description = u8"查询当前科学研究任务的状态、进度、来源证据和结果范围。";
     get.parametersJson = "{\"type\":\"object\",\"properties\":{" 
-        "\"job_id\":{\"type\":\"integer\"}}}";
-    get.execute = [service](const picojson::value& args)
+        "\"job_id\":{\"type\":\"integer\"},"
+        "\"research_id\":{\"type\":\"string\"}}}";
+    get.execute = [service, researchManager](const picojson::value& args)
     {
         const earthscience::ScienceJobSnapshot snapshot = service->snapshot();
+        if (args.is<picojson::object>() && args.contains("research_id"))
+        {
+            std::string researchId;
+            if (!requiredString(args, "research_id", researchId))
+                return errorJson("research_id must be a non-empty string");
+            earthscience::ScienceResearchRecord research;
+            std::string persistenceError;
+            if (!researchManager->get(
+                    researchId, research, persistenceError))
+                return errorJson("research record unavailable: " +
+                                 persistenceError);
+            const auto step = std::find_if(
+                research.steps.begin(), research.steps.end(),
+                [&snapshot](const earthscience::ScienceResearchStep& value)
+                { return value.liveJobId == snapshot.jobId; });
+            if (step != research.steps.end())
+            {
+                const std::vector<earthscience::ScienceSourceDescriptor> sources =
+                    service->listSources();
+                const auto source = std::find_if(
+                    sources.begin(), sources.end(),
+                    [&step](const earthscience::ScienceSourceDescriptor& value)
+                    { return value.id == step->sourceId; });
+                if (source == sources.end())
+                    return errorJson(
+                        "research source is no longer registered: " +
+                        step->sourceId);
+                if (!researchManager->observe(
+                        researchId, snapshot, *source, research,
+                        persistenceError))
+                    return errorJson("research status could not be saved: " +
+                                     persistenceError);
+            }
+            return researchJson(research);
+        }
         double requested = static_cast<double>(snapshot.jobId);
         if (!optionalNumber(args, "job_id", requested) ||
             std::floor(requested) != requested)
@@ -1100,4 +1294,33 @@ void registerScienceResearchTools(
         return snapshotJson(service->snapshot());
     };
     tools->add(change);
+
+    earthai::Tool brief;
+    brief.name = "build_research_brief";
+    brief.description = u8"为持久化 ScienceEarth 研究生成有来源编号的三源"
+        u8"科学简报；只读取紧凑证据，不显示图层、不改变相机。";
+    brief.parametersJson =
+        "{\"type\":\"object\",\"properties\":{"
+        "\"research_id\":{\"type\":\"string\"}},"
+        "\"required\":[\"research_id\"]}";
+    brief.execute = [researchManager](const picojson::value& args)
+    {
+        std::string researchId;
+        if (!requiredString(args, "research_id", researchId))
+            return errorJson("research_id is required");
+        earthscience::ScienceResearchRecord research;
+        std::vector<earthscience::ScienceEvidenceRecord> evidence;
+        std::string briefError;
+        if (!researchManager->get(researchId, research, briefError))
+            return errorJson("research record unavailable: " + briefError);
+        if (!researchManager->loadEvidence(
+                researchId, evidence, briefError))
+            return errorJson("research evidence unavailable: " + briefError);
+        earthscience::ScienceResearchBrief result;
+        if (!earthscience::buildScienceResearchBrief(
+                research, evidence, result, briefError))
+            return errorJson("research brief could not be built: " + briefError);
+        return briefJson(result);
+    };
+    tools->add(brief);
 }

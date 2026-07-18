@@ -1,6 +1,8 @@
 #ifndef EARTH_SCIENCE_AI_TOOLS_H
 #define EARTH_SCIENCE_AI_TOOLS_H
 
+#include <string>
+
 class LayerManager;
 class SciencePreviewLayer;
 namespace osgVerse { class EarthManipulator; }
@@ -12,6 +14,7 @@ void registerScienceResearchTools(
     earthscience::ScienceQueryService* service,
     SciencePreviewLayer* layer,
     LayerManager* layers,
-    osgVerse::EarthManipulator* manipulator);
+    osgVerse::EarthManipulator* manipulator,
+    const std::string& researchRoot = std::string());
 
 #endif
