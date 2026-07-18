@@ -139,7 +139,51 @@ package writes, and unsafe application-bundle paths. No prohibited production ma
   invent physical meaning for latent dimensions.
 - The immutable G0 package-size policy debt recorded by earlier verification is unchanged. G3 does
   not hide or relax it.
-- This document does not claim that the fixed Desktop application contains commit `5003cdd`.
-  Packaging, static bundle/dependency/signature audit, atomic same-name Desktop replacement, and
-  one final user-run visual/Quit acceptance are the next gate. Formal tags and synchronization wait
-  for that acceptance unless explicitly requested earlier.
+- Formal release tags and synchronization still wait for the final user-run visual/Quit acceptance.
+
+## Manual-test package handoff (2026-07-19)
+
+The fixed Desktop application was atomically replaced with the same product name and repository
+identity. Automated verification never launched or foregrounded it.
+
+- app: `/Users/USER/Desktop/osgSol Earth.app`;
+- version/channel: `0.6.0` / `manual-test`;
+- packaged source: `8951179be76abf21f85c7bcb07fbce188fc72710`;
+- AlphaEarth index SHA-256:
+  `15875963d1bf4dd3f35a1f6c3ec6329378fef0fab6549fac677552f1d348f736`;
+- executable SHA-256:
+  `d26b87f8794bc45b29060286e818fc7a15a39bc839e9f322d2e37001d3abb754`;
+- rollback copy:
+  `build/desktop-backups/pre-scienceearth-g3-20260719-025627/osgSol Earth.previous.app`.
+
+The clean Release build passed **50/50** offline tests with `network-local` excluded. The formal
+packaging contract passed product identity, provenance, dependency closure, index, and signature
+checks while runtime smoke was explicitly disabled. The final Desktop bundle passed deep strict
+code-signature verification, and the Desktop contains exactly one matching visible app.
+
+The immutable v0.2 bundle audit remains **STOP** and was not relaxed. The previous Desktop v0.5
+bundle was already STOP at 668,619,430 bytes, a 126,025,230-byte cumulative delta with 2,258
+violations. The v0.6 candidate is 663,412,962 bytes, a 120,818,762-byte cumulative delta with 2,254
+violations and zero unresolved dependencies. It is 5,206,468 bytes smaller than v0.5, but still
+exceeds the immutable 60-MiB cumulative gate because the existing package includes the 87-MB
+AlphaEarth index and the established direct-linked science runtime. This is a manual-test handoff,
+not a claim that the G0 release debt is closed.
+
+The matching DiagnosticReports count was 17 both before and after static replacement. Because the
+app was not executed, normal Quit remains a human-only acceptance item: launch this exact Desktop
+app, exercise Quit/window close/Command-Q, and confirm that no new matching `.ips` report appears.
+
+### Human acceptance checklist
+
+1. Load Copernicus DEM and verify the georeferenced overlay, hypsometric legend, numeric elevation
+   summaries, EGM2008 DSM explanation, and absence of a year control.
+2. Create a research question, attach AlphaEarth, Sentinel-2, and DEM evidence one source at a time,
+   build the numbered cited brief, restart, and confirm the brief persists. Also verify that a
+   failed source produces an honest partial brief without moving the camera or changing layers.
+3. Recheck AlphaEarth 64D point/year/regional analysis, PCA/clustering semantics, explanations,
+   panel reflow, help-on-demand, and scrollbars; then recheck Sentinel-2 visibility/cloud/time.
+4. Recheck protected behavior: Hong Kong 3D Tiles refinement and terrain continuity, no height
+   pumping, confirmed-view photography with no prior-image contamination, high-altitude photo
+   wording, clean removal of every satellite path/range circle, and two-way panel scrolling.
+5. Quit through the panel, window close, and Command-Q. Confirm macOS shows no abnormal-exit alert
+   and creates no new `osgSol_Earth*.ips` report.
