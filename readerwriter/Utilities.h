@@ -443,6 +443,10 @@ namespace osgVerse
     inline std::vector<unsigned char> loadFileData(const std::string& url)
     { std::string mimeType, encodingType; return loadFileData(url, mimeType, encodingType); }
 
+    /** True only for the exact known Google "Zoom Level Not Supported" PNG response. */
+    OSGVERSE_RW_EXPORT bool isUnsupportedGoogleZoomTile(
+            const std::string& url, const std::vector<unsigned char>& bytes);
+
     /** Get [mimetype, extension] map data, or reversed [extension, mimetype] */
     OSGVERSE_RW_EXPORT std::map<std::string, std::string> createMimeTypeMapper(bool reversed = false);
 

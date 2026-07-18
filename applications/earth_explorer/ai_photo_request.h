@@ -6,7 +6,9 @@
 #include <picojson.h>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
+#include <vector>
 
 namespace earthai
 {
@@ -176,24 +178,6 @@ namespace earthai
         return completedUpdateTicks > 0;
     }
 
-    inline const char* photoCaptureGateError(bool animationRunning, const PhotoViewGate& gate,
-                                             const osg::Vec3d& targetLla,
-                                             const osg::Vec3d& currentEyeLla)
-    {
-        if (animationRunning) return "camera_flight_in_progress";
-        if (!gate.photoRequestedThisTurn()) return "photo_not_requested";
-
-        // 相机地面投影必须落在目标可见范围内。地面近景最低只给 5km，防止香港旧视角
-        // 被当成 NVIDIA 总部视角；轨道视角按高度放宽到 2 倍，允许 ISS 倾斜构图时眼点
-        // 地面投影偏离目标，最高仍封顶 1500km，避免无限放宽。
-        const double eyeHeight = std::max(0.0, currentEyeLla[2]);
-        const double visibleRadius = std::max(5000.0, std::min(1500000.0, eyeHeight * 2.0));
-        if (photoSurfaceDistanceMeters(targetLla, currentEyeLla) > visibleRadius)
-            return "photo_target_not_visible";
-        if (gate.flewThisTurn()) return "photo_view_not_confirmed";
-        return NULL;
-    }
-
     inline double photoFlyAltitudeKm(const picojson::value& args)
     {
         if (args.contains("alt_km")) return args.get("alt_km").get<double>();
@@ -209,30 +193,250 @@ namespace earthai
         bool showCameraPlatform = false;
     };
 
-    inline PhotoRequest photoRequestAtVisibleCameraAltitude(
-        const PhotoRequest& request, const osg::Vec3d& currentEyeLla)
+    struct PhotoCameraContext
     {
-        PhotoRequest visible = request;
-        if (std::isfinite(currentEyeLla[2]) && currentEyeLla[2] > 0.0)
-            visible.lla[2] = currentEyeLla[2];
-        return visible;
+        osg::Vec3d cameraEyeLla;
+        osg::Vec3d viewTargetLla;
+        osg::Matrixd visibleViewMatrix;
+        osg::Matrixd visibleProjectionMatrix;
+        int viewportWidth = 0;
+        int viewportHeight = 0;
+
+        double headingDeg = std::numeric_limits<double>::quiet_NaN();
+        double offNadirDeg = std::numeric_limits<double>::quiet_NaN();
+        double verticalFovDeg = std::numeric_limits<double>::quiet_NaN();
+        double aspectRatio = std::numeric_limits<double>::quiet_NaN();
+        double groundFootprintSpanKm = std::numeric_limits<double>::quiet_NaN();
+        bool headingValid = false;
+        bool viewTargetValid = false;
+        bool offNadirValid = false;
+        bool verticalFovValid = false;
+        bool aspectRatioValid = false;
+        bool groundFootprintSpanValid = false;
+    };
+
+    inline osg::Vec3d photoLlaToEcef(const osg::Vec3d& lla)
+    {
+        static const double kA = 6378137.0;
+        static const double kB = 6356752.3142451793;
+        const double sinLat = std::sin(lla[0]);
+        const double cosLat = std::cos(lla[0]);
+        const double sinLon = std::sin(lla[1]);
+        const double cosLon = std::cos(lla[1]);
+        const double e2 = 1.0 - (kB * kB) / (kA * kA);
+        const double n = kA / std::sqrt(1.0 - e2 * sinLat * sinLat);
+        return osg::Vec3d((n + lla[2]) * cosLat * cosLon,
+                          (n + lla[2]) * cosLat * sinLon,
+                          ((1.0 - e2) * n + lla[2]) * sinLat);
+    }
+
+    inline bool photoIntersectWgs84(const osg::Vec3d& origin, const osg::Vec3d& direction,
+                                    osg::Vec3d& intersectionLla)
+    {
+        static const double kA = 6378137.0;
+        static const double kB = 6356752.3142451793;
+        const double a2 = kA * kA, b2 = kB * kB;
+        const double qa = (direction[0] * direction[0] + direction[1] * direction[1]) / a2
+                        + direction[2] * direction[2] / b2;
+        const double qb = 2.0 * ((origin[0] * direction[0] + origin[1] * direction[1]) / a2
+                        + origin[2] * direction[2] / b2);
+        const double qc = (origin[0] * origin[0] + origin[1] * origin[1]) / a2
+                        + origin[2] * origin[2] / b2 - 1.0;
+        const double discriminant = qb * qb - 4.0 * qa * qc;
+        if (!(qa > 0.0) || discriminant < 0.0) return false;
+        const double root = std::sqrt(discriminant);
+        const double t0 = (-qb - root) / (2.0 * qa);
+        const double t1 = (-qb + root) / (2.0 * qa);
+        double t = std::numeric_limits<double>::infinity();
+        if (t0 > 0.0) t = t0;
+        if (t1 > 0.0 && t1 < t) t = t1;
+        if (!std::isfinite(t)) return false;
+
+        const osg::Vec3d p = origin + direction * t;
+        const double horizontalNormal = std::sqrt(
+            (p[0] / a2) * (p[0] / a2) + (p[1] / a2) * (p[1] / a2));
+        intersectionLla.set(std::atan2(p[2] / b2, horizontalNormal),
+                            std::atan2(p[1], p[0]), 0.0);
+        return true;
+    }
+
+    inline PhotoCameraContext makePhotoCameraContext(
+        const osg::Vec3d& cameraEyeLla, const osg::Vec3d& viewTargetLla,
+        const osg::Matrixd& visibleViewMatrix,
+        const osg::Matrixd& visibleProjectionMatrix,
+        int viewportWidth, int viewportHeight)
+    {
+        PhotoCameraContext context;
+        context.cameraEyeLla = cameraEyeLla;
+        context.viewTargetLla = viewTargetLla;
+        context.viewTargetValid = true;
+        context.visibleViewMatrix = visibleViewMatrix;
+        context.visibleProjectionMatrix = visibleProjectionMatrix;
+        context.viewportWidth = viewportWidth;
+        context.viewportHeight = viewportHeight;
+
+        osg::Vec3d eyeWorld, lookAtWorld, cameraUp;
+        visibleViewMatrix.getLookAt(eyeWorld, lookAtWorld, cameraUp, 1.0);
+        osg::Vec3d look = lookAtWorld - eyeWorld;
+        if (look.normalize() > 0.0)
+        {
+            const double lat = cameraEyeLla[0], lon = cameraEyeLla[1];
+            osg::Vec3d localUp(std::cos(lat) * std::cos(lon),
+                               std::cos(lat) * std::sin(lon), std::sin(lat));
+            localUp.normalize();
+            const osg::Vec3d nadir = -localUp;
+            const double nadirDot = std::max(-1.0, std::min(1.0, look * nadir));
+            context.offNadirDeg = std::acos(nadirDot) * 57.29577951308232;
+            context.offNadirValid = std::isfinite(context.offNadirDeg);
+
+            osg::Vec3d horizontal = look - localUp * (look * localUp);
+            if (horizontal.normalize() > 1.0e-9)
+            {
+                const osg::Vec3d east(-std::sin(lon), std::cos(lon), 0.0);
+                const osg::Vec3d north(-std::sin(lat) * std::cos(lon),
+                                       -std::sin(lat) * std::sin(lon), std::cos(lat));
+                context.headingDeg = std::atan2(horizontal * east, horizontal * north)
+                                   * 57.29577951308232;
+                if (context.headingDeg < 0.0) context.headingDeg += 360.0;
+                context.headingValid = std::isfinite(context.headingDeg);
+            }
+        }
+
+        double projectionAspect = 0.0, zNear = 0.0, zFar = 0.0;
+        context.verticalFovValid = visibleProjectionMatrix.getPerspective(
+            context.verticalFovDeg, projectionAspect, zNear, zFar)
+            && std::isfinite(context.verticalFovDeg) && context.verticalFovDeg > 0.0;
+        if (viewportWidth > 0 && viewportHeight > 0)
+        {
+            context.aspectRatio = (double)viewportWidth / (double)viewportHeight;
+            context.aspectRatioValid = std::isfinite(context.aspectRatio)
+                                    && context.aspectRatio > 0.0;
+        }
+        else if (projectionAspect > 0.0 && std::isfinite(projectionAspect))
+        {
+            context.aspectRatio = projectionAspect;
+            context.aspectRatioValid = true;
+        }
+
+        osg::Matrixd inverseViewProjection;
+        const osg::Matrixd viewProjection = visibleViewMatrix * visibleProjectionMatrix;
+        if (inverseViewProjection.invert(viewProjection))
+        {
+            const osg::Vec3d eyeEcef = photoLlaToEcef(cameraEyeLla);
+            const osg::Vec3d worldOffset = eyeWorld - eyeEcef;
+            static const double kCorners[4][2] = {
+                { -1.0, -1.0 }, { 1.0, -1.0 }, { 1.0, 1.0 }, { -1.0, 1.0 }
+            };
+            std::vector<osg::Vec3d> cornerLlas;
+            for (size_t i = 0; i < 4; ++i)
+            {
+                const osg::Vec3d farWorld = osg::Vec3d(
+                    kCorners[i][0], kCorners[i][1], 1.0) * inverseViewProjection;
+                osg::Vec3d direction = farWorld - eyeWorld;
+                if (direction.normalize() <= 0.0) continue;
+                osg::Vec3d hitLla;
+                if (photoIntersectWgs84(eyeWorld - worldOffset, direction, hitLla))
+                    cornerLlas.push_back(hitLla);
+            }
+            if (cornerLlas.size() == 4)
+            {
+                double maxDistanceM = 0.0;
+                for (size_t i = 0; i < cornerLlas.size(); ++i)
+                    for (size_t j = i + 1; j < cornerLlas.size(); ++j)
+                        maxDistanceM = std::max(maxDistanceM,
+                            photoSurfaceDistanceMeters(cornerLlas[i], cornerLlas[j]));
+                if (maxDistanceM > 0.0 && std::isfinite(maxDistanceM))
+                {
+                    context.groundFootprintSpanKm = maxDistanceM / 1000.0;
+                    context.groundFootprintSpanValid = true;
+                }
+            }
+        }
+        return context;
+    }
+
+    inline bool photoTargetVisibleInCameraContext(
+        const osg::Vec3d& targetLla,
+        const PhotoCameraContext& camera)
+    {
+        osg::Vec3d eyeWorld, lookAtWorld, cameraUp;
+        camera.visibleViewMatrix.getLookAt(
+            eyeWorld, lookAtWorld, cameraUp, 1.0);
+        const osg::Vec3d eyeEcef = photoLlaToEcef(camera.cameraEyeLla);
+        const osg::Vec3d worldOffset = eyeWorld - eyeEcef;
+        osg::Vec3d targetSurfaceLla = targetLla;
+        targetSurfaceLla[2] = 0.0;
+        const osg::Vec3d targetWorld =
+            photoLlaToEcef(targetSurfaceLla) + worldOffset;
+        const osg::Vec4d clip = osg::Vec4d(
+            targetWorld[0], targetWorld[1], targetWorld[2], 1.0) *
+            (camera.visibleViewMatrix * camera.visibleProjectionMatrix);
+        if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) ||
+            !std::isfinite(clip[2]) || !std::isfinite(clip[3]) ||
+            clip[3] <= 1.0e-12)
+            return false;
+        const double x = clip[0] / clip[3];
+        const double y = clip[1] / clip[3];
+        const double z = clip[2] / clip[3];
+        static const double kEdgeTolerance = 1.02;
+        return std::abs(x) <= kEdgeTolerance &&
+               std::abs(y) <= kEdgeTolerance &&
+               z >= -1.0 && z <= 1.0;
+    }
+
+    inline bool photoCameraContextsMatchFrame(
+        const PhotoCameraContext& expected,
+        const PhotoCameraContext& current)
+    {
+        if (expected.viewportWidth != current.viewportWidth ||
+            expected.viewportHeight != current.viewportHeight)
+            return false;
+        static const double kMatrixTolerance = 1.0e-10;
+        for (int row = 0; row < 4; ++row)
+        {
+            for (int column = 0; column < 4; ++column)
+            {
+                if (std::abs(expected.visibleViewMatrix(row, column) -
+                             current.visibleViewMatrix(row, column)) >
+                        kMatrixTolerance ||
+                    std::abs(expected.visibleProjectionMatrix(row, column) -
+                             current.visibleProjectionMatrix(row, column)) >
+                        kMatrixTolerance)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    inline const char* photoCaptureGateError(
+        bool animationRunning,
+        const PhotoViewGate& gate,
+        const osg::Vec3d& targetLla,
+        const PhotoCameraContext& camera)
+    {
+        if (animationRunning) return "camera_flight_in_progress";
+        if (!gate.photoRequestedThisTurn()) return "photo_not_requested";
+        if (!photoTargetVisibleInCameraContext(targetLla, camera))
+            return "photo_target_not_visible";
+        if (gate.flewThisTurn()) return "photo_view_not_confirmed";
+        return NULL;
     }
 
     struct PhotoCaptureRequest
     {
         osg::Vec3d targetLla;
-        osg::Matrixd visibleCameraMatrix;
+        PhotoCameraContext camera;
         std::string style;
         bool showCameraPlatform = false;
         long long requestId = 0;
     };
 
     inline PhotoCaptureRequest makePhotoCaptureRequest(
-        const PhotoRequest& input, const osg::Matrixd& visibleMatrix, long long requestId)
+        const PhotoRequest& input, const PhotoCameraContext& camera, long long requestId)
     {
         PhotoCaptureRequest request;
         request.targetLla = input.lla;
-        request.visibleCameraMatrix = visibleMatrix;
+        request.camera = camera;
         request.style = input.style;
         request.showCameraPlatform = input.showCameraPlatform;
         request.requestId = requestId;
@@ -244,7 +448,7 @@ namespace earthai
         return "{\"type\":\"object\",\"properties\":{"
                "\"lat\":{\"type\":\"number\",\"description\":\"本次照片目标纬度\"},"
                "\"lon\":{\"type\":\"number\",\"description\":\"本次照片目标经度\"},"
-               "\"alt_km\":{\"type\":\"number\",\"description\":\"目标预期高度;最终以当前可见相机实际高度为准\"},"
+               "\"alt_km\":{\"type\":\"number\",\"description\":\"可选目标/导航高度;不代表快门相机高度，快门几何始终读取当前画面\"},"
                "\"style\":{\"type\":\"string\",\"description\":\"可选风格/时代/天气\"},"
                "\"show_camera_platform\":{\"type\":\"boolean\","
                "\"description\":\"仅当用户明确要求画面出现飞行器/空间站/太阳能板时为true;"

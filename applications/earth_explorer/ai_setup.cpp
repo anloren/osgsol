@@ -184,7 +184,8 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
     earthai::MediaManager* mediaMgr = nullptr;
     if (!aiKeyForMedia.empty() || (aiFakeForMedia && *aiFakeForMedia))
     {
-        mediaMgr = new earthai::MediaManager(&viewer, ui ? ui->cards() : nullptr, aiKeyForMedia);
+        mediaMgr = new earthai::MediaManager(
+            &viewer, ui ? ui->cards() : nullptr, aiKeyForMedia, mani);
     }
     runtime.media = mediaMgr;
 
@@ -363,7 +364,8 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
         photo.parametersJson = earthai::photoToolParametersJson();
         earthai::MediaManager* mediaPtr = mediaMgr;
         osgVerse::EarthManipulator* maniPhoto = mani;
-        photo.execute = [mediaPtr, maniPhoto, photoViewGate](const picojson::value& args) {
+        osgViewer::Viewer* viewerPhoto = &viewer;
+        photo.execute = [mediaPtr, maniPhoto, viewerPhoto, photoViewGate](const picojson::value& args) {
             if (!mediaPtr)
             {
                 // review:mediaMgr 的实际构造条件是"有 EARTH_AI_KEY 或 EARTH_AI_FAKE"(见上面
@@ -388,9 +390,30 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
                 return picojson::value(err);
             }
 
-            const osg::Vec3d currentEyeLla = maniPhoto->computeEyeLatLonHeight();
+            if (!viewerPhoto || !viewerPhoto->getCamera())
+            {
+                picojson::object err;
+                err["error"] = picojson::value("camera unavailable");
+                return picojson::value(err);
+            }
+            int viewportWidth = 0, viewportHeight = 0;
+            const osg::Viewport* viewport =
+                viewerPhoto->getCamera()->getViewport();
+            if (viewport)
+            {
+                viewportWidth = (int)viewport->width();
+                viewportHeight = (int)viewport->height();
+            }
+            const earthai::PhotoCameraContext currentCamera =
+                earthai::makePhotoCameraContext(
+                    maniPhoto->computeEyeLatLonHeight(),
+                    maniPhoto->computeViewPointLatLonHeight(),
+                    viewerPhoto->getCamera()->getViewMatrix(),
+                    viewerPhoto->getCamera()->getProjectionMatrix(),
+                    viewportWidth, viewportHeight);
             const char* gateError = earthai::photoCaptureGateError(
-                maniPhoto->isAnimationRunning(), *photoViewGate, request.lla, currentEyeLla);
+                maniPhoto->isAnimationRunning(), *photoViewGate,
+                request.lla, currentCamera);
             if (gateError)
             {
                 picojson::object err;
@@ -399,8 +422,6 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
             }
             request.showCameraPlatform = earthai::photoCameraPlatformAllowed(
                 *photoViewGate, request.showCameraPlatform);
-            request = earthai::photoRequestAtVisibleCameraAltitude(request, currentEyeLla);
-
             picojson::value r = mediaPtr->startPhotoJob(
                 request.style, request.lla, request.showCameraPlatform);
             if (r.is<picojson::object>() && r.contains("status")

@@ -170,7 +170,7 @@ namespace osgVerse
         std::map<std::string, osg::ref_ptr<osg::Referenced>> _imageRequests;
         osg::ref_ptr<osg::Texture> _elevationRef;
         osg::ref_ptr<osg::Texture2D> _overlayPending;  // 异步加载中的 OVERLAY 本瓦片纹理(顶替期暂存,到货后 swap)
-        bool _overlayStretched = false;  // 电平触发:本瓦片当前是否处于"超缩放父级拉伸"状态,operator() 每帧续帧戳
+        std::atomic<bool> _overlayStretched{false};  // update 写/cull 读；仅可见 cull traversal 续帧戳
         osg::Matrix _worldToLocal;
         osg::Vec3d _extentMin, _extentMax;
         CreatePathFunc _createPathFunc;
@@ -191,8 +191,8 @@ namespace osgVerse
         bool tryGetLayerPath(TileCallback::LayerType id, std::string& path) const;
         std::string getLayerPath(TileCallback::LayerType id) const;
 
-        // 超缩放拉伸信号:updateLayerData 对 OVERLAY 做"超原生最大缩放→父级拉伸"兜底时,
-        // 记下当前帧号;app 侧据此(带去抖)显示"已达最大细节"角标。
+        // 超缩放拉伸信号:TileCallback 在当前瓦片真正进入 cull traversal 时记下帧号；
+        // app 侧据此(带去抖)显示"已达最大细节"角标。
         void markOverlayStretchedPastNative(unsigned int frame) { _lastOverlayStretchFrame = frame; }
         unsigned int getLastOverlayStretchFrame() const { return _lastOverlayStretchFrame; }
 
@@ -218,8 +218,7 @@ namespace osgVerse
 
         std::map<int, std::string> _layerPaths;
         mutable std::mutex _layerPathsMutex;
-        std::atomic<unsigned int> _lastOverlayStretchFrame{0};   // operator()/updateLayerData 在 update 线程写,
-                                                                  // EarthControlUI 在 draw 线程读,跨线程 → atomic
+        std::atomic<unsigned int> _lastOverlayStretchFrame{0};   // cull 线程写、UI/draw 线程读
         std::map<std::string, std::string> _acceptHandlerExts;
         std::map<std::string, osg::observer_ptr<osgDB::ReaderWriter>> _cachedReaderWriters;
         std::mutex _cachedRWMutex;  // 并行瓦片加载:保护 _cachedReaderWriters

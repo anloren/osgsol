@@ -25,6 +25,26 @@ enum class SciencePanelLocationMode
     CurrentViewFootprint,
 };
 
+enum class ScienceHelpTopic
+{
+    DataMeaning,
+    PreviewColors,
+    Pca,
+    Clusters,
+    ScientificLimits,
+    Provenance,
+};
+
+struct SciencePanelModeCapabilities
+{
+    bool showsSingleYear = false;
+    bool showsYearRange = false;
+    bool showsYearPair = false;
+    bool supportsGrid = false;
+    bool supportsPca = false;
+    bool supportsClustering = false;
+};
+
 struct SciencePanelState
 {
     SciencePanelMode mode = SciencePanelMode::Preview;
@@ -35,7 +55,7 @@ struct SciencePanelState
     int comparisonYear = 2025;
     int gridSize = 128;
     bool advancedOpen = false;
-    bool resultExpanded = true;
+    bool resultExpanded = false;
     bool enablePca = false;
     bool enableClustering = false;
     int clusterCount = 4;
@@ -93,11 +113,28 @@ struct ScienceCostPresentation
     bool requiresConfirmation = false;
 };
 
+struct ScienceArtifactUiPresentation
+{
+    bool matchesDraft = false;
+    bool showPcaSummary = false;
+    bool showClusterSummary = false;
+    std::string scopeLabel;
+    std::string pendingSettingsLabel;
+};
+
 SciencePanelPresentation describeScienceSnapshot(
     const earthscience::ScienceJobSnapshot& snapshot);
 SciencePanelPresentation describeScienceSnapshot(
     const earthscience::ScienceJobSnapshot& snapshot,
     SciencePanelMode mode);
+SciencePanelModeCapabilities sciencePanelModeCapabilities(
+    SciencePanelMode mode);
+const char* sciencePanelPrimaryActionLabel(SciencePanelMode mode);
+ScienceArtifactUiPresentation describeScienceArtifactUi(
+    const earthscience::ScienceArtifact& artifact,
+    const earthscience::GeoTemporalQuery& currentDraft);
+const char* scienceHelpTopicTitle(ScienceHelpTopic topic);
+const char* scienceHelpTopicBody(ScienceHelpTopic topic);
 ScienceCostPresentation describeScienceCost(
     const earthscience::ScienceQueryCost& cost);
 std::shared_ptr<const earthscience::ScienceArtifact> selectSciencePanelArtifact(
@@ -135,6 +172,8 @@ private:
     std::string _displayedEstimateKey;
     bool _estimateVisible = false;
     std::string _confirmedEstimateKey;
+    earthscience::GeoTemporalQuery _currentDraft;
+    bool _hasCurrentDraft = false;
 };
 
 #endif

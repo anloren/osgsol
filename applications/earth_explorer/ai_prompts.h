@@ -13,6 +13,7 @@
 #include <string>
 #include <cmath>
 #include <cstdio>
+#include "ai_photo_request.h"
 // buildMotionPrompt 同样 header-only、只依赖 osg/Vec3d + string + cmath + cstdio(见该文件
 // 头注释),依赖它不会把 ai_prompts.h 拖出"只依赖这四个头"的约束——直接复用其 A->B 轨迹
 // 描述(罗盘方位/距离/高度变化),避免两处各写一份雷同的三角函数计算。
@@ -32,44 +33,133 @@ namespace earthai
         return std::string(buf);
     }
 
-    // 实景照片提示词:banana pro 是带推理的图像模型——先让它推理该经纬度是什么真实地方,
-    // 再以渲染图为构图参考生成真实照片。英文提示词(模型对 EN 支持最佳)。
-    // lla = (纬度弧度, 经度弧度, 高度米),与 EarthManipulator::computeEyeLatLonHeight()
-    // 的返回值约定一致(调用方直接把相机位姿传进来,本函数内部负责弧度转角度)。
-    inline std::string buildPhotoPrompt(const osg::Vec3d& lla, const std::string& styleSuffix,
-                                        bool showCameraPlatform = false)
+    inline std::string photoPromptNumber(double value, const char* format)
     {
-        const double kRad2Deg = 57.29577951308232;
-        double latDeg = lla[0] * kRad2Deg;
-        double lonDeg = lla[1] * kRad2Deg;
-        double altKm = lla[2] / 1000.0;
+        char buffer[48];
+        snprintf(buffer, sizeof(buffer), format, value);
+        return std::string(buffer);
+    }
 
-        char altBuf[32];
-        snprintf(altBuf, sizeof(altBuf), "%.1f", altKm);
-
+    // 实景照片提示词以快门时的不可变 PhotoCaptureRequest 为唯一几何事实源。目标地点、
+    // 相机眼点、画面中心各自独立；可计算的姿态/视场/地面覆盖尺度由 view/projection/
+    // viewport 派生。输入截图的几何必须被模型原样保留，只允许替换合成材质与标签。
+    inline std::string buildPhotoPrompt(const PhotoCaptureRequest& capture)
+    {
+        static const double kRad2Deg = 57.29577951308232;
+        const PhotoCameraContext& camera = capture.camera;
+        const double eyeAltKm = camera.cameraEyeLla[2] / 1000.0;
         std::string p = "You are creating a real photograph. Treat this as a fresh independent generation: "
                         "do not reuse, continue, edit, or copy any previous generated photograph. "
-                        "Camera position: latitude ";
-        p += formatLatLonDeg(latDeg, lonDeg);
+                        "Camera eye (WGS84 ellipsoid): ";
+        p += formatLatLonDeg(camera.cameraEyeLla[0] * kRad2Deg,
+                             camera.cameraEyeLla[1] * kRad2Deg);
         p += ", altitude ";
-        p += altBuf;
-        p += " km above ground, aerial view. First, reason step by step about what real "
-             "place this is \xE2\x80\x94 the city, landmarks, terrain, coastline, vegetation "
-             "and architecture actually found at these coordinates \xE2\x80\x94 and what they "
-             "look like from this altitude. The attached rendered image is ONLY a composition "
-             "and terrain-layout reference: match its framing, scale and viewpoint, but replace "
-             "its synthetic appearance with the real world. Output a photorealistic aerial "
-             "photograph: true-to-life landmarks, materials, water color, vegetation, "
-             "atmospheric haze, natural lighting with soft shadows. Absolutely no UI elements, "
-             "no text overlays, no watermarks, no map labels, no borders.";
-        if (!styleSuffix.empty()) { p += " Style: "; p += styleSuffix; }
-        if (!showCameraPlatform)
+        p += photoPromptNumber(eyeAltKm, "%.1f");
+        p += " km above the WGS84 ellipsoid. ";
+        if (camera.viewTargetValid)
+        {
+            p += "Center-of-frame view target: ";
+            p += formatLatLonDeg(camera.viewTargetLla[0] * kRad2Deg,
+                                 camera.viewTargetLla[1] * kRad2Deg);
+            p += ". ";
+        }
+        p += "Intended geographic subject: ";
+        p += formatLatLonDeg(capture.targetLla[0] * kRad2Deg,
+                             capture.targetLla[1] * kRad2Deg);
+        p += ". The intended subject identifies the requested region, but it must not override "
+             "the current screenshot's camera geometry or center-of-frame composition. ";
+
+        p += "Measured view geometry: ";
+        if (camera.headingValid)
+        {
+            p += "heading ";
+            p += photoPromptNumber(camera.headingDeg, "%.1f");
+            p += " degrees clockwise from true north; ";
+        }
+        else p += "heading undefined because the optical axis is near nadir; ";
+        if (camera.offNadirValid)
+        {
+            p += "off-nadir angle ";
+            p += photoPromptNumber(camera.offNadirDeg, "%.1f");
+            p += " degrees (0 is straight down); ";
+        }
+        if (camera.verticalFovValid)
+        {
+            p += "vertical FOV ";
+            p += photoPromptNumber(camera.verticalFovDeg, "%.1f");
+            p += " degrees; ";
+        }
+        if (camera.aspectRatioValid)
+        {
+            p += "aspect ratio ";
+            p += photoPromptNumber(camera.aspectRatio, "%.3f");
+            p += "; ";
+        }
+        if (camera.groundFootprintSpanValid)
+        {
+            p += "visible ground footprint maximum span approximately ";
+            p += photoPromptNumber(camera.groundFootprintSpanKm, "%.1f");
+            p += " km; ";
+        }
+
+        p += "HARD CAMERA-GEOMETRY LOCK: the attached current-render screenshot is authoritative "
+             "for camera geometry, projection, framing, scale, perspective and composition. "
+             "Do not move the camera closer or farther, raise or lower its altitude, zoom, crop, or reframe. "
+             "Do not change heading, off-nadir angle, roll, vertical FOV, aspect ratio, horizon visibility, "
+             "Earth curvature visibility, perspective, or visible ground footprint. Preserve exactly whether "
+             "the horizon or Earth curvature is visible in the screenshot; never invent or remove either. "
+             "Replace only the synthetic map texture, labels and rendering artifacts with physically plausible "
+             "real-world appearance at the same scale and viewpoint. ";
+
+        if (camera.cameraEyeLla[2] >= 100000.0)
+        {
+            p += "This is a spaceborne/high-altitude Earth-observation viewpoint, not drone or aircraft imagery. "
+                 "Do not turn it into a low-altitude photograph: no foreground mountains, no near-camera clouds, "
+                 "no building-level perspective, no low-altitude parallax, and no invented close-up detail. "
+                 "Surface detail and atmospheric effects must remain physically plausible for the stated altitude "
+                 "and visible ground footprint. ";
+        }
+        else if (camera.cameraEyeLla[2] >= 20000.0)
+        {
+            p += "This is a very-high-altitude Earth-observation viewpoint, not a low drone view. "
+                 "Do not introduce foreground terrain, near-camera clouds, building-level perspective, "
+                 "low-altitude parallax or a smaller ground footprint. ";
+        }
+        else
+        {
+            p += "Output a photorealistic aerial photograph while preserving the locked camera geometry. ";
+        }
+
+        p += "Reason about the real terrain, coastline, vegetation and architecture actually found in the "
+             "visible region. Use true-to-life materials, water color, vegetation, atmospheric haze and natural "
+             "lighting. Absolutely no UI elements, no text overlays, no watermarks, no map labels, no borders.";
+        if (!capture.style.empty())
+        {
+            p += " Style: ";
+            p += capture.style;
+            p += ". This style applies to appearance only and must not override camera geometry.";
+        }
+        if (!capture.showCameraPlatform)
             p += " The camera position is only the viewpoint, not a subject: show no spacecraft, "
                  "no aircraft, no drone, no satellite, no solar panels, no window frame, and no "
                  "other camera-platform parts.";
         else
             p += " The user explicitly requested that the camera platform or vehicle be visible.";
         return p;
+    }
+
+    // 视频首帧等旧调用只有一个相机 LLA、没有完整快门矩阵。保留兼容入口；正式照片路径
+    // 必须调用上面的 PhotoCaptureRequest 重载，不能退回这个缺少姿态的兼容分支。
+    inline std::string buildPhotoPrompt(const osg::Vec3d& lla, const std::string& styleSuffix,
+                                        bool showCameraPlatform = false)
+    {
+        PhotoRequest request;
+        request.lla = lla;
+        request.style = styleSuffix;
+        request.showCameraPlatform = showCameraPlatform;
+        PhotoCameraContext camera;
+        camera.cameraEyeLla = lla;
+        return buildPhotoPrompt(makePhotoCaptureRequest(request, camera, 0));
     }
 
     // 巡航视频提示词:起始帧是"已生成的实景照片"(而非原始渲染截图);含地理上下文 +

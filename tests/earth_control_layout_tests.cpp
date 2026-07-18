@@ -98,6 +98,11 @@ int main()
     CHECK(setup.find("AlwaysAutoResize") == std::string::npos);
     CHECK(setup.find("NoScrollbar") == std::string::npos);
 
+    CHECK(setup.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") !=
+          std::string::npos);
+    CHECK(setup.find("ImGuiStyleVar_ScrollbarSize") != std::string::npos);
+    CHECK(setup.find("ImGuiCol_ScrollbarGrab") != std::string::npos);
+
     // A constrained panel must not use ImGui's default "control then visible
     // label on the right" form. At compact widths that pattern clips the
     // label. Production fields use a wrapped label row followed by a
@@ -137,6 +142,33 @@ int main()
     CHECK(panel.find("\"G = \"") != std::string::npos);
     CHECK(panel.find("\"B = \"") != std::string::npos);
     CHECK(panel.find(u8"尚无可测时长") != std::string::npos);
+    CHECK(panel.find("sciencePanelModeCapabilities(_state.mode)") !=
+          std::string::npos);
+    CHECK(panel.find("sciencePanelPrimaryActionLabel(_state.mode)") !=
+          std::string::npos);
+    CHECK(panel.find("describeScienceArtifactUi") != std::string::npos);
+    CHECK(panel.find("ImGui::OpenPopup") != std::string::npos);
+    CHECK(panel.find("ImGui::BeginPopup") != std::string::npos);
+    CHECK(panel.find(u8"本次未启用 PCA") == std::string::npos);
+    CHECK(panel.find(u8"本次未启用聚类") == std::string::npos);
+    CHECK(panel.find(u8"请在左侧设置本次研究并运行") ==
+          std::string::npos);
+    CHECK(panel.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") !=
+          std::string::npos);
+    CHECK(panel.find("ImGuiStyleVar_ScrollbarSize") != std::string::npos);
+    CHECK(panel.find("ImGuiCol_ScrollbarGrab") != std::string::npos);
+    CHECK(panel.find("artifact->analysis.interpretation->front") ==
+          std::string::npos);
+    CHECK(panel.find("ImGuiTreeNodeFlags_DefaultOpen)) return") ==
+          std::string::npos);
+    const size_t draftRefresh = panel.find(
+        "_currentDraft = buildSciencePanelDraft(");
+    const size_t collapsedOperationsReturn = panel.find(
+        "if (!operationsExpanded) return;");
+    CHECK(draftRefresh != std::string::npos);
+    CHECK(collapsedOperationsReturn != std::string::npos);
+    CHECK(draftRefresh < collapsedOperationsReturn);
+
 
     std::cout << "[OK] Earth control panel responsive layout\n";
     return 0;

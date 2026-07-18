@@ -6,6 +6,7 @@
 #include "ai_cards.h"
 #include "ai_chat.h"   // AIChatCore 完整定义(ai_media.h 只前置声明):addErrorNote() 调用需要
 #include "earth_config.h"
+#include <readerwriter/EarthManipulator.h>
 #include "3rdparty/libhv/all/client/requests.h"
 #include "3rdparty/libhv/all/base64.h"
 #include <OpenThreads/Thread>
@@ -152,12 +153,19 @@ namespace earthai
         std::string actual = capturedPath(pngPath);
         osg::ref_ptr<osg::Image> img = osgDB::readImageFile(actual);
         if (!img.valid() || !_viewer || !_viewer->getCamera()) return;
-        int vx = 0, vy = 0, vw = _contentW, vh = _contentH;
-        if (vw <= 0 || vh <= 0)   // 未注入内容区尺寸:退回相机 viewport(可能等于整窗,即不裁)
+        int vx = 0, vy = 0, vw = 0, vh = 0;
+        const osg::Viewport* vp = _viewer->getCamera()->getViewport();
+        if (vp)
         {
-            const osg::Viewport* vp = _viewer->getCamera()->getViewport();
-            if (!vp) return;
-            vx = (int)vp->x(); vy = (int)vp->y(); vw = (int)vp->width(); vh = (int)vp->height();
+            vx = (int)vp->x();
+            vy = (int)vp->y();
+            vw = (int)vp->width();
+            vh = (int)vp->height();
+        }
+        if (vw <= 0 || vh <= 0)
+        {
+            vw = _contentW;
+            vh = _contentH;
         }
         if (vw <= 0 || vh <= 0) return;
         if (vx == 0 && vy == 0 && vw == img->s() && vh == img->t()) return;   // 已是视口大小
@@ -694,8 +702,11 @@ namespace earthai
         std::shared_ptr<std::atomic<bool>> pollDone = std::make_shared<std::atomic<bool>>(false);
     };
 
-    MediaManager::MediaManager(osgViewer::Viewer* viewer, AICardPanel* cards, const std::string& apiKeyOrEmpty)
-        : _viewer(viewer), _cards(cards), _apiKey(apiKeyOrEmpty), _grabber(viewer),
+    MediaManager::MediaManager(osgViewer::Viewer* viewer, AICardPanel* cards,
+                               const std::string& apiKeyOrEmpty,
+                               osgVerse::EarthManipulator* photoManipulator)
+        : _viewer(viewer), _photoManipulator(photoManipulator), _cards(cards),
+          _apiKey(apiKeyOrEmpty), _grabber(viewer),
           _state(IDLE), _jobId(0), _photoRequestId(0), _workerJoinable(false),
           _viewRenderUpdateTicks(0),
           _waitSnapshotTicks(0),
@@ -711,6 +722,31 @@ namespace earthai
             if (_video->workerJoinable && _video->worker.joinable()) _video->worker.join();
             delete _video;
         }
+    }
+
+    PhotoCameraContext MediaManager::currentPhotoCameraContext() const
+    {
+        if (!_viewer || !_viewer->getCamera() || !_photoManipulator)
+            return PhotoCameraContext();
+        int viewportWidth = 0;
+        int viewportHeight = 0;
+        const osg::Viewport* viewport = _viewer->getCamera()->getViewport();
+        if (viewport)
+        {
+            viewportWidth = (int)viewport->width();
+            viewportHeight = (int)viewport->height();
+        }
+        if (viewportWidth <= 0 || viewportHeight <= 0)
+        {
+            viewportWidth = _contentW;
+            viewportHeight = _contentH;
+        }
+        return makePhotoCameraContext(
+            _photoManipulator->computeEyeLatLonHeight(),
+            _photoManipulator->computeViewPointLatLonHeight(),
+            _viewer->getCamera()->getViewMatrix(),
+            _viewer->getCamera()->getProjectionMatrix(),
+            viewportWidth, viewportHeight);
     }
 
     void MediaManager::joinWorkerIfAny()
@@ -887,7 +923,7 @@ namespace earthai
                 ++_viewRenderUpdateTicks;
                 return;
             }
-            if (!_viewer || !_viewer->getCamera())
+            if (!_viewer || !_viewer->getCamera() || !_photoManipulator)
             {
                 _jobs.update(_jobId, AIJob::FAILED, 1.0f, "", "camera unavailable");
                 if (_cards) _cards->removeJob(_jobId);
@@ -898,9 +934,10 @@ namespace earthai
                 return;
             }
             _captureRequest = makePhotoCaptureRequest(
-                _pendingPhotoInput, _viewer->getCamera()->getViewMatrix(), _photoRequestId);
-            _prompt = buildPhotoPrompt(_captureRequest.targetLla, _captureRequest.style,
-                                       _captureRequest.showCameraPlatform);
+                _pendingPhotoInput,
+                currentPhotoCameraContext(),
+                _photoRequestId);
+            _prompt = buildPhotoPrompt(_captureRequest);
             hudHide();
             _grabber.grab(_snapPath);
             _state = WAITING_SNAPSHOT;
@@ -924,6 +961,38 @@ namespace earthai
                     OSG_WARN << "[AIChat] photo job timeout waiting snapshot" << std::endl;
                     _state = IDLE;
                 }
+                return;
+            }
+
+            // ScreenCaptureHandler writes the framebuffer later in the frame than this FRAME
+            // handler reads the camera. If a drag, wheel event, projection change or resize
+            // changed the view in between, discard that reference and arm one more capture.
+            // Only a frame whose view/projection/viewport still matches its immutable prompt
+            // context may proceed to generation.
+            const PhotoCameraContext completedFrameCamera =
+                currentPhotoCameraContext();
+            if (!photoCameraContextsMatchFrame(
+                    _captureRequest.camera, completedFrameCamera))
+            {
+                _captureRequest = makePhotoCaptureRequest(
+                    _pendingPhotoInput, completedFrameCamera,
+                    _photoRequestId);
+                _prompt = buildPhotoPrompt(_captureRequest);
+                _grabber.grab(_snapPath);
+                _waitSnapshotTicks = 0;
+                return;
+            }
+            if (!photoTargetVisibleInCameraContext(
+                    _captureRequest.targetLla, _captureRequest.camera))
+            {
+                hudRestore();
+                _jobs.update(_jobId, AIJob::FAILED, 1.0f, "",
+                             "photo_target_not_visible");
+                if (_cards) _cards->removeJob(_jobId);
+                if (_chatCore)
+                    _chatCore->addErrorNote(
+                        u8"照片生成失败：目标不在当前画面内");
+                _state = IDLE;
                 return;
             }
 

@@ -22,6 +22,7 @@
 #include <vector>
 
 class AICardPanel;
+namespace osgVerse { class EarthManipulator; }
 
 namespace earthai
 {
@@ -222,7 +223,9 @@ namespace earthai
         // 供 EarthControlUI::runInternal() 在最开头查询,为 true 时跳过全部 ImGui::Begin
         // 窗口(含 Earth Control 面板与 AIChatUI 对话条/卡片),但仍然要正常调用
         // NewFrame/Render(由 ImGuiNewFrameCallback/ImGuiRenderCallback 负责,与本类无关)。
-        MediaManager(osgViewer::Viewer* viewer, AICardPanel* cards, const std::string& apiKeyOrEmpty);
+        MediaManager(osgViewer::Viewer* viewer, AICardPanel* cards,
+                     const std::string& apiKeyOrEmpty,
+                     osgVerse::EarthManipulator* photoManipulator);
         ~MediaManager();
 
         JobManager* jobs() { return &_jobs; }
@@ -240,7 +243,11 @@ namespace earthai
         // 快门补光:抓帧期间把 WorldSunDir 临时对准相机(夜面/背光视角否则拍出全黑构图参考,
         // banana 只能纯靠坐标推理)。main 注入 EarthAtmosphereOcean 指针;为空则跳过补光。
         void setEarthUniforms(osgVerse::EarthAtmosphereOcean* e) { _earth = e; }
-        void setContentSize(int w, int h) { _grabber.setContentSize(w, h); _videoGrabber.setContentSize(w, h); }
+        void setContentSize(int w, int h)
+        {
+            _contentW = w; _contentH = h;
+            _grabber.setContentSize(w, h); _videoGrabber.setContentSize(w, h);
+        }
         void applyFillLight();   // 内部:把太阳对准相机(快门补光)
 
         // v0.15-vision 收尾修复:MediaManager 先于 AIChatCore 构造(ai_setup.cpp 里 generate_photo/
@@ -254,8 +261,8 @@ namespace earthai
         // generate_photo 工具入口(主线程调用,在 AIChatCore::drainMainThread 的工具执行阶段):
         // 建 Job → 触发抓帧 → 立即返回 {"status":"started","job_id":N}(不等生图完成)。
         // 若已有照片任务在跑,返回 {"error":"photo job already running"}。
-        // lla=(纬度弧度,经度弧度,高度米),与 EarthManipulator::computeEyeLatLonHeight() 返回值
-        // 约定一致；自然语言工具层要求每次显式提供本次任务自己的目标坐标。
+        // lla 是本次请求自己的目标坐标，仅描述目标地点；相机 eye/画面中心/姿态/FOV 在真正
+        // 预约快照的边界从当前可见相机读取，不能再把目标 lat/lon 与眼点高度拼成伪相机位置。
         picojson::value startPhotoJob(const std::string& stylePrompt, const osg::Vec3d& lla,
                                       bool showCameraPlatform = false);
 
@@ -308,6 +315,7 @@ namespace earthai
         enum PendingState { IDLE, WAITING_VIEW_RENDER, WAITING_SNAPSHOT, GENERATING, DONE_HANDLED };
 
         osgViewer::Viewer* _viewer;
+        osgVerse::EarthManipulator* _photoManipulator;
         AICardPanel* _cards;
         std::string _apiKey;
         SnapshotGrabber _grabber;
@@ -343,8 +351,10 @@ namespace earthai
         bool _workerJoinable;
         unsigned int _viewRenderUpdateTicks;
         int _waitSnapshotTicks;  // 进入 WAITING_SNAPSHOT 后累计的 update() 调用次数,超阈值判超时
+        int _contentW = 0, _contentH = 0;
 
         void joinWorkerIfAny();
+        PhotoCameraContext currentPhotoCameraContext() const;
 
         // 照片与视频状态机各自保留原有 early return；public update() 顺序调用两个 helper，
         // 再从单一 epilogue 发布本 tick 的视频 UI 快照。

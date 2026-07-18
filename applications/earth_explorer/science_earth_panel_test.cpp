@@ -78,9 +78,42 @@ int main()
     CHECK(defaults.comparisonYear == 2025);
     CHECK(defaults.gridSize == 128);
     CHECK(!defaults.advancedOpen);
-    CHECK(defaults.resultExpanded);
+    CHECK(!defaults.resultExpanded);
     CHECK(!defaults.enablePca);
     CHECK(!defaults.enableClustering);
+
+    const SciencePanelModeCapabilities previewCapabilities =
+        sciencePanelModeCapabilities(SciencePanelMode::Preview);
+    CHECK(previewCapabilities.showsSingleYear);
+    CHECK(!previewCapabilities.showsYearRange);
+    CHECK(!previewCapabilities.showsYearPair);
+    CHECK(!previewCapabilities.supportsGrid);
+    CHECK(!previewCapabilities.supportsPca);
+    CHECK(!previewCapabilities.supportsClustering);
+    CHECK(std::string(sciencePanelPrimaryActionLabel(
+              SciencePanelMode::Preview)) == u8"加载伪彩预览");
+
+    const SciencePanelModeCapabilities seriesCapabilities =
+        sciencePanelModeCapabilities(SciencePanelMode::PointSeries);
+    CHECK(!seriesCapabilities.showsSingleYear);
+    CHECK(seriesCapabilities.showsYearRange);
+    CHECK(!seriesCapabilities.showsYearPair);
+    CHECK(!seriesCapabilities.supportsGrid);
+    CHECK(!seriesCapabilities.supportsPca);
+    CHECK(!seriesCapabilities.supportsClustering);
+    CHECK(std::string(sciencePanelPrimaryActionLabel(
+              SciencePanelMode::PointSeries)) == u8"分析点位年度变化");
+
+    const SciencePanelModeCapabilities regionalCapabilities =
+        sciencePanelModeCapabilities(SciencePanelMode::RegionalChange);
+    CHECK(!regionalCapabilities.showsSingleYear);
+    CHECK(!regionalCapabilities.showsYearRange);
+    CHECK(regionalCapabilities.showsYearPair);
+    CHECK(regionalCapabilities.supportsGrid);
+    CHECK(regionalCapabilities.supportsPca);
+    CHECK(regionalCapabilities.supportsClustering);
+    CHECK(std::string(sciencePanelPrimaryActionLabel(
+              SciencePanelMode::RegionalChange)) == u8"分析当前视野变化");
 
     const SciencePanelPresentation queued = describeScienceSnapshot(snapshot(
         earthscience::ScienceJobState::Queued,
@@ -169,6 +202,106 @@ int main()
     CHECK(selectSciencePanelArtifact(
         independentResults, SciencePanelMode::PointSeries)->artifactId ==
         "analysis-old");
+
+    earthscience::ScienceJobSnapshot readyPreviewJob = snapshot(
+        earthscience::ScienceJobState::Ready,
+        earthscience::ScienceProgressStage::Ready, "preview ready");
+    readyPreviewJob.jobId = 42;
+    readyPreviewJob.query.outputKind =
+        earthscience::ScienceOutputKind::RasterLayer;
+    const SciencePanelPresentation unrelatedRegionalStatus =
+        describeScienceSnapshot(
+            readyPreviewJob, SciencePanelMode::RegionalChange);
+    CHECK(unrelatedRegionalStatus.kind == SciencePanelResultKind::Idle);
+    CHECK(unrelatedRegionalStatus.title.find(u8"此模式尚无结果") !=
+          std::string::npos);
+    CHECK(unrelatedRegionalStatus.title.find("ready") == std::string::npos);
+
+    earthscience::ScienceJobSnapshot runningPreviewJob = snapshot(
+        earthscience::ScienceJobState::Fetching,
+        earthscience::ScienceProgressStage::Reading, "reading preview tile");
+    runningPreviewJob.jobId = 43;
+    runningPreviewJob.query.outputKind =
+        earthscience::ScienceOutputKind::RasterLayer;
+    const SciencePanelPresentation runningFromAnotherMode =
+        describeScienceSnapshot(
+            runningPreviewJob, SciencePanelMode::RegionalChange);
+    CHECK(runningFromAnotherMode.busy);
+    CHECK(runningFromAnotherMode.kind == SciencePanelResultKind::Active);
+
+    earthscience::ScienceArtifact regionalPcaArtifact;
+    regionalPcaArtifact.query.outputKind =
+        earthscience::ScienceOutputKind::Analysis;
+    regionalPcaArtifact.query.analysis.kind =
+        earthscience::ScienceAnalysisKind::RegionalChange;
+    regionalPcaArtifact.query.analysis.gridSize = 128;
+    regionalPcaArtifact.query.analysis.enablePca = true;
+    regionalPcaArtifact.query.time.explicitYears = {2017, 2025};
+    earthscience::GeoTemporalQuery matchingRegionalDraft =
+        regionalPcaArtifact.query;
+    ScienceArtifactUiPresentation artifactUi =
+        describeScienceArtifactUi(regionalPcaArtifact, matchingRegionalDraft);
+    CHECK(artifactUi.matchesDraft);
+    CHECK(!artifactUi.showPcaSummary);
+    CHECK(!artifactUi.showClusterSummary);
+    CHECK(artifactUi.scopeLabel.find("2017") != std::string::npos);
+    CHECK(artifactUi.scopeLabel.find("2025") != std::string::npos);
+    CHECK(artifactUi.scopeLabel.find("128") != std::string::npos);
+    CHECK(artifactUi.pendingSettingsLabel.empty());
+
+    regionalPcaArtifact.analysis.pca.componentCount = 3;
+    artifactUi = describeScienceArtifactUi(
+        regionalPcaArtifact, matchingRegionalDraft);
+    CHECK(artifactUi.showPcaSummary);
+    CHECK(artifactUi.scopeLabel.find("PCA") != std::string::npos);
+    matchingRegionalDraft.time.explicitYears = {2018, 2024};
+    matchingRegionalDraft.analysis.baselineYear = 2018;
+    matchingRegionalDraft.analysis.comparisonYear = 2024;
+    artifactUi = describeScienceArtifactUi(
+        regionalPcaArtifact, matchingRegionalDraft);
+    CHECK(!artifactUi.matchesDraft);
+    CHECK(!artifactUi.pendingSettingsLabel.empty());
+    CHECK(artifactUi.scopeLabel.find("2017") != std::string::npos);
+    CHECK(artifactUi.scopeLabel.find("2025") != std::string::npos);
+    CHECK(artifactUi.scopeLabel.find("2018") == std::string::npos);
+    CHECK(artifactUi.scopeLabel.find("2024") == std::string::npos);
+
+    earthscience::ScienceArtifact pointSeriesArtifact;
+    pointSeriesArtifact.query.outputKind =
+        earthscience::ScienceOutputKind::TimeSeries;
+    pointSeriesArtifact.query.analysis.kind =
+        earthscience::ScienceAnalysisKind::PointSeries;
+    pointSeriesArtifact.query.time.explicitYears = {
+        2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025};
+    const ScienceArtifactUiPresentation compactPointScope =
+        describeScienceArtifactUi(
+            pointSeriesArtifact, pointSeriesArtifact.query);
+    CHECK(compactPointScope.scopeLabel.find("2017") != std::string::npos);
+    CHECK(compactPointScope.scopeLabel.find("2025") != std::string::npos);
+    CHECK(compactPointScope.scopeLabel.find("2018") == std::string::npos);
+
+    const ScienceHelpTopic helpTopics[] = {
+        ScienceHelpTopic::DataMeaning,
+        ScienceHelpTopic::PreviewColors,
+        ScienceHelpTopic::Pca,
+        ScienceHelpTopic::Clusters,
+        ScienceHelpTopic::ScientificLimits,
+        ScienceHelpTopic::Provenance,
+    };
+    for (ScienceHelpTopic topic : helpTopics)
+    {
+        CHECK(std::string(scienceHelpTopicTitle(topic)).size() > 2);
+        CHECK(std::string(scienceHelpTopicBody(topic)).size() > 12);
+    }
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::Pca)).find(u8"局部数学") !=
+          std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::PreviewColors)).find(u8"不是自然色") !=
+          std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::ScientificLimits)).find(u8"不能单独证明") !=
+          std::string::npos);
 
     earthscience::ScienceJobSnapshot previewReplacementFailure = snapshot(
         earthscience::ScienceJobState::Failed,

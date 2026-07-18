@@ -394,6 +394,7 @@ protected:
 
         osg::ref_ptr<osg::MatrixTransform> mt = new osg::MatrixTransform;
         mt->setUpdateCallback(tileCB.get());
+        mt->setCullCallback(tileCB.get());
         mt->setName(name); mt->addChild(geode.get());
         mt->setMatrix(localMatrix); return mt.release();
     }

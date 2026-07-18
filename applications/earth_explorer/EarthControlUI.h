@@ -213,7 +213,15 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         ImGui::SetNextWindowSizeConstraints(
             ImVec2(panelLayout.minWidth, panelLayout.minHeight),
             ImVec2(panelLayout.maxWidth, panelLayout.maxHeight));
-        if (ImGui::Begin("Earth Control / 地球控制台"))
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 14.0f);
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab,
+                              ImVec4(0.23f, 0.65f, 1.0f, 0.72f));
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered,
+                              ImVec4(0.23f, 0.65f, 1.0f, 0.90f));
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive,
+                              ImVec4(0.23f, 0.65f, 1.0f, 1.0f));
+        if (ImGui::Begin("Earth Control / 地球控制台", nullptr,
+                         ImGuiWindowFlags_AlwaysVerticalScrollbar))
         {
             ImGui::PushTextWrapPos(0.0f);
             // ---- 相机读数 ----
@@ -485,6 +493,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
 #else
         ImGui::End();
 #endif
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar();
 
         // ===== 信息呈现面板:统一锚定右上角,与左上角操作面板分离;可关闭 =====
         // 约定(用户偏好):今后所有"呈现信息"的 UI 都放这里(右上角),不要混进上面的操作面板。

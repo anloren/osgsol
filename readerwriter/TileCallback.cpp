@@ -629,9 +629,7 @@ bool TileCallback::updateLayerData(osg::NodeVisitor* nv, osg::Node* node, LayerT
         if (tex.valid())
         {
             emptyPath = false;  // 视为"有数据",走下方正常绑定路径而非移除分支
-            unsigned int fr = (nv && nv->getFrameStamp()) ? nv->getFrameStamp()->getFrameNumber() : 0u;
-            TileManager::instance()->markOverlayStretchedPastNative(fr);
-            _overlayStretched = true;  // 电平触发:operator() 每帧续帧戳,直到本瓦片不再被遍历或换源
+            _overlayStretched = true;  // 只记录状态；实际可见的 cull traversal 才发布帧戳
         }
     }
     if (tex.valid())
@@ -671,6 +669,19 @@ bool TileCallback::updateLayerData(osg::NodeVisitor* nv, osg::Node* node, LayerT
 
 void TileCallback::operator()(osg::Node* node, osg::NodeVisitor* nv)
 {
+    // UpdateVisitor 会遍历 PagedLOD 的所有已加载子树，包括已非当前
+    // 渲染 LOD 的深层瓦片，因此不能用 update traversal 代表“可见”。
+    // 同一 callback 另挂到 cull 路径；只有 PagedLOD 当前选中的瓦片
+    // 才会到达这里，据此续帧戳供 app 侧保留短去抖。
+    if (nv && nv->getVisitorType() == osg::NodeVisitor::CULL_VISITOR)
+    {
+        if (_overlayStretched && nv->getFrameStamp())
+            TileManager::instance()->markOverlayStretchedPastNative(
+                nv->getFrameStamp()->getFrameNumber());
+        traverse(node, nv);
+        return;
+    }
+
     if (!_layersDone)
     {
         // Check if current layer paths are all usable and loaded
@@ -733,15 +744,6 @@ void TileCallback::operator()(osg::Node* node, osg::NodeVisitor* nv)
             }
         }
         _uvRangesToSet.clear();
-    }
-
-    // I-2 电平触发续帧戳:只要本瓦片仍处于"超缩放父级拉伸"态且还在被每帧 update 遍历(即仍在
-    // 视锥/仍是当前显示的叶瓦片),就持续把帧戳刷新为当前帧,角标去抖窗口(30 帧)因而不会过期。
-    // 一旦本瓦片不再被遍历(zoom out、换源或入口复位清掉该态),帧戳停止刷新,角标随去抖自然隐藏。
-    if (_overlayStretched)
-    {
-        unsigned int fr = (nv && nv->getFrameStamp()) ? nv->getFrameStamp()->getFrameNumber() : 0u;
-        TileManager::instance()->markOverlayStretchedPastNative(fr);
     }
 
     if (TileManager::instance()->shouldMorph(*this))

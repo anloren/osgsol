@@ -38,6 +38,7 @@
 #include <xxYUV/rgb2yuv.h>
 #include <avir/avir.h>
 #include <nanoid/nanoid.h>
+#include <mbedtls/sha256.h>
 #include <miniz.h>
 
 #define MINIAUDIO_IMPLEMENTATION
@@ -583,6 +584,44 @@ namespace osgVerse
         return fanned;
     }
 
+    bool isUnsupportedGoogleZoomTile(const std::string& url,
+                                     const std::vector<unsigned char>& bytes)
+    {
+        static const std::string prefix = "https://mt1.google.com/vt/lyrs=";
+        if (url.compare(0, prefix.size(), prefix) != 0 || url.size() <= prefix.size() + 1)
+            return false;
+        const char layer = url[prefix.size()];
+        if ((layer != 's' && layer != 'h') || url[prefix.size() + 1] != '&') return false;
+
+        // Exact byte identity, not dimensions/file size/text OCR: normal 256x256 PNGs and
+        // other providers are untouched. This is the response observed repeatedly in the
+        // local cache on 2026-07-18 (SHA-256 below).
+        if (bytes.size() != 1370u) return false;
+        static const unsigned char expected[32] = {
+            0x1d, 0x40, 0x6f, 0xd8, 0x34, 0xa5, 0xcb, 0xed,
+            0x43, 0x44, 0x71, 0xbb, 0x02, 0xa1, 0xd9, 0x8a,
+            0x6d, 0xd8, 0x92, 0x86, 0xa7, 0xa6, 0x78, 0x26,
+            0x27, 0x4a, 0x29, 0x6f, 0xb8, 0x71, 0x21, 0x0c
+        };
+        unsigned char digest[32] = {};
+        if (mbedtls_sha256(bytes.data(), bytes.size(), digest, 0) != 0) return false;
+        return std::memcmp(digest, expected, sizeof(expected)) == 0;
+    }
+
+    static void rejectUnsupportedGoogleZoomTile(
+            const std::string& url, std::vector<unsigned char>& buffer)
+    {
+        if (!isUnsupportedGoogleZoomTile(url, buffer)) return;
+        // Leave the bytes in the disk cache as a negative-cache entry. Clearing only the
+        // returned payload makes the image reader fail closed, so PagedLOD keeps its parent
+        // without repeatedly fetching the same provider placeholder.
+        buffer.clear();
+        static std::atomic<bool> reported(false);
+        if (!reported.exchange(true))
+            OSG_NOTICE << "[TileCache] rejected Google unsupported-zoom placeholder; "
+                       << "keeping parent LOD" << std::endl;
+    }
+
     std::vector<unsigned char> loadFileData(const std::string& url, std::string& mimeType, std::string& encodingType,
                                             const std::vector<std::string>& reqHeaders)
     {
@@ -622,6 +661,7 @@ namespace osgVerse
                         if (minf) std::getline(minf, mimeType);
                         buffer.resize(s.size()); memcpy(buffer.data(), s.data(), s.size());
                         countTileCacheOp(sTileCacheHits);
+                        rejectUnsupportedGoogleZoomTile(url, buffer);
                         return buffer;
                     }
                 }
@@ -696,6 +736,7 @@ namespace osgVerse
                 // .mime 极小且幂等;直接写(撕裂的 mime 只触发重取,不致坏图)
                 std::ofstream mo((cf + ".mime").c_str()); if (mo) mo << mimeType;
             }
+            rejectUnsupportedGoogleZoomTile(url, buffer);
 #endif
         }
         else
