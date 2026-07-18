@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <osg/MatrixTransform>
@@ -44,8 +45,9 @@
 
 // Release 构建带 -DNDEBUG 会吞掉 assert —— 用自定义 CHECK 保证断言永远生效
 #define CHECK(x) do { if (!(x)) { \
-    std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ << ": " #x << std::endl; \
-    std::abort(); } } while (0)
+    std::ostringstream checkMessage; \
+    checkMessage << "CHECK failed at " << __FILE__ << ":" << __LINE__ << ": " #x; \
+    throw std::runtime_error(checkMessage.str()); } } while (0)
 
 // 只记录请求、不真正加载 —— 模拟"图像尚未到达"的窗口期(此时纹理就已被绑定渲染)
 class StubImageRequestHandler : public osg::NodeVisitor::ImageRequestHandler
@@ -206,7 +208,7 @@ static size_t processThreadCount()
 }
 #endif
 
-int main(int, char**)
+static int runTests()
 {
     // ---- Google 的精确“Zoom Level Not Supported”响应必须视为无瓦片 ----
     // 只匹配默认 mt1 + lyrs=s/h + 已知 PNG 的完整 SHA-256。相同字节来自自定义/Esri
@@ -514,4 +516,17 @@ int main(int, char**)
 
     std::cout << "[tile_overlay_tests] all OK" << std::endl;
     return 0;
+}
+
+int main(int, char**)
+{
+    try
+    {
+        return runTests();
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << error.what() << std::endl;
+        return 1;
+    }
 }
