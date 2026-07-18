@@ -1,4 +1,6 @@
 ADD_LIBRARY(osgSolScienceCore STATIC
+    CopernicusDemSource.cpp
+    CopernicusDemSource.h
     ScienceAnalysisEngine.cpp
     ScienceAnalysisEngine.h
     ScienceAnalysisExport.cpp
@@ -90,6 +92,17 @@ TARGET_LINK_LIBRARIES(osgSol_Smoke_Sentinel2Production
     PRIVATE osgSolSciencePreview)
 
 IF(BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_CopernicusDemSource
+        CopernicusDemSourceTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_CopernicusDemSource PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_CopernicusDemSource
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_CopernicusDemSource
+             COMMAND $<TARGET_FILE:osgSol_Test_CopernicusDemSource>)
+    SET_TESTS_PROPERTIES(osgSol_Test_CopernicusDemSource PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
     ADD_EXECUTABLE(osgSol_Test_ScienceArtifactStore
         ScienceArtifactStoreTest.cpp)
     TARGET_COMPILE_FEATURES(osgSol_Test_ScienceArtifactStore
