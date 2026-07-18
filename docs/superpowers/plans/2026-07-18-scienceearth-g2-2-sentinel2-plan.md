@@ -228,37 +228,37 @@ git commit -m "refactor(scienceearth): support provider time contracts"
 - Consumes: exact `GeoTemporalQuery` and a fetched STAC body.
 - Produces: `Sentinel2Runtime::submit/snapshot/cancel/clear` with `ScienceProviderSnapshot`.
 
-- [ ] **Step 1: Write a local three-band GeoTIFF fixture test**
+- [x] **Step 1: Write a local three-band GeoTIFF fixture test**
 
 Create a small projected UInt8 three-band GTiff in a temporary directory with known RGB corners.
 Inject a fake STAC fetch returning its scene metadata and a test-only local asset resolver. Require
 correct 256 by 256 RGBA, orientation, 33 by 33 ground grid, bounds, resolution, evidence, and no
 full-file network path.
 
-- [ ] **Step 2: Add cancellation, stale, and failure tests**
+- [x] **Step 2: Add cancellation, stale, and failure tests**
 
 Block the injected fetch/read seams, cancel the active generation, submit a newer generation, and
 prove no old artifact can become Ready. Cover timeout, no scene, malformed COG, wrong bands, and
 GDAL error without throwing across the worker.
 
-- [ ] **Step 3: Build RED**
+- [x] **Step 3: Build RED**
 
 Build `osgSol_Test_Sentinel2Runtime`; expect missing runtime symbols.
 
-- [ ] **Step 4: Implement the worker and real transports**
+- [x] **Step 4: Implement the worker and real transports**
 
 Fetch STAC with GDAL CPL HTTP under the 2 MiB/8 s/15 s limits. Open the selected production asset
 only as `/vsicurl/<https-url>`, register only GTiff/VRT/MEM, disable directory reads, allow `.tif`,
 and use 8 s/25 s HTTP limits. Use `GDALRasterIOExtraArg` cancellation progress. Never retry with a
 plain URL or `/vsicurl_streaming/`.
 
-- [ ] **Step 5: Emit honest evidence**
+- [x] **Step 5: Emit honest evidence**
 
 Populate item id, acquisition time, cloud cover, collection, STAC endpoint, COG URL, requested and
 actual coverage, natural-color display processing, source/display resolution, attribution, and a
 warning that scene cloud cover is scene-wide and not a per-pixel cloud mask.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
 ```bash
 git add science/Sentinel2Runtime.h science/Sentinel2Runtime.cpp \

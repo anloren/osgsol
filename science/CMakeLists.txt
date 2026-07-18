@@ -37,6 +37,8 @@ ADD_LIBRARY(osgSolSciencePreview STATIC
     AlphaEarthEmbeddingRuntime.h
     AlphaEarthProvider.cpp
     AlphaEarthProvider.h
+    Sentinel2Runtime.cpp
+    Sentinel2Runtime.h
     SciencePreviewSupport.cpp
     SciencePreviewSupport.h
     SciencePreviewRuntime.cpp
@@ -111,6 +113,19 @@ IF(BUILD_TESTING)
     ADD_TEST(NAME osgSol_Test_Sentinel2Stac
              COMMAND $<TARGET_FILE:osgSol_Test_Sentinel2Stac>)
     SET_TESTS_PROPERTIES(osgSol_Test_Sentinel2Stac PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_Sentinel2Runtime
+        Sentinel2RuntimeTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_Sentinel2Runtime PRIVATE cxx_std_17)
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_Sentinel2Runtime PRIVATE
+        "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
+    TARGET_LINK_LIBRARIES(osgSol_Test_Sentinel2Runtime
+        PRIVATE osgSolSciencePreview)
+    ADD_TEST(NAME osgSol_Test_Sentinel2Runtime
+             COMMAND $<TARGET_FILE:osgSol_Test_Sentinel2Runtime>)
+    SET_TESTS_PROPERTIES(osgSol_Test_Sentinel2Runtime PROPERTIES
         LABELS "offline;scienceearth"
         TIMEOUT 10)
 

@@ -161,7 +161,8 @@ namespace
             GDALRegister_VRT();
             GDALRegister_MEM();
             CPLSetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR");
-            CPLSetConfigOption("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tiff");
+            CPLSetConfigOption(
+                "CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.tiff");
             CPLSetConfigOption("GDAL_HTTP_VERSION", "2TLS");
             CPLSetConfigOption("GDAL_HTTP_MULTIPLEX", "YES");
             CPLSetConfigOption("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES");
