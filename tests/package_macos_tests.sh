@@ -7,6 +7,10 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if grep -Eq '^[[:space:]]*xattr([[:space:]]|$)' "$ROOT/packaging/package_macos.sh"; then
+    echo "FAIL: formal packaging must not invoke xattr" >&2
+    exit 1
+fi
 SDK="${OSGVERSE_SDK:-$ROOT/build/sdk_core}"
 RUNTIME_SDK="${OSG_RUNTIME_SDK:-}"
 if [ -z "$RUNTIME_SDK" ]; then

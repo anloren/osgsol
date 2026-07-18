@@ -2,6 +2,10 @@
 # Package an installed EarthExplorer tree as the formal osgSol Earth product.
 set -euo pipefail
 
+# Never copy Finder metadata, resource forks, or quarantine attributes into the candidate. This
+# keeps the package reproducible without mutating extended attributes after the files are copied.
+export COPYFILE_DISABLE=1
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDK="${OSGVERSE_SDK:-$REPO/build/sdk_core}"
 OSG_RUNTIME_SDK="${OSG_RUNTIME_SDK:-}"
@@ -493,9 +497,9 @@ if find "$BUILD_APP" -name imgui.ini -print -quit | grep -q .; then
     fail 65 "Refusing to sign a bundle containing imgui.ini"
 fi
 
-# Copied Finder/resource metadata invalidates strict signatures. Clean the complete tree first.
+# All copied inputs were created with COPYFILE_DISABLE=1, so the candidate contains no inherited
+# Finder metadata or resource forks. Make the files writable before relocating/signing them.
 chmod -R u+w "$BUILD_APP"
-xattr -cr "$BUILD_APP"
 
 # install_name_tool invalidates upstream signatures. Sign every loose Mach-O explicitly because
 # codesign --deep does not reliably discover dylibs/plugins that are not nested bundles.
