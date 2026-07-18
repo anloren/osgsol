@@ -77,3 +77,10 @@ signals, crash suppression, macOS setting changes, or a packaging workaround.
 - Current owner regression: `osgVerse_Test_TmsLayerLoadPool` creates eight workers, executes the
   parallel task path, shuts the pool down twice safely, verifies zero remaining owned workers, and
   verifies that post-shutdown work falls back to the caller thread.
+- Production-plugin unload regression: `osgVerse_Test_TileOverlay` loads the real
+  `osgdb_verse_tms` plugin against a local fixture, observes its eight production workers, releases
+  the created tile, calls `Registry::closeLibrary()`, and verifies that at least eight process
+  threads disappear before the plugin code is unloaded. This path uses no external network.
+- The focused exit, pool, and production-plugin tests pass in the Release GLCore build used by the
+  macOS application (`build/science_64d_candidate`), rather than the accidentally reconfigured
+  legacy-OpenGL build directory.

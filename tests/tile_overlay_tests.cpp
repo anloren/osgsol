@@ -28,6 +28,10 @@
 #include <readerwriter/Utilities.h>
 #include "../plugins/osgdb_tms/TmsOverlaySelection.h"
 
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#endif
+
 #if __has_include("../applications/earth_explorer/science_overlay.h")
 #include "../applications/earth_explorer/science_overlay.h"
 #define HAS_SCIENCE_OVERLAY 1
@@ -172,6 +176,20 @@ static void setTileCacheRoot(const std::string& root)
     CHECK(setenv("EARTH_TILE_CACHE", root.c_str(), 1) == 0);
 #endif
 }
+
+#if defined(__APPLE__)
+static size_t processThreadCount()
+{
+    thread_act_array_t threads = NULL;
+    mach_msg_type_number_t count = 0;
+    if (task_threads(mach_task_self(), &threads, &count) != KERN_SUCCESS) return 0;
+    for (mach_msg_type_number_t i = 0; i < count; ++i)
+        mach_port_deallocate(mach_task_self(), threads[i]);
+    vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(threads),
+                  static_cast<vm_size_t>(count) * sizeof(thread_t));
+    return static_cast<size_t>(count);
+}
+#endif
 
 int main(int, char**)
 {
@@ -375,6 +393,9 @@ int main(int, char**)
     //      防止 wiring 断开 ----
 #if defined(OSGVERSE_TMS_PLUGIN_PATH)
     {
+#if defined(__APPLE__)
+        const size_t threadsBeforePlugin = processThreadCount();
+#endif
         osg::ref_ptr<FixtureImageReader> fixture = new FixtureImageReader;
         osgDB::Registry::instance()->addReaderWriter(fixture.get());
         CHECK(osgDB::Registry::instance()->loadLibrary(OSGVERSE_TMS_PLUGIN_PATH) !=
@@ -406,7 +427,17 @@ int main(int, char**)
         CHECK(node.valid());
         CHECK(fixture->count("MODIS_Terra_NDVI_8Day") == 0);
         CHECK(fixture->count("VIIRS_SNPP_CorrectedReflectance_TrueColor") == 0);
+        node = NULL;
         osgDB::Registry::instance()->removeReaderWriter(fixture.get());
+#if defined(__APPLE__)
+        const size_t threadsWithPlugin = processThreadCount();
+        CHECK(threadsWithPlugin >= threadsBeforePlugin + 8u);
+#endif
+        CHECK(osgDB::Registry::instance()->closeLibrary(OSGVERSE_TMS_PLUGIN_PATH));
+#if defined(__APPLE__)
+        const size_t threadsAfterClose = processThreadCount();
+        CHECK(threadsAfterClose + 8u <= threadsWithPlugin);
+#endif
     }
 #else
     CHECK(false && "OSGVERSE_TMS_PLUGIN_PATH is required");
