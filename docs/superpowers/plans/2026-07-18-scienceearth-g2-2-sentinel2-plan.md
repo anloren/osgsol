@@ -385,18 +385,18 @@ git commit -m "feat(scienceearth): expose Sentinel-2 to Agent research"
 **Interfaces:**
 - Produces: a JSONL evidence record; no map/UI side effect.
 
-- [ ] **Step 1: Add a manually invoked smoke executable**
+- [x] **Step 1: Add a manually invoked smoke executable**
 
 Accept explicit latitude, longitude, interval, cloud threshold, and span. Print state transitions,
 selected scene metadata, byte/memory bounds, artifact dimensions, and evidence. Never create a
 listener or local server.
 
-- [ ] **Step 2: Run one bounded real query**
+- [x] **Step 2: Run one bounded real query**
 
 Use a 2.56 km Tokyo-area request and at most a 30-day interval. Require Ready, 256 by 256 RGBA,
 valid ground grid, one STAC request, one COG asset, and no full-object fallback marker.
 
-- [ ] **Step 3: Record exact facts and commit**
+- [x] **Step 3: Record exact facts and commit**
 
 Record timestamp, request, endpoint, scene, acquisition, cloud, source/display resolution, elapsed
 time, warnings, and limitations. Do not claim a universal latency threshold from one request.

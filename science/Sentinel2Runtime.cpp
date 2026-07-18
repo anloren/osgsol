@@ -472,6 +472,11 @@ struct Sentinel2Runtime::Impl
              number(artifact->raster.sourceResolutionMeters), "m"},
             {"display_resolution", "Display resolution",
              number(artifact->raster.displayResolutionMeters), "m/pixel"},
+            {"stac_request_count", "STAC requests", "1", "request"},
+            {"selected_asset_count", "Selected COG assets", "1", "asset"},
+            {"cog_access_mode", "COG access mode",
+             "GDAL /vsicurl/ bounded window", ""},
+            {"full_object_fallback", "Full-object fallback", "none", ""},
         };
         artifact->sourceReferences.push_back(std::move(reference));
         artifact->warnings.push_back(
