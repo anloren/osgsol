@@ -435,6 +435,23 @@ namespace earthscience
         std::shared_ptr<const std::vector<std::string>> limitations;
     };
 
+    struct ScienceScalarSummary
+    {
+        std::string variableId;
+        std::string displayName;
+        std::string unit;
+        bool centerValid = false;
+        double center = 0.0;
+        bool minimumValid = false;
+        bool maximumValid = false;
+        bool meanValid = false;
+        double minimum = 0.0;
+        double maximum = 0.0;
+        double mean = 0.0;
+        std::uint64_t validCellCount = 0;
+        std::uint64_t noDataCellCount = 0;
+    };
+
     struct ScienceArtifact
     {
         std::string artifactId;
@@ -444,6 +461,7 @@ namespace earthscience
         ScienceRasterPayload raster;
         ScienceEmbeddingPayload embedding;
         ScienceAnalysisPayload analysis;
+        std::vector<ScienceScalarSummary> scalarSummaries;
         std::string visualizationId;
         std::vector<std::string> warnings;
         std::string processingVersion;

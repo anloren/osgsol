@@ -574,6 +574,44 @@ namespace
                     minimumOwnedCharacters,
                 "artifact byte estimate omitted scene evidence strings");
     }
+
+    void testScalarEvidenceSummariesAreCopiedAndCounted()
+    {
+        earthscience::ScienceArtifact artifact;
+        require(artifact.scalarSummaries.empty(),
+                "legacy artifacts must not invent scalar evidence");
+
+        earthscience::ScienceScalarSummary summary;
+        summary.variableId = std::string(4096, 'v');
+        summary.displayName = std::string(8192, 'd');
+        summary.unit = std::string(16384, 'u');
+        summary.centerValid = true;
+        summary.center = 42.5;
+        summary.minimumValid = true;
+        summary.minimum = -3.0;
+        summary.maximumValid = true;
+        summary.maximum = 101.0;
+        summary.meanValid = true;
+        summary.mean = 39.25;
+        summary.validCellCount = 1024;
+        summary.noDataCellCount = 7;
+        artifact.scalarSummaries.push_back(summary);
+
+        const earthscience::ScienceArtifact copied = artifact;
+        require(copied.scalarSummaries.size() == 1 &&
+                    copied.scalarSummaries.front().variableId ==
+                        summary.variableId &&
+                    copied.scalarSummaries.front().centerValid &&
+                    copied.scalarSummaries.front().center == 42.5 &&
+                    copied.scalarSummaries.front().validCellCount == 1024 &&
+                    copied.scalarSummaries.front().noDataCellCount == 7,
+                "scalar evidence was not preserved by artifact copy");
+
+        const std::uint64_t minimumOwnedCharacters = 4096 + 8192 + 16384;
+        require(earthscience::estimatedArtifactBytes(artifact) >=
+                    minimumOwnedCharacters,
+                "artifact byte estimate omitted scalar evidence strings");
+    }
 }
 
 int main()
@@ -591,6 +629,7 @@ int main()
     testEmbeddingShapeContractRejectsInconsistentBacking();
     testArtifactByteEstimateIncludesOwnedStrings();
     testSceneEvidenceFieldsAreCopiedAndCounted();
+    testScalarEvidenceSummariesAreCopiedAndCounted();
     std::cout << "[OK] ScienceEarth generic query type contract\n";
     return 0;
 }

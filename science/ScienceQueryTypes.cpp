@@ -331,6 +331,13 @@ std::uint64_t estimatedArtifactBytes(const ScienceArtifact& artifact)
     addVectorBytes(total, analysis.clusters.concentrations);
     addStringVectorBytes(total, analysis.interpretation);
     addStringVectorBytes(total, analysis.limitations);
+    addVectorBytes(total, artifact.scalarSummaries);
+    for (const ScienceScalarSummary& summary : artifact.scalarSummaries)
+    {
+        addStringBytes(total, summary.variableId);
+        addStringBytes(total, summary.displayName);
+        addStringBytes(total, summary.unit);
+    }
     addStringBytes(total, artifact.visualizationId);
     addStringVectorBytes(total, artifact.warnings);
     addStringBytes(total, artifact.processingVersion);
