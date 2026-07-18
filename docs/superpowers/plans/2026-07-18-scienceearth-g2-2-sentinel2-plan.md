@@ -126,17 +126,17 @@ git commit -m "feat(scienceearth): define scene evidence contracts"
 - Produces: `buildSentinel2SearchUrl(...)`, `parseSentinel2Items(...)`, and
   `selectSentinel2Item(...)` returning `Sentinel2Scene`.
 
-- [ ] **Step 1: Write fixed official-shaped fixtures**
+- [x] **Step 1: Write fixed official-shaped fixtures**
 
 Cover two valid scenes, cloud/date/id tie-breaking, no matching cloud threshold, malformed JSON,
 oversize body, invalid bbox/time/cloud, missing visual asset, HTTP asset, wrong host/path/suffix,
 wrong media type, and more than ten retained items.
 
-- [ ] **Step 2: Register and build RED**
+- [x] **Step 2: Register and build RED**
 
 Add `osgSol_Test_Sentinel2Stac` labeled `offline;scienceearth`; build it and expect missing symbols.
 
-- [ ] **Step 3: Implement the pure seam**
+- [x] **Step 3: Implement the pure seam**
 
 Define:
 
@@ -160,11 +160,11 @@ bool selectSentinel2Item(const std::vector<Sentinel2Scene>& scenes,
 Use picojson and strict allowlists. Percent-encode every query value; never concatenate unchecked
 input into a URL.
 
-- [ ] **Step 4: Run GREEN and mutation cases**
+- [x] **Step 4: Run GREEN and mutation cases**
 
 Run the executable directly. Expected: all valid and rejection cases exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add science/Sentinel2Stac.h science/Sentinel2Stac.cpp \

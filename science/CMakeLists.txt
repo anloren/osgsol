@@ -17,6 +17,8 @@ ADD_LIBRARY(osgSolScienceCore STATIC
     ScienceQueryService.h
     ScienceQueryTypes.cpp
     ScienceQueryTypes.h
+    Sentinel2Stac.cpp
+    Sentinel2Stac.h
     ScienceSourceRegistry.cpp
     ScienceSourceRegistry.h)
 
@@ -98,6 +100,17 @@ IF(BUILD_TESTING)
     ADD_TEST(NAME osgSol_Test_ScienceQueryTypes
              COMMAND $<TARGET_FILE:osgSol_Test_ScienceQueryTypes>)
     SET_TESTS_PROPERTIES(osgSol_Test_ScienceQueryTypes PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_Sentinel2Stac
+        Sentinel2StacTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_Sentinel2Stac PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_Sentinel2Stac
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_Sentinel2Stac
+             COMMAND $<TARGET_FILE:osgSol_Test_Sentinel2Stac>)
+    SET_TESTS_PROPERTIES(osgSol_Test_Sentinel2Stac PROPERTIES
         LABELS "offline;scienceearth"
         TIMEOUT 10)
 
