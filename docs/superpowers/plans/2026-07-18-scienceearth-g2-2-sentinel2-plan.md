@@ -353,6 +353,7 @@ git commit -m "feat(scienceearth): add Sentinel-2 source workflow"
 ### Task 7: Extend Agent research and evidence
 
 **Files:**
+- Modify: `applications/earth_explorer/science_query_builder.h`
 - Modify: `applications/earth_explorer/science_ai_tools.cpp`
 - Modify: `applications/earth_explorer/science_ai_tools_test.cpp`
 - Modify: `tests/science_query_consumer_contract_tests.py`
@@ -360,23 +361,25 @@ git commit -m "feat(scienceearth): add Sentinel-2 source workflow"
 **Interfaces:**
 - Produces: backward-compatible `start_science_research` source-aware time/cloud arguments.
 
-- [ ] **Step 1: Write RED schema/result cases**
+- [x] **Step 1: Write RED schema/result cases**
 
 Require AlphaEarth year calls to remain valid; Sentinel requires interval start/end, accepts a
 0-100 cloud threshold, rejects year-only ambiguity, returns actual acquisition/cloud/scene/COG
 evidence, and never calls a camera or layer-enable tool implicitly.
 
-- [ ] **Step 2: Implement source-aware argument routing**
+- [x] **Step 2: Implement source-aware argument routing**
 
 Build queries from the selected descriptor instead of assuming the first source. Return compact
 structured evidence and warnings; keep large pixels out of model results.
 
-- [ ] **Step 3: Run AI/consumer/camera GREEN and commit**
+- [x] **Step 3: Run AI/consumer/camera GREEN and commit**
 
 ```bash
-git add applications/earth_explorer/science_ai_tools.cpp \
+git add applications/earth_explorer/science_query_builder.h \
+  applications/earth_explorer/science_ai_tools.cpp \
   applications/earth_explorer/science_ai_tools_test.cpp \
-  tests/science_query_consumer_contract_tests.py
+  tests/science_query_consumer_contract_tests.py \
+  docs/superpowers/plans/2026-07-18-scienceearth-g2-2-sentinel2-plan.md
 git commit -m "feat(scienceearth): expose Sentinel-2 to Agent research"
 ```
 

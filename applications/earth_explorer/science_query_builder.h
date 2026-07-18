@@ -82,11 +82,11 @@ inline std::string scienceSubtractUtcDays(
     return value;
 }
 
-inline earthscience::GeoTemporalQuery makeSentinel2PreviewQuery(
+inline earthscience::GeoTemporalQuery makeSentinel2PreviewIntervalQuery(
     const earthscience::ScienceSourceDescriptor& source,
     double latitude, double longitude,
+    const std::string& intervalStartUtc,
     const std::string& intervalEndUtc,
-    int windowDays,
     double maximumCloudCoverPercent,
     double requestedSpanMeters)
 {
@@ -94,9 +94,6 @@ inline earthscience::GeoTemporalQuery makeSentinel2PreviewQuery(
         ? source.capabilities.minimumSpanMeters : 2560.0;
     const double maximumSpan = source.capabilities.maximumSpanMeters >= minimumSpan
         ? source.capabilities.maximumSpanMeters : 81920.0;
-    if (windowDays != 7 && windowDays != 30 && windowDays != 90)
-        windowDays = 30;
-
     earthscience::GeoTemporalQuery query;
     query.sourceId = source.id;
     query.geometry.kind = earthscience::ScienceGeometryKind::Point;
@@ -105,8 +102,7 @@ inline earthscience::GeoTemporalQuery makeSentinel2PreviewQuery(
     query.geometry.requestedSpanMeters = std::clamp(
         requestedSpanMeters, minimumSpan, maximumSpan);
     query.time.mode = earthscience::ScienceTimeMode::Interval;
-    query.time.intervalStart = scienceSubtractUtcDays(
-        intervalEndUtc, windowDays);
+    query.time.intervalStart = intervalStartUtc;
     query.time.intervalEnd = intervalEndUtc;
     query.variables = {"visual"};
     query.targetResolutionMeters = source.nativeResolutionMeters;
@@ -119,6 +115,22 @@ inline earthscience::GeoTemporalQuery makeSentinel2PreviewQuery(
         maximumCloudCoverPercent, 0.0, 100.0);
     query.sceneFilters.maximumScenes = 10;
     return query;
+}
+
+inline earthscience::GeoTemporalQuery makeSentinel2PreviewQuery(
+    const earthscience::ScienceSourceDescriptor& source,
+    double latitude, double longitude,
+    const std::string& intervalEndUtc,
+    int windowDays,
+    double maximumCloudCoverPercent,
+    double requestedSpanMeters)
+{
+    if (windowDays != 7 && windowDays != 30 && windowDays != 90)
+        windowDays = 30;
+    return makeSentinel2PreviewIntervalQuery(
+        source, latitude, longitude,
+        scienceSubtractUtcDays(intervalEndUtc, windowDays), intervalEndUtc,
+        maximumCloudCoverPercent, requestedSpanMeters);
 }
 
 inline std::vector<int> makeScienceUiYearRange(

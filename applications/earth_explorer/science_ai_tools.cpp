@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -250,6 +251,10 @@ namespace
                 : earthscience::scienceAnalysisKindName(analysisKind)));
         item["years"] = picojson::value(
             yearsJson(artifact.query.time.explicitYears));
+        item["time_start"] = picojson::value(
+            artifact.query.time.intervalStart);
+        item["time_end"] = picojson::value(
+            artifact.query.time.intervalEnd);
 
         picojson::array metrics;
         if (artifact.analysis.metrics)
@@ -337,6 +342,38 @@ namespace
             item["source_url"] = picojson::value(reference.originalUrl);
             item["source_version"] = picojson::value(reference.providerVersion);
             item["attribution"] = picojson::value(reference.attribution);
+            item["acquisition_time"] = picojson::value(
+                reference.acquisitionTime);
+
+            constexpr std::size_t MAX_SOURCE_EVIDENCE_ENTRIES = 32;
+            picojson::array sourceEvidence;
+            for (const earthscience::ScienceEvidenceField& field :
+                 reference.fields)
+            {
+                if (sourceEvidence.size() >= MAX_SOURCE_EVIDENCE_ENTRIES) break;
+                picojson::object entry;
+                entry["id"] = picojson::value(field.id);
+                entry["label"] = picojson::value(field.displayName);
+                entry["value"] = picojson::value(field.value);
+                entry["unit"] = picojson::value(field.unit);
+                sourceEvidence.push_back(picojson::value(entry));
+                if (field.id == "scene_id")
+                    item["scene_id"] = picojson::value(field.value);
+                else if (field.id == "scene_cloud_cover")
+                {
+                    char* end = nullptr;
+                    const double cloud = std::strtod(field.value.c_str(), &end);
+                    if (end && *end == '\0' && std::isfinite(cloud))
+                        item["scene_cloud_cover_percent"] =
+                            picojson::value(cloud);
+                }
+                else if (field.id == "visual_asset")
+                    item["cog_url"] = picojson::value(field.value);
+            }
+            item["source_evidence"] = picojson::value(sourceEvidence);
+            source["acquisition_time"] = picojson::value(
+                reference.acquisitionTime);
+            source["evidence"] = picojson::value(sourceEvidence);
         }
         item["source"] = picojson::value(source);
 
@@ -483,6 +520,15 @@ namespace
             static_cast<double>(source.componentCount));
         item["experimental"] = picojson::value(source.experimental);
 
+        picojson::array timeModes;
+        if (source.capabilities.explicitYears)
+            timeModes.push_back(picojson::value("explicit-years"));
+        if (source.capabilities.intervalTime)
+            timeModes.push_back(picojson::value("interval"));
+        if (source.capabilities.instantTime)
+            timeModes.push_back(picojson::value("instant"));
+        item["time_modes"] = picojson::value(timeModes);
+
         picojson::array visualizations;
         for (const auto& visualization : source.visualizations)
         {
@@ -522,6 +568,12 @@ namespace
         const int year = snapshot.query.time.explicitYears.empty()
             ? 0 : snapshot.query.time.explicitYears.front();
         result["year"] = picojson::value(static_cast<double>(year));
+        result["time_start"] = picojson::value(
+            snapshot.query.time.intervalStart);
+        result["time_end"] = picojson::value(
+            snapshot.query.time.intervalEnd);
+        result["camera_changed"] = picojson::value(false);
+        result["layer_changed"] = picojson::value(false);
 
         std::shared_ptr<const earthscience::ScienceArtifact> resultArtifact =
             snapshot.lastSuccessfulArtifact;
@@ -568,8 +620,11 @@ void registerScienceResearchTools(
 
     earthai::Tool start;
     start.name = "start_science_research";
-    start.description = u8"异步提交预览、64D 点时间序列或区域嵌入分析。"
-        u8"lat/lon 省略时使用当前视野中心；本工具不会改变相机。";
+    start.description = u8"异步提交 AlphaEarth 预览/64D 研究，或 Sentinel-2 "
+        u8"真彩场景查询。Sentinel-2 必须提供 time_start/time_end，可用 "
+        u8"max_cloud_percent 限制场景级云量。lat/lon 省略时使用当前视野"
+        u8"中心；本工具不会改变相机或图层可见性，结果需显式调用 "
+        u8"show_science_artifact 显示。";
     start.parametersJson = "{\"type\":\"object\",\"properties\":{" 
         "\"source_id\":{\"type\":\"string\"},"
         "\"visualization_id\":{\"type\":\"string\"},"
@@ -582,10 +637,14 @@ void registerScienceResearchTools(
         "\"last_year\":{\"type\":\"integer\"},"
         "\"baseline_year\":{\"type\":\"integer\"},"
         "\"comparison_year\":{\"type\":\"integer\"},"
+        "\"time_start\":{\"type\":\"string\"},"
+        "\"time_end\":{\"type\":\"string\"},"
+        "\"max_cloud_percent\":{\"type\":\"number\","
+            "\"minimum\":0,\"maximum\":100},"
         "\"grid_size\":{\"type\":\"integer\"},"
         "\"enable_pca\":{\"type\":\"boolean\"},"
         "\"cluster_count\":{\"type\":\"integer\"}}}";
-    start.execute = [service, layer, layers, manipulator](
+    start.execute = [service, manipulator](
         const picojson::value& args)
     {
         if (!args.is<picojson::object>())
@@ -594,7 +653,11 @@ void registerScienceResearchTools(
             service->listSources();
         if (sources.empty()) return errorJson("no science sources are registered");
 
-        std::string sourceId = sources.front().id;
+        std::string sourceId = "alphaearth-foundations";
+        if (std::none_of(
+                sources.begin(), sources.end(), [](const auto& candidate)
+                { return candidate.id == "alphaearth-foundations"; }))
+            sourceId = sources.front().id;
         if (!optionalString(args, "source_id", sourceId))
             return errorJson("source_id must be a string");
         const auto sourceIterator = std::find_if(
@@ -633,7 +696,38 @@ void registerScienceResearchTools(
             return errorJson("lat and lon must be finite WGS84 coordinates");
 
         earthscience::GeoTemporalQuery query;
-        if (mode == "preview")
+        if (source.id == "sentinel-2-l2a")
+        {
+            if (mode != "preview")
+                return errorJson(
+                    "Sentinel-2 supports preview mode only; it is not a 64D source");
+            for (const char* yearKey : {
+                     "year", "first_year", "last_year",
+                     "baseline_year", "comparison_year"})
+                if (args.contains(yearKey))
+                    return errorJson(
+                        "Sentinel-2 uses time_start/time_end, not year fields");
+            std::string timeStart;
+            std::string timeEnd;
+            if (!requiredString(args, "time_start", timeStart) ||
+                !requiredString(args, "time_end", timeEnd))
+                return errorJson(
+                    "Sentinel-2 requires non-empty time_start and time_end");
+            if (timeStart > timeEnd)
+                return errorJson(
+                    "Sentinel-2 time_start must not be after time_end");
+            double maximumCloudPercent = 20.0;
+            if (!optionalNumber(
+                    args, "max_cloud_percent", maximumCloudPercent) ||
+                !std::isfinite(maximumCloudPercent) ||
+                maximumCloudPercent < 0.0 || maximumCloudPercent > 100.0)
+                return errorJson(
+                    "max_cloud_percent must be a number inside [0, 100]");
+            query = makeSentinel2PreviewIntervalQuery(
+                source, latitude, longitude, timeStart, timeEnd,
+                maximumCloudPercent, eyeLla[2] * 0.85);
+        }
+        else if (mode == "preview")
         {
             int year = source.lastYear;
             if (!optionalInteger(args, "year", year))
@@ -694,13 +788,6 @@ void registerScienceResearchTools(
         }
         service->submit(query);
         const earthscience::ScienceJobSnapshot snapshot = service->snapshot();
-        if (mode == "preview" &&
-            (snapshot.state != earthscience::ScienceJobState::Failed ||
-             snapshot.lastSuccessfulArtifact))
-        {
-            layer->setVisible(true);
-            layers->setEnabled("alphaearth", true);
-        }
         return snapshotJson(snapshot);
     };
     tools->add(start);

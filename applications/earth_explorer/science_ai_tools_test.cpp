@@ -69,12 +69,55 @@ namespace
         return source;
     }
 
+    earthscience::ScienceSourceDescriptor makeSentinelDescriptor()
+    {
+        earthscience::ScienceSourceDescriptor source;
+        source.id = "sentinel-2-l2a";
+        source.name = "Sentinel-2 Level-2A";
+        source.category = "optical satellite natural-color scene";
+        source.providerVersion = "earth-search-v1";
+        source.attribution =
+            "Copernicus Sentinel data / Element 84 Earth Search / AWS Open Data";
+        source.firstYear = 2015;
+        source.lastYear = 2026;
+        source.nativeResolutionMeters = 10.0;
+        source.componentCount = 3;
+        source.health = earthscience::ScienceSourceHealth::Ready;
+        source.healthMessage = "Ready on demand";
+        source.experimental = true;
+        source.variables = {
+            {"visual", "True color image", "display DN", "display RGB", 3},
+        };
+        earthscience::ScienceVisualizationDescriptor visualization;
+        visualization.id = "natural-color-visual";
+        visualization.displayName = "Natural color scene";
+        visualization.kind =
+            earthscience::ScienceVisualizationKind::NaturalColor;
+        visualization.channelVariables = {"visual"};
+        visualization.displayMinimum = 0.0;
+        visualization.displayMaximum = 255.0;
+        visualization.legend = "Sentinel-2 true-color display product";
+        source.visualizations.push_back(visualization);
+        source.capabilities.pointQuery = true;
+        source.capabilities.intervalTime = true;
+        source.capabilities.rasterLayerOutput = true;
+        source.capabilities.minimumSpanMeters = 2560.0;
+        source.capabilities.maximumSpanMeters = 81920.0;
+        return source;
+    }
+
     class ToolProvider : public earthscience::IScienceProvider
     {
     public:
+        explicit ToolProvider(
+            earthscience::ScienceSourceDescriptor source = makeDescriptor())
+            : _source(std::move(source))
+        {
+        }
+
         earthscience::ScienceSourceDescriptor descriptor() const override
         {
-            return makeDescriptor();
+            return _source;
         }
 
         std::uint64_t submit(
@@ -131,14 +174,34 @@ namespace
             earthscience::ScienceSourceReference reference;
             reference.sourceId = lastQuery.sourceId;
             reference.providerVersion = providerVersion;
-            reference.datasetId = "alphaearth-test-cog";
-            reference.originalUrl = "https://example.invalid/test.tif";
-            reference.attribution =
-                "Google / Google DeepMind / source.coop";
+            const bool sentinel = lastQuery.sourceId == "sentinel-2-l2a";
+            reference.datasetId = sentinel
+                ? "S2C_54SUE_20260710_0_L2A" : "alphaearth-test-cog";
+            reference.originalUrl = sentinel
+                ? "https://sentinel-cogs.s3.us-west-2.amazonaws.com/test/TCI.tif"
+                : "https://example.invalid/test.tif";
+            reference.attribution = _source.attribution;
             reference.actualCoverage = preview ? artifact->raster.bounds
                 : earthscience::ScienceWgs84Bounds{10.0, 20.0, 30.0, 40.0};
             reference.variables = lastQuery.variables;
-            reference.processingSteps = {"read 64D embedding", "validate mask"};
+            reference.processingSteps = sentinel
+                ? std::vector<std::string>{
+                    "Earth Search STAC Item Search",
+                    "bounded visual COG window read"}
+                : std::vector<std::string>{
+                    "read 64D embedding", "validate mask"};
+            if (sentinel)
+            {
+                reference.acquisitionTime = "2026-07-10T01:37:22.464000Z";
+                reference.fields = {
+                    {"scene_id", "Scene ID", reference.datasetId, ""},
+                    {"scene_cloud_cover", "Scene cloud cover", "11.17", "%"},
+                    {"visual_asset", "Selected visual COG",
+                     reference.originalUrl, ""},
+                };
+                artifact->warnings = {
+                    "Scene cloud cover is scene-wide, not a per-pixel cloud mask"};
+            }
             artifact->sourceReferences.push_back(reference);
             const std::vector<int> years = lastQuery.time.explicitYears.empty()
                 ? std::vector<int>{2025} : lastQuery.time.explicitYears;
@@ -246,6 +309,7 @@ namespace
         earthscience::GeoTemporalQuery lastQuery;
 
     private:
+        earthscience::ScienceSourceDescriptor _source;
         std::uint64_t _generation = 0;
         earthscience::ScienceProviderSnapshot _snapshot;
     };
@@ -338,9 +402,14 @@ namespace
             std::make_unique<earthscience::ScienceSourceRegistry>();
         auto provider = std::make_unique<ToolProvider>();
         ToolProvider* providerPointer = provider.get();
+        auto sentinelProvider =
+            std::make_unique<ToolProvider>(makeSentinelDescriptor());
+        ToolProvider* sentinelProviderPointer = sentinelProvider.get();
         std::string registrationError;
         require(registry->add(std::move(provider), registrationError),
                 "tool provider registration failed");
+        require(registry->add(std::move(sentinelProvider), registrationError),
+                "Sentinel tool provider registration failed");
         earthscience::ScienceQueryService service(std::move(registry));
         osg::ref_ptr<SciencePreviewLayer> layer =
             new SciencePreviewLayer(&service);
@@ -380,13 +449,19 @@ namespace
                 "search result omitted source catalog");
         const picojson::array& sources =
             result.get("sources").get<picojson::array>();
-        require(sources.size() == 1 &&
+        require(sources.size() == 2 &&
                     sources.front().get("health").get<std::string>() == "ready" &&
-                    !sources.front().get("attribution").get<std::string>().empty(),
+                    !sources.front().get("attribution").get<std::string>().empty() &&
+                    sources[1].get("id").get<std::string>() == "sentinel-2-l2a" &&
+                    sources[1].get("visualizations").get<picojson::array>().size() == 1,
                 "search result omitted health or attribution");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
         const earthai::Tool& start = findTool(tools, "start_science_research");
+        picojson::value startSchema;
+        require(picojson::parse(startSchema, start.parametersJson).empty() &&
+                    startSchema.is<picojson::object>(),
+                "start schema is not valid JSON");
         require(start.parametersJson.find("source_id") != std::string::npos &&
                     start.parametersJson.find("visualization_id") !=
                         std::string::npos &&
@@ -399,8 +474,14 @@ namespace
                     start.parametersJson.find("grid_size") != std::string::npos &&
                     start.parametersJson.find("enable_pca") != std::string::npos &&
                     start.parametersJson.find("cluster_count") !=
+                        std::string::npos &&
+                    start.parametersJson.find("time_start") != std::string::npos &&
+                    start.parametersJson.find("time_end") != std::string::npos &&
+                    start.parametersJson.find("max_cloud_percent") !=
                         std::string::npos,
                 "start schema omitted compatible preview or 64D research options");
+        layer->setVisible(false);
+        layers.setEnabled("alphaearth", false);
         require(tools.dispatch("start_science_research", emptyArgs(), result),
                 "default start tool did not dispatch");
         require(std::abs(providerPointer->lastQuery.geometry.point.latitude -
@@ -416,6 +497,11 @@ namespace
                     result.get("progress").contains("determinate") &&
                     !result.get("progress").contains("percent"),
                 "indeterminate job progress was not honest and structured");
+        require(providerPointer->lastQuery.sourceId ==
+                    "alphaearth-foundations" &&
+                    !layer->isVisible() && layers.find("alphaearth") &&
+                    !layers.find("alphaearth")->enabled,
+                "default research changed source compatibility or map visibility");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
         const std::uint64_t readyJob = service.snapshot().jobId;
@@ -452,6 +538,94 @@ namespace
                 "preview summary did not use raster coverage and resolution");
         require(result.get("progress").contains("percent"),
                 "determinate job progress omitted percent");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        picojson::object sentinelArgs;
+        sentinelArgs["source_id"] = picojson::value("sentinel-2-l2a");
+        sentinelArgs["visualization_id"] =
+            picojson::value("natural-color-visual");
+        sentinelArgs["mode"] = picojson::value("preview");
+        sentinelArgs["lat"] = picojson::value(35.68);
+        sentinelArgs["lon"] = picojson::value(139.76);
+        sentinelArgs["time_start"] =
+            picojson::value("2026-06-18T00:00:00Z");
+        sentinelArgs["time_end"] =
+            picojson::value("2026-07-18T00:00:00Z");
+        sentinelArgs["max_cloud_percent"] = picojson::value(20.0);
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(sentinelArgs), result),
+                "Sentinel research did not dispatch");
+        require(sentinelProviderPointer->lastQuery.sourceId == "sentinel-2-l2a" &&
+                    sentinelProviderPointer->lastQuery.time.mode ==
+                        earthscience::ScienceTimeMode::Interval &&
+                    sentinelProviderPointer->lastQuery.time.intervalStart ==
+                        "2026-06-18T00:00:00Z" &&
+                    sentinelProviderPointer->lastQuery.time.intervalEnd ==
+                        "2026-07-18T00:00:00Z" &&
+                    sentinelProviderPointer->lastQuery.sceneFilters.
+                        maximumCloudCoverPercent == 20.0 &&
+                    sentinelProviderPointer->lastQuery.variables ==
+                        std::vector<std::string>({"visual"}) &&
+                    sentinelProviderPointer->lastQuery.visualizationId ==
+                        "natural-color-visual" &&
+                    !layer->isVisible() && layers.find("alphaearth") &&
+                    !layers.find("alphaearth")->enabled,
+                "Sentinel research lost interval/cloud intent or changed visibility");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        sentinelProviderPointer->publishReady("sentinel-artifact");
+        const std::uint64_t sentinelJob = service.snapshot().jobId;
+        picojson::object sentinelGetArgs;
+        sentinelGetArgs["job_id"] =
+            picojson::value(static_cast<double>(sentinelJob));
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(sentinelGetArgs), result),
+                "Sentinel result did not dispatch");
+        const picojson::value& sentinelArtifact = result.get("artifact");
+        require(sentinelArtifact.get("time_start").get<std::string>() ==
+                    "2026-06-18T00:00:00Z" &&
+                    sentinelArtifact.get("time_end").get<std::string>() ==
+                    "2026-07-18T00:00:00Z" &&
+                    sentinelArtifact.get("acquisition_time").get<std::string>() ==
+                    "2026-07-10T01:37:22.464000Z" &&
+                    sentinelArtifact.get("scene_id").get<std::string>() ==
+                    "S2C_54SUE_20260710_0_L2A" &&
+                    sentinelArtifact.get("scene_cloud_cover_percent").get<double>() ==
+                    11.17 &&
+                    sentinelArtifact.get("source_url").get<std::string>().find(
+                        "TCI.tif") != std::string::npos &&
+                    sentinelArtifact.get("source_evidence").
+                        get<picojson::array>().size() == 3,
+                "Sentinel result omitted interval, scene, cloud, COG, or evidence");
+        require(sentinelArtifact.serialize(false).find("rgba") ==
+                    std::string::npos,
+                "Sentinel result leaked raster pixels to the Agent");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        const std::uint64_t beforeInvalidSentinel =
+            sentinelProviderPointer->generation();
+        picojson::object invalidSentinel;
+        invalidSentinel["source_id"] = picojson::value("sentinel-2-l2a");
+        invalidSentinel["year"] = picojson::value(2026.0);
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(invalidSentinel),
+                    result) && result.contains("error") &&
+                    sentinelProviderPointer->generation() == beforeInvalidSentinel,
+                "Sentinel accepted ambiguous year-only time selection");
+        invalidSentinel = sentinelArgs;
+        invalidSentinel["max_cloud_percent"] = picojson::value(101.0);
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(invalidSentinel),
+                    result) && result.contains("error") &&
+                    sentinelProviderPointer->generation() == beforeInvalidSentinel,
+                "Sentinel accepted cloud threshold outside [0, 100]");
+        invalidSentinel = sentinelArgs;
+        invalidSentinel["mode"] = picojson::value("point_series");
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(invalidSentinel),
+                    result) && result.contains("error") &&
+                    sentinelProviderPointer->generation() == beforeInvalidSentinel,
+                "Sentinel accepted unsupported 64D point-series mode");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
         picojson::object explicitArgs;

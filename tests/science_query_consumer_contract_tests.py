@@ -95,6 +95,11 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
         for token in (
             "source_id",
             "visualization_id",
+            "time_start",
+            "time_end",
+            "max_cloud_percent",
+            "source_evidence",
+            "scene_cloud_cover_percent",
             "listSources()",
             "source.health",
             "source.attribution",
@@ -112,6 +117,13 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
             "moveTo",
         ):
             self.assertNotIn(camera_writer, source, camera_writer)
+
+        start_block = source[
+            source.index('start.name = "start_science_research"'):
+            source.index('get.name = "get_research_job"')]
+        self.assertNotIn("layer->setVisible", start_block)
+        self.assertNotIn("layers->setEnabled", start_block)
+        self.assertIn("show_science_artifact", start_block)
 
     def test_consumer_contract_is_science_enabled_only(self):
         cmake = read("tests/CMakeLists.txt")
