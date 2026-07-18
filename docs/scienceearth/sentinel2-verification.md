@@ -75,3 +75,33 @@ selected the same scene. No additional location, interval, or asset was queried.
 The official collection metadata identifies the collection as Sentinel-2 Level-2A, its `visual`
 asset as a true-color RGB product, and its temporal extent beginning 2015-06-27:
 <https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a>.
+
+## Safe release regressions
+
+Both release configurations were built completely from committed source without opening or
+foregrounding the Desktop app. No selected test created a listener or local server.
+
+### ScienceEarth enabled
+
+The safe offline release set passed **32 of 32** tests in `13.63 s` real time. It covered the
+Sentinel-2 STAC parser, bounded GDAL COG runtime, provider, unified query service, AlphaEarth,
+source registry, panel, Agent tools, preview/layout contracts, dependencies, and static/fake exit
+guards.
+
+### ScienceEarth disabled
+
+A fresh `Release` tree with `OSGSOL_BUILD_SCIENCE=OFF` built successfully. Its safe offline set
+passed **14 of 14** tests in `11.34 s` real time. The generated contract contains
+`OSGSOL_BUILD_SCIENCE_VALUE 0`; the EarthExplorer compile flags contain
+`OSGSOL_BUILD_SCIENCE=0`; and a global-symbol inspection found no `ScienceQueryService`,
+`Sentinel2`, or `AlphaEarth` symbol in the resulting executable.
+
+### Deliberate safety exclusions
+
+The regression command excluded four `network-local` tests and did not create any local port. It
+also excluded the existing `Ai_Chat`, `Feeds`, `TerrainGrid`, `Tiles3dPaging`, `Satellite`,
+`Geospatial`, `EarthManipulator`, `Ais`, and `WorldTools` tests because their legacy assertion
+paths call `std::abort()`. `OsgApplicationUsageExit` was excluded because it launches a Viewer
+process. Those exclusions avoid generating a macOS crash report or taking focus; they are not
+claims that the excluded runtime behaviors were automated in this pass. The new Sentinel-2 tests
+use ordinary nonzero exits on failure.

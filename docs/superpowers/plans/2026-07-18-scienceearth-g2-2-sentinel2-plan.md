@@ -418,12 +418,12 @@ time, warnings, and limitations. Do not claim a universal latency threshold from
 **Interfaces:**
 - Produces: verified staging and one same-name Desktop manual candidate.
 
-- [ ] **Step 1: Inspect every selected test failure path**
+- [x] **Step 1: Inspect every selected test failure path**
 
 Exclude GUI launch, intentional signal, `abort`, crash-report, and foreground tests. Convert any
 new Sentinel test failure to an ordinary nonzero exit before running it.
 
-- [ ] **Step 2: Run focused and complete safe suites**
+- [x] **Step 2: Run focused and complete safe suites**
 
 Run all Sentinel tests, query/service/registry/AlphaEarth/UI/Agent/preview tests, the safe
 science-enabled offline set, and a fresh science-off build. Record exact counts.
