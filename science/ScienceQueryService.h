@@ -36,7 +36,7 @@ namespace earthscience
 
     private:
         bool validate(const GeoTemporalQuery& query,
-                      const ScienceSourceDescriptor& source,
+                      const IScienceProvider& provider,
                       std::string& error) const;
         ScienceQueryCost estimateUnlocked(
             const GeoTemporalQuery& query) const;

@@ -222,6 +222,25 @@ ScienceSourceDescriptor AlphaEarthProvider::descriptor() const
     return result;
 }
 
+bool AlphaEarthProvider::validateQuery(
+    const GeoTemporalQuery& query, std::string& error) const
+{
+    if (query.sourceId != "alphaearth-foundations")
+    {
+        error = "AlphaEarth query source id changed";
+        return false;
+    }
+    if (query.outputKind == ScienceOutputKind::RasterLayer &&
+        !isAlphaEarthLegacyPreviewQuery(query))
+    {
+        error =
+            "raster-layer output requires the exact AlphaEarth preview signature";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 std::uint64_t AlphaEarthProvider::submit(const GeoTemporalQuery& query)
 {
     if (query.sourceId != "alphaearth-foundations") return 0;

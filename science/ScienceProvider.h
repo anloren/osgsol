@@ -24,6 +24,13 @@ namespace earthscience
         virtual ~IScienceProvider() = default;
 
         virtual ScienceSourceDescriptor descriptor() const = 0;
+        virtual bool validateQuery(
+            const GeoTemporalQuery& query, std::string& error) const
+        {
+            static_cast<void>(query);
+            error.clear();
+            return true;
+        }
         virtual std::uint64_t submit(const GeoTemporalQuery& query) = 0;
         virtual ScienceProviderSnapshot snapshot() const = 0;
         virtual void cancel(std::uint64_t generation) = 0;

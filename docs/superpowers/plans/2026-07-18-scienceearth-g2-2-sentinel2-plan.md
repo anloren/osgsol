@@ -185,29 +185,29 @@ git commit -m "feat(scienceearth): parse Sentinel-2 STAC scenes"
 **Interfaces:**
 - Produces: `IScienceProvider::validateQuery(const GeoTemporalQuery&, std::string&) const`.
 
-- [ ] **Step 1: Write multi-provider RED cases**
+- [x] **Step 1: Write multi-provider RED cases**
 
 Use a controlled Sentinel descriptor supporting point, interval, and raster output. Require an
 interval raster query to dispatch, malformed/reversed intervals and cloud values outside 0-100 to
 fail before dispatch, and every existing AlphaEarth rejection to remain unchanged.
 
-- [ ] **Step 2: Build RED**
+- [x] **Step 2: Build RED**
 
 Build `osgSol_Test_ScienceQueryService` and `osgSol_Test_AlphaEarthProvider`; expect the interval
 query to be rejected by the hard-coded explicit-year path.
 
-- [ ] **Step 3: Implement descriptor-driven validation**
+- [x] **Step 3: Implement descriptor-driven validation**
 
 Validate geometry, source time capability, visualization variables, no raster aggregation, no
 raster analysis, finite span, interval ordering, and filters generically. Call provider validation
 last. Keep AlphaEarth's exact preview/64D signatures in `AlphaEarthProvider::validateQuery()`.
 
-- [ ] **Step 4: Make raster cost source-aware**
+- [x] **Step 4: Make raster cost source-aware**
 
 Estimate raster source cells times visualization channel count, output 256 by 256 RGBA, and retain
 the learned throughput key by source/visualization/time mode.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 ```bash
 git add science/ScienceProvider.h science/AlphaEarthProvider.h \

@@ -54,24 +54,16 @@ namespace
         return stream.str();
     }
 
-    bool isLegacyPreviewQuery(const GeoTemporalQuery& query)
+    bool isRasterPreviewQuery(const GeoTemporalQuery& query)
     {
-        return query.sourceId == "alphaearth-foundations" &&
-               query.geometry.kind == ScienceGeometryKind::Point &&
-               query.time.mode == ScienceTimeMode::ExplicitYears &&
-               query.time.explicitYears.size() == 1 &&
-               query.variables ==
-                   std::vector<std::string>({"A01", "A16", "A09"}) &&
-               query.aggregation == ScienceAggregation::None &&
-               query.outputKind == ScienceOutputKind::RasterLayer &&
-               query.visualizationId == "false-color-a01-a16-a09" &&
-               query.analysis.kind == ScienceAnalysisKind::None;
+        return query.outputKind == ScienceOutputKind::RasterLayer;
     }
 
     std::string throughputKey(const GeoTemporalQuery& query)
     {
-        if (isLegacyPreviewQuery(query))
-            return query.sourceId + "#preview";
+        if (isRasterPreviewQuery(query))
+            return query.sourceId + "#preview#" + query.visualizationId +
+                "#time=" + timeModeName(query.time.mode);
 
         std::ostringstream key;
         key << query.sourceId
@@ -108,7 +100,7 @@ namespace
             nativeResolutionMeters = 10.0;
         if (query.geometry.kind == ScienceGeometryKind::Point)
         {
-            if (isLegacyPreviewQuery(query))
+            if (isRasterPreviewQuery(query))
             {
                 const double span = query.geometry.requestedSpanMeters > 0.0
                     ? query.geometry.requestedSpanMeters : fallbackSpanMeters;
@@ -150,6 +142,26 @@ namespace
             static_cast<std::uint64_t>(widthCellsValue),
             static_cast<std::uint64_t>(heightCellsValue));
     }
+
+    std::uint64_t rasterComponentCount(
+        const GeoTemporalQuery& query,
+        const ScienceSourceDescriptor* source)
+    {
+        if (!source) return 3;
+        std::uint64_t result = 0;
+        for (const std::string& variableId : query.variables)
+        {
+            const auto variable = std::find_if(
+                source->variables.begin(), source->variables.end(),
+                [&variableId](const ScienceVariableDescriptor& candidate)
+                { return candidate.id == variableId; });
+            if (variable == source->variables.end()) return 3;
+            result = checkedAdd(
+                result, static_cast<std::uint64_t>(
+                    std::max(1, variable->componentCount)));
+        }
+        return result == 0 ? 3 : result;
+    }
 }
 
 ScienceQueryService::ScienceQueryService(
@@ -190,25 +202,31 @@ ScienceQueryCost ScienceQueryService::estimateUnlocked(
     ScienceQueryCost cost;
     double nativeResolutionMeters = 10.0;
     double maximumSpanMeters = 81920.0;
+    ScienceSourceDescriptor source;
+    bool hasSource = false;
     if (_registry)
     {
         const IScienceProvider* provider = _registry->find(query.sourceId);
         if (provider)
         {
-            const ScienceSourceDescriptor source = provider->descriptor();
+            source = provider->descriptor();
+            hasSource = true;
             nativeResolutionMeters = source.nativeResolutionMeters;
             maximumSpanMeters = source.capabilities.maximumSpanMeters;
         }
     }
     const std::uint64_t sourceCells = estimatedSourceCells(
         query, nativeResolutionMeters, maximumSpanMeters);
-    if (isLegacyPreviewQuery(query))
+    if (isRasterPreviewQuery(query))
     {
         constexpr std::uint64_t PREVIEW_CELLS = 256u * 256u;
+        const std::uint64_t componentCount = rasterComponentCount(
+            query, hasSource ? &source : nullptr);
         cost.resultCells = PREVIEW_CELLS;
-        cost.sourceBytesUpperBound = checkedMultiply(sourceCells, 3);
+        cost.sourceBytesUpperBound = checkedMultiply(
+            sourceCells, componentCount);
         cost.residentBytesUpperBound = checkedAdd(
-            checkedMultiply(sourceCells, 6),
+            checkedMultiply(sourceCells, componentCount * 2),
             checkedMultiply(PREVIEW_CELLS, 4));
     }
     else
@@ -314,7 +332,7 @@ std::uint64_t ScienceQueryService::submit(const GeoTemporalQuery& query)
     std::string error;
     if (!provider)
         error = "unknown science source: " + query.sourceId;
-    else if (!validate(query, provider->descriptor(), error))
+    else if (!validate(query, *provider, error))
     {
         // The precise validation error was populated by validate().
     }
@@ -456,7 +474,7 @@ ScienceJobSnapshot ScienceQueryService::snapshot()
             {
                 const std::shared_ptr<const ScienceArtifact> retained =
                     std::move(artifact);
-                if (isLegacyPreviewQuery(_state.query))
+                if (isRasterPreviewQuery(_state.query))
                 {
                     _state.lastSuccessfulPreviewArtifact = retained;
                     _state.displayArtifact = retained;
@@ -492,9 +510,10 @@ ScienceJobSnapshot ScienceQueryService::snapshot()
 }
 
 bool ScienceQueryService::validate(
-    const GeoTemporalQuery& query, const ScienceSourceDescriptor& source,
+    const GeoTemporalQuery& query, const IScienceProvider& provider,
     std::string& error) const
 {
+    const ScienceSourceDescriptor source = provider.descriptor();
     if (source.health == ScienceSourceHealth::Unavailable)
     {
         error = "science source unavailable: " + source.healthMessage;
@@ -565,46 +584,67 @@ bool ScienceQueryService::validate(
             source.capabilities.maximumSpanMeters) + " meters";
         return false;
     }
-    if (query.time.mode != ScienceTimeMode::ExplicitYears)
-    {
-        error = "unsupported science time selection: " +
-            std::string(timeModeName(query.time.mode));
-        return false;
-    }
-    if (!source.capabilities.explicitYears)
-    {
-        error = "science source does not support explicit years";
-        return false;
-    }
-    if (rasterRequest && query.time.explicitYears.size() != 1)
-    {
-        error = "science query requires exactly one explicit year";
-        return false;
-    }
-    if (!rasterRequest && (query.time.explicitYears.empty() ||
-                           query.time.explicitYears.size() > 9))
-    {
-        error = "science query requires one to nine explicit years";
-        return false;
-    }
     std::vector<int> years = query.time.explicitYears;
-    std::sort(years.begin(), years.end());
-    if (std::adjacent_find(years.begin(), years.end()) != years.end())
+    if (query.time.mode == ScienceTimeMode::ExplicitYears)
     {
-        error = "science explicit years must be unique";
-        return false;
-    }
-    const auto invalidYear = std::find_if(
-        years.begin(), years.end(), [&source](int year)
+        if (!source.capabilities.explicitYears)
         {
-            return year < source.firstYear || year > source.lastYear;
-        });
-    if (invalidYear != years.end())
+            error = "science source does not support explicit years";
+            return false;
+        }
+        if (rasterRequest && years.size() != 1)
+        {
+            error = "science query requires exactly one explicit year";
+            return false;
+        }
+        if (!rasterRequest && (years.empty() || years.size() > 9))
+        {
+            error = "science query requires one to nine explicit years";
+            return false;
+        }
+        std::sort(years.begin(), years.end());
+        if (std::adjacent_find(years.begin(), years.end()) != years.end())
+        {
+            error = "science explicit years must be unique";
+            return false;
+        }
+        const auto invalidYear = std::find_if(
+            years.begin(), years.end(), [&source](int year)
+            { return year < source.firstYear || year > source.lastYear; });
+        if (invalidYear != years.end())
+        {
+            error = "science year must be inside [" +
+                std::to_string(source.firstYear) + ", " +
+                std::to_string(source.lastYear) + ']';
+            return false;
+        }
+    }
+    else if (query.time.mode == ScienceTimeMode::Interval)
     {
-        error = "science year must be inside [" +
-            std::to_string(source.firstYear) + ", " +
-            std::to_string(source.lastYear) + ']';
-        return false;
+        if (!source.capabilities.intervalTime)
+        {
+            error = "unsupported science time selection: interval";
+            return false;
+        }
+        if (query.time.intervalStart.empty() || query.time.intervalEnd.empty() ||
+            query.time.intervalStart > query.time.intervalEnd)
+        {
+            error = "science interval must be non-empty and ordered";
+            return false;
+        }
+    }
+    else if (query.time.mode == ScienceTimeMode::Instant)
+    {
+        if (!source.capabilities.instantTime)
+        {
+            error = "unsupported science time selection: instant";
+            return false;
+        }
+        if (query.time.instant.empty())
+        {
+            error = "science instant time must be non-empty";
+            return false;
+        }
     }
 
     if (rasterRequest)
@@ -636,9 +676,9 @@ bool ScienceQueryService::validate(
             error = "science source does not support raster-layer output";
             return false;
         }
-        if (!isLegacyPreviewQuery(query))
+        if (query.analysis.kind != ScienceAnalysisKind::None)
         {
-            error = "raster-layer output requires the exact preview signature";
+            error = "raster-layer output does not support analysis options";
             return false;
         }
     }
@@ -718,6 +758,20 @@ bool ScienceQueryService::validate(
         error = "target resolution must be finite and non-negative";
         return false;
     }
+    if (!std::isfinite(query.sceneFilters.maximumCloudCoverPercent) ||
+        query.sceneFilters.maximumCloudCoverPercent < 0.0 ||
+        query.sceneFilters.maximumCloudCoverPercent > 100.0)
+    {
+        error = "scene cloud cover must be inside [0, 100]";
+        return false;
+    }
+    if (query.sceneFilters.maximumScenes == 0 ||
+        query.sceneFilters.maximumScenes > 10)
+    {
+        error = "scene candidate limit must be inside [1, 10]";
+        return false;
+    }
+    if (!provider.validateQuery(query, error)) return false;
     if (query.targetResolutionMeters > 0.0 &&
         query.targetResolutionMeters < source.nativeResolutionMeters &&
         !query.limits.allowUpsampling)

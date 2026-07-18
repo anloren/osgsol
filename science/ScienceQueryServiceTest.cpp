@@ -70,6 +70,58 @@ namespace
         return source;
     }
 
+    earthscience::ScienceSourceDescriptor makeSentinelDescriptor()
+    {
+        earthscience::ScienceSourceDescriptor source;
+        source.id = "sentinel-2-l2a";
+        source.name = "Sentinel-2 Level-2A";
+        source.category = "optical imagery";
+        source.providerVersion = "earth-search-v1";
+        source.attribution = "Copernicus Sentinel data / Element 84 / AWS";
+        source.firstYear = 2018;
+        source.lastYear = 2026;
+        source.nativeResolutionMeters = 10.0;
+        source.componentCount = 3;
+        source.health = earthscience::ScienceSourceHealth::Ready;
+        source.healthMessage = "Ready on demand";
+        source.variables = {
+            {"visual", "True-color visual", "1", "display-rgb", 3},
+        };
+        earthscience::ScienceVisualizationDescriptor visualization;
+        visualization.id = "natural-color-visual";
+        visualization.displayName = "Sentinel-2 true color";
+        visualization.kind =
+            earthscience::ScienceVisualizationKind::NaturalColor;
+        visualization.channelVariables = {"visual"};
+        source.visualizations.push_back(visualization);
+        source.capabilities.pointQuery = true;
+        source.capabilities.intervalTime = true;
+        source.capabilities.rasterLayerOutput = true;
+        source.capabilities.minimumSpanMeters = 2560.0;
+        source.capabilities.maximumSpanMeters = 81920.0;
+        return source;
+    }
+
+    earthscience::GeoTemporalQuery makeSentinelQuery()
+    {
+        earthscience::GeoTemporalQuery query;
+        query.sourceId = "sentinel-2-l2a";
+        query.geometry.kind = earthscience::ScienceGeometryKind::Point;
+        query.geometry.point.latitude = 35.68;
+        query.geometry.point.longitude = 139.76;
+        query.geometry.requestedSpanMeters = 10000.0;
+        query.time.mode = earthscience::ScienceTimeMode::Interval;
+        query.time.intervalStart = "2026-06-18T00:00:00Z";
+        query.time.intervalEnd = "2026-07-18T23:59:59Z";
+        query.variables = {"visual"};
+        query.targetResolutionMeters = 10.0;
+        query.outputKind = earthscience::ScienceOutputKind::RasterLayer;
+        query.visualizationId = "natural-color-visual";
+        query.sceneFilters.maximumCloudCoverPercent = 20.0;
+        query.sceneFilters.maximumScenes = 10;
+        return query;
+    }
+
     earthscience::GeoTemporalQuery makeQuery()
     {
         earthscience::GeoTemporalQuery query;
@@ -687,7 +739,7 @@ namespace
                 "nine-year point throughput polluted two-year point work");
     }
 
-    void testAnotherProviderCannotImpersonateLegacyPreview()
+    void testProviderPreviewCostsAndArtifactsRemainIsolated()
     {
         ProviderEvents alphaEvents, otherEvents;
         auto registry =
@@ -700,6 +752,7 @@ namespace
         otherDescriptor.id = "other-foundations";
         auto other = std::make_unique<ControlledProvider>(
             otherDescriptor, &otherEvents);
+        ControlledProvider* otherPointer = other.get();
         std::string error;
         require(registry->add(std::move(alpha), error) &&
                     registry->add(std::move(other), error),
@@ -724,21 +777,79 @@ namespace
         impostor.sourceId = "other-foundations";
         const earthscience::ScienceQueryCost impostorCost =
             service.estimate(impostor);
-        require(impostorCost.resultCells == 1 &&
+        require(impostorCost.resultCells == 256u * 256u &&
                     !impostorCost.durationDeterminate,
-                "another provider inherited AlphaEarth preview cost or timing");
+                "another provider lost raster cost or inherited AlphaEarth timing");
 
         service.submit(impostor);
-        const earthscience::ScienceJobSnapshot rejected = service.snapshot();
-        require(rejected.state == earthscience::ScienceJobState::Failed &&
-                    rejected.message ==
-                        "raster-layer output requires the exact preview "
-                        "signature" &&
-                    otherEvents.submits == 0 &&
-                    rejected.lastSuccessfulPreviewArtifact ==
+        const earthscience::ScienceJobSnapshot queued = service.snapshot();
+        require(queued.state == earthscience::ScienceJobState::Queued &&
+                    otherEvents.submits == 1 &&
+                    queued.lastSuccessfulPreviewArtifact ==
                         alphaReady.lastSuccessfulPreviewArtifact &&
-                    rejected.displayArtifact == alphaReady.displayArtifact,
-                "another provider polluted AlphaEarth preview state");
+                    queued.displayArtifact == alphaReady.displayArtifact,
+                "new provider dispatch discarded the retained AlphaEarth preview");
+
+        const std::uint64_t otherGeneration = otherPointer->generation();
+        otherPointer->publish(
+            otherGeneration, earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready, 1, 1,
+                         "artifact", 2.0),
+            "Ready", makeArtifact("other-preview", otherGeneration));
+        const earthscience::ScienceJobSnapshot otherReady = service.snapshot();
+        require(otherReady.lastSuccessfulPreviewArtifact &&
+                    otherReady.lastSuccessfulPreviewArtifact->artifactId ==
+                        "other-preview" &&
+                    otherReady.displayArtifact ==
+                        otherReady.lastSuccessfulPreviewArtifact,
+                "ready provider preview did not replace the displayed artifact");
+    }
+
+    void testDispatchesBoundedIntervalRasterForCapableProvider()
+    {
+        ProviderEvents events;
+        auto registry =
+            std::make_unique<earthscience::ScienceSourceRegistry>();
+        auto ownedProvider = std::make_unique<ControlledProvider>(
+            makeSentinelDescriptor(), &events);
+        ControlledProvider* provider = ownedProvider.get();
+        std::string error;
+        require(registry->add(std::move(ownedProvider), error),
+                "Sentinel provider fixture registration failed");
+        earthscience::ScienceQueryService service(std::move(registry));
+
+        const earthscience::GeoTemporalQuery query = makeSentinelQuery();
+        service.submit(query);
+        require(events.submits == 1 && provider->generation() == 1 &&
+                    service.snapshot().state ==
+                        earthscience::ScienceJobState::Queued,
+                "valid interval raster query did not dispatch");
+        const earthscience::ScienceQueryCost cost = service.estimate(query);
+        require(cost.resultCells == 256u * 256u &&
+                    cost.sourceBytesUpperBound > 0,
+                "Sentinel raster query lost its bounded cost");
+
+        earthscience::GeoTemporalQuery invalid = query;
+        invalid.time.intervalStart = "2026-08-01T00:00:00Z";
+        requireRejectedWithoutDispatch(
+            service, *provider, invalid,
+            "science interval must be non-empty and ordered");
+        invalid = query;
+        invalid.sceneFilters.maximumCloudCoverPercent = 101.0;
+        requireRejectedWithoutDispatch(
+            service, *provider, invalid,
+            "scene cloud cover must be inside [0, 100]");
+        invalid = query;
+        invalid.sceneFilters.maximumScenes = 11;
+        requireRejectedWithoutDispatch(
+            service, *provider, invalid,
+            "scene candidate limit must be inside [1, 10]");
+        invalid = query;
+        invalid.time.mode = earthscience::ScienceTimeMode::ExplicitYears;
+        invalid.time.explicitYears = {2026};
+        requireRejectedWithoutDispatch(
+            service, *provider, invalid,
+            "science source does not support explicit years");
     }
 
     void testRequiresConfirmationAndEnforcesEstimatedBudgets()
@@ -775,7 +886,8 @@ int main()
     testEstimatesExactCostAndRequiresEvidenceForDuration();
     testPreviewThroughputDoesNotFabricateAnalysisDuration();
     testThroughputEvidenceIsolatedByPhysicalWorkload();
-    testAnotherProviderCannotImpersonateLegacyPreview();
+    testDispatchesBoundedIntervalRasterForCapableProvider();
+    testProviderPreviewCostsAndArtifactsRemainIsolated();
     testRequiresConfirmationAndEnforcesEstimatedBudgets();
     testDestructionCancelsBeforeProviderDestruction();
     std::cout << "[OK] ScienceEarth single-active-job query service\n";

@@ -126,6 +126,20 @@ namespace
 
         earthscience::AlphaEarthProvider provider(
             "/definitely/missing/alphaearth.sqlite");
+        std::string validationError;
+        require(provider.validateQuery(preview, validationError) &&
+                    validationError.empty(),
+                "provider rejected the exact AlphaEarth preview signature");
+        changed = preview;
+        changed.visualizationId.clear();
+        require(!provider.validateQuery(changed, validationError) &&
+                    validationError ==
+                        "raster-layer output requires the exact AlphaEarth "
+                        "preview signature",
+                "provider-specific validation accepted an altered preview");
+        require(provider.validateQuery(
+                    makeAnalysisQuery(), validationError),
+                "provider rejected the existing AlphaEarth analysis path");
         const std::uint64_t previewGeneration = provider.submit(preview);
         const earthscience::ScienceProviderSnapshot previewState =
             provider.snapshot();

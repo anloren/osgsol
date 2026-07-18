@@ -28,6 +28,8 @@ namespace earthscience
         ~AlphaEarthProvider() override;
 
         ScienceSourceDescriptor descriptor() const override;
+        bool validateQuery(
+            const GeoTemporalQuery& query, std::string& error) const override;
         std::uint64_t submit(const GeoTemporalQuery& query) override;
         ScienceProviderSnapshot snapshot() const override;
         void cancel(std::uint64_t generation) override;
