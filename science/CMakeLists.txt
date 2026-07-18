@@ -12,6 +12,8 @@ ADD_LIBRARY(osgSolScienceCore STATIC
     ScienceAnalysisSupport.h
     ScienceEmbedding.cpp
     ScienceEmbedding.h
+    ScienceEvidenceStore.cpp
+    ScienceEvidenceStore.h
     ScienceProvider.h
     ScienceArtifactStore.cpp
     ScienceArtifactStore.h
@@ -104,6 +106,17 @@ TARGET_LINK_LIBRARIES(osgSol_Smoke_CopernicusDemProduction
     PRIVATE osgSolSciencePreview)
 
 IF(BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_ScienceEvidenceStore
+        ScienceEvidenceStoreTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceEvidenceStore PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceEvidenceStore
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceEvidenceStore
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceEvidenceStore>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceEvidenceStore PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
     ADD_EXECUTABLE(osgSol_Test_ScienceResearchTypes
         ScienceResearchTypesTest.cpp)
     TARGET_COMPILE_FEATURES(osgSol_Test_ScienceResearchTypes PRIVATE cxx_std_17)
