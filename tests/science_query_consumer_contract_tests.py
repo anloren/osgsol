@@ -27,6 +27,7 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
         self.assertIn("ScienceSourceRegistry", source)
         self.assertIn("AlphaEarthProvider", source)
         self.assertIn("Sentinel2Provider", source)
+        self.assertIn("CopernicusDemProvider", source)
         self.assertIn("ScienceQueryService", source)
         self.assertNotIn("new earthscience::SciencePreviewRuntime", source)
         self.assertIn("new SciencePreviewLayer(scienceService.get())", source)
@@ -62,6 +63,8 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
             "resolveSciencePanelSource",
             "sciencePanelModesForSource",
             "expectedVisualizationId",
+            "surface-elevation-hypsometric",
+            "CopernicusDemMeaning",
             "sciencePanelPrimaryActionLabel(activeMode, source.id)",
         ):
             self.assertIn(token, source, token)

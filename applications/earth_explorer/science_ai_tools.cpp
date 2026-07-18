@@ -284,6 +284,34 @@ namespace
             artifact.analysis.metrics &&
             artifact.analysis.metrics->size() > metrics.size());
 
+        constexpr std::size_t MAX_SCALAR_SUMMARIES = 16;
+        picojson::array scalarSummaries;
+        for (const earthscience::ScienceScalarSummary& summary :
+             artifact.scalarSummaries)
+        {
+            if (scalarSummaries.size() >= MAX_SCALAR_SUMMARIES) break;
+            picojson::object entry;
+            entry["variable_id"] = picojson::value(summary.variableId);
+            entry["name"] = picojson::value(summary.displayName);
+            entry["unit"] = picojson::value(summary.unit);
+            if (summary.centerValid && std::isfinite(summary.center))
+                entry["center"] = picojson::value(summary.center);
+            if (summary.minimumValid && std::isfinite(summary.minimum))
+                entry["minimum"] = picojson::value(summary.minimum);
+            if (summary.maximumValid && std::isfinite(summary.maximum))
+                entry["maximum"] = picojson::value(summary.maximum);
+            if (summary.meanValid && std::isfinite(summary.mean))
+                entry["mean"] = picojson::value(summary.mean);
+            entry["valid_cells"] = picojson::value(
+                static_cast<double>(summary.validCellCount));
+            entry["no_data_cells"] = picojson::value(
+                static_cast<double>(summary.noDataCellCount));
+            scalarSummaries.push_back(picojson::value(entry));
+        }
+        item["scalar_summaries"] = picojson::value(scalarSummaries);
+        item["scalar_summaries_truncated"] = picojson::value(
+            artifact.scalarSummaries.size() > scalarSummaries.size());
+
         const earthscience::ScienceRegionalChangeSummary& regional =
             artifact.analysis.regionalChange;
         if (analysisKind == earthscience::ScienceAnalysisKind::RegionalChange)
@@ -620,8 +648,8 @@ void registerScienceResearchTools(
 
     earthai::Tool start;
     start.name = "start_science_research";
-    start.description = u8"异步提交 AlphaEarth 预览/64D 研究，或 Sentinel-2 "
-        u8"真彩场景查询。Sentinel-2 必须提供 time_start/time_end，可用 "
+    start.description = u8"异步提交 AlphaEarth 预览/64D 研究、Sentinel-2 "
+        u8"真彩场景，或 Copernicus DEM 静态 DSM 高程查询。Sentinel-2 必须提供 time_start/time_end，可用 "
         u8"max_cloud_percent 限制场景级云量。lat/lon 省略时使用当前视野"
         u8"中心；本工具不会改变相机或图层可见性，结果需显式调用 "
         u8"show_science_artifact 显示。";
@@ -696,7 +724,22 @@ void registerScienceResearchTools(
             return errorJson("lat and lon must be finite WGS84 coordinates");
 
         earthscience::GeoTemporalQuery query;
-        if (source.id == "sentinel-2-l2a")
+        if (source.id == "copernicus-dem-glo-30")
+        {
+            if (mode != "preview")
+                return errorJson(
+                    "Copernicus DEM supports preview mode only; it is a static DSM");
+            for (const char* timeKey : {
+                     "year", "first_year", "last_year",
+                     "baseline_year", "comparison_year",
+                     "time_start", "time_end", "max_cloud_percent"})
+                if (args.contains(timeKey))
+                    return errorJson(
+                        "Copernicus DEM is the static 2021 release; omit time and cloud fields");
+            query = makeCopernicusDemPreviewQuery(
+                source, latitude, longitude, eyeLla[2] * 0.85);
+        }
+        else if (source.id == "sentinel-2-l2a")
         {
             if (mode != "preview")
                 return errorJson(

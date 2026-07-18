@@ -113,6 +113,9 @@ earthscience::GeoTemporalQuery buildSciencePanelDraft(
             source, latitude, longitude, sentinelIntervalEndUtc,
             state.sentinelWindowDays,
             state.sentinelMaximumCloudPercent, requestedSpanMeters);
+    if (source.id == "copernicus-dem-glo-30")
+        return makeCopernicusDemPreviewQuery(
+            source, latitude, longitude, requestedSpanMeters);
     if (state.mode == SciencePanelMode::Preview && visualization)
         return makeSciencePointQuery(
             source, *visualization, latitude, longitude,
@@ -382,6 +385,9 @@ const char* modeLabel(SciencePanelMode mode, const std::string& sourceId)
 {
     if (sourceId == "sentinel-2-l2a" && mode == SciencePanelMode::Preview)
         return u8"真彩场景 / True-color scene";
+    if (sourceId == "copernicus-dem-glo-30" &&
+        mode == SciencePanelMode::Preview)
+        return u8"地表高程 / Surface elevation";
     return modeLabel(mode);
 }
 
@@ -411,6 +417,37 @@ void drawPrimaryMetrics(const earthscience::ScienceArtifact& artifact)
         if (hasGeographicExtent(artifact.raster.bounds))
             ImGui::TextWrapped(u8"实际范围 / Footprint: %s",
                 formatBounds(artifact.raster.bounds).c_str());
+        if (artifact.raster.sourceResolutionMeters > 0.0 &&
+            artifact.raster.displayResolutionMeters > 0.0)
+            ImGui::TextWrapped(
+                u8"分辨率 / Resolution: 源 %s · 显示 %s",
+                formatResolution(
+                    artifact.raster.sourceResolutionMeters).c_str(),
+                formatResolution(
+                    artifact.raster.displayResolutionMeters).c_str());
+        return;
+    }
+    if (artifact.query.sourceId == "copernicus-dem-glo-30")
+    {
+        if (!artifact.scalarSummaries.empty())
+        {
+            const earthscience::ScienceScalarSummary& summary =
+                artifact.scalarSummaries.front();
+            if (summary.centerValid)
+                ImGui::TextWrapped(
+                    u8"中心 DSM 高程 / Center: %.1f %s",
+                    summary.center, summary.unit.c_str());
+            if (summary.minimumValid && summary.maximumValid &&
+                summary.meanValid)
+                ImGui::TextWrapped(
+                    u8"范围与均值 / Min · mean · max: %.1f · %.1f · %.1f %s",
+                    summary.minimum, summary.mean, summary.maximum,
+                    summary.unit.c_str());
+            ImGui::TextWrapped(
+                u8"有效 / NoData: %s / %s cells",
+                formatInteger(summary.validCellCount).c_str(),
+                formatInteger(summary.noDataCellCount).c_str());
+        }
         if (artifact.raster.sourceResolutionMeters > 0.0 &&
             artifact.raster.displayResolutionMeters > 0.0)
             ImGui::TextWrapped(
@@ -503,6 +540,18 @@ void drawEmbeddingLegend(const earthscience::ScienceArtifact& artifact)
     {
         ImGui::TextWrapped(
             u8"自然色通道 / Natural color: R = B4 · G = B3 · B = B2");
+    }
+    else if (artifact.query.sourceId == "copernicus-dem-glo-30")
+    {
+        drawLegendLine("dem_water", ImVec4(0.15f, 0.35f, 0.66f, 1.0f),
+                       u8"-500–0 m · 蓝 / Blue");
+        drawLegendLine("dem_low", ImVec4(0.38f, 0.65f, 0.36f, 1.0f),
+                       u8"0–200 m · 绿 / Green");
+        drawLegendLine("dem_mid", ImVec4(0.79f, 0.72f, 0.49f, 1.0f),
+                       u8"200–3000 m · 黄褐 / Tan");
+        drawLegendLine("dem_high", ImVec4(0.57f, 0.41f, 0.30f, 1.0f),
+                       u8"3000–6000 m · 棕至白 / Brown to white");
+        ImGui::TextDisabled(u8"固定色标；透明 = NoData");
     }
     else if (artifact.analysis.kind == earthscience::ScienceAnalysisKind::None &&
         artifact.query.variables.size() >= 3)
@@ -719,6 +768,17 @@ SciencePanelModeCapabilities sciencePanelModeCapabilities(SciencePanelMode mode)
     return capabilities;
 }
 
+SciencePanelModeCapabilities sciencePanelModeCapabilities(
+    const earthscience::ScienceSourceDescriptor& source,
+    SciencePanelMode mode)
+{
+    SciencePanelModeCapabilities capabilities =
+        sciencePanelModeCapabilities(mode);
+    if (mode == SciencePanelMode::Preview)
+        capabilities.showsSingleYear = source.capabilities.explicitYears;
+    return capabilities;
+}
+
 const earthscience::ScienceSourceDescriptor* resolveSciencePanelSource(
     const std::vector<earthscience::ScienceSourceDescriptor>& sources,
     const std::string& sourceId)
@@ -770,6 +830,9 @@ const char* sciencePanelPrimaryActionLabel(
 {
     if (sourceId == "sentinel-2-l2a" && mode == SciencePanelMode::Preview)
         return u8"加载 Sentinel-2 真彩场景";
+    if (sourceId == "copernicus-dem-glo-30" &&
+        mode == SciencePanelMode::Preview)
+        return u8"加载 Copernicus DEM 高程";
     return sciencePanelPrimaryActionLabel(mode);
 }
 
@@ -787,6 +850,8 @@ ScienceArtifactUiPresentation describeScienceArtifactUi(
     std::ostringstream scope;
     if (artifact.query.sourceId == "sentinel-2-l2a")
         scope << u8"Sentinel-2 · 真彩场景";
+    else if (artifact.query.sourceId == "copernicus-dem-glo-30")
+        scope << u8"Copernicus DEM · DSM 地表高程";
     else if (artifactMatchesMode(artifact, SciencePanelMode::Preview))
         scope << u8"AlphaEarth · 伪彩预览";
     else if (artifactMatchesMode(artifact, SciencePanelMode::PointSeries))
@@ -805,6 +870,9 @@ ScienceArtifactUiPresentation describeScienceArtifactUi(
                 break;
             }
     }
+    else if (artifact.query.sourceId == "copernicus-dem-glo-30" &&
+             !artifact.query.time.publicationTime.empty())
+        scope << u8" · " << artifact.query.time.publicationTime << u8" 发布";
     else if (!artifact.query.time.explicitYears.empty())
     {
         scope << u8" · ";
@@ -841,6 +909,12 @@ const char* scienceHelpTopicTitle(ScienceHelpTopic topic)
         return u8"最大场景云量是什么？";
     case ScienceHelpTopic::Sentinel2Limits:
         return u8"Sentinel-2 科学边界";
+    case ScienceHelpTopic::CopernicusDemMeaning:
+        return u8"Copernicus DEM 表示什么？";
+    case ScienceHelpTopic::CopernicusDemColors:
+        return u8"高程颜色表示什么？";
+    case ScienceHelpTopic::CopernicusDemLimits:
+        return u8"Copernicus DEM 科学边界";
     case ScienceHelpTopic::Pca: return u8"PCA 与右侧结果";
     case ScienceHelpTopic::Clusters: return u8"无标签聚类是什么？";
     case ScienceHelpTopic::ScientificLimits: return u8"科学解释边界";
@@ -873,6 +947,16 @@ const char* scienceHelpTopicBody(ScienceHelpTopic topic)
     case ScienceHelpTopic::Sentinel2Limits:
         return u8"当前切片只选择一个日期、一个场景和一个 COG，不做"
                u8"多景镶嵌、逐像素云检测、光谱指数或变化归因。";
+    case ScienceHelpTopic::CopernicusDemMeaning:
+        return u8"Copernicus DEM GLO-30 是约 30 m 的数字表面模型（DSM）。"
+               u8"数值单位为米，垂直基准为 EGM2008；表面可包含建筑、"
+               u8"基础设施和植被，不等同于裸地高程。";
+    case ScienceHelpTopic::CopernicusDemColors:
+        return u8"固定分层设色把 DSM 高程映射为蓝、绿、黄褐、棕、白；"
+               u8"它不是自然色影像，透明表示 NoData。数值解释以结果统计为准。";
+    case ScienceHelpTopic::CopernicusDemLimits:
+        return u8"这是静态 DSM，不是裸地 DTM，也不是逐年变化产品。"
+               u8"当前切片不推断地物类型、建成年份或变化原因。";
     case ScienceHelpTopic::Pca:
         return u8"PCA 只适用于区域年度变化。勾选后重新运行，右侧才会显示"
                u8"本次结果内的局部数学方向；它不代表具体地物。";
@@ -1047,6 +1131,12 @@ std::vector<std::string> describeScienceArtifactEvidence(
             time << artifact.query.time.intervalStart << " — "
                  << artifact.query.time.intervalEnd;
     }
+    else if (artifact.query.time.mode == earthscience::ScienceTimeMode::Instant)
+    {
+        time << u8"产品发布 / Product release: ";
+        time << (artifact.query.time.publicationTime.empty()
+            ? unavailable : artifact.query.time.publicationTime);
+    }
     else
     {
         time << u8"已载入结果年份 / Loaded artifact year(s): ";
@@ -1199,8 +1289,10 @@ void ScienceEarthPanel::drawOperations(
     _state.sourceId = source.id;
     SciencePanelMode activeMode = activeSciencePanelMode(source, _state.mode);
     const std::string expectedVisualizationId =
-        source.id == "sentinel-2-l2a"
-            ? "natural-color-visual" : "false-color-a01-a16-a09";
+        source.id == "sentinel-2-l2a" ? "natural-color-visual" :
+        source.id == "copernicus-dem-glo-30"
+            ? "surface-elevation-hypsometric"
+            : "false-color-a01-a16-a09";
     const earthscience::ScienceVisualizationDescriptor* visualization =
         findScienceVisualization(source, expectedVisualizationId);
     if (visualization && visualization->id != expectedVisualizationId)
@@ -1243,14 +1335,18 @@ void ScienceEarthPanel::drawOperations(
     drawHelpButton("data_meaning",
         source.id == "sentinel-2-l2a"
             ? ScienceHelpTopic::Sentinel2Meaning
-            : ScienceHelpTopic::DataMeaning,
+            : source.id == "copernicus-dem-glo-30"
+                ? ScienceHelpTopic::CopernicusDemMeaning
+                : ScienceHelpTopic::DataMeaning,
         false);
     if (ImGui::CollapsingHeader(u8"数据源详情 / Source details"))
     {
         ImGui::TextWrapped(u8"原始分辨率：%.1f m",
                            source.nativeResolutionMeters);
         ImGui::TextWrapped(source.id == "sentinel-2-l2a"
-                ? u8"显示通道：%d" : u8"潜在分量：%d",
+                ? u8"显示通道：%d"
+                : source.id == "copernicus-dem-glo-30"
+                    ? u8"数值波段：%d" : u8"潜在分量：%d",
             source.componentCount);
         ImGui::TextWrapped(u8"提供方版本：%s",
                            source.providerVersion.c_str());
@@ -1305,7 +1401,7 @@ void ScienceEarthPanel::drawOperations(
     }
 
     const SciencePanelModeCapabilities capabilities =
-        sciencePanelModeCapabilities(activeMode);
+        sciencePanelModeCapabilities(source, activeMode);
 
     if (source.id == "sentinel-2-l2a")
     {
@@ -1355,6 +1451,9 @@ void ScienceEarthPanel::drawOperations(
         }
         ImGui::TextDisabled(u8"截至 UTC 今日；选择不会移动相机");
     }
+    else if (source.id == "copernicus-dem-glo-30")
+        ImGui::TextDisabled(
+            u8"静态 2021 公共发布 · 无年份滑块 · 选择不会移动相机");
     else if (capabilities.showsSingleYear)
         drawDiscreteYear("preview", u8"年份 / Year", &_state.lastYear,
                          source.firstYear, source.lastYear);
@@ -1629,7 +1728,9 @@ void ScienceEarthPanel::drawResults(
         drawHelpButton("preview_colors",
             artifact->query.sourceId == "sentinel-2-l2a"
                 ? ScienceHelpTopic::Sentinel2NaturalColor
-                : ScienceHelpTopic::PreviewColors,
+                : artifact->query.sourceId == "copernicus-dem-glo-30"
+                    ? ScienceHelpTopic::CopernicusDemColors
+                    : ScienceHelpTopic::PreviewColors,
                        false);
 
         ImGui::TextDisabled(u8"科学解释边界");
@@ -1637,7 +1738,9 @@ void ScienceEarthPanel::drawResults(
             "scientific_limits",
             artifact->query.sourceId == "sentinel-2-l2a"
                 ? ScienceHelpTopic::Sentinel2Limits
-                : ScienceHelpTopic::ScientificLimits);
+                : artifact->query.sourceId == "copernicus-dem-glo-30"
+                    ? ScienceHelpTopic::CopernicusDemLimits
+                    : ScienceHelpTopic::ScientificLimits);
 
         drawTechnicalDetails(*artifact);
         if (artifact->raster.width > 0)

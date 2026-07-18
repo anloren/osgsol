@@ -118,6 +118,23 @@ int main()
     sentinelVisualization.channelVariables = {"visual"};
     sentinelSource.visualizations.push_back(sentinelVisualization);
 
+    earthscience::ScienceSourceDescriptor demSource;
+    demSource.id = "copernicus-dem-glo-30";
+    demSource.name = "Copernicus DEM GLO-30";
+    demSource.firstYear = demSource.lastYear = 2021;
+    demSource.nativeResolutionMeters = 30.0;
+    demSource.capabilities.pointQuery = true;
+    demSource.capabilities.instantTime = true;
+    demSource.capabilities.rasterLayerOutput = true;
+    demSource.capabilities.minimumSpanMeters = 2560.0;
+    demSource.capabilities.maximumSpanMeters = 81920.0;
+    earthscience::ScienceVisualizationDescriptor demVisualization;
+    demVisualization.id = "surface-elevation-hypsometric";
+    demVisualization.kind =
+        earthscience::ScienceVisualizationKind::Continuous;
+    demVisualization.channelVariables = {"surface_elevation"};
+    demSource.visualizations.push_back(demVisualization);
+
     const std::vector<earthscience::ScienceSourceDescriptor> reorderedSources =
         {sentinelSource, alphaSource};
     CHECK(resolveSciencePanelSource(
@@ -141,6 +158,27 @@ int main()
     CHECK(std::string(sciencePanelPrimaryActionLabel(
               SciencePanelMode::Preview, sentinelSource.id)) ==
           u8"加载 Sentinel-2 真彩场景");
+    CHECK(sciencePanelModesForSource(demSource) ==
+          std::vector<SciencePanelMode>({SciencePanelMode::Preview}));
+    CHECK(!sciencePanelModeCapabilities(
+               demSource, SciencePanelMode::Preview).showsSingleYear);
+    CHECK(std::string(sciencePanelPrimaryActionLabel(
+              SciencePanelMode::Preview, demSource.id)) ==
+          u8"加载 Copernicus DEM 高程");
+
+    const earthscience::GeoTemporalQuery demPreview =
+        makeCopernicusDemPreviewQuery(
+            demSource, 35.68, 139.76, 10000.0);
+    CHECK(demPreview.sourceId == "copernicus-dem-glo-30");
+    CHECK(demPreview.time.mode == earthscience::ScienceTimeMode::Instant);
+    CHECK(demPreview.time.instant == "2021");
+    CHECK(demPreview.time.publicationTime == "2021");
+    CHECK(demPreview.time.explicitYears.empty());
+    CHECK(demPreview.variables ==
+          std::vector<std::string>({"surface_elevation"}));
+    CHECK(demPreview.targetResolutionMeters == 30.0);
+    CHECK(demPreview.visualizationId ==
+          "surface-elevation-hypsometric");
 
     const earthscience::GeoTemporalQuery sentinel7 =
         makeSentinel2PreviewQuery(
@@ -404,6 +442,9 @@ int main()
         ScienceHelpTopic::Sentinel2NaturalColor,
         ScienceHelpTopic::Sentinel2Cloud,
         ScienceHelpTopic::Sentinel2Limits,
+        ScienceHelpTopic::CopernicusDemMeaning,
+        ScienceHelpTopic::CopernicusDemColors,
+        ScienceHelpTopic::CopernicusDemLimits,
         ScienceHelpTopic::Pca,
         ScienceHelpTopic::Clusters,
         ScienceHelpTopic::ScientificLimits,
@@ -432,6 +473,46 @@ int main()
     CHECK(std::string(scienceHelpTopicBody(
               ScienceHelpTopic::Sentinel2Limits)).find(
                   u8"不做") != std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::CopernicusDemMeaning)).find(
+                  "DSM") != std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::CopernicusDemMeaning)).find(
+                  "EGM2008") != std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::CopernicusDemColors)).find(
+                  u8"不是自然色") != std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::CopernicusDemLimits)).find(
+                  u8"不是裸地") != std::string::npos);
+
+    earthscience::ScienceArtifact demArtifact;
+    demArtifact.artifactId = "dem-artifact";
+    demArtifact.query = demPreview;
+    demArtifact.raster.bounds = {139.70, 35.60, 139.82, 35.76};
+    demArtifact.raster.sourceResolutionMeters = 30.0;
+    demArtifact.raster.displayResolutionMeters = 39.1;
+    earthscience::ScienceScalarSummary demSummary;
+    demSummary.variableId = "surface_elevation";
+    demSummary.displayName = "Surface elevation";
+    demSummary.unit = "m";
+    demSummary.centerValid = true;
+    demSummary.center = 42.0;
+    demSummary.minimumValid = demSummary.maximumValid =
+        demSummary.meanValid = true;
+    demSummary.minimum = 1.0;
+    demSummary.maximum = 88.0;
+    demSummary.mean = 35.0;
+    demArtifact.scalarSummaries.push_back(demSummary);
+    const ScienceArtifactUiPresentation demUi =
+        describeScienceArtifactUi(demArtifact, demPreview);
+    CHECK(demUi.scopeLabel.find("Copernicus DEM") != std::string::npos);
+    CHECK(demUi.scopeLabel.find(u8"2021 发布") != std::string::npos);
+    CHECK(demUi.scopeLabel.find(u8"伪彩") == std::string::npos);
+    const std::string demEvidence = joined(
+        describeScienceArtifactEvidence(demArtifact));
+    CHECK(demEvidence.find(u8"产品发布") != std::string::npos);
+    CHECK(demEvidence.find("2021") != std::string::npos);
 
     const SciencePanelPresentation sentinelNoScene = describeScienceSnapshot(
         snapshot(earthscience::ScienceJobState::Failed,

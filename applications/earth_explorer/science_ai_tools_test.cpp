@@ -106,6 +106,42 @@ namespace
         return source;
     }
 
+    earthscience::ScienceSourceDescriptor makeDemDescriptor()
+    {
+        earthscience::ScienceSourceDescriptor source;
+        source.id = "copernicus-dem-glo-30";
+        source.name = "Copernicus DEM GLO-30";
+        source.category = "static digital surface model elevation";
+        source.providerVersion = "aws-glo30-2021";
+        source.attribution =
+            "Copernicus DEM / European Union / ESA / AWS Open Data";
+        source.firstYear = source.lastYear = 2021;
+        source.nativeResolutionMeters = 30.0;
+        source.componentCount = 1;
+        source.health = earthscience::ScienceSourceHealth::Ready;
+        source.healthMessage = "Ready on demand";
+        source.experimental = true;
+        source.variables = {
+            {"surface_elevation", "DSM surface elevation", "m",
+             "digital surface model height", 1, 4},
+        };
+        earthscience::ScienceVisualizationDescriptor visualization;
+        visualization.id = "surface-elevation-hypsometric";
+        visualization.displayName = "Surface elevation (hypsometric)";
+        visualization.kind = earthscience::ScienceVisualizationKind::Continuous;
+        visualization.channelVariables = {"surface_elevation"};
+        visualization.displayMinimum = -500.0;
+        visualization.displayMaximum = 9000.0;
+        visualization.legend = "Fixed DSM elevation colors in EGM2008 metres";
+        source.visualizations.push_back(visualization);
+        source.capabilities.pointQuery = true;
+        source.capabilities.instantTime = true;
+        source.capabilities.rasterLayerOutput = true;
+        source.capabilities.minimumSpanMeters = 2560.0;
+        source.capabilities.maximumSpanMeters = 81920.0;
+        return source;
+    }
+
     class ToolProvider : public earthscience::IScienceProvider
     {
     public:
@@ -168,18 +204,41 @@ namespace
             if (preview)
             {
                 artifact->raster.bounds = {-122.2, 37.4, -122.0, 37.6};
-                artifact->raster.sourceResolutionMeters = 10.0;
-                artifact->raster.displayResolutionMeters = 80.0;
+                const bool dem =
+                    lastQuery.sourceId == "copernicus-dem-glo-30";
+                artifact->raster.sourceResolutionMeters = dem ? 30.0 : 10.0;
+                artifact->raster.displayResolutionMeters = dem ? 39.1 : 80.0;
+                if (dem)
+                {
+                    earthscience::ScienceScalarSummary summary;
+                    summary.variableId = "surface_elevation";
+                    summary.displayName = "Surface elevation";
+                    summary.unit = "m";
+                    summary.centerValid = true;
+                    summary.center = 42.0;
+                    summary.minimumValid = summary.maximumValid =
+                        summary.meanValid = true;
+                    summary.minimum = 1.0;
+                    summary.maximum = 88.0;
+                    summary.mean = 35.0;
+                    summary.validCellCount = 111556;
+                    summary.noDataCellCount = 0;
+                    artifact->scalarSummaries.push_back(summary);
+                }
             }
             earthscience::ScienceSourceReference reference;
             reference.sourceId = lastQuery.sourceId;
             reference.providerVersion = providerVersion;
             const bool sentinel = lastQuery.sourceId == "sentinel-2-l2a";
+            const bool dem = lastQuery.sourceId == "copernicus-dem-glo-30";
             reference.datasetId = sentinel
-                ? "S2C_54SUE_20260710_0_L2A" : "alphaearth-test-cog";
+                ? "S2C_54SUE_20260710_0_L2A"
+                : dem ? "Copernicus_DSM_COG_10_N35_00_E139_00_DEM"
+                      : "alphaearth-test-cog";
             reference.originalUrl = sentinel
                 ? "https://sentinel-cogs.s3.us-west-2.amazonaws.com/test/TCI.tif"
-                : "https://example.invalid/test.tif";
+                : dem ? "https://copernicus-dem-30m.s3.amazonaws.com/test.tif"
+                      : "https://example.invalid/test.tif";
             reference.attribution = _source.attribution;
             reference.actualCoverage = preview ? artifact->raster.bounds
                 : earthscience::ScienceWgs84Bounds{10.0, 20.0, 30.0, 40.0};
@@ -405,11 +464,16 @@ namespace
         auto sentinelProvider =
             std::make_unique<ToolProvider>(makeSentinelDescriptor());
         ToolProvider* sentinelProviderPointer = sentinelProvider.get();
+        auto demProvider =
+            std::make_unique<ToolProvider>(makeDemDescriptor());
+        ToolProvider* demProviderPointer = demProvider.get();
         std::string registrationError;
         require(registry->add(std::move(provider), registrationError),
                 "tool provider registration failed");
         require(registry->add(std::move(sentinelProvider), registrationError),
                 "Sentinel tool provider registration failed");
+        require(registry->add(std::move(demProvider), registrationError),
+                "DEM tool provider registration failed");
         earthscience::ScienceQueryService service(std::move(registry));
         osg::ref_ptr<SciencePreviewLayer> layer =
             new SciencePreviewLayer(&service);
@@ -449,11 +513,18 @@ namespace
                 "search result omitted source catalog");
         const picojson::array& sources =
             result.get("sources").get<picojson::array>();
-        require(sources.size() == 2 &&
+        require(sources.size() == 3 &&
                     sources.front().get("health").get<std::string>() == "ready" &&
                     !sources.front().get("attribution").get<std::string>().empty() &&
-                    sources[1].get("id").get<std::string>() == "sentinel-2-l2a" &&
-                    sources[1].get("visualizations").get<picojson::array>().size() == 1,
+                    sources[1].get("id").get<std::string>() ==
+                        "copernicus-dem-glo-30" &&
+                    sources[1].get("time_modes").get<picojson::array>().front().
+                        get<std::string>() == "instant" &&
+                    sources[1].get("visualizations").get<picojson::array>().
+                        front().get("legend").get<std::string>().find("EGM2008") !=
+                        std::string::npos &&
+                    sources[2].get("id").get<std::string>() == "sentinel-2-l2a" &&
+                    sources[2].get("visualizations").get<picojson::array>().size() == 1,
                 "search result omitted health or attribution");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
@@ -538,6 +609,64 @@ namespace
                 "preview summary did not use raster coverage and resolution");
         require(result.get("progress").contains("percent"),
                 "determinate job progress omitted percent");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        picojson::object demArgs;
+        demArgs["source_id"] = picojson::value("copernicus-dem-glo-30");
+        demArgs["visualization_id"] =
+            picojson::value("surface-elevation-hypsometric");
+        demArgs["mode"] = picojson::value("preview");
+        demArgs["lat"] = picojson::value(35.68);
+        demArgs["lon"] = picojson::value(139.76);
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(demArgs), result),
+                "DEM research did not dispatch");
+        require(demProviderPointer->lastQuery.sourceId ==
+                    "copernicus-dem-glo-30" &&
+                    demProviderPointer->lastQuery.time.mode ==
+                        earthscience::ScienceTimeMode::Instant &&
+                    demProviderPointer->lastQuery.time.publicationTime == "2021" &&
+                    demProviderPointer->lastQuery.time.explicitYears.empty() &&
+                    demProviderPointer->lastQuery.variables ==
+                        std::vector<std::string>({"surface_elevation"}) &&
+                    demProviderPointer->lastQuery.visualizationId ==
+                        "surface-elevation-hypsometric" &&
+                    !layer->isVisible() && layers.find("alphaearth") &&
+                    !layers.find("alphaearth")->enabled,
+                "DEM research lost static DSM intent or changed visibility");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        demProviderPointer->publishReady("dem-artifact", 0,
+                                         "copernicus-dem-hypsometric-v1",
+                                         "aws-glo30-2021");
+        const std::uint64_t demJob = service.snapshot().jobId;
+        picojson::object demGetArgs;
+        demGetArgs["job_id"] = picojson::value(static_cast<double>(demJob));
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(demGetArgs), result),
+                "DEM result did not dispatch");
+        require(result.get("artifact").contains("scalar_summaries") &&
+                    result.get("artifact").get("scalar_summaries").
+                        get<picojson::array>().size() == 1 &&
+                    result.get("artifact").serialize(false).find("rgba") ==
+                        std::string::npos,
+                "DEM result omitted compact numeric evidence or leaked pixels");
+
+        const std::uint64_t beforeInvalidDem = demProviderPointer->generation();
+        picojson::object invalidDem = demArgs;
+        invalidDem["year"] = picojson::value(2021.0);
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(invalidDem), result) &&
+                    result.contains("error") &&
+                    demProviderPointer->generation() == beforeInvalidDem,
+                "DEM accepted a misleading year selector");
+        invalidDem = demArgs;
+        invalidDem["mode"] = picojson::value("point_series");
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(invalidDem), result) &&
+                    result.contains("error") &&
+                    demProviderPointer->generation() == beforeInvalidDem,
+                "DEM accepted unsupported time-series analysis");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
         picojson::object sentinelArgs;

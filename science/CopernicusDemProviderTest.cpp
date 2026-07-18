@@ -26,6 +26,7 @@ namespace
         value.geometry.point = {35.68, 139.76};
         value.geometry.requestedSpanMeters = 10000.0;
         value.time.mode = earthscience::ScienceTimeMode::Instant;
+        value.time.instant = "2021";
         value.time.publicationTime = "2021";
         value.variables = {"surface_elevation"};
         value.targetResolutionMeters = 30.0;

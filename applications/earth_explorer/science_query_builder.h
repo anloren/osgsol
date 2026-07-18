@@ -133,6 +133,34 @@ inline earthscience::GeoTemporalQuery makeSentinel2PreviewQuery(
         maximumCloudCoverPercent, requestedSpanMeters);
 }
 
+inline earthscience::GeoTemporalQuery makeCopernicusDemPreviewQuery(
+    const earthscience::ScienceSourceDescriptor& source,
+    double latitude, double longitude, double requestedSpanMeters)
+{
+    const double minimumSpan = source.capabilities.minimumSpanMeters > 0.0
+        ? source.capabilities.minimumSpanMeters : 2560.0;
+    const double maximumSpan = source.capabilities.maximumSpanMeters >= minimumSpan
+        ? source.capabilities.maximumSpanMeters : 81920.0;
+    earthscience::GeoTemporalQuery query;
+    query.sourceId = source.id;
+    query.geometry.kind = earthscience::ScienceGeometryKind::Point;
+    query.geometry.point.latitude = latitude;
+    query.geometry.point.longitude = longitude;
+    query.geometry.requestedSpanMeters = std::clamp(
+        requestedSpanMeters, minimumSpan, maximumSpan);
+    query.time.mode = earthscience::ScienceTimeMode::Instant;
+    query.time.instant = "2021";
+    query.time.publicationTime = "2021";
+    query.variables = {"surface_elevation"};
+    query.targetResolutionMeters = source.nativeResolutionMeters;
+    query.aggregation = earthscience::ScienceAggregation::None;
+    query.outputKind = earthscience::ScienceOutputKind::RasterLayer;
+    query.purpose = "visible Copernicus DEM static surface elevation layer";
+    query.priority = earthscience::SciencePriority::Visible;
+    query.visualizationId = "surface-elevation-hypsometric";
+    return query;
+}
+
 inline std::vector<int> makeScienceUiYearRange(
     const earthscience::ScienceSourceDescriptor& source,
     int firstYear, int lastYear)

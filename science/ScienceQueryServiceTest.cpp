@@ -140,6 +140,7 @@ namespace
         query.geometry.point = {35.68, 139.76};
         query.geometry.requestedSpanMeters = 10000.0;
         query.time.mode = earthscience::ScienceTimeMode::Instant;
+        query.time.instant = "2021";
         query.time.publicationTime = "2021";
         query.variables = {"surface_elevation"};
         query.targetResolutionMeters = 30.0;

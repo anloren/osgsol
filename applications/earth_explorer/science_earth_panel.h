@@ -33,6 +33,9 @@ enum class ScienceHelpTopic
     Sentinel2NaturalColor,
     Sentinel2Cloud,
     Sentinel2Limits,
+    CopernicusDemMeaning,
+    CopernicusDemColors,
+    CopernicusDemLimits,
     Pca,
     Clusters,
     ScientificLimits,
@@ -135,6 +138,9 @@ SciencePanelPresentation describeScienceSnapshot(
     const earthscience::ScienceJobSnapshot& snapshot,
     SciencePanelMode mode);
 SciencePanelModeCapabilities sciencePanelModeCapabilities(
+    SciencePanelMode mode);
+SciencePanelModeCapabilities sciencePanelModeCapabilities(
+    const earthscience::ScienceSourceDescriptor& source,
     SciencePanelMode mode);
 const earthscience::ScienceSourceDescriptor* resolveSciencePanelSource(
     const std::vector<earthscience::ScienceSourceDescriptor>& sources,

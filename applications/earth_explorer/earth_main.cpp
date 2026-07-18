@@ -56,6 +56,7 @@
 #include "geo_primitives.h"
 #if OSGSOL_BUILD_SCIENCE
 #include <AlphaEarthProvider.h>
+#include <CopernicusDemProvider.h>
 #include <Sentinel2Provider.h>
 #include <ScienceQueryService.h>
 #include "science_preview_layer.h"
@@ -993,6 +994,12 @@ int main(int argc, char** argv)
             std::make_unique<earthscience::Sentinel2Provider>(),
             scienceProviderError))
         OSG_WARN << "ScienceEarth Sentinel-2 registration failed: "
+                 << scienceProviderError << std::endl;
+    scienceProviderError.clear();
+    if (!scienceRegistry->add(
+            std::make_unique<earthscience::CopernicusDemProvider>(),
+            scienceProviderError))
+        OSG_WARN << "ScienceEarth Copernicus DEM registration failed: "
                  << scienceProviderError << std::endl;
     auto scienceService =
         std::make_unique<earthscience::ScienceQueryService>(

@@ -101,7 +101,7 @@ bool CopernicusDemProvider::validateQuery(
         error = "Copernicus DEM is a static surface model, not a time series";
     else if (query.time.publicationTime != "2021")
         error = "Copernicus DEM preview requires the public 2021 release";
-    else if (!query.time.instant.empty() ||
+    else if (query.time.instant != "2021" ||
              !query.time.intervalStart.empty() ||
              !query.time.intervalEnd.empty() ||
              !query.time.explicitYears.empty())
