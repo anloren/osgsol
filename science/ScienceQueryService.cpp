@@ -143,7 +143,7 @@ namespace
             static_cast<std::uint64_t>(heightCellsValue));
     }
 
-    std::uint64_t rasterComponentCount(
+    std::uint64_t rasterBytesPerCell(
         const GeoTemporalQuery& query,
         const ScienceSourceDescriptor* source)
     {
@@ -156,9 +156,14 @@ namespace
                 [&variableId](const ScienceVariableDescriptor& candidate)
                 { return candidate.id == variableId; });
             if (variable == source->variables.end()) return 3;
-            result = checkedAdd(
-                result, static_cast<std::uint64_t>(
-                    std::max(1, variable->componentCount)));
+            const std::uint64_t componentCount =
+                static_cast<std::uint64_t>(
+                    std::max(1, variable->componentCount));
+            const std::uint64_t bytesPerComponent =
+                static_cast<std::uint64_t>(
+                    std::max(1, variable->bytesPerComponent));
+            result = checkedAdd(result, checkedMultiply(
+                componentCount, bytesPerComponent));
         }
         return result == 0 ? 3 : result;
     }
@@ -220,13 +225,14 @@ ScienceQueryCost ScienceQueryService::estimateUnlocked(
     if (isRasterPreviewQuery(query))
     {
         constexpr std::uint64_t PREVIEW_CELLS = 256u * 256u;
-        const std::uint64_t componentCount = rasterComponentCount(
+        const std::uint64_t bytesPerCell = rasterBytesPerCell(
             query, hasSource ? &source : nullptr);
         cost.resultCells = PREVIEW_CELLS;
         cost.sourceBytesUpperBound = checkedMultiply(
-            sourceCells, componentCount);
+            sourceCells, bytesPerCell);
         cost.residentBytesUpperBound = checkedAdd(
-            checkedMultiply(sourceCells, componentCount * 2),
+            checkedMultiply(
+                checkedMultiply(sourceCells, bytesPerCell), 2),
             checkedMultiply(PREVIEW_CELLS, 4));
     }
     else

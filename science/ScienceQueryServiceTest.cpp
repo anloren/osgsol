@@ -102,6 +102,52 @@ namespace
         return source;
     }
 
+    earthscience::ScienceSourceDescriptor makeDemDescriptor()
+    {
+        earthscience::ScienceSourceDescriptor source;
+        source.id = "copernicus-dem-glo-30";
+        source.name = "Copernicus DEM GLO-30";
+        source.category = "static digital surface model";
+        source.providerVersion = "aws-glo30-2021";
+        source.attribution = "Copernicus DEM / European Union / ESA / AWS";
+        source.firstYear = source.lastYear = 2021;
+        source.nativeResolutionMeters = 30.0;
+        source.componentCount = 1;
+        source.health = earthscience::ScienceSourceHealth::Ready;
+        source.variables = {
+            {"surface_elevation", "DSM surface elevation", "m",
+             "digital surface model height", 1, 4},
+        };
+        earthscience::ScienceVisualizationDescriptor visualization;
+        visualization.id = "surface-elevation-hypsometric";
+        visualization.kind =
+            earthscience::ScienceVisualizationKind::Continuous;
+        visualization.channelVariables = {"surface_elevation"};
+        source.visualizations.push_back(visualization);
+        source.capabilities.pointQuery = true;
+        source.capabilities.instantTime = true;
+        source.capabilities.rasterLayerOutput = true;
+        source.capabilities.minimumSpanMeters = 2560.0;
+        source.capabilities.maximumSpanMeters = 81920.0;
+        return source;
+    }
+
+    earthscience::GeoTemporalQuery makeDemQuery()
+    {
+        earthscience::GeoTemporalQuery query;
+        query.sourceId = "copernicus-dem-glo-30";
+        query.geometry.kind = earthscience::ScienceGeometryKind::Point;
+        query.geometry.point = {35.68, 139.76};
+        query.geometry.requestedSpanMeters = 10000.0;
+        query.time.mode = earthscience::ScienceTimeMode::Instant;
+        query.time.publicationTime = "2021";
+        query.variables = {"surface_elevation"};
+        query.targetResolutionMeters = 30.0;
+        query.outputKind = earthscience::ScienceOutputKind::RasterLayer;
+        query.visualizationId = "surface-elevation-hypsometric";
+        return query;
+    }
+
     earthscience::GeoTemporalQuery makeSentinelQuery()
     {
         earthscience::GeoTemporalQuery query;
@@ -667,6 +713,26 @@ namespace
                 "successful provider throughput did not enable duration");
     }
 
+    void testFloatRasterCostUsesNumericStorageWidth()
+    {
+        ProviderEvents events;
+        auto registry =
+            std::make_unique<earthscience::ScienceSourceRegistry>();
+        auto provider = std::make_unique<ControlledProvider>(
+            makeDemDescriptor(), &events);
+        std::string error;
+        require(registry->add(std::move(provider), error),
+                "DEM provider fixture registration failed");
+        earthscience::ScienceQueryService service(std::move(registry));
+
+        const earthscience::ScienceQueryCost cost =
+            service.estimate(makeDemQuery());
+        require(cost.resultCells == 256u * 256u &&
+                    cost.sourceBytesUpperBound == 451584u &&
+                    cost.residentBytesUpperBound == 1165312u,
+                "Float32 DEM raster cost was counted as one byte per cell");
+    }
+
     void testPreviewThroughputDoesNotFabricateAnalysisDuration()
     {
         ServiceFixture fixture;
@@ -884,6 +950,7 @@ int main()
     testRetainsLastGoodAcrossFetchingFailureAndCancellation();
     testRetainsPreviewAnalysisAndDisplayIndependently();
     testEstimatesExactCostAndRequiresEvidenceForDuration();
+    testFloatRasterCostUsesNumericStorageWidth();
     testPreviewThroughputDoesNotFabricateAnalysisDuration();
     testThroughputEvidenceIsolatedByPhysicalWorkload();
     testDispatchesBoundedIntervalRasterForCapableProvider();

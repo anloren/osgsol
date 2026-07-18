@@ -39,6 +39,8 @@ ADD_LIBRARY(osgSolSciencePreview STATIC
     AlphaEarthEmbeddingRuntime.h
     AlphaEarthProvider.cpp
     AlphaEarthProvider.h
+    CopernicusDemProvider.cpp
+    CopernicusDemProvider.h
     CopernicusDemRuntime.cpp
     CopernicusDemRuntime.h
     Sentinel2Provider.cpp
@@ -94,6 +96,17 @@ TARGET_LINK_LIBRARIES(osgSol_Smoke_Sentinel2Production
     PRIVATE osgSolSciencePreview)
 
 IF(BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_CopernicusDemProvider
+        CopernicusDemProviderTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_CopernicusDemProvider PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_CopernicusDemProvider
+        PRIVATE osgSolSciencePreview)
+    ADD_TEST(NAME osgSol_Test_CopernicusDemProvider
+             COMMAND $<TARGET_FILE:osgSol_Test_CopernicusDemProvider>)
+    SET_TESTS_PROPERTIES(osgSol_Test_CopernicusDemProvider PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
     ADD_EXECUTABLE(osgSol_Test_CopernicusDemRuntime
         CopernicusDemRuntimeTest.cpp)
     TARGET_COMPILE_FEATURES(osgSol_Test_CopernicusDemRuntime PRIVATE cxx_std_17)

@@ -160,6 +160,7 @@ namespace earthscience
         std::string unit;
         std::string dataKind;
         int componentCount = 1;
+        int bytesPerComponent = 1;
     };
 
     struct ScienceVisualizationDescriptor
