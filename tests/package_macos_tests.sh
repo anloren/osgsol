@@ -64,6 +64,17 @@ expect_rejected_profile()
     grep -q "known-good" "$APP/keep"
 }
 
+list_macho_dependencies()
+{
+    local binary="$1"
+    otool -L "$binary" |
+        sed -n '2,$ {
+            s/^[[:space:]]*//
+            s/[[:space:]]*(compatibility version.*$//
+            p
+        }'
+}
+
 make_install_fixture()
 {
     local root="$1"
@@ -110,10 +121,46 @@ assert_unique_family_arch()
     ' "$records"
 }
 
+assert_relative_dependency()
+{
+    local app="$1"
+    local binary="$2"
+    local dependency="$3"
+    local base candidate resolved contents
+    case "$dependency" in
+        @rpath/*)
+            base="$app/Contents/lib"
+            candidate="$base/${dependency#@rpath/}"
+            ;;
+        @loader_path/*)
+            base="$(dirname "$binary")"
+            candidate="$base/${dependency#@loader_path/}"
+            ;;
+        @executable_path/*)
+            base="$app/Contents/MacOS"
+            candidate="$base/${dependency#@executable_path/}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    [ -f "$candidate" ] || return 1
+    resolved="$(/bin/realpath "$candidate")"
+    contents="$(/bin/realpath "$app/Contents")"
+    case "$resolved" in
+        "$contents"/*)
+            file -b "$resolved" | grep -q 'Mach-O'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 assert_bundle_dependency_closure()
 {
     local app="$1"
-    local binary dependency dependency_name dependencies load_commands
+    local binary dependency dependencies load_commands dylib_id
     dependencies="$TMP_ROOT/closure-dependencies"
     load_commands="$TMP_ROOT/closure-load-commands"
     while IFS= read -r -d '' binary; do
@@ -121,15 +168,18 @@ assert_bundle_dependency_closure()
             continue
         fi
         codesign --verify --strict "$binary"
-        otool -L "$binary" > "$dependencies"
+        dylib_id="$(otool -D "$binary" | sed -n '2p')"
+        list_macho_dependencies "$binary" > "$dependencies"
         while IFS= read -r dependency; do
+            if [ -n "$dylib_id" ] && [ "$dependency" = "$dylib_id" ]; then
+                continue
+            fi
             case "$dependency" in
                 /System/Library/*|/usr/lib/*)
                     ;;
-                @rpath/*)
-                    dependency_name="${dependency#@rpath/}"
-                    if [ ! -e "$app/Contents/lib/$dependency_name" ]; then
-                        echo "FAIL: unresolved packaged @rpath dependency: $dependency in $binary" >&2
+                @rpath/*|@loader_path/*|@executable_path/*)
+                    if ! assert_relative_dependency "$app" "$binary" "$dependency"; then
+                        echo "FAIL: unresolved packaged relative dependency: $dependency in $binary" >&2
                         return 1
                     fi
                     ;;
@@ -138,7 +188,7 @@ assert_bundle_dependency_closure()
                     return 1
                     ;;
             esac
-        done < <(tail -n +2 "$dependencies" | awk '{print $1}')
+        done < "$dependencies"
         otool -l "$binary" > "$load_commands"
         if awk '$1 == "cmd" && $2 == "LC_RPATH" { wanted = 1; next }
                 wanted && $1 == "path" { print $2; wanted = 0 }' "$load_commands" |
@@ -218,6 +268,27 @@ fi
 grep -q "AlphaEarth index is required" "$LOG"
 grep -q "known-good" "$APP/keep"
 
+expect_rejected_profile "Source commit is not a commit in this repository" \
+    env -u EARTH_AI_KEY OSGVERSE_SDK="$SDK" OSG_RUNTIME_SDK="$RUNTIME_SDK" \
+        OSGSOL_PACKAGE_OUTPUT="$APP" OSGSOL_PACKAGE_VERSION="$VERSION" \
+        OSGSOL_BUILD_CHANNEL="$CHANNEL" \
+        OSGSOL_SOURCE_COMMIT="0000000000000000000000000000000000000000" \
+        OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+        OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+        bash "$ROOT/packaging/package_macos.sh"
+
+ANNOTATED_TAG_OBJECT="$(git -C "$ROOT" for-each-ref \
+    --format='%(objecttype) %(objectname)' refs/tags |
+    awk '$1 == "tag" { print $2; exit }')"
+test -n "$ANNOTATED_TAG_OBJECT"
+expect_rejected_profile "Source commit is not a commit in this repository" \
+    env -u EARTH_AI_KEY OSGVERSE_SDK="$SDK" OSG_RUNTIME_SDK="$RUNTIME_SDK" \
+        OSGSOL_PACKAGE_OUTPUT="$APP" OSGSOL_PACKAGE_VERSION="$VERSION" \
+        OSGSOL_BUILD_CHANNEL="$CHANNEL" OSGSOL_SOURCE_COMMIT="$ANNOTATED_TAG_OBJECT" \
+        OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+        OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+        bash "$ROOT/packaging/package_macos.sh"
+
 # Compile-time and runtime OSG profiles are separate inputs. A formal package must reject either
 # side when it is not GLCore before touching the known-good output.
 LEGACY_INSTALL="$TMP_ROOT/legacy-install"
@@ -267,7 +338,7 @@ private_dependency="$(otool -L "$private_probe" |
 test -n "$private_dependency"
 install_name_tool -change "$private_dependency" \
     "/private/osgsol-task12/libtask12-missing.dylib" "$private_probe"
-expect_rejected_profile "Private dependency remains in packaged binary" \
+expect_rejected_profile "Missing non-system dependency" \
     env -u EARTH_AI_KEY OSGVERSE_SDK="$PRIVATE_INSTALL" \
         OSG_RUNTIME_SDK="$RUNTIME_SDK" OSGSOL_PACKAGE_OUTPUT="$APP" \
         OSGSOL_PACKAGE_VERSION="$VERSION" OSGSOL_BUILD_CHANNEL="$CHANNEL" \
@@ -304,11 +375,99 @@ expect_rejected_profile "Duplicate Mach-O UUID in packaged bundle" \
         OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
         bash "$ROOT/packaging/package_macos.sh"
 
+# Bundle-relative dependencies must resolve to Mach-O files inside Contents. Cover both token
+# families and preserve the known-good output on missing and escaping paths.
+LOADER_MISSING_INSTALL="$TMP_ROOT/loader-missing-install"
+make_install_fixture "$LOADER_MISSING_INSTALL"
+loader_missing_probe="$(find "$LOADER_MISSING_INSTALL/lib" -maxdepth 1 -type f \
+    -name '*.so' -print -quit)"
+loader_missing_dependency="$(otool -L "$loader_missing_probe" |
+    awk 'NR > 1 && $1 ~ "^/(usr|System)/" { print $1; exit }')"
+test -n "$loader_missing_dependency"
+install_name_tool -change "$loader_missing_dependency" \
+    '@loader_path/task12-missing-loader.dylib' "$loader_missing_probe"
+expect_rejected_profile "Missing bundle-token dependency" \
+    env -u EARTH_AI_KEY OSGVERSE_SDK="$LOADER_MISSING_INSTALL" \
+        OSG_RUNTIME_SDK="$RUNTIME_SDK" OSGSOL_PACKAGE_OUTPUT="$APP" \
+        OSGSOL_PACKAGE_VERSION="$VERSION" OSGSOL_BUILD_CHANNEL="$CHANNEL" \
+        OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+        OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+        bash "$ROOT/packaging/package_macos.sh"
+
+EXECUTABLE_ESCAPE_INSTALL="$TMP_ROOT/executable-escape-install"
+make_install_fixture "$EXECUTABLE_ESCAPE_INSTALL"
+executable_escape_probe="$(find "$EXECUTABLE_ESCAPE_INSTALL/lib" -maxdepth 1 -type f \
+    -name '*.so' -print -quit)"
+executable_escape_dependency="$(otool -L "$executable_escape_probe" |
+    awk 'NR > 1 && $1 ~ "^/(usr|System)/" { print $1; exit }')"
+test -n "$executable_escape_dependency"
+printf '%s\n' 'int task12_escape(void) { return 12; }' > "$TMP_ROOT/task12-escape.c"
+clang -dynamiclib "$TMP_ROOT/task12-escape.c" -o "$TMP_ROOT/task12-escape.dylib"
+install_name_tool -change "$executable_escape_dependency" \
+    '@executable_path/../../../task12-escape.dylib' "$executable_escape_probe"
+expect_rejected_profile "bundle-token dependency escapes package" \
+    env -u EARTH_AI_KEY OSGVERSE_SDK="$EXECUTABLE_ESCAPE_INSTALL" \
+        OSG_RUNTIME_SDK="$RUNTIME_SDK" OSGSOL_PACKAGE_OUTPUT="$APP" \
+        OSGSOL_PACKAGE_VERSION="$VERSION" OSGSOL_BUILD_CHANNEL="$CHANNEL" \
+        OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+        OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+        bash "$ROOT/packaging/package_macos.sh"
+
+RPATH_ESCAPE_INSTALL="$TMP_ROOT/rpath-escape-install"
+make_install_fixture "$RPATH_ESCAPE_INSTALL"
+rpath_escape_probe="$(find "$RPATH_ESCAPE_INSTALL/lib" -maxdepth 1 -type f \
+    -name '*.so' -print -quit)"
+rpath_escape_dependency="$(otool -L "$rpath_escape_probe" |
+    awk 'NR > 1 && $1 ~ "^/(usr|System)/" { print $1; exit }')"
+test -n "$rpath_escape_dependency"
+printf '%s\n' 'int task12_rpath_escape(void) { return 12; }' > \
+    "$TMP_ROOT/task12-rpath-escape.c"
+clang -dynamiclib "$TMP_ROOT/task12-rpath-escape.c" \
+    -o "$TMP_ROOT/task12-rpath-escape.dylib"
+ln -s "$TMP_ROOT/task12-rpath-escape.dylib" \
+    "$RPATH_ESCAPE_INSTALL/lib/task12-rpath-escape.dylib"
+install_name_tool -change "$rpath_escape_dependency" \
+    '@rpath/task12-rpath-escape.dylib' "$rpath_escape_probe"
+expect_rejected_profile "bundled runtime dependency escapes package" \
+    env -u EARTH_AI_KEY OSGVERSE_SDK="$RPATH_ESCAPE_INSTALL" \
+        OSG_RUNTIME_SDK="$RUNTIME_SDK" OSGSOL_PACKAGE_OUTPUT="$APP" \
+        OSGSOL_PACKAGE_VERSION="$VERSION" OSGSOL_BUILD_CHANNEL="$CHANNEL" \
+        OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+        OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+        bash "$ROOT/packaging/package_macos.sh"
+
+# Two distinct external sources may not silently collapse onto one bundle-local basename.
+COLLISION_INSTALL="$TMP_ROOT/collision-install"
+COLLISION_SOURCE="$TMP_ROOT/collision-source"
+make_install_fixture "$COLLISION_INSTALL"
+mkdir -p "$COLLISION_SOURCE"
+collision_probe="$(find "$COLLISION_INSTALL/lib" -maxdepth 1 -type f -name '*.so' -print -quit)"
+collision_dependency="$(otool -L "$collision_probe" |
+    awk 'NR > 1 && $1 ~ "^/(usr|System)/" { print $1; exit }')"
+collision_existing="$(find "$COLLISION_INSTALL/lib" -maxdepth 1 -type f \
+    \( -name 'libosg*.dylib' -o -name 'libosg*.so' \) -print -quit)"
+test -n "$collision_dependency"
+test -n "$collision_existing"
+collision_external="$COLLISION_SOURCE/$(basename "$collision_existing")"
+printf '%s\n' 'int task12_collision(void) { return 12; }' > "$COLLISION_SOURCE/collision.c"
+clang -dynamiclib "$COLLISION_SOURCE/collision.c" \
+    -Wl,-install_name,"$collision_external" -o "$collision_external"
+install_name_tool -change "$collision_dependency" "$collision_external" "$collision_probe"
+expect_rejected_profile "Dependency basename collision" \
+    env -u EARTH_AI_KEY OSGVERSE_SDK="$COLLISION_INSTALL" \
+        OSG_RUNTIME_SDK="$RUNTIME_SDK" OSGSOL_PACKAGE_OUTPUT="$APP" \
+        OSGSOL_PACKAGE_VERSION="$VERSION" OSGSOL_BUILD_CHANNEL="$CHANNEL" \
+        OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+        OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+        bash "$ROOT/packaging/package_macos.sh"
+
 # A formal package must recursively close non-system dependencies instead of retaining paths to
 # the build host. Build a three-library chain entirely inside this test: the install SDK contains
 # only the root, while its middle and leaf dependencies live outside the SDK.
 EXTERNAL_INSTALL="$TMP_ROOT/external-install"
-EXTERNAL_SOURCE="$TMP_ROOT/external-source"
+# Keep the source closure in a directory with a space so dependency parsing is verified against
+# normal macOS paths rather than only whitespace-free build roots.
+EXTERNAL_SOURCE="$TMP_ROOT/external source"
 EXTERNAL_OUTPUT="$TMP_ROOT/external-output/osgSol Earth.app"
 make_install_fixture "$EXTERNAL_INSTALL"
 mkdir -p "$EXTERNAL_SOURCE" "$(dirname "$EXTERNAL_OUTPUT")"
@@ -344,12 +503,14 @@ if [ ! -f "$EXTERNAL_OUTPUT/Contents/lib/libtask12-leaf.dylib" ]; then
     exit 1
 fi
 if ! otool -L "$EXTERNAL_OUTPUT/Contents/lib/libtask12-root.dylib" |
-   awk 'NR > 1 {print $1}' | grep -qx '@rpath/libtask12-middle.dylib'; then
+   sed -n '2,$ { s/^[[:space:]]*//; s/[[:space:]]*(compatibility version.*$//; p; }' |
+   grep -qx '@rpath/libtask12-middle.dylib'; then
     echo "FAIL: direct non-system dependency was not closed as @rpath" >&2
     exit 1
 fi
 if ! otool -L "$EXTERNAL_OUTPUT/Contents/lib/libtask12-middle.dylib" |
-   awk 'NR > 1 {print $1}' | grep -qx '@rpath/libtask12-leaf.dylib'; then
+   sed -n '2,$ { s/^[[:space:]]*//; s/[[:space:]]*(compatibility version.*$//; p; }' |
+   grep -qx '@rpath/libtask12-leaf.dylib'; then
     echo "FAIL: transitive non-system dependency was not closed as @rpath" >&2
     exit 1
 fi
@@ -390,20 +551,17 @@ while IFS= read -r -d '' binary; do
         codesign --verify --strict "$binary"
         dependencies="$TMP_ROOT/dependencies"
         load_commands="$TMP_ROOT/load-commands"
-        otool -L "$binary" > "$dependencies"
+        list_macho_dependencies "$binary" > "$dependencies"
         otool -l "$binary" > "$load_commands"
-        if tail -n +2 "$dependencies" | awk '{print $1}' |
-           grep -F "$RUNTIME_SDK/" >/dev/null; then
+        if grep -F "$RUNTIME_SDK/" "$dependencies" >/dev/null; then
             echo "FAIL: packaged Mach-O retains OSG runtime SDK path: $binary" >&2
             exit 1
         fi
-        if tail -n +2 "$dependencies" | awk '{print $1}' |
-           grep -F "$SDK/" >/dev/null; then
+        if grep -F "$SDK/" "$dependencies" >/dev/null; then
             echo "FAIL: packaged Mach-O retains install SDK path: $binary" >&2
             exit 1
         fi
-        if tail -n +2 "$dependencies" | awk '{print $1}' |
-           grep -E '^/(Users|private)/' >/dev/null; then
+        if grep -E '^/(Users|private)/' "$dependencies" >/dev/null; then
             echo "FAIL: packaged Mach-O retains a private dependency: $binary" >&2
             exit 1
         fi
@@ -416,7 +574,6 @@ while IFS= read -r -d '' binary; do
     fi
 done < <(find "$APP/Contents" -type f -print0)
 assert_bundle_dependency_closure "$APP"
-
 collect_osg_uuid_records "$RUNTIME_SDK/lib" | sort -u > "$TMP_ROOT/runtime-uuids"
 collect_osg_uuid_records "$APP/Contents/lib" | sort -u > "$TMP_ROOT/package-uuids"
 test -s "$TMP_ROOT/runtime-uuids"
@@ -429,8 +586,14 @@ if ! cmp -s "$TMP_ROOT/runtime-uuids" "$TMP_ROOT/package-uuids"; then
     exit 1
 fi
 
+if [ "${OSGSOL_PACKAGE_TEST_SKIP_RUNTIME_SMOKE:-0}" = "1" ]; then
+    codesign --verify --deep --strict "$APP"
+    echo "[OK] formal macOS staging identity, provenance, closure, and signature checks"
+    exit 0
+fi
+
 env -u EARTH_AI_KEY -u OSG_LIBRARY_PATH HOME="$HOME_DIR" EARTH_IME=0 \
-    EARTH_OFFSCREEN=1 EARTH_AUTOCAP=100 \
+    EARTH_OFFSCREEN=1 EARTH_AUTOCAP=100 EARTH_PREFETCH=0 \
     "$APP/Contents/MacOS/osgSol_Earth" >"$LOG" 2>&1
 grep -q "\[Earth\] offscreen context 1920x1080" "$LOG"
 grep -q "\[Earth\] offscreen capture saved" "$LOG"

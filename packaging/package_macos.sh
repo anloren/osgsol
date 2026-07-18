@@ -22,6 +22,59 @@ fail()
     exit "$code"
 }
 
+list_macho_dependencies()
+{
+    local binary="$1"
+    otool -L "$binary" |
+        sed -n '2,$ {
+            s/^[[:space:]]*//
+            s/[[:space:]]*(compatibility version.*$//
+            p
+        }'
+}
+
+assert_packaged_relative_dependency()
+{
+    local binary="$1"
+    local dependency="$2"
+    local base candidate resolved bundle_contents kind
+    case "$dependency" in
+        @rpath/*)
+            base="$BUILD_APP/Contents/lib"
+            candidate="$base/${dependency#@rpath/}"
+            kind="bundled runtime"
+            ;;
+        @loader_path/*)
+            base="$(dirname "$binary")"
+            candidate="$base/${dependency#@loader_path/}"
+            kind="bundle-token"
+            ;;
+        @executable_path/*)
+            base="$BUILD_APP/Contents/MacOS"
+            candidate="$base/${dependency#@executable_path/}"
+            kind="bundle-token"
+            ;;
+        *)
+            fail 67 "Unsupported packaged dependency: $dependency in $binary"
+            ;;
+    esac
+    if [ ! -f "$candidate" ]; then
+        fail 67 "Missing $kind dependency: $dependency in $binary"
+    fi
+    resolved="$(/bin/realpath "$candidate")"
+    bundle_contents="$(/bin/realpath "$BUILD_APP/Contents")"
+    case "$resolved" in
+        "$bundle_contents"/*)
+            ;;
+        *)
+            fail 67 "$kind dependency escapes package: $dependency in $binary"
+            ;;
+    esac
+    if ! file -b "$resolved" | grep -q 'Mach-O'; then
+        fail 67 "$kind dependency is not Mach-O: $dependency in $binary"
+    fi
+}
+
 collect_osg_uuid_records()
 {
     local root="$1"
@@ -55,6 +108,68 @@ assert_unique_osg_family_arch()
     ' "$records"
 }
 
+close_non_system_dependencies()
+{
+    local queue_file="$AUDIT_DIR/macho-closure-queue"
+    local seen_file="$AUDIT_DIR/macho-closure-seen"
+    local dependencies="$AUDIT_DIR/macho-closure-dependencies"
+    local binary dependency dylib_id source destination destination_name
+    : > "$queue_file"
+    : > "$seen_file"
+
+    while IFS= read -r -d '' binary; do
+        if file -b "$binary" | grep -q 'Mach-O'; then
+            printf '%s\n' "$binary" >> "$queue_file"
+            printf '%s\n' "$binary" >> "$seen_file"
+        fi
+    done < <(find "$BUILD_APP/Contents" -type f -print0)
+
+    # Appending to this regular-file queue before the next read keeps traversal compatible with
+    # the Bash 3.2 shipped by macOS without relying on associative arrays.
+    while IFS= read -r binary; do
+        otool -D "$binary" > "$AUDIT_DIR/macho-closure-id"
+        dylib_id="$(sed -n '2p' "$AUDIT_DIR/macho-closure-id")"
+        list_macho_dependencies "$binary" > "$dependencies"
+        while IFS= read -r dependency; do
+            [ -n "$dependency" ] || continue
+            if [ -n "$dylib_id" ] && [ "$dependency" = "$dylib_id" ]; then
+                continue
+            fi
+            case "$dependency" in
+                /System/Library/*|/usr/lib/*|@rpath/*|@loader_path/*|@executable_path/*)
+                    continue
+                    ;;
+                /*)
+                    source="$dependency"
+                    ;;
+                *)
+                    fail 67 "Unsupported dependency identity: $dependency in $binary"
+                    ;;
+            esac
+
+            if [ ! -f "$source" ]; then
+                fail 67 "Missing non-system dependency: $source required by $binary"
+            fi
+            if ! file -b "$source" | grep -q 'Mach-O'; then
+                fail 67 "Non-system dependency is not Mach-O: $source required by $binary"
+            fi
+            destination_name="$(basename "$source")"
+            destination="$BUILD_APP/Contents/lib/$destination_name"
+            if [ -e "$destination" ]; then
+                if ! cmp -s "$source" "$destination"; then
+                    fail 67 "Dependency basename collision: $source conflicts with $destination"
+                fi
+            else
+                cp -pL "$source" "$destination"
+            fi
+            if ! grep -Fqx "$destination" "$seen_file"; then
+                printf '%s\n' "$destination" >> "$seen_file"
+                printf '%s\n' "$destination" >> "$queue_file"
+            fi
+        done < "$dependencies"
+    done < "$queue_file"
+}
+
 # Reject every invalid invocation before creating, deleting, or moving output.
 if [ -n "${EARTH_AI_KEY:-}" ]; then
     fail 64 "Refusing to package while EARTH_AI_KEY is set; unset it and use per-user configuration."
@@ -73,6 +188,9 @@ if [[ ! "$BUILD_CHANNEL" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
 fi
 if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
     fail 68 "Source commit must be an exact 40-character lowercase Git object id"
+fi
+if [ "$(git -C "$REPO" cat-file -t "$SOURCE_COMMIT" 2>/dev/null || true)" != "commit" ]; then
+    fail 68 "Source commit is not a commit in this repository: $SOURCE_COMMIT"
 fi
 if [[ ! "$PRODUCT_EXECUTABLE" =~ ^[0-9A-Za-z._-]+$ ]]; then
     fail 68 "Invalid product executable name: $PRODUCT_EXECUTABLE"
@@ -192,6 +310,11 @@ mkdir -p "$BUILD_APP/Contents/misc/science/alphaearth"
 cp "$ALPHAEARTH_INDEX" \
     "$BUILD_APP/Contents/misc/science/alphaearth/alphaearth.sqlite"
 
+# Close the complete non-system dynamic dependency graph before changing any install names. This
+# makes byte-wise collision checks meaningful and ensures every copied dependency is included in
+# the later relocation, UUID, signature, and resolution audits.
+close_non_system_dependencies
+
 # Make every packaged Mach-O resolve only against its bundle-local runtime closure.
 install_name_tool -delete_rpath '$ORIGIN:$ORIGIN/../lib' \
     "$BUILD_APP/Contents/MacOS/$PRODUCT_EXECUTABLE" 2>/dev/null || true
@@ -259,8 +382,7 @@ while IFS= read -r -d '' binary; do
             install_name_tool -id "@rpath/$dylib_id_name" "$binary" 2>/dev/null
         fi
     fi
-    otool -L "$binary" > "$AUDIT_DIR/dependencies"
-    awk 'NR > 1 {print $1}' "$AUDIT_DIR/dependencies" > "$AUDIT_DIR/dependency-list"
+    list_macho_dependencies "$binary" > "$AUDIT_DIR/dependency-list"
     while IFS= read -r dependency; do
         dependency_name="$(basename "$dependency")"
         if [ -e "$BUILD_APP/Contents/lib/$dependency_name" ] &&
@@ -296,7 +418,7 @@ if ! cmp -s "$AUDIT_DIR/runtime-osg-uuids" "$AUDIT_DIR/package-osg-uuids"; then
 fi
 
 # Every relocated @rpath edge must resolve and no packaged Mach-O may retain an install-tree or
-# OSG-runtime-tree path. Python remains a separately recorded clean-machine distribution debt.
+# OSG-runtime-tree path.
 while IFS= read -r -d '' binary; do
     file_description="$(file -b "$binary")"
     if [[ "$file_description" != *Mach-O* ]]; then
@@ -304,6 +426,11 @@ while IFS= read -r -d '' binary; do
     fi
     otool -D "$binary" > "$AUDIT_DIR/dylib-id"
     dylib_id="$(sed -n '2p' "$AUDIT_DIR/dylib-id")"
+    case "$dylib_id" in
+        /Users/*|/private/*)
+            fail 67 "Private dependency remains in packaged binary: $dylib_id in $binary"
+            ;;
+    esac
     otool -l "$binary" > "$AUDIT_DIR/load-commands"
     awk '$1 == "cmd" && $2 == "LC_RPATH" { wanted = 1; next }
          wanted && $1 == "path" { print $2; wanted = 0 }' \
@@ -311,8 +438,7 @@ while IFS= read -r -d '' binary; do
     if grep -E '^/' "$AUDIT_DIR/rpaths" >/dev/null; then
         fail 67 "Absolute LC_RPATH remains in packaged binary: $binary"
     fi
-    otool -L "$binary" > "$AUDIT_DIR/dependencies"
-    awk 'NR > 1 {print $1}' "$AUDIT_DIR/dependencies" > "$AUDIT_DIR/dependency-list"
+    list_macho_dependencies "$binary" > "$AUDIT_DIR/dependency-list"
     while IFS= read -r dependency; do
         if [[ "$dependency" == "$SDK"/* ]] ||
            [[ "$dependency" == "$OSG_RUNTIME_SDK"/* ]]; then
@@ -328,9 +454,15 @@ while IFS= read -r -d '' binary; do
         fi
         case "$dependency" in
             @rpath/*)
-                if [ ! -e "$BUILD_APP/Contents/lib/${dependency#@rpath/}" ]; then
-                    fail 67 "Missing bundled runtime dependency: $dependency in $binary"
-                fi
+                assert_packaged_relative_dependency "$binary" "$dependency"
+                ;;
+            @loader_path/*|@executable_path/*)
+                assert_packaged_relative_dependency "$binary" "$dependency"
+                ;;
+            /System/Library/*|/usr/lib/*)
+                ;;
+            *)
+                fail 67 "Unsupported dependency identity: $dependency in $binary"
                 ;;
         esac
     done < "$AUDIT_DIR/dependency-list"

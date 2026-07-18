@@ -252,3 +252,82 @@ No Desktop application was replaced by this task. Packaging, bundle/link audit, 
 same-path packaged exit, and the full manual matrix remain Task 12 release gates. Tagging,
 synchronization, and publication remain forbidden until manual acceptance and an explicit user
 request.
+
+## 8. Task 12 current handoff boundary
+
+Recorded on 2026-07-18. Tasks 1--11 are implemented and independently audited. Task 12 is not a
+formal release completion: the fixed Desktop application is a runnable manual-test candidate, but
+it is not a package produced from the final committed source state.
+
+### 8.1 Current source verification
+
+- A fresh Release build at `build/science_64d_final_verify`, explicitly using
+  `/Users/USER/osgsol/build/sdk_core` and `VERSE_BUILD_WITH_PYTHON=OFF`, completed successfully.
+- The complete `scienceearth`/offline-labelled suite passed 24/24 in a normal macOS process context.
+  This includes the 64D query, math, analysis, export, provider, runtime, georeference, UI, Agent,
+  G0/build-contract, and bounded local-range tests.
+- A separate fresh `OSGSOL_BUILD_SCIENCE=OFF` Release build under
+  `/tmp/science_64d_final_off_verify` passed 22/22, covering the protected Earth, camera, terrain,
+  3D tiles, satellite, AI, UI, threading, input-safety, and normal-exit paths without ScienceEarth.
+- The current packaging contract passed against a temporary staging output with runtime smoke
+  explicitly skipped after the already-recorded Desktop execution. It verifies that source
+  provenance is an actual commit object, recursively closes absolute dependencies, rejects
+  basename collisions and escaping `@rpath`/`@loader_path`/`@executable_path` dependencies, and
+  preserves the previous output on every rejected candidate.
+- The bounded real-data result from Task 11 remains the frozen evidence at
+  `/tmp/scienceearth_64d_real_verification.jsonl`; public data was not downloaded again for Task 12.
+- Packaging-source changes made after the earlier `b86bbde` staging are being verified separately.
+  The old `dist/osgSol Earth.app` must not be presented as a package of the current source state.
+
+### 8.2 Fixed Desktop manual candidate
+
+There is exactly one matching Desktop application:
+`/Users/USER/Desktop/osgSol Earth.app`. The previous fixed-path application is retained outside
+the Desktop at `build/desktop-backups/pre-manual-handoff-20260718/osgSol Earth.previous.app`.
+
+Verified facts for the exact Desktop application are:
+
+- product `osgSol Earth`, id `com.anloren.osgsol.earth`, version `0.3.0`, channel
+  `signature-probe`;
+- production AlphaEarth index SHA-256 in both plist and bundled SQLite:
+  `15875963d1bf4dd3f35a1f6c3ec6329378fef0fab6549fac677552f1d348f736`;
+- 131 Mach-O files, zero duplicate UUIDs, zero OSG family/architecture conflicts, zero private
+  dependencies, zero absolute RPATHs, and zero unresolved dependencies;
+- no bundled `EARTH_AI_KEY`, package-test secret, or `imgui.ini`;
+- `codesign --verify --deep` PASS;
+- the exact executable completed the same-path normal-exit test and a 20-frame offscreen run on
+  Apple M4 Pro / OpenGL 4.1, wrote `/tmp/earth_capture_0.png`, exited 0, and produced no new crash
+  report.
+
+The candidate plist contains the historical string
+`d3a7e0f18d26a2f78d502ac19f31a5ac7fd8e405`. That value is not a Git object and therefore is not
+valid exact-source provenance. The Desktop candidate is also not byte-identical to the earlier
+formal staging application. These contradictions are recorded rather than hidden.
+
+`codesign --verify --deep --strict` fails on the final Desktop path after Finder/FileProvider adds
+resource-fork metadata to the bundle root. This is release-packaging debt; it is not described as a
+strict-signature PASS and does not block local functional testing of the currently runnable app.
+
+### 8.3 Immutable G0 audit remains STOP
+
+The current canonical audit against the protected `v0.2.0` baseline returns:
+
+- protected baseline: 542,594,200 bytes;
+- current Desktop candidate: 663,038,422 bytes;
+- delta: 120,444,222 bytes, above the immutable 62,914,560-byte hard stop;
+- Tier A: PASS; Tier B: STOP; unresolved dependencies: zero.
+
+This is the existing `G0_IMMUTABLE_V0_2_AUDIT=STOP_UNCHANGED` release-policy debt, not a 64D
+functional regression and not a formal G0 `GO`. It must be resolved or explicitly ratcheted before
+a tagged ScienceEarth release. It does not prevent local manual testing.
+
+### 8.4 Required manual acceptance and release work
+
+Task 12 and the active Goal remain open until the same fixed Desktop candidate is checked for the
+progressive UI, 64D point/regional/time-series/PCA/clustering/export workflows, scientific wording
+and provenance, Agent cross-source analysis, Hong Kong 3D tiles and terrain, photo view authority,
+satellite/reset cleanliness, panel scrolling and camera stability, plus panel Quit/window
+close/`Cmd+Q`.
+
+A later formal package must be produced from a real frozen Git commit and must carry truthful
+source provenance. No tag, push, merge, synchronization, or publication has occurred.
