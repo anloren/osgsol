@@ -95,6 +95,12 @@ TARGET_COMPILE_FEATURES(osgSol_Smoke_Sentinel2Production PRIVATE cxx_std_17)
 TARGET_LINK_LIBRARIES(osgSol_Smoke_Sentinel2Production
     PRIVATE osgSolSciencePreview)
 
+ADD_EXECUTABLE(osgSol_Smoke_CopernicusDemProduction EXCLUDE_FROM_ALL
+    CopernicusDemProductionSmoke.cpp)
+TARGET_COMPILE_FEATURES(osgSol_Smoke_CopernicusDemProduction PRIVATE cxx_std_17)
+TARGET_LINK_LIBRARIES(osgSol_Smoke_CopernicusDemProduction
+    PRIVATE osgSolSciencePreview)
+
 IF(BUILD_TESTING)
     ADD_EXECUTABLE(osgSol_Test_CopernicusDemProvider
         CopernicusDemProviderTest.cpp)
