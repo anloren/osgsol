@@ -19,6 +19,8 @@ ADD_LIBRARY(osgSolScienceCore STATIC
     ScienceArtifactStore.h
     ScienceQueryService.cpp
     ScienceQueryService.h
+    ScienceResearchBrief.cpp
+    ScienceResearchBrief.h
     ScienceResearchManager.cpp
     ScienceResearchManager.h
     ScienceResearchTypes.cpp
@@ -108,6 +110,17 @@ TARGET_LINK_LIBRARIES(osgSol_Smoke_CopernicusDemProduction
     PRIVATE osgSolSciencePreview)
 
 IF(BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_ScienceResearchBrief
+        ScienceResearchBriefTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceResearchBrief PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceResearchBrief
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceResearchBrief
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceResearchBrief>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceResearchBrief PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
     ADD_EXECUTABLE(osgSol_Test_ScienceResearchManager
         ScienceResearchManagerTest.cpp)
     TARGET_COMPILE_FEATURES(osgSol_Test_ScienceResearchManager PRIVATE cxx_std_17)
