@@ -803,6 +803,11 @@ static void prefetchLowLODGlobe(int maxZ)
 
 int main(int argc, char** argv)
 {
+#if defined(__APPLE__)
+    // ApplicationUsage is OSG process metadata.  Keep it alive beyond C++ static finalization;
+    // see earth_exit.h and the real-session macOS crash evidence in normal-exit-root-cause.md.
+    earthexit::pinApplicationUsageForProcessLifetime();
+#endif
     const std::string settingsPath = osgVerse::defaultImGuiSettingsPath();
     const std::string userDataPath = osgDB::getFilePath(settingsPath);
     const std::string runtimeLogBase = userDataPath.empty() ? std::string()

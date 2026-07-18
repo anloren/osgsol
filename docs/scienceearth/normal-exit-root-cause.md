@@ -1,6 +1,6 @@
 # macOS normal-exit root cause
 
-CHANGED_OWNER_FILE=plugins/osgdb_tms/ReaderWriterTMS.cpp
+CHANGED_OWNER_FILE=applications/earth_explorer/earth_exit.h
 
 ## First repair and its limit
 
@@ -55,7 +55,7 @@ The earlier statement that the later `ApplicationUsage` report was stale was inc
 - The previous offscreen exit test disabled or shortened the normal tile path, so it never
   exercised plugin unload with those eight persistent workers.
 
-## Current repair
+## Second repair and its limit
 
 `LayerLoadPool` is now `osgVerse::TmsLayerLoadPool`, an owned function-local object inside the TMS
 plugin. Its workers remain reusable during the session, but are joinable. At plugin destruction it
@@ -63,7 +63,39 @@ sets a stop predicate, wakes every idle worker, drains any already queued work, 
 threads, and only then permits `dlclose` to unload their code. The repair does not use `_Exit`, kill
 signals, crash suppression, macOS setting changes, or a packaging workaround.
 
-## GREEN evidence
+That worker lifetime repair remains valid, but it was not the owner of the persistent normal-exit
+crash. Treating the idle workers as the cause of `ApplicationUsage` map corruption was another
+incorrect conclusion.
+
+## Decisive real-session evidence
+
+- Incident `72E054B1-E9BB-491C-AAF1-5EA19D2AFB35` is from Desktop executable UUID
+  `a06b83f4-2d14-3ea0-b012-bc62b1f9b506`, launched at 20:52:37 and closed normally at 21:06:23
+  on 2026-07-18.
+- The TMS repair was active and the old eight waiting worker threads were absent. The process still
+  crashed after `main` returned, inside `__cxa_finalize`.
+- The first invalid owner is now unambiguous: `osg::ApplicationUsage::~ApplicationUsage()` enters
+  `libsystem_malloc` with an invalid map node while destroying its first reverse-order member,
+  `_commandLineOptionsDefaults`. Static disassembly identifies the failing root pointer load at
+  object offset `0xc8`.
+- OSG 3.6.5 implements `ApplicationUsage::instance()` as a function-local `osg::ref_ptr`; upstream
+  master still has the same implementation. The singleton contains process-wide usage metadata and
+  has no runtime need to be destroyed after `main`.
+
+## Current repair
+
+On macOS, `pinApplicationUsageForProcessLifetime()` takes exactly one additional OSG reference at
+the first instruction of Earth `main`. Repeated calls are idempotent. Normal panel Quit, window
+close, Cmd+Q, viewer thread shutdown, plugin shutdown, and return from `main` are unchanged. During
+`__cxa_finalize`, OSG releases its own reference but the usage registry is not destructed; macOS
+reclaims this process-lifetime metadata with the address space. This does not use `_Exit`, signals,
+crash suppression, macOS settings, or a custom allocator.
+
+The compile-only regression checks both the one-time reference increment and idempotence. It is
+intentionally not executed from Codex after the user's foreground crash warning; final acceptance
+belongs to the current Desktop package in a manual session.
+
+## Historical automated evidence (insufficient for long-session acceptance)
 
 - Focused owner-order test: `osgVerse_Test_ImGuiThreading` passed after failing on the absent
   stop-before-destruction boundary.
