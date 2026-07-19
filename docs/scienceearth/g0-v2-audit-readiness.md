@@ -31,18 +31,18 @@ G0 v2 已从此前的 `STOP` 转为正式 `PASS`。插件隔离、私有依赖�
 
 ## 最终审计摘要
 
-- App 内容来源提交：`f8b60341d753d61fa24bec24d6f9d84c40f0d362`
+- App 内容来源提交：`4252e75ec817ca820c628f97a4404728b7a12758`
 - 版本 / 频道：`0.6.0` / `g0-plugin-audit`
-- 候选 fingerprint：`3502dcba3dda8d831b399df0863e2e1f3ba2fc7331135d1c4350a4c38b553416`
+- 候选 fingerprint：`039e93463c630fe17cdd3a8e98c3c551caec5be8d7f5ab211aad397859378367`
 - 总结果：`PASS`，退出码 0
 - Tier A / Tier B：`PASS` / `PASS`
 - finding / violation / unresolved / root cause：`0 / 0 / 0 / 0`
 - 相对 ratchet：新增 0，移除 1,086
-- 基线 / 候选：542,594,200 / 663,553,961 bytes
-- 运行时增量：33,776,401 bytes，`PASS`
+- 基线 / 候选：542,594,200 / 663,554,329 bytes
+- 运行时增量：33,776,769 bytes，`PASS`
 - 科学数据：87,183,360 bytes，`PASS`
-- 总增量：120,959,761 bytes，`PASS`
-- 科学插件闭包：31,734,368 bytes，`PASS`
+- 总增量：120,960,129 bytes，`PASS`
+- 科学插件闭包：31,734,624 bytes，`PASS`
 - 签名：`codesign --verify --deep --strict` 通过
 
 报告：
@@ -66,6 +66,10 @@ G0 v2 已从此前的 `STOP` 转为正式 `PASS`。插件隔离、私有依赖�
 静态 G0 已关闭，但运行时人工验收不能由离线审计替代。用户需要手动打开精确候选包，验证
 普通 Earth 无回退、科学数据与 AI 联动、拍照保持可见视角以及 Quit 后没有新的匹配 `.ips`。
 通过后，桌面固定 App 更新、tag 和同步必须作为单独的明确发布动作执行。
+
+来源提交 `f8b6034` 的旧候选已被人工证实会在首次科学面板绘制时崩溃，其证据已归档到
+`build/science_g0_plugin_audit/broken-f8b6034/`。固定候选路径当前是带 ImGui 跨模块 context
+与 allocator 桥的 `4252e75` 修复包；必须测试当前包，不能继续使用旧归档。
 
 ## 可选而非 G0 阻塞项
 

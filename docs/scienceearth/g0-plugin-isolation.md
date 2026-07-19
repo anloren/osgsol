@@ -28,7 +28,9 @@ ScienceEarth G0 的代码隔离、正式 staging 打包和 v2 静态审计已经
 - 64 维分析、证据与 provenance 语义；
 - 科学 AI research 工具及其跨数据源联动入口。
 
-插件只有一个版本化 C ABI 锚点：`_osgsol_science_g0_probe_anchor`。主程序不再直接链接
+插件只有一个版本化 C ABI 锚点：`_osgsol_science_g0_probe_anchor`。当前 ABI v2 除原有
+session 函数外，还要求主程序在每次科学面板绘制前传入当前 ImGui context 和对应的内存
+分配器。主程序不再直接链接
 GDAL、PROJ、ZSTD 或 SciencePreview 的科学实现。插件 session 销毁时会释放服务和工作
 线程，但模块句柄有意保持到进程退出，避免 OSG 延迟销毁的节点或回调跳入已经卸载的代码。
 
@@ -52,20 +54,20 @@ fontconfig 使用包内确定性配置，同时继续尊重用户已经设置的
 
 - 候选版本：`0.6.0`
 - 构建频道：`g0-plugin-audit`
-- App 内容来源提交：`f8b60341d753d61fa24bec24d6f9d84c40f0d362`
-- 候选 bundle fingerprint：`3502dcba3dda8d831b399df0863e2e1f3ba2fc7331135d1c4350a4c38b553416`
-- 主程序 SHA-256：`893e1859940e04ac8cc1363bc238010c3bfdc6045bda87d5998d9b2c02d9252b`
-- 插件 SHA-256：`6549a1238fa5ba857a2e7fb7aec2832fa060d59c4958bbd9a86923ebdfbebf09`
+- App 内容来源提交：`4252e75ec817ca820c628f97a4404728b7a12758`
+- 候选 bundle fingerprint：`039e93463c630fe17cdd3a8e98c3c551caec5be8d7f5ab211aad397859378367`
+- 主程序 SHA-256：`fa44e16b0881964076091e0f93cd3abb1866cc8d0b6a2217f6281ebe6d20d5a7`
+- 插件 SHA-256：`cdc1962e589e292d8922967052d256164001da130eb4cddfcb7e1916a18402bd`
 - AlphaEarth index SHA-256：`15875963d1bf4dd3f35a1f6c3ec6329378fef0fab6549fac677552f1d348f736`
 - 数据清单 SHA-256：`d026f04aafdc218380798cbe84bf390d179b483aff1cfc41b0a68ce8ad11d957`
-- 审计 JSON SHA-256：`6e87cd77a3080620d67ae65c01d83a9f8ded491034e9ff15a8ec6e414de86df7`
-- 审计文本 SHA-256：`ec2d66d8b9b1bd438977c5ac5717b87c69c82577814cddebaa770c05ded1474c`
+- 审计 JSON SHA-256：`5fc3530847b943c2244927187fb1cb5e033f84a83c19a741e7c956909810cbc5`
+- 审计文本 SHA-256：`8bc5db133b2b9c8ace96f118d98551ff2dab8d64fc7dda89bc41c8995466cfac`
 
 插件实际位置为
 `Contents/lib/osgPlugins-3.6.5/osgdb_science.so`，候选中恰好一份。`nm -gU` 只输出：
 
 ```text
-0000000000005068 T _osgsol_science_g0_probe_anchor
+0000000000005110 T _osgsol_science_g0_probe_anchor
 ```
 
 科学插件专属依赖闭包由以下五个文件组成：
@@ -80,12 +82,12 @@ fontconfig 使用包内确定性配置，同时继续尊重用户已经设置的
 
 | 门槛 | 实测 | 结论 |
 | --- | ---: | --- |
-| 运行时增量 | 33,776,401 bytes（约 32.21 MiB） | PASS |
+| 运行时增量 | 33,776,769 bytes（约 32.21 MiB） | PASS |
 | 已验证科学数据 | 87,183,360 bytes（约 83.14 MiB） | PASS |
-| 包体总增量 | 120,959,761 bytes（约 115.36 MiB） | PASS |
-| 科学插件闭包 | 31,734,368 bytes（约 30.26 MiB） | PASS |
+| 包体总增量 | 120,960,129 bytes（约 115.36 MiB） | PASS |
+| 科学插件闭包 | 31,734,624 bytes（约 30.26 MiB） | PASS |
 
-批准基线为 542,594,200 bytes，候选总大小为 663,553,961 bytes。本轮没有依靠放宽包
+批准基线为 542,594,200 bytes，候选总大小为 663,554,329 bytes。本轮没有依靠放宽包
 大小标准过关；即使按用户允许适度放松的方向评估，当前值也已在既有 PASS 范围内。
 
 ## 验证记录
@@ -112,6 +114,31 @@ fontconfig 使用包内确定性配置，同时继续尊重用户已经设置的
 面板入口和普通 Earth 主程序没有被删减或改成占位实现。现有科学单元测试仍直接覆盖内部
 库；产品主程序只是把同一套对象的所有权移到插件内部。相机、地图、图层、照片、Quit 和
 面板布局的既有回归均包含在 54 个离线测试中并保持通过。
+
+## 2026-07-19 首次启动崩溃与修复
+
+用户手动打开来源提交 `f8b6034` 的首个插件候选后，程序在约 2.2 秒内退出。对应报告为
+`~/Library/Logs/DiagnosticReports/osgSol_Earth-2026-07-19-141458.ips`，候选主程序和插件
+UUID 与报告完全匹配。异常为 `EXC_BAD_ACCESS / SIGSEGV`，非法地址 `0x1470`；崩溃线程
+位于首次科学面板绘制，栈顶业务函数是
+`ScienceEarthPanel::drawOperations(...) + 104`。
+
+根因不是签名或 macOS 安全机制，而是主程序和插件分别静态链接了 Dear ImGui。二者各自有
+一个 `GImGui` 全局：主程序副本已有 context，插件副本仍为空。Dear ImGui 自身头文件明确
+要求跨静态库/DLL 边界调用时同时执行 `SetCurrentContext()` 和
+`SetAllocatorFunctions()`；旧 ABI 没有提供这条桥，因此插件第一次调用
+`ImGui::CollapsingHeader()` 就解引用空 context。
+
+提交 `4252e75` 将插件 ABI 升至 v2，增加 context 与 allocator 桥。主程序在左右科学面板
+每次绘制前传递当前 context、allocate、deallocate 和 user data；插件绑定后才绘制。任一
+必要项为空时，门面跳过绘制而不进入插件。失败测试先证明旧 ABI 缺失该能力，随后聚焦测试
+验证每次绘制都先绑定、参数逐项一致、缺失 context 不调用绘制、旧 ABI 和缺函数表继续
+fail closed。
+
+旧崩溃候选及原审计报告保存在
+`build/science_g0_plugin_audit/broken-f8b6034/`，不能再用于手测。固定候选路径已替换为来源
+提交 `4252e75` 的修复包。本代理没有启动修复包，因此“能够实际启动且退出不产生新 `.ips`”
+仍须由用户手动确认。
 
 ## 后续必须补做
 

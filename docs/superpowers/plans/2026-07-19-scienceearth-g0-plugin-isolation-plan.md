@@ -56,7 +56,15 @@
 **Interfaces:**
 
 ```cpp
-struct OsgSolSciencePluginApiV1
+struct OsgSolScienceGuiBridgeV1
+{
+    void* context;
+    OsgSolScienceAllocateFunction allocate;
+    OsgSolScienceDeallocateFunction deallocate;
+    void* allocatorUserData;
+};
+
+struct OsgSolSciencePluginApiV2
 {
     std::uint32_t abiVersion;
     std::uint32_t structSize;
@@ -66,15 +74,18 @@ struct OsgSolSciencePluginApiV1
     void (*setVisible)(void* session, bool visible);
     void (*registerAiTools)(void* session, earthai::ToolRegistry*,
                             LayerManager*, osgVerse::EarthManipulator*);
+    void (*bindGui)(void* session, const OsgSolScienceGuiBridgeV1*);
     void (*drawOperations)(void* session, LayerManager*,
                            osgVerse::EarthManipulator*);
     void (*drawResults)(void* session, LayerManager*);
 };
 
-using OsgSolScienceAnchor = const OsgSolSciencePluginApiV1* (*)();
+using OsgSolScienceAnchor = const OsgSolSciencePluginApiV2* (*)();
 ```
 
 The only externally visible symbol is the C anchor `_osgsol_science_g0_probe_anchor`. `SciencePluginRuntime` exposes `load`, `available`, `error`, `sceneNode`, `setVisible`, `registerAiTools`, `drawOperations`, and `drawResults`. Its destructor destroys the opaque session but intentionally keeps the module loaded until process exit so OSG-held node destructors and callbacks cannot jump into an unloaded image.
+
+Post-implementation runtime evidence required ABI v2: the host and plugin each statically link Dear ImGui and therefore own separate `GImGui` globals. Before either panel draw, the host passes the active context plus allocator functions and the plugin calls `SetAllocatorFunctions` and `SetCurrentContext`. An incomplete bridge skips drawing; an ABI v1 plugin is rejected.
 
 - [x] **Step 1: Write failing fake-ABI tests**
 
