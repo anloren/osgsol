@@ -10,9 +10,8 @@ def read(relative_path):
 
 
 class ScienceQueryConsumerContractTests(unittest.TestCase):
-    def test_all_consumers_use_query_service(self):
+    def test_query_service_remains_inside_plugin_implementation(self):
         for relative_path in (
-            "applications/earth_explorer/EarthControlUI.h",
             "applications/earth_explorer/science_preview_layer.h",
             "applications/earth_explorer/science_preview_layer.cpp",
             "applications/earth_explorer/science_ai_tools.h",
@@ -22,23 +21,45 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
             self.assertNotIn("SciencePreviewRuntime", source, relative_path)
             self.assertIn("ScienceQueryService", source, relative_path)
 
-    def test_main_owns_one_registry_provider_and_service(self):
-        source = read("applications/earth_explorer/earth_main.cpp")
-        self.assertIn("ScienceSourceRegistry", source)
-        self.assertIn("AlphaEarthProvider", source)
-        self.assertIn("Sentinel2Provider", source)
-        self.assertIn("CopernicusDemProvider", source)
-        self.assertIn("ScienceQueryService", source)
-        self.assertNotIn("new earthscience::SciencePreviewRuntime", source)
-        self.assertIn("new SciencePreviewLayer(scienceService.get())", source)
+        control = read("applications/earth_explorer/EarthControlUI.h")
+        self.assertNotIn("ScienceQueryService", control)
+        self.assertIn("SciencePluginRuntime", control)
+        self.assertIn("_scienceRuntime->drawOperations", control)
+        self.assertIn("_scienceRuntime->drawResults", control)
+
+    def test_plugin_owns_one_registry_provider_and_service(self):
+        plugin = read("applications/earth_explorer/science_plugin_entry.cpp")
+        for token in (
+            "ScienceSourceRegistry",
+            "AlphaEarthProvider",
+            "Sentinel2Provider",
+            "CopernicusDemProvider",
+            "ScienceQueryService",
+            "new SciencePreviewLayer(service.get())",
+        ):
+            self.assertIn(token, plugin)
+        self.assertNotIn("SciencePreviewRuntime", plugin)
+
+        main = read("applications/earth_explorer/earth_main.cpp")
+        for forbidden in (
+            "ScienceSourceRegistry",
+            "AlphaEarthProvider",
+            "Sentinel2Provider",
+            "CopernicusDemProvider",
+            "ScienceQueryService",
+            "SciencePreviewLayer",
+        ):
+            self.assertNotIn(forbidden, main)
+        self.assertIn("SciencePluginRuntime scienceRuntime", main)
+        self.assertIn("scienceRuntime.registerAiTools", main)
 
     def test_ui_catalog_exposes_meaning_health_and_provenance(self):
         control = read("applications/earth_explorer/EarthControlUI.h")
         source = read("applications/earth_explorer/science_earth_panel.cpp")
         query_builder = read(
             "applications/earth_explorer/science_query_builder.h")
-        self.assertIn("_sciencePanel.drawOperations(", control)
-        self.assertIn("_sciencePanel.drawResults(", control)
+        self.assertIn("_scienceRuntime->drawOperations(", control)
+        self.assertIn("_scienceRuntime->drawResults(", control)
         self.assertIn("finishLeftThenDrawScienceResults(", control)
 
         executable_contract = read("tests/earth_control_layout_tests.cpp")
