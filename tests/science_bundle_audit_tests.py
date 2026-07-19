@@ -532,6 +532,25 @@ class ScienceBundleAuditTests(unittest.TestCase):
                          "REVIEW_REQUIRED")
         self.assertEqual(AUDIT.classify_size(60 * AUDIT.MIB + 1), "STOP")
 
+    def test_v2_size_budgets_have_exact_pass_review_stop_boundaries(self):
+        mib = 1024 * 1024
+        cases = (
+            ((40 * mib, 128 * mib, 160 * mib, 40 * mib), "PASS"),
+            ((40 * mib + 1, 128 * mib, 160 * mib, 40 * mib),
+             "REVIEW_REQUIRED"),
+            ((60 * mib + 1, 1, 1, 1), "STOP"),
+            ((1, 128 * mib + 1, 1, 1), "REVIEW_REQUIRED"),
+            ((1, 160 * mib + 1, 1, 1), "STOP"),
+            ((1, 1, 160 * mib + 1, 1), "REVIEW_REQUIRED"),
+            ((1, 1, 192 * mib + 1, 1), "STOP"),
+            ((1, 1, 1, 60 * mib + 1), "STOP"),
+        )
+        for values, expected in cases:
+            with self.subTest(values=values):
+                self.assertEqual(
+                    AUDIT.evaluate_v2_size_gates(*values)["status"],
+                    expected)
+
     def test_combined_size_gate_has_exact_cli_status_and_exit_codes(self):
         cases = [
             (40 * AUDIT.MIB, 40 * AUDIT.MIB, "PASS", 0),

@@ -13,8 +13,19 @@ from pathlib import Path
 
 
 MIB = 1024 * 1024
-TARGET_ADDED_BYTES = 40 * MIB
-HARD_STOP_ADDED_BYTES = 60 * MIB
+RUNTIME_TARGET_BYTES = 40 * MIB
+RUNTIME_STOP_BYTES = 60 * MIB
+SCIENCE_DATA_TARGET_BYTES = 128 * MIB
+SCIENCE_DATA_STOP_BYTES = 160 * MIB
+COMBINED_TARGET_BYTES = 160 * MIB
+COMBINED_STOP_BYTES = 192 * MIB
+SCIENCE_CLOSURE_TARGET_BYTES = 40 * MIB
+SCIENCE_CLOSURE_STOP_BYTES = 60 * MIB
+
+# Compatibility names for the original two-gate policy. Existing callers and
+# tests continue to exercise these while G0 v2 accounting is integrated.
+TARGET_ADDED_BYTES = RUNTIME_TARGET_BYTES
+HARD_STOP_ADDED_BYTES = RUNTIME_STOP_BYTES
 SYSTEM_PREFIXES = ("/System/Library/", "/usr/lib/")
 FORBIDDEN_PREFIXES = ("/opt/homebrew", "/usr/local")
 SCIENCE_DEPENDENCY_PATTERN = re.compile(
@@ -173,6 +184,52 @@ def classify_size(size_bytes):
     if size_bytes <= HARD_STOP_ADDED_BYTES:
         return "REVIEW_REQUIRED"
     return "STOP"
+
+
+def classify_bounded_size(value, target, stop):
+    if value <= target:
+        return "PASS"
+    if value <= stop:
+        return "REVIEW_REQUIRED"
+    return "STOP"
+
+
+def evaluate_v2_size_gates(runtime_delta_bytes, science_data_bytes,
+                           total_delta_bytes, science_closure_bytes):
+    values = {
+        "runtime_delta": (
+            runtime_delta_bytes, RUNTIME_TARGET_BYTES, RUNTIME_STOP_BYTES),
+        "science_data": (
+            science_data_bytes,
+            SCIENCE_DATA_TARGET_BYTES,
+            SCIENCE_DATA_STOP_BYTES),
+        "combined_delta": (
+            total_delta_bytes, COMBINED_TARGET_BYTES, COMBINED_STOP_BYTES),
+        "science_closure": (
+            science_closure_bytes,
+            SCIENCE_CLOSURE_TARGET_BYTES,
+            SCIENCE_CLOSURE_STOP_BYTES),
+    }
+    gates = {
+        name: classify_bounded_size(value, target, stop)
+        for name, (value, target, stop) in values.items()
+    }
+    status = (
+        "STOP" if "STOP" in gates.values()
+        else "REVIEW_REQUIRED" if "REVIEW_REQUIRED" in gates.values()
+        else "PASS")
+    return {
+        "status": status,
+        "exit_code": {
+            "PASS": 0,
+            "REVIEW_REQUIRED": 2,
+            "STOP": 1,
+        }[status],
+        "size_gates": gates,
+        "values": {
+            name: value for name, (value, _, _) in values.items()
+        },
+    }
 
 
 def evaluate_size_gates(delta_bytes, science_closure_bytes):
