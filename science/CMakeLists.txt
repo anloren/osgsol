@@ -97,6 +97,40 @@ TARGET_LINK_LIBRARIES(osgSolSciencePreview
 INSTALL(TARGETS osgSolScienceCore osgSolSciencePreview
         ARCHIVE DESTINATION ${INSTALL_LIBDIR})
 
+SET(OSGSOL_SCIENCE_EARTH_DIR
+    "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
+ADD_LIBRARY(osgdb_science MODULE
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_plugin_entry.cpp"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_plugin_api.h"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_preview_layer.cpp"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_preview_layer.h"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_ai_tools.cpp"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_ai_tools.h"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_query_builder.h"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_earth_panel.cpp"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_earth_panel.h")
+TARGET_COMPILE_FEATURES(osgdb_science PRIVATE cxx_std_17)
+TARGET_INCLUDE_DIRECTORIES(osgdb_science PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${OSGSOL_SCIENCE_EARTH_DIR}"
+    "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
+TARGET_LINK_LIBRARIES(osgdb_science
+    osgSolSciencePreview
+    osgVerseReaderWriter
+    osgVersePipeline
+    osgVerseModeling
+    osgVerseDependency
+    osgVerseUI
+    osgVerseAI)
+LINK_OSG_LIBRARY(osgdb_science OpenThreads osg osgDB osgGA osgUtil osgViewer)
+SET_TARGET_PROPERTIES(osgdb_science PROPERTIES
+    PREFIX ""
+    SUFFIX ".so"
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    LINK_FLAGS "-Wl,-exported_symbol,_osgsol_science_g0_probe_anchor")
+INSTALL(TARGETS osgdb_science LIBRARY DESTINATION ${INSTALL_PLUGINDIR})
+
 ADD_EXECUTABLE(osgSol_Smoke_Sentinel2Production EXCLUDE_FROM_ALL
     Sentinel2ProductionSmoke.cpp)
 TARGET_COMPILE_FEATURES(osgSol_Smoke_Sentinel2Production PRIVATE cxx_std_17)

@@ -55,12 +55,7 @@
 #include "feeds/firms_feed.h"
 #include "geo_primitives.h"
 #if OSGSOL_BUILD_SCIENCE
-#include <AlphaEarthProvider.h>
-#include <CopernicusDemProvider.h>
-#include <Sentinel2Provider.h>
-#include <ScienceQueryService.h>
-#include "science_preview_layer.h"
-#include "science_ai_tools.h"
+#include "science_plugin_runtime.h"
 #endif
 #include <VerseCommon.h>
 #if defined(__APPLE__)
@@ -977,36 +972,22 @@ int main(int argc, char** argv)
     LayerManager layerMgr;
     viewer.addEventHandler(new LayerManagerDrainHandler(&layerMgr));
 #if OSGSOL_BUILD_SCIENCE
+    SciencePluginRuntime scienceRuntime;
     std::string scienceIndexPath =
         MISC_DIR + std::string("science/alphaearth/alphaearth.sqlite");
     if (const char* indexEnv = getenv("OSGSOL_ALPHAEARTH_INDEX"))
         if (*indexEnv) scienceIndexPath = indexEnv;
-    auto scienceRegistry =
-        std::make_unique<earthscience::ScienceSourceRegistry>();
-    std::string scienceProviderError;
-    if (!scienceRegistry->add(
-            std::make_unique<earthscience::AlphaEarthProvider>(scienceIndexPath),
-            scienceProviderError))
-        OSG_WARN << "ScienceEarth provider registration failed: "
-                 << scienceProviderError << std::endl;
-    scienceProviderError.clear();
-    if (!scienceRegistry->add(
-            std::make_unique<earthscience::Sentinel2Provider>(),
-            scienceProviderError))
-        OSG_WARN << "ScienceEarth Sentinel-2 registration failed: "
-                 << scienceProviderError << std::endl;
-    scienceProviderError.clear();
-    if (!scienceRegistry->add(
-            std::make_unique<earthscience::CopernicusDemProvider>(),
-            scienceProviderError))
-        OSG_WARN << "ScienceEarth Copernicus DEM registration failed: "
-                 << scienceProviderError << std::endl;
-    auto scienceService =
-        std::make_unique<earthscience::ScienceQueryService>(
-            std::move(scienceRegistry));
-    osg::ref_ptr<SciencePreviewLayer> scienceLayer =
-        new SciencePreviewLayer(scienceService.get());
-    sceneCamera->addChild(scienceLayer.get());
+    const std::string sciencePluginPath =
+        BASE_DIR + std::string("/") + OSGPLUGIN_PREFIX +
+        std::string("/osgdb_science.so");
+    if (!scienceRuntime.load(sciencePluginPath, scienceIndexPath))
+    {
+        OSG_WARN << scienceRuntime.error() << std::endl;
+    }
+    else if (osg::Node* scienceNode = scienceRuntime.sceneNode())
+    {
+        sceneCamera->addChild(scienceNode);
+    }
 #endif
     {
         OverlayLayer base; base.id = "base"; base.displayName = u8"卫星影像";
@@ -1024,22 +1005,25 @@ int main(int argc, char** argv)
         layerMgr.add(labels);
 
 #if OSGSOL_BUILD_SCIENCE
-        OverlayLayer alphaearth;
-        alphaearth.id = "alphaearth";
-        alphaearth.displayName = u8"ScienceEarth 科学影像";
-        alphaearth.group = "ScienceEarth";
-        alphaearth.subtitle =
-            u8"当前科学结果 · 数据源和证据见 ScienceEarth 结果面板";
-        alphaearth.type = OverlayLayer::Grid;
-        alphaearth.enabled = false;
-        alphaearth.shape = earthmark::MarkerShape::Square;
-        alphaearth.iconColor = osg::Vec4(0.25f, 0.82f, 1.0f, 1.0f);
-        SciencePreviewLayer* scienceLayerPtr = scienceLayer.get();
-        alphaearth.apply = [scienceLayerPtr](const OverlayLayer& layer)
+        if (scienceRuntime.available())
         {
-            scienceLayerPtr->setVisible(layer.enabled);
-        };
-        layerMgr.add(alphaearth);
+            OverlayLayer alphaearth;
+            alphaearth.id = "alphaearth";
+            alphaearth.displayName = u8"ScienceEarth 科学影像";
+            alphaearth.group = "ScienceEarth";
+            alphaearth.subtitle =
+                u8"当前科学结果 · 数据源和证据见 ScienceEarth 结果面板";
+            alphaearth.type = OverlayLayer::Grid;
+            alphaearth.enabled = false;
+            alphaearth.shape = earthmark::MarkerShape::Square;
+            alphaearth.iconColor = osg::Vec4(0.25f, 0.82f, 1.0f, 1.0f);
+            SciencePluginRuntime* scienceRuntimePtr = &scienceRuntime;
+            alphaearth.apply = [scienceRuntimePtr](const OverlayLayer& layer)
+            {
+                scienceRuntimePtr->setVisible(layer.enabled);
+            };
+            layerMgr.add(alphaearth);
+        }
 #endif
 
         LayerManager* lmptr = &layerMgr;
@@ -1318,9 +1302,8 @@ int main(int argc, char** argv)
     if (aiMedia) aiMedia->setContentSize(w, h);   // 快照按渲染内容区裁剪(去掉整窗多余底色边条)
 
 #if OSGSOL_BUILD_SCIENCE
-    registerScienceResearchTools(aiRuntime.tools, scienceService.get(),
-                                 scienceLayer.get(), &layerMgr,
-                                 earthManipulator.get());
+    scienceRuntime.registerAiTools(aiRuntime.tools, &layerMgr,
+                                   earthManipulator.get());
 #endif
 
     if (aiRuntime.tools && shipLayer)
@@ -1458,8 +1441,7 @@ int main(int argc, char** argv)
     ctrlUI->_aiCore = aiCore;
     ctrlUI->_aiMedia = aiMedia;
 #if OSGSOL_BUILD_SCIENCE
-    ctrlUI->_scienceService = scienceService.get();
-    ctrlUI->_scienceLayer = scienceLayer.get();
+    ctrlUI->_scienceRuntime = &scienceRuntime;
 #endif
     imgui->initialize(ctrlUI, false);
     imgui->addToView(&viewer, cameras[3]);  // cameras[3] = finalCamera (HUD, renders to screen)

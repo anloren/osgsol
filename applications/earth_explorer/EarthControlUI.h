@@ -29,9 +29,7 @@
 #include "earth_control_layout.h"
 #include <readerwriter/TileCallback.h>
 #if OSGSOL_BUILD_SCIENCE
-#include <ScienceQueryService.h>
-#include "science_earth_panel.h"
-#include "science_preview_layer.h"
+#include "science_plugin_runtime.h"
 #endif
 
 // EarthExplorer 的 ImGui 控制面板。直接驱动 EarthManipulator 与 EarthAtmosphereOcean，
@@ -49,9 +47,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
     earthai::AIChatCore* _aiCore = nullptr;   // 由 main 注入；draw() 内部对空指针安全
     earthai::MediaManager* _aiMedia = nullptr;   // 由 main 注入；为空则📷按钮禁用(见 draw())
 #if OSGSOL_BUILD_SCIENCE
-    earthscience::ScienceQueryService* _scienceService = nullptr;
-    SciencePreviewLayer* _scienceLayer = nullptr;
-    ScienceEarthPanel _sciencePanel;
+    SciencePluginRuntime* _scienceRuntime = nullptr;
 #endif
     float _sunAz, _sunEl;     // 太阳方位角/高度角（度）
     float _exposure;          // HDR 曝光
@@ -405,8 +401,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             // 地震详情等「信息呈现」UI 不在此操作面板内,统一放右上角独立面板(见 End() 之后)。
 
 #if OSGSOL_BUILD_SCIENCE
-            _sciencePanel.drawOperations(
-                _scienceService, _scienceLayer, _layers, _mani);
+            if (_scienceRuntime)
+                _scienceRuntime->drawOperations(_layers, _mani);
 #endif
 
             // ---- 跳转 ----
@@ -483,13 +479,14 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             ImGui::PopTextWrapPos();
         }
 #if OSGSOL_BUILD_SCIENCE
-        earthui::finishLeftThenDrawScienceResults(
-            []() { ImGui::End(); },
-            [this]()
-            {
-                _sciencePanel.drawResults(
-                    _scienceService, _scienceLayer, _layers);
-            });
+        if (_scienceRuntime && _scienceRuntime->available())
+        {
+            earthui::finishLeftThenDrawScienceResults(
+                []() { ImGui::End(); },
+                [this]() { _scienceRuntime->drawResults(_layers); });
+        }
+        else
+            ImGui::End();
 #else
         ImGui::End();
 #endif

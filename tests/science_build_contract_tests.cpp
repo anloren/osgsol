@@ -15,7 +15,10 @@ int main()
 
     const std::string targets = OSGSOL_BUILD_TARGETS_VALUE;
     if (OSGSOL_BUILD_SCIENCE_VALUE == 1)
+    {
         CHECK(targets.find("osgSolScienceCore") != std::string::npos);
+        CHECK(targets.find("osgdb_science") != std::string::npos);
+    }
     else
     {
         CHECK(OSGSOL_BUILD_SCIENCE_VALUE == 0);

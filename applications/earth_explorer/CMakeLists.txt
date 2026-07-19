@@ -13,9 +13,8 @@ SET(EXECUTABLE_FILES
 
 IF(OSGSOL_BUILD_SCIENCE)
     LIST(APPEND EXECUTABLE_FILES
-         science_preview_layer.cpp science_preview_layer.h
-         science_ai_tools.cpp science_ai_tools.h science_query_builder.h
-         science_earth_panel.cpp science_earth_panel.h)
+         science_plugin_runtime.cpp science_plugin_runtime.h
+         science_plugin_api.h)
 ENDIF()
 
 IF(APPLE)
@@ -43,7 +42,7 @@ TARGET_LINK_LIBRARIES(${EXE_NAME} osgVerseReaderWriter osgVerseAnimation osgVers
                       osgVerseWrappers osgVerseModeling osgVerseScript osgVerseUI osgVerseAI
                       osgVerseDependency ${EXTERNAL_LIBRARIES})
 IF(OSGSOL_BUILD_SCIENCE)
-    TARGET_LINK_LIBRARIES(${EXE_NAME} osgSolSciencePreview)
+    TARGET_LINK_LIBRARIES(${EXE_NAME} ${CMAKE_DL_LIBS})
     TARGET_COMPILE_DEFINITIONS(${EXE_NAME} PRIVATE OSGSOL_BUILD_SCIENCE=1)
 ELSE()
     TARGET_COMPILE_DEFINITIONS(${EXE_NAME} PRIVATE OSGSOL_BUILD_SCIENCE=0)
@@ -53,6 +52,22 @@ TARGET_COMPILE_OPTIONS(${EXE_NAME} PUBLIC -D_SCL_SECURE_NO_WARNINGS)
 IF(APPLE)
     TARGET_LINK_LIBRARIES(${EXE_NAME} "-framework Cocoa")   # ime_bridge.mm 的 AppKit 依赖
 ENDIF(APPLE)
+
+IF(APPLE AND OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
+    FIND_PACKAGE(Python3 COMPONENTS Interpreter REQUIRED)
+    ADD_TEST(NAME osgSol_Test_SciencePluginContract
+        COMMAND ${CMAKE_COMMAND} -E env
+            PYTHONDONTWRITEBYTECODE=1
+            OSGSOL_SCIENCE_PLUGIN=$<TARGET_FILE:osgdb_science>
+            OSGSOL_SCIENCE_MAIN=$<TARGET_FILE:${EXE_NAME}>
+            OSGSOL_SCIENCE_MAIN_LINK_FILE=${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${EXE_NAME}.dir/link.txt
+            ${Python3_EXECUTABLE} -m unittest
+            tests.science_plugin_contract_tests -v)
+    SET_TESTS_PROPERTIES(osgSol_Test_SciencePluginContract PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        LABELS "offline;scienceearth"
+        TIMEOUT 30)
+ENDIF()
 
 IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
     ADD_EXECUTABLE(osgSol_Test_ScienceEarthPanel
