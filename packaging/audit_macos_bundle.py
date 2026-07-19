@@ -37,6 +37,20 @@ SCIENCE_STRING_PATTERN = re.compile(
     r"proj_(?:context_create|create_crs_to_crs)|"
     r"ZSTD_(?:compress|decompress|createDStream))")
 ALLOWED_SCIENCE_EXPORTS = frozenset({"_osgsol_science_g0_probe_anchor"})
+ROOT_CAUSE_CATEGORIES = {
+    "science-static-linkage": {
+        "static_science_symbol", "static_science_string",
+        "dynamic_science_dependency", "main_reaches_science_dependency",
+    },
+    "missing-science-plugin": {"missing_science_plugin"},
+    "forbidden-compiled-paths": {
+        "forbidden_runtime_reference", "forbidden_rpath", "forbidden_string",
+        "external_dependency",
+    },
+    "unresolved-dependencies": {"unresolved_dependency"},
+    "science-export-surface": {"exported_science_symbol"},
+    "invalid-science-data": {"invalid_science_data_manifest"},
+}
 
 
 FINDING_SCHEMA_VERSION = 1
@@ -134,6 +148,28 @@ def compare_identity_sets(candidate, ceiling):
 def _finding_summary(finding):
     return (f"{finding['owner']} {finding['category']}: "
             f"{finding['subject']}")
+
+
+def summarize_root_causes(findings):
+    summaries = []
+    for root_cause, categories in sorted(ROOT_CAUSE_CATEGORIES.items()):
+        matching = [
+            finding for finding in findings
+            if finding["category"] in categories
+        ]
+        if not matching:
+            continue
+        summaries.append({
+            "id": root_cause,
+            "finding_count": len(matching),
+            "affected_owners": sorted({
+                finding["owner"] for finding in matching
+            }),
+            "representative_subjects": sorted({
+                finding["subject"] for finding in matching
+            })[:5],
+        })
+    return summaries
 
 
 def evaluate_isolation(findings, science_nodes, reference, ratchet_ids):
@@ -636,6 +672,7 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
     unresolved = sorted(set(unresolved))
     findings_by_id = {item["identity"]: item for item in findings}
     findings = [findings_by_id[item] for item in sorted(findings_by_id)]
+    root_causes = summarize_root_causes(findings)
     if reference_manifest is None:
         policy = {
             "tier_a": {"status": "NOT_EVALUATED", "violations": []},
@@ -713,6 +750,7 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
         },
         "review_items": size_result["review_items"],
         "findings": findings,
+        "root_causes": root_causes,
         "manifests": manifests,
         "tier_a": policy["tier_a"],
         "tier_b": policy["tier_b"],
@@ -729,6 +767,7 @@ def render_text(result):
             f"Error: {result['error']}\n")
     lines = [
         f"ScienceEarth macOS bundle audit: {result['status']}",
+        f"Policy: {result['thresholds']['policy_version']}",
         f"App: {result['app']}",
         f"Baseline: {result['baseline']}",
         "",
@@ -741,14 +780,28 @@ def render_text(result):
         f"  science closure: {result['sizes']['science_closure_bytes']} bytes",
         "",
         "Size gates",
-        f"  policy: {result['thresholds']['policy_version']}",
         f"  runtime delta: {result['size_gates']['runtime_delta']}",
         f"  verified science data: {result['size_gates']['science_data']}",
         f"  combined delta: {result['size_gates']['combined_delta']}",
         f"  science closure: {result['size_gates']['science_closure']}",
         "",
-        "Dependency graph",
+        "Root causes",
     ]
+    for root_cause in result["root_causes"]:
+        lines.append(
+            f"  {root_cause['id']}: {root_cause['finding_count']} findings; "
+            f"owners={', '.join(root_cause['affected_owners'])}")
+        lines.extend(
+            f"    {subject}"
+            for subject in root_cause["representative_subjects"])
+    if not result["root_causes"]:
+        lines.append("  none")
+    lines.extend([
+        "",
+        f"Unresolved dependencies: {len(result['unresolved'])}",
+        "",
+        "Dependency graph",
+    ])
     for node, edges in sorted(result["graph"].items()):
         lines.append(f"  {node}")
         for edge in edges:

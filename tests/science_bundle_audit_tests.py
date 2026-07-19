@@ -608,6 +608,47 @@ class ScienceBundleAuditTests(unittest.TestCase):
         self.assertEqual(delta["new"], [changed])
         self.assertEqual(delta["removed"], [old])
 
+    def test_root_causes_group_noise_without_discarding_raw_findings(self):
+        findings = []
+        for index in range(100):
+            findings.append(AUDIT.make_finding(
+                "Contents/MacOS/main", "static_science_symbol",
+                f"000000000000{index:04x} T _GDALSymbol{index}", []))
+        for index in range(20):
+            findings.append(AUDIT.make_finding(
+                "Contents/lib/libreaderwriter.so", "static_science_symbol",
+                f"000000000001{index:04x} T _ZSTDSymbol{index}", []))
+        findings.append(AUDIT.make_finding(
+            "osgdb_science.so", "missing_science_plugin", "0", []))
+        findings.extend((
+            AUDIT.make_finding(
+                "Contents/MacOS/main", "forbidden_string",
+                "/usr/local/lib/gdalplugins", []),
+            AUDIT.make_finding(
+                "Contents/lib/libfontconfig.dylib", "forbidden_string",
+                "/opt/homebrew/etc/fonts", []),
+        ))
+        findings.append(AUDIT.make_finding(
+            "Contents/MacOS/main", "unresolved_dependency",
+            "@rpath/libmissing.dylib", []))
+
+        root_causes = AUDIT.summarize_root_causes(findings)
+
+        self.assertEqual(len(findings), 124)
+        self.assertEqual(
+            [item["id"] for item in root_causes],
+            [
+                "forbidden-compiled-paths",
+                "missing-science-plugin",
+                "science-static-linkage",
+                "unresolved-dependencies",
+            ])
+        self.assertEqual(
+            next(item for item in root_causes
+                 if item["id"] == "science-static-linkage")["finding_count"],
+            120)
+        self.assertEqual(len(findings), 124)
+
     def test_recursively_audits_main_libraries_and_unreferenced_plugins(self):
         probe = BundleFixture(self.root)
         result = audit(probe.app, self.baseline.app, self.valid_inspector())
@@ -989,11 +1030,18 @@ class ScienceBundleAuditTests(unittest.TestCase):
         self.assertEqual(payload["status"], "STOP")
         report = AUDIT.render_text(payload)
         for section in (
-                "Dependency graph", "Science-only closure", "Size gates",
+                "Root causes", "Unresolved dependencies", "Dependency graph",
+                "Science-only closure", "Size gates",
                 "Isolation manifests", "Tier A science closure",
                 "Tier B non-science delta", "Historical absolute debt",
                 "Removed debt", "New findings", "Violations"):
             self.assertIn(section, report)
+        self.assertLess(report.index("Size gates"), report.index("Root causes"))
+        self.assertLess(
+            report.index("Root causes"), report.index("Unresolved dependencies"))
+        self.assertLess(
+            report.index("Unresolved dependencies"),
+            report.index("Dependency graph"))
 
     def test_real_macho_audit_uses_pass_review_and_stop_exit_codes(self):
         baseline = self.root / "TierBaseline.app"
