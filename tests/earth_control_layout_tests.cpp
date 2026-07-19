@@ -144,7 +144,7 @@ int main()
     CHECK(panel.find(u8"尚无可测时长") != std::string::npos);
     CHECK(panel.find("sciencePanelModeCapabilities(source, activeMode)") !=
           std::string::npos);
-    CHECK(panel.find(u8"静态 2021 公共发布 · 无年份滑块") !=
+    CHECK(panel.find(u8"静态 2021 公共发布 · 无年份控件") !=
           std::string::npos);
     CHECK(panel.find("sciencePanelPrimaryActionLabel(activeMode, source.id)") !=
           std::string::npos);

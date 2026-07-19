@@ -444,7 +444,9 @@ namespace osgVerse
     inline std::vector<unsigned char> loadFileData(const std::string& url)
     { std::string mimeType, encodingType; return loadFileData(url, mimeType, encodingType); }
 
-    /** True only for the exact known Google "Zoom Level Not Supported" PNG response. */
+    /** True only for the exact known Google "Zoom Level Not Supported" PNG response.
+     *  URL form is intentionally ignored because the same placeholder may pass through
+     *  normalized, cached, or alternate request paths. */
     OSGVERSE_RW_EXPORT bool isUnsupportedGoogleZoomTile(
             const std::string& url, const std::vector<unsigned char>& bytes);
 

@@ -157,14 +157,14 @@ int main()
           SciencePanelMode::RegionalChange);
     CHECK(std::string(sciencePanelPrimaryActionLabel(
               SciencePanelMode::Preview, sentinelSource.id)) ==
-          u8"加载 Sentinel-2 真彩场景");
+          u8"加载近期 Sentinel-2 真彩影像");
     CHECK(sciencePanelModesForSource(demSource) ==
           std::vector<SciencePanelMode>({SciencePanelMode::Preview}));
     CHECK(!sciencePanelModeCapabilities(
                demSource, SciencePanelMode::Preview).showsSingleYear);
     CHECK(std::string(sciencePanelPrimaryActionLabel(
               SciencePanelMode::Preview, demSource.id)) ==
-          u8"加载 Copernicus DEM 高程");
+          u8"加载当前视野的地表高程");
 
     const earthscience::GeoTemporalQuery demPreview =
         makeCopernicusDemPreviewQuery(
@@ -212,7 +212,8 @@ int main()
     CHECK(!previewCapabilities.supportsPca);
     CHECK(!previewCapabilities.supportsClustering);
     CHECK(std::string(sciencePanelPrimaryActionLabel(
-              SciencePanelMode::Preview)) == u8"加载伪彩预览");
+              SciencePanelMode::Preview)) ==
+          u8"加载所选年份的空间特征图");
 
     const SciencePanelModeCapabilities seriesCapabilities =
         sciencePanelModeCapabilities(SciencePanelMode::PointSeries);
@@ -223,7 +224,24 @@ int main()
     CHECK(!seriesCapabilities.supportsPca);
     CHECK(!seriesCapabilities.supportsClustering);
     CHECK(std::string(sciencePanelPrimaryActionLabel(
-              SciencePanelMode::PointSeries)) == u8"分析点位年度变化");
+              SciencePanelMode::PointSeries)) ==
+          u8"开始比较当前位置的历年变化");
+    CHECK(std::string(sciencePanelModeLabel(
+              SciencePanelMode::PointSeries, alphaSource.id)) ==
+          u8"比较当前位置的历年变化");
+    const std::string pointExplanation = sciencePanelModeDescription(
+        SciencePanelMode::PointSeries, alphaSource.id);
+    CHECK(pointExplanation.find(u8"64 维") != std::string::npos);
+    CHECK(pointExplanation.find(u8"不等同于") != std::string::npos);
+    SciencePanelState pointSelection;
+    pointSelection.firstYear = 2020;
+    pointSelection.lastYear = 2025;
+    const std::string pointSummary = sciencePanelSelectionSummary(
+        SciencePanelMode::PointSeries, pointSelection, alphaSource.id);
+    CHECK(pointSummary.find("2020") != std::string::npos);
+    CHECK(pointSummary.find("2025") != std::string::npos);
+    CHECK(pointSummary.find(u8"6 个年度") != std::string::npos);
+    CHECK(pointSummary.find(u8"尚未开始") != std::string::npos);
 
     const SciencePanelModeCapabilities regionalCapabilities =
         sciencePanelModeCapabilities(SciencePanelMode::RegionalChange);
@@ -234,7 +252,8 @@ int main()
     CHECK(regionalCapabilities.supportsPca);
     CHECK(regionalCapabilities.supportsClustering);
     CHECK(std::string(sciencePanelPrimaryActionLabel(
-              SciencePanelMode::RegionalChange)) == u8"分析当前视野变化");
+              SciencePanelMode::RegionalChange)) ==
+          u8"开始比较当前视野的年度变化");
 
     const SciencePanelPresentation queued = describeScienceSnapshot(snapshot(
         earthscience::ScienceJobState::Queued,
@@ -355,6 +374,8 @@ int main()
         earthscience::ScienceOutputKind::Analysis;
     regionalPcaArtifact.query.analysis.kind =
         earthscience::ScienceAnalysisKind::RegionalChange;
+    regionalPcaArtifact.analysis.kind =
+        earthscience::ScienceAnalysisKind::RegionalChange;
     regionalPcaArtifact.query.analysis.gridSize = 128;
     regionalPcaArtifact.query.analysis.enablePca = true;
     regionalPcaArtifact.query.time.explicitYears = {2017, 2025};
@@ -368,6 +389,7 @@ int main()
     CHECK(artifactUi.scopeLabel.find("2017") != std::string::npos);
     CHECK(artifactUi.scopeLabel.find("2025") != std::string::npos);
     CHECK(artifactUi.scopeLabel.find("128") != std::string::npos);
+    CHECK(artifactUi.scopeLabel.find(u8"当前视野") != std::string::npos);
     CHECK(artifactUi.pendingSettingsLabel.empty());
 
     regionalPcaArtifact.analysis.pca.componentCount = 3;
@@ -730,18 +752,18 @@ int main()
     multiYear.time.explicitYears = {
         2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025};
     CHECK(!ordinaryCost.requiresConfirmation);
-    CHECK(sciencePanelEstimateRequiresConfirmation(multiYear, ordinaryCost));
+    CHECK(!sciencePanelEstimateRequiresConfirmation(multiYear, ordinaryCost));
     const std::string multiYearBinding = sciencePanelEstimateBindingKey(
         multiYear, ordinaryCost);
     CHECK(!multiYearBinding.empty());
-    CHECK(!sciencePanelEstimateConfirmationMatches(
+    CHECK(sciencePanelEstimateConfirmationMatches(
         multiYear, ordinaryCost, std::string()));
     CHECK(sciencePanelEstimateConfirmationMatches(
         multiYear, ordinaryCost, multiYearBinding));
 
     earthscience::GeoTemporalQuery changedYears = multiYear;
     changedYears.time.explicitYears.pop_back();
-    CHECK(!sciencePanelEstimateConfirmationMatches(
+    CHECK(sciencePanelEstimateConfirmationMatches(
         changedYears, ordinaryCost, multiYearBinding));
     CHECK(sciencePanelEstimateBindingKey(changedYears, ordinaryCost) !=
           multiYearBinding);
@@ -759,7 +781,8 @@ int main()
         earthscience::ScienceAnalysisKind::RegionalChange;
     regional256.analysis.gridSize = 256;
     regional256.time.explicitYears = {2017, 2025};
-    CHECK(sciencePanelEstimateRequiresConfirmation(regional256, ordinaryCost));
+    CHECK(!sciencePanelEstimateRequiresConfirmation(regional256, ordinaryCost));
+    CHECK(sciencePanelEstimateRequiresConfirmation(multiYear, unknownDuration));
 
     std::shared_ptr<earthscience::ScienceArtifact> previewEvidence =
         std::make_shared<earthscience::ScienceArtifact>();

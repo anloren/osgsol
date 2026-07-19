@@ -210,9 +210,10 @@ static size_t processThreadCount()
 
 static int runTests()
 {
-    // ---- Google 的精确“Zoom Level Not Supported”响应必须视为无瓦片 ----
-    // 只匹配默认 mt1 + lyrs=s/h + 已知 PNG 的完整 SHA-256。相同字节来自自定义/Esri
-    // 或正常 Google PNG 都不得误拒。缓存中的占位图保留为 negative cache，避免重抓。
+    // ---- 精确的 Google“Zoom Level Not Supported”响应必须始终视为无瓦片 ----
+    // 生产缓存证明同一占位 PNG 的请求 URL 不一定保持默认 mt1 模板形式。只要完整
+    // SHA-256 与已知占位图相同，就必须拒绝；正常 PNG 仍不得误拒。缓存中的占位图
+    // 保留为 negative cache，避免重抓。
     {
         const std::vector<unsigned char> unsupported =
             decodeBase64(googleUnsupportedZoomPngBase64());
@@ -229,8 +230,8 @@ static int runTests()
 
         CHECK(osgVerse::isUnsupportedGoogleZoomTile(googleLabels, unsupported));
         CHECK(osgVerse::isUnsupportedGoogleZoomTile(googleBase, unsupported));
-        CHECK(!osgVerse::isUnsupportedGoogleZoomTile(custom, unsupported));
-        CHECK(!osgVerse::isUnsupportedGoogleZoomTile(esri, unsupported));
+        CHECK(osgVerse::isUnsupportedGoogleZoomTile(custom, unsupported));
+        CHECK(osgVerse::isUnsupportedGoogleZoomTile(esri, unsupported));
         std::vector<unsigned char> changed = unsupported;
         changed[changed.size() / 2] ^= 1u;
         CHECK(!osgVerse::isUnsupportedGoogleZoomTile(googleLabels, changed));
@@ -253,8 +254,8 @@ static int runTests()
 
         std::string mime, encoding;
         CHECK(osgVerse::loadFileData(googleLabels, mime, encoding).empty());
-        CHECK(osgVerse::loadFileData(custom, mime, encoding) == unsupported);
-        CHECK(osgVerse::loadFileData(esri, mime, encoding) == unsupported);
+        CHECK(osgVerse::loadFileData(custom, mime, encoding).empty());
+        CHECK(osgVerse::loadFileData(esri, mime, encoding).empty());
         CHECK(osgVerse::loadFileData(normalGoogle, mime, encoding) == normalPng);
         CHECK(osgDB::fileExists(cacheFileFor(cacheRoot, googleLabels)));
         std::cout << "[tile_overlay_tests] Google unsupported-zoom negative cache OK"
@@ -302,10 +303,10 @@ static int runTests()
         custom->setLayerPath(osgVerse::TileCallback::ORTHOPHOTO,
             "https://tiles.example.invalid/vt/lyrs=s&x=1&y=2&z=99");
         custom->setTileNumber(1, 2, 99);
-        osg::ref_ptr<osg::Texture> preserved = custom->createLayerImage(
+        osg::ref_ptr<osg::Texture> rejectedCustom = custom->createLayerImage(
             osgVerse::TileCallback::ORTHOPHOTO, emptyPath, NULL);
         CHECK(!emptyPath);
-        CHECK(preserved.valid());
+        CHECK(!rejectedCustom.valid());
 
         osgDB::Registry::instance()->removeReaderWriter(fixture.get());
         std::cout << "[tile_overlay_tests] decoded Google unsupported-zoom tile rejected OK"

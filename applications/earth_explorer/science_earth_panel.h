@@ -153,6 +153,13 @@ SciencePanelMode activeSciencePanelMode(
 const char* sciencePanelPrimaryActionLabel(SciencePanelMode mode);
 const char* sciencePanelPrimaryActionLabel(
     SciencePanelMode mode, const std::string& sourceId);
+const char* sciencePanelModeLabel(
+    SciencePanelMode mode, const std::string& sourceId);
+const char* sciencePanelModeDescription(
+    SciencePanelMode mode, const std::string& sourceId);
+std::string sciencePanelSelectionSummary(
+    SciencePanelMode mode, const SciencePanelState& state,
+    const std::string& sourceId);
 ScienceArtifactUiPresentation describeScienceArtifactUi(
     const earthscience::ScienceArtifact& artifact,
     const earthscience::GeoTemporalQuery& currentDraft);

@@ -584,23 +584,16 @@ namespace osgVerse
         return fanned;
     }
 
-    static bool isDefaultGoogleVisualTileUrl(const std::string& url)
-    {
-        static const std::string prefix = "https://mt1.google.com/vt/lyrs=";
-        if (url.compare(0, prefix.size(), prefix) != 0 || url.size() <= prefix.size() + 1)
-            return false;
-        const char layer = url[prefix.size()];
-        return (layer == 's' || layer == 'h') && url[prefix.size() + 1] == '&';
-    }
-
     bool isUnsupportedGoogleZoomTile(const std::string& url,
                                      const std::vector<unsigned char>& bytes)
     {
-        if (!isDefaultGoogleVisualTileUrl(url)) return false;
+        (void)url;
 
-        // Exact byte identity, not dimensions/file size/text OCR: normal 256x256 PNGs and
-        // other providers are untouched. This is the response observed repeatedly in the
-        // local cache on 2026-07-18 (SHA-256 below).
+        // Exact byte identity, not dimensions/file size/text OCR. Production cache evidence
+        // on 2026-07-19 showed that this same Google-authored placeholder can arrive through
+        // URL spellings that do not retain the default mt1 template. A SHA-256 match cannot
+        // collide with a valid tile in practice, so reject the known placeholder regardless
+        // of its request URL while leaving every other 256x256 image untouched.
         if (bytes.size() != 1370u) return false;
         static const unsigned char expected[32] = {
             0x1d, 0x40, 0x6f, 0xd8, 0x34, 0xa5, 0xcb, 0xed,
@@ -615,8 +608,8 @@ namespace osgVerse
 
     bool isUnsupportedGoogleZoomImage(const std::string& url, const osg::Image& image)
     {
-        if (!isDefaultGoogleVisualTileUrl(url) || image.s() != 256 || image.t() != 256 ||
-            image.r() != 1)
+        (void)url;
+        if (image.s() != 256 || image.t() != 256 || image.r() != 1)
             return false;
 
         // A protocol plugin or osgDB::FileCache may return an already-decoded image and bypass
