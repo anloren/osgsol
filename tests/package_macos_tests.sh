@@ -544,6 +544,14 @@ test "$(/usr/libexec/PlistBuddy -c 'Print :ScienceEarthIndexSha256' "$APP/Conten
     "$ALPHAEARTH_INDEX_SHA256"
 test "$(shasum -a 256 "$APP/Contents/misc/science/alphaearth/alphaearth.sqlite" | awk '{print $1}')" = \
     "$ALPHAEARTH_INDEX_SHA256"
+SCIENCE_DATA_MANIFEST="$APP/Contents/misc/science/data-manifest.json"
+test -f "$SCIENCE_DATA_MANIFEST"
+PYTHONDONTWRITEBYTECODE=1 python3 \
+    "$ROOT/packaging/scienceearth/data_manifest.py" --validate "$APP" >/dev/null
+SCIENCE_DATA_MANIFEST_SHA256="$(shasum -a 256 \
+    "$SCIENCE_DATA_MANIFEST" | awk '{print $1}')"
+test "$(/usr/libexec/PlistBuddy -c 'Print :ScienceEarthDataManifestSha256' \
+    "$APP/Contents/Info.plist")" = "$SCIENCE_DATA_MANIFEST_SHA256"
 if /usr/libexec/PlistBuddy -c 'Print :LSEnvironment:EARTH_AI_KEY' \
    "$APP/Contents/Info.plist" >/dev/null 2>&1; then
     echo "FAIL: plist contains EARTH_AI_KEY" >&2

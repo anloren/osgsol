@@ -313,6 +313,13 @@ done
 mkdir -p "$BUILD_APP/Contents/misc/science/alphaearth"
 cp "$ALPHAEARTH_INDEX" \
     "$BUILD_APP/Contents/misc/science/alphaearth/alphaearth.sqlite"
+PYTHONDONTWRITEBYTECODE=1 python3 \
+    "$REPO/packaging/scienceearth/data_manifest.py" \
+    --write "$BUILD_APP" \
+    --alphaearth-index \
+    'Contents/misc/science/alphaearth/alphaearth.sqlite' >/dev/null
+SCIENCE_DATA_MANIFEST_SHA256="$(shasum -a 256 \
+    "$BUILD_APP/Contents/misc/science/data-manifest.json" | awk '{print $1}')"
 
 # Close the complete non-system dynamic dependency graph before changing any install names. This
 # makes byte-wise collision checks meaningful and ensures every copied dependency is included in
@@ -487,6 +494,7 @@ cat > "$BUILD_APP/Contents/Info.plist" <<PLIST
   <key>ScienceEarthBuildChannel</key><string>$BUILD_CHANNEL</string>
   <key>ScienceEarthSourceCommit</key><string>$SOURCE_COMMIT</string>
   <key>ScienceEarthIndexSha256</key><string>$ALPHAEARTH_INDEX_SHA256</string>
+  <key>ScienceEarthDataManifestSha256</key><string>$SCIENCE_DATA_MANIFEST_SHA256</string>
   <key>NSHighResolutionCapable</key><false/>
   <key>NSMinimumSystemVersion</key><string>11.0</string>
 </dict>

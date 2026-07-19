@@ -54,6 +54,9 @@ def load_module(name, path):
 MANIFEST = load_module(
     "scienceearth_g0_manifest_for_audit",
     Path(__file__).resolve().parent / "scienceearth" / "g0_manifest.py")
+DATA_MANIFEST = load_module(
+    "scienceearth_data_manifest_for_audit",
+    Path(__file__).resolve().parent / "scienceearth" / "data_manifest.py")
 
 
 def normalize_subject(subject, source_roots):
@@ -251,6 +254,22 @@ def evaluate_v2_size_gates(runtime_delta_bytes, science_data_bytes,
         "STOP" if "STOP" in gates.values()
         else "REVIEW_REQUIRED" if "REVIEW_REQUIRED" in gates.values()
         else "PASS")
+    labels = {
+        "runtime_delta": "runtime delta",
+        "science_data": "verified science data",
+        "combined_delta": "combined package delta",
+        "science_closure": "science closure",
+    }
+    review_items = []
+    violations = []
+    for name, (value, target, stop) in values.items():
+        if gates[name] == "REVIEW_REQUIRED":
+            review_items.append(
+                f"{labels[name]} {value} exceeds target {target} and "
+                "requires review")
+        elif gates[name] == "STOP":
+            violations.append(
+                f"{labels[name]} {value} exceeds stop {stop}")
     return {
         "status": status,
         "exit_code": {
@@ -262,7 +281,25 @@ def evaluate_v2_size_gates(runtime_delta_bytes, science_data_bytes,
         "values": {
             name: value for name, (value, _, _) in values.items()
         },
+        "review_items": sorted(review_items),
+        "violations": sorted(violations),
     }
+
+
+def load_science_data_manifest(app):
+    app = Path(app)
+    result = DATA_MANIFEST.validate(app)
+    plist_path = app / "Contents" / "Info.plist"
+    if not plist_path.is_file() or plist_path.is_symlink():
+        raise ValueError(
+            "science data manifest requires a regular Info.plist")
+    with plist_path.open("rb") as stream:
+        plist = plistlib.load(stream)
+    expected = plist.get("ScienceEarthDataManifestSha256")
+    if expected != result["manifest_sha256"]:
+        raise ValueError(
+            "ScienceEarthDataManifestSha256 does not match the package manifest")
+    return result
 
 
 def evaluate_size_gates(delta_bytes, science_closure_bytes):
@@ -572,7 +609,30 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
     baseline_bytes = bundle_size(baseline)
     total_bytes = bundle_size(app)
     delta_bytes = total_bytes - baseline_bytes
-    size_result = evaluate_size_gates(delta_bytes, science_closure_bytes)
+    data_manifest_path = (
+        app / "Contents" / "misc" / "science" / "data-manifest.json")
+    science_data = {
+        "schema": None,
+        "bytes": 0,
+        "entries": [],
+        "manifest_sha256": None,
+    }
+    if data_manifest_path.exists() or data_manifest_path.is_symlink():
+        try:
+            science_data = load_science_data_manifest(app)
+        except (OSError, plistlib.InvalidFileException, ValueError) as error:
+            add_finding(
+                "Contents/misc/science/data-manifest.json",
+                "invalid_science_data_manifest", str(error),
+                f"invalid science data manifest: {error}")
+            science_data["error"] = str(error)
+    science_data_bytes = science_data["bytes"]
+    runtime_delta_bytes = delta_bytes - science_data_bytes
+    size_result = evaluate_v2_size_gates(
+        runtime_delta_bytes,
+        science_data_bytes,
+        delta_bytes,
+        science_closure_bytes)
     unresolved = sorted(set(unresolved))
     findings_by_id = {item["identity"]: item for item in findings}
     findings = [findings_by_id[item] for item in sorted(findings_by_id)]
@@ -617,7 +677,7 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
     else:
         status = size_result["status"]
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "ok": status == "PASS",
         "status": status,
         "exit_code": {"PASS": 0, "STOP": 1, "REVIEW_REQUIRED": 2}[status],
@@ -631,12 +691,25 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
             "baseline_bytes": baseline_bytes,
             "total_bytes": total_bytes,
             "delta_bytes": delta_bytes,
+            "runtime_delta_bytes": runtime_delta_bytes,
+            "science_data_bytes": science_data_bytes,
+            "combined_delta_bytes": delta_bytes,
             "science_closure_bytes": science_closure_bytes,
         },
+        "science_data": science_data,
         "size_gates": size_result["size_gates"],
         "thresholds": {
+            "policy_version": "G0-v2",
             "target_added_bytes": TARGET_ADDED_BYTES,
             "hard_stop_added_bytes": HARD_STOP_ADDED_BYTES,
+            "runtime_target_bytes": RUNTIME_TARGET_BYTES,
+            "runtime_stop_bytes": RUNTIME_STOP_BYTES,
+            "science_data_target_bytes": SCIENCE_DATA_TARGET_BYTES,
+            "science_data_stop_bytes": SCIENCE_DATA_STOP_BYTES,
+            "combined_target_bytes": COMBINED_TARGET_BYTES,
+            "combined_stop_bytes": COMBINED_STOP_BYTES,
+            "science_closure_target_bytes": SCIENCE_CLOSURE_TARGET_BYTES,
+            "science_closure_stop_bytes": SCIENCE_CLOSURE_STOP_BYTES,
         },
         "review_items": size_result["review_items"],
         "findings": findings,
@@ -662,15 +735,16 @@ def render_text(result):
         "Sizes",
         f"  baseline: {result['sizes']['baseline_bytes']} bytes",
         f"  total: {result['sizes']['total_bytes']} bytes",
-        f"  delta: {result['sizes']['delta_bytes']} bytes",
+        f"  runtime delta: {result['sizes']['runtime_delta_bytes']} bytes",
+        f"  verified science data: {result['sizes']['science_data_bytes']} bytes",
+        f"  combined delta: {result['sizes']['combined_delta_bytes']} bytes",
         f"  science closure: {result['sizes']['science_closure_bytes']} bytes",
         "",
         "Size gates",
-        f"  target: <= {result['thresholds']['target_added_bytes']} bytes",
-        f"  review: > {result['thresholds']['target_added_bytes']} and "
-        f"<= {result['thresholds']['hard_stop_added_bytes']} bytes",
-        f"  immutable stop: > {result['thresholds']['hard_stop_added_bytes']} bytes",
-        f"  delta: {result['size_gates']['delta']}",
+        f"  policy: {result['thresholds']['policy_version']}",
+        f"  runtime delta: {result['size_gates']['runtime_delta']}",
+        f"  verified science data: {result['size_gates']['science_data']}",
+        f"  combined delta: {result['size_gates']['combined_delta']}",
         f"  science closure: {result['size_gates']['science_closure']}",
         "",
         "Dependency graph",
@@ -744,7 +818,7 @@ def load_json_object(path, label):
 
 def error_result(message, reference_path=None, ratchet_path=None):
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "ok": False,
         "status": "STOP",
         "exit_code": 1,

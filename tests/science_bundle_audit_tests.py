@@ -14,6 +14,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT_PATH = ROOT / "packaging" / "audit_macos_bundle.py"
 MANIFEST_PATH = ROOT / "packaging" / "scienceearth" / "g0_manifest.py"
+DATA_MANIFEST_PATH = (
+    ROOT / "packaging" / "scienceearth" / "data_manifest.py")
 BUILDER_PATH = ROOT / "packaging" / "build_science_g0_probe.sh"
 SPEC = importlib.util.spec_from_file_location("audit_macos_bundle", AUDIT_PATH)
 AUDIT = importlib.util.module_from_spec(SPEC)
@@ -21,6 +23,14 @@ SPEC.loader.exec_module(AUDIT)
 MANIFEST_SPEC = importlib.util.spec_from_file_location("g0_manifest", MANIFEST_PATH)
 MANIFEST = importlib.util.module_from_spec(MANIFEST_SPEC)
 MANIFEST_SPEC.loader.exec_module(MANIFEST)
+
+
+def load_data_manifest_module():
+    spec = importlib.util.spec_from_file_location(
+        "scienceearth_data_manifest", DATA_MANIFEST_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class FakeInspector:
@@ -100,6 +110,106 @@ def write_app_plist(app, executable="main"):
             "CFBundleIdentifier": "org.osgsol.science-g0-test",
             "CFBundlePackageType": "APPL",
         }, stream)
+
+
+class ScienceDataManifestTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="osgsol-science-data-manifest-")
+        self.app = Path(self.temporary.name) / "Science.app"
+        self.data_path = (
+            self.app / "Contents" / "misc" / "science" / "alphaearth" /
+            "alphaearth.sqlite")
+        self.data_path.parent.mkdir(parents=True)
+        self.data_path.write_bytes(b"verified-alphaearth-data")
+        self.relative = (
+            "Contents/misc/science/alphaearth/alphaearth.sqlite")
+        self.manifest_path = (
+            self.app / "Contents" / "misc" / "science" /
+            "data-manifest.json")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def document(self, **entry_changes):
+        entry = {
+            "bytes": self.data_path.stat().st_size,
+            "path": self.relative,
+            "role": "spatial-index",
+            "sha256": hashlib.sha256(self.data_path.read_bytes()).hexdigest(),
+            "source_id": "alphaearth-foundations",
+        }
+        entry.update(entry_changes)
+        return {
+            "entries": [entry],
+            "schema": "osgsol-science-data-v1",
+        }
+
+    def write_document(self, document, canonical=True):
+        self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        if canonical:
+            encoded = json.dumps(
+                document, sort_keys=True, separators=(",", ":")) + "\n"
+        else:
+            encoded = json.dumps(document, indent=2, sort_keys=True) + "\n"
+        self.manifest_path.write_text(encoded)
+
+    def test_validates_exact_canonical_science_data_document(self):
+        self.write_document(self.document())
+
+        result = load_data_manifest_module().validate(self.app)
+
+        self.assertEqual(result["bytes"], self.data_path.stat().st_size)
+        self.assertEqual(result["entries"], self.document()["entries"])
+
+    def test_rejects_untrusted_manifest_and_payload_shapes(self):
+        module = load_data_manifest_module()
+        outside = self.app / "Contents" / "misc" / "outside.bin"
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        outside.write_bytes(b"outside")
+        link = self.data_path.with_name("linked.sqlite")
+        link.symlink_to(self.data_path.name)
+        macho = self.data_path.with_name("macho.bin")
+        macho.write_bytes(bytes.fromhex("feedfacf") + b"not-data")
+        cases = {
+            "traversal": self.document(path=(
+                "Contents/misc/science/../../outside.bin")),
+            "absolute": self.document(path=str(self.data_path)),
+            "symlink": self.document(
+                path=str(link.relative_to(self.app)),
+                bytes=link.stat().st_size,
+                sha256=hashlib.sha256(link.read_bytes()).hexdigest()),
+            "macho": self.document(
+                path=str(macho.relative_to(self.app)),
+                bytes=macho.stat().st_size,
+                sha256=hashlib.sha256(macho.read_bytes()).hexdigest()),
+            "missing": self.document(path=(
+                "Contents/misc/science/alphaearth/missing.sqlite")),
+            "wrong-bytes": self.document(bytes=1),
+            "boolean-bytes": self.document(bytes=True),
+            "wrong-hash": self.document(sha256="0" * 64),
+            "outside": self.document(
+                path=str(outside.relative_to(self.app)),
+                bytes=outside.stat().st_size,
+                sha256=hashlib.sha256(outside.read_bytes()).hexdigest()),
+            "unknown-entry-key": self.document(extra="not-allowed"),
+        }
+        duplicate = self.document()
+        duplicate["entries"].append(dict(duplicate["entries"][0]))
+        cases["duplicate"] = duplicate
+        unknown_top = self.document()
+        unknown_top["unknown"] = True
+        cases["unknown-top-key"] = unknown_top
+
+        for label, document in cases.items():
+            with self.subTest(label=label):
+                self.write_document(document)
+                with self.assertRaises(ValueError):
+                    module.validate(self.app)
+
+        self.write_document(self.document(), canonical=False)
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            module.validate(self.app)
 
 
 class ScienceBundleAuditTests(unittest.TestCase):
@@ -183,6 +293,20 @@ class ScienceBundleAuditTests(unittest.TestCase):
         ratchet_path.write_text(json.dumps(ratchet))
         return reference_path, ratchet_path
 
+    def bind_science_data(self, app, relative, payload):
+        path = Path(app) / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        result = load_data_manifest_module().write(app, relative)
+        write_app_plist(app)
+        plist_path = Path(app) / "Contents" / "Info.plist"
+        with plist_path.open("rb") as stream:
+            plist = plistlib.load(stream)
+        plist["ScienceEarthDataManifestSha256"] = result["manifest_sha256"]
+        with plist_path.open("wb") as stream:
+            plistlib.dump(plist, stream)
+        return path, result
+
     def test_baseline_debt_passes_but_new_non_science_identity_stops(self):
         probe = BundleFixture(self.root)
         inspector = self.valid_inspector()
@@ -195,7 +319,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
             probe.app, self.baseline.app, inspector,
             source_roots=self.policy_source_roots,
             reference_manifest=reference, ratchet_manifest=ratchet)
-        self.assertEqual(result["schema_version"], 3)
+        self.assertEqual(result["schema_version"], 4)
         self.assertTrue(all(
             key in result for key in
             ("manifests", "tier_a", "tier_b", "absolute", "delta")))
@@ -207,6 +331,53 @@ class ScienceBundleAuditTests(unittest.TestCase):
             reference_manifest=reference, ratchet_manifest=ratchet)
         self.assertEqual(result["status"], "STOP")
         self.assertEqual(len(result["delta"]["new"]), 1)
+
+    def test_audit_splits_only_plist_bound_verified_science_data(self):
+        probe = BundleFixture(self.root)
+        relative = "Contents/misc/science/alphaearth/alphaearth.sqlite"
+        payload = b"alphaearth-verified-payload"
+        _, manifest = self.bind_science_data(probe.app, relative, payload)
+        reference, ratchet = self.manifest_chain([])
+
+        result = audit(
+            probe.app, self.baseline.app, self.valid_inspector(),
+            source_roots=self.policy_source_roots,
+            reference_manifest=reference, ratchet_manifest=ratchet)
+
+        total_delta = (
+            AUDIT.bundle_size(probe.app) - AUDIT.bundle_size(self.baseline.app))
+        self.assertEqual(result["science_data"]["bytes"], len(payload))
+        self.assertEqual(result["sizes"]["science_data_bytes"], len(payload))
+        self.assertEqual(
+            result["sizes"]["runtime_delta_bytes"],
+            total_delta - len(payload))
+        self.assertEqual(
+            result["sizes"]["combined_delta_bytes"], total_delta)
+        self.assertEqual(result["size_gates"]["science_data"], "PASS")
+        self.assertEqual(
+            result["science_data"]["manifest_sha256"],
+            manifest["manifest_sha256"])
+
+    def test_invalid_present_data_manifest_is_not_excluded_from_runtime(self):
+        probe = BundleFixture(self.root)
+        relative = "Contents/misc/science/alphaearth/alphaearth.sqlite"
+        data, _ = self.bind_science_data(probe.app, relative, b"trusted")
+        data.write_bytes(b"tampered")
+        reference, ratchet = self.manifest_chain([])
+
+        result = audit(
+            probe.app, self.baseline.app, self.valid_inspector(),
+            source_roots=self.policy_source_roots,
+            reference_manifest=reference, ratchet_manifest=ratchet)
+
+        total_delta = (
+            AUDIT.bundle_size(probe.app) - AUDIT.bundle_size(self.baseline.app))
+        self.assertEqual(result["science_data"]["bytes"], 0)
+        self.assertEqual(result["sizes"]["runtime_delta_bytes"], total_delta)
+        self.assertEqual(result["status"], "STOP")
+        self.assertTrue(any(
+            finding["category"] == "invalid_science_data_manifest"
+            for finding in result["findings"]))
 
     def test_direct_audit_rejects_independently_rehashed_root_substitution(self):
         probe = BundleFixture(self.root)
