@@ -58,12 +58,12 @@ bool SciencePluginRuntime::load(const std::string& pluginPath,
     if (symbolError || !anchor)
         return reject(handle, "ScienceEarth plugin anchor is missing");
 
-    const OsgSolSciencePluginApiV1* api = anchor();
-    if (!api || api->abiVersion != OSGSOL_SCIENCE_PLUGIN_ABI_V1 ||
-        api->structSize < sizeof(OsgSolSciencePluginApiV1))
+    const OsgSolSciencePluginApiV2* api = anchor();
+    if (!api || api->abiVersion != OSGSOL_SCIENCE_PLUGIN_ABI_V2 ||
+        api->structSize < sizeof(OsgSolSciencePluginApiV2))
         return reject(handle, "ScienceEarth plugin ABI is incompatible");
     if (!api->create || !api->destroy || !api->sceneNode ||
-        !api->setVisible || !api->registerAiTools ||
+        !api->setVisible || !api->registerAiTools || !api->bindGui ||
         !api->drawOperations || !api->drawResults)
         return reject(handle, "ScienceEarth plugin function table is incomplete");
 
@@ -102,12 +102,20 @@ void SciencePluginRuntime::registerAiTools(
 }
 
 void SciencePluginRuntime::drawOperations(
-    LayerManager* layers, osgVerse::EarthManipulator* manipulator) const
+    LayerManager* layers, osgVerse::EarthManipulator* manipulator,
+    const OsgSolScienceGuiBridgeV1& gui) const
 {
-    if (available()) _api->drawOperations(_session, layers, manipulator);
+    if (!available() || !gui.context || !gui.allocate || !gui.deallocate)
+        return;
+    _api->bindGui(_session, &gui);
+    _api->drawOperations(_session, layers, manipulator);
 }
 
-void SciencePluginRuntime::drawResults(LayerManager* layers) const
+void SciencePluginRuntime::drawResults(
+    LayerManager* layers, const OsgSolScienceGuiBridgeV1& gui) const
 {
-    if (available()) _api->drawResults(_session, layers);
+    if (!available() || !gui.context || !gui.allocate || !gui.deallocate)
+        return;
+    _api->bindGui(_session, &gui);
+    _api->drawResults(_session, layers);
 }

@@ -108,6 +108,19 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         return ImGui::InputInt(id, value);
     }
 
+#if OSGSOL_BUILD_SCIENCE
+    static OsgSolScienceGuiBridgeV1 scienceGuiBridge()
+    {
+        ImGuiMemAllocFunc allocate = nullptr;
+        ImGuiMemFreeFunc deallocate = nullptr;
+        void* userData = nullptr;
+        ImGui::GetAllocatorFunctions(&allocate, &deallocate, &userData);
+        const OsgSolScienceGuiBridgeV1 bridge = {
+            ImGui::GetCurrentContext(), allocate, deallocate, userData};
+        return bridge;
+    }
+#endif
+
     static bool panelCheckbox(const char* label, const char* id, bool* value)
     {
         bool changed = ImGui::Checkbox(id, value);
@@ -402,7 +415,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
 
 #if OSGSOL_BUILD_SCIENCE
             if (_scienceRuntime)
-                _scienceRuntime->drawOperations(_layers, _mani);
+                _scienceRuntime->drawOperations(
+                    _layers, _mani, scienceGuiBridge());
 #endif
 
             // ---- 跳转 ----
@@ -483,7 +497,10 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         {
             earthui::finishLeftThenDrawScienceResults(
                 []() { ImGui::End(); },
-                [this]() { _scienceRuntime->drawResults(_layers); });
+                [this]() {
+                    _scienceRuntime->drawResults(
+                        _layers, scienceGuiBridge());
+                });
         }
         else
             ImGui::End();

@@ -11,6 +11,10 @@
 namespace
 {
     typedef const int* (*CounterFunction)();
+    typedef const OsgSolScienceGuiBridgeV1* (*GuiBridgeFunction)();
+
+    void* testAllocate(std::size_t, void*) { return nullptr; }
+    void testFree(void*, void*) {}
 
     const int* fakeCounters()
     {
@@ -18,6 +22,15 @@ namespace
         if (!handle) return nullptr;
         CounterFunction function = reinterpret_cast<CounterFunction>(
             dlsym(handle, "osgsol_science_test_counters"));
+        return function ? function() : nullptr;
+    }
+
+    const OsgSolScienceGuiBridgeV1* fakeGuiBridge()
+    {
+        void* handle = dlopen(OSGSOL_TEST_SCIENCE_PLUGIN, RTLD_NOW | RTLD_LOCAL);
+        if (!handle) return nullptr;
+        GuiBridgeFunction function = reinterpret_cast<GuiBridgeFunction>(
+            dlsym(handle, "osgsol_science_test_gui_bridge"));
         return function ? function() : nullptr;
     }
 }
@@ -32,8 +45,14 @@ int main()
         CHECK(runtime.sceneNode() == nullptr);
         runtime.setVisible(true);
         runtime.registerAiTools(nullptr, nullptr, nullptr);
-        runtime.drawOperations(nullptr, nullptr);
-        runtime.drawResults(nullptr);
+        const OsgSolScienceGuiBridgeV1 gui = {
+            reinterpret_cast<void*>(0x1234),
+            testAllocate,
+            testFree,
+            reinterpret_cast<void*>(0x5678),
+        };
+        runtime.drawOperations(nullptr, nullptr, gui);
+        runtime.drawResults(nullptr, gui);
         const int* counters = fakeCounters();
         CHECK(counters != nullptr);
         CHECK(counters[0] == 1);
@@ -43,6 +62,20 @@ int main()
         CHECK(counters[4] == 1);
         CHECK(counters[5] == 1);
         CHECK(counters[6] == 1);
+        CHECK(counters[7] == 2);
+        CHECK(counters[8] == 0);
+        const OsgSolScienceGuiBridgeV1* forwarded = fakeGuiBridge();
+        CHECK(forwarded != nullptr);
+        CHECK(forwarded->context == gui.context);
+        CHECK(forwarded->allocate == gui.allocate);
+        CHECK(forwarded->deallocate == gui.deallocate);
+        CHECK(forwarded->allocatorUserData == gui.allocatorUserData);
+        const OsgSolScienceGuiBridgeV1 missingGui = {};
+        runtime.drawOperations(nullptr, nullptr, missingGui);
+        runtime.drawResults(nullptr, missingGui);
+        CHECK(counters[4] == 1);
+        CHECK(counters[5] == 1);
+        CHECK(counters[7] == 2);
     }
     CHECK(fakeCounters() != nullptr);
     CHECK(fakeCounters()[1] == 1);
@@ -53,8 +86,9 @@ int main()
         CHECK(!runtime.available());
         CHECK(runtime.error().find("load") != std::string::npos);
         runtime.setVisible(false);
-        runtime.drawOperations(nullptr, nullptr);
-        runtime.drawResults(nullptr);
+        const OsgSolScienceGuiBridgeV1 gui = {};
+        runtime.drawOperations(nullptr, nullptr, gui);
+        runtime.drawResults(nullptr, gui);
     }
     {
         SciencePluginRuntime runtime;

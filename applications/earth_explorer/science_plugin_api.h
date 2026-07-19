@@ -9,9 +9,22 @@ namespace earthai { class ToolRegistry; }
 namespace osg { class Node; }
 namespace osgVerse { class EarthManipulator; }
 
-static const std::uint32_t OSGSOL_SCIENCE_PLUGIN_ABI_V1 = 1u;
+static const std::uint32_t OSGSOL_SCIENCE_PLUGIN_ABI_V2 = 2u;
 
-struct OsgSolSciencePluginApiV1
+typedef void* (*OsgSolScienceAllocateFunction)(std::size_t size,
+                                               void* userData);
+typedef void (*OsgSolScienceDeallocateFunction)(void* pointer,
+                                                void* userData);
+
+struct OsgSolScienceGuiBridgeV1
+{
+    void* context;
+    OsgSolScienceAllocateFunction allocate;
+    OsgSolScienceDeallocateFunction deallocate;
+    void* allocatorUserData;
+};
+
+struct OsgSolSciencePluginApiV2
 {
     std::uint32_t abiVersion;
     std::uint32_t structSize;
@@ -23,12 +36,14 @@ struct OsgSolSciencePluginApiV1
                             earthai::ToolRegistry* tools,
                             LayerManager* layers,
                             osgVerse::EarthManipulator* manipulator);
+    void (*bindGui)(void* session,
+                    const OsgSolScienceGuiBridgeV1* bridge);
     void (*drawOperations)(void* session,
                            LayerManager* layers,
                            osgVerse::EarthManipulator* manipulator);
     void (*drawResults)(void* session, LayerManager* layers);
 };
 
-typedef const OsgSolSciencePluginApiV1* (*OsgSolScienceAnchor)();
+typedef const OsgSolSciencePluginApiV2* (*OsgSolScienceAnchor)();
 
 #endif

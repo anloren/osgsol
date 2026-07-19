@@ -12,6 +12,7 @@
 #include <Sentinel2Provider.h>
 
 #include <osg/Notify>
+#include <ui/ImGuiComponents.h>
 
 #include <cstdio>
 #include <exception>
@@ -123,6 +124,17 @@ namespace
                                      runtime->layer.get(), layers, manipulator);
     }
 
+    void bindGui(void*, const OsgSolScienceGuiBridgeV1* bridge)
+    {
+        if (!bridge || !bridge->context || !bridge->allocate ||
+            !bridge->deallocate) return;
+        ImGui::SetAllocatorFunctions(
+            bridge->allocate, bridge->deallocate,
+            bridge->allocatorUserData);
+        ImGui::SetCurrentContext(
+            static_cast<ImGuiContext*>(bridge->context));
+    }
+
     void drawOperations(void* value, LayerManager* layers,
                         osgVerse::EarthManipulator* manipulator)
     {
@@ -140,21 +152,22 @@ namespace
                                    runtime->layer.get(), layers);
     }
 
-    const OsgSolSciencePluginApiV1 pluginApi = {
-        OSGSOL_SCIENCE_PLUGIN_ABI_V1,
-        sizeof(OsgSolSciencePluginApiV1),
+    const OsgSolSciencePluginApiV2 pluginApi = {
+        OSGSOL_SCIENCE_PLUGIN_ABI_V2,
+        sizeof(OsgSolSciencePluginApiV2),
         createSession,
         destroySession,
         sceneNode,
         setVisible,
         registerAiTools,
+        bindGui,
         drawOperations,
         drawResults,
     };
 }
 
 extern "C" __attribute__((visibility("default")))
-const OsgSolSciencePluginApiV1* osgsol_science_g0_probe_anchor()
+const OsgSolSciencePluginApiV2* osgsol_science_g0_probe_anchor()
 {
     return &pluginApi;
 }

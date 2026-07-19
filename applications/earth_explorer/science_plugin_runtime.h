@@ -24,14 +24,16 @@ public:
                          LayerManager* layers,
                          osgVerse::EarthManipulator* manipulator) const;
     void drawOperations(LayerManager* layers,
-                        osgVerse::EarthManipulator* manipulator) const;
-    void drawResults(LayerManager* layers) const;
+                        osgVerse::EarthManipulator* manipulator,
+                        const OsgSolScienceGuiBridgeV1& gui) const;
+    void drawResults(LayerManager* layers,
+                     const OsgSolScienceGuiBridgeV1& gui) const;
 
 private:
     bool reject(void* handle, const std::string& error);
 
     void* _module;
-    const OsgSolSciencePluginApiV1* _api;
+    const OsgSolSciencePluginApiV2* _api;
     void* _session;
     std::string _error;
 };

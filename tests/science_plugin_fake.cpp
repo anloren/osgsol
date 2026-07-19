@@ -5,7 +5,8 @@
 
 namespace
 {
-    int counters[7] = {};
+    int counters[9] = {};
+    OsgSolScienceGuiBridgeV1 lastGuiBridge = {};
 
     void* createSession(const char* indexPath, char* error, std::size_t errorSize)
     {
@@ -24,25 +25,42 @@ namespace
     void setVisible(void*, bool) { ++counters[2]; }
     void registerAiTools(void*, earthai::ToolRegistry*, LayerManager*,
                          osgVerse::EarthManipulator*) { ++counters[3]; }
+    void bindGui(void*, const OsgSolScienceGuiBridgeV1* bridge)
+    {
+        ++counters[7];
+        counters[8] = bridge && bridge->context && bridge->allocate &&
+            bridge->deallocate ? 1 : -1;
+        if (bridge) lastGuiBridge = *bridge;
+    }
     void drawOperations(void*, LayerManager*, osgVerse::EarthManipulator*)
-    { ++counters[4]; }
-    void drawResults(void*, LayerManager*) { ++counters[5]; }
+    {
+        if (counters[8] != 1) counters[8] = -1;
+        else counters[8] = 0;
+        ++counters[4];
+    }
+    void drawResults(void*, LayerManager*)
+    {
+        if (counters[8] != 1) counters[8] = -1;
+        else counters[8] = 0;
+        ++counters[5];
+    }
 
-    const OsgSolSciencePluginApiV1 api = {
-        OSGSOL_SCIENCE_PLUGIN_ABI_V1,
-        sizeof(OsgSolSciencePluginApiV1),
+    const OsgSolSciencePluginApiV2 api = {
+        OSGSOL_SCIENCE_PLUGIN_ABI_V2,
+        sizeof(OsgSolSciencePluginApiV2),
         createSession,
         destroySession,
         sceneNode,
         setVisible,
         registerAiTools,
+        bindGui,
         drawOperations,
         drawResults,
     };
 }
 
 extern "C" __attribute__((visibility("default")))
-const OsgSolSciencePluginApiV1* osgsol_science_g0_probe_anchor()
+const OsgSolSciencePluginApiV2* osgsol_science_g0_probe_anchor()
 {
     return &api;
 }
@@ -51,4 +69,10 @@ extern "C" __attribute__((visibility("default")))
 const int* osgsol_science_test_counters()
 {
     return counters;
+}
+
+extern "C" __attribute__((visibility("default")))
+const OsgSolScienceGuiBridgeV1* osgsol_science_test_gui_bridge()
+{
+    return &lastGuiBridge;
 }
