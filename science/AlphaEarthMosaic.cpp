@@ -9,7 +9,7 @@
 #include <cpl_error.h>
 #include <cpl_string.h>
 #include <gdal_priv.h>
-#include <gdalwarper.h>
+#include <gdal_utils.h>
 #include <ogr_spatialref.h>
 
 namespace earthscience
@@ -26,16 +26,31 @@ namespace
         }
     };
 
-    struct WarpOptionsCloser
+    struct QuietGdalErrors
     {
-        void operator()(GDALWarpOptions* options) const
-        {
-            if (options) GDALDestroyWarpOptions(options);
-        }
+        QuietGdalErrors() { CPLPushErrorHandler(CPLQuietErrorHandler); }
+        ~QuietGdalErrors() { CPLPopErrorHandler(); }
     };
 
     using DatasetPtr = std::unique_ptr<GDALDataset, DatasetCloser>;
-    using WarpOptionsPtr = std::unique_ptr<GDALWarpOptions, WarpOptionsCloser>;
+
+    struct WarpAppOptionsCloser
+    {
+        void operator()(GDALWarpAppOptions* options) const
+        {
+            if (options) GDALWarpAppOptionsFree(options);
+        }
+    };
+
+    using WarpAppOptionsPtr =
+        std::unique_ptr<GDALWarpAppOptions, WarpAppOptionsCloser>;
+
+    int cancelProgress(double, const char*, void* userData)
+    {
+        const auto* cancelled = static_cast<
+            const std::function<bool()>*>(userData);
+        return cancelled && *cancelled && (*cancelled)() ? FALSE : TRUE;
+    }
 
     bool validBounds(const ScienceWgs84Bounds& bounds)
     {
@@ -174,7 +189,6 @@ bool readAlphaEarthMosaic(
         error = "AlphaEarth mosaic WGS84 target could not be configured";
         return false;
     }
-    const std::string destinationProjection(destinationWkt);
     CPLFree(destinationWkt);
     for (int band = 1; band <= destination->GetRasterCount(); ++band)
     {
@@ -226,31 +240,51 @@ bool readAlphaEarthMosaic(
             }
         }
 
-        WarpOptionsPtr options(GDALCreateWarpOptions());
-        options->nBandCount = static_cast<int>(sourceBands.size());
-        options->panSrcBands = static_cast<int*>(
-            CPLMalloc(sizeof(int) * sourceBands.size()));
-        options->panDstBands = static_cast<int*>(
-            CPLMalloc(sizeof(int) * sourceBands.size()));
-        options->padfSrcNoDataReal = static_cast<double*>(
-            CPLMalloc(sizeof(double) * sourceBands.size()));
-        options->padfDstNoDataReal = static_cast<double*>(
-            CPLMalloc(sizeof(double) * sourceBands.size()));
+        char** arguments = nullptr;
+        arguments = CSLAddString(arguments, "-r");
+        arguments = CSLAddString(arguments, "near");
+        arguments = CSLAddString(arguments, "-ovr");
+        arguments = CSLAddString(arguments, "AUTO");
+        arguments = CSLAddString(arguments, "-srcnodata");
+        arguments = CSLAddString(arguments, "-128");
+        arguments = CSLAddString(arguments, "-dstnodata");
+        arguments = CSLAddString(arguments, "-128");
+        arguments = CSLAddString(arguments, "-wo");
+        arguments = CSLAddString(arguments, "UNIFIED_SRC_NODATA=YES");
         for (std::size_t index = 0; index < sourceBands.size(); ++index)
         {
-            options->panSrcBands[index] = sourceBands[index];
-            options->panDstBands[index] = static_cast<int>(index + 1);
-            options->padfSrcNoDataReal[index] = -128.0;
-            options->padfDstNoDataReal[index] = -128.0;
+            arguments = CSLAddString(arguments, "-srcband");
+            arguments = CSLAddString(
+                arguments, std::to_string(sourceBands[index]).c_str());
+            arguments = CSLAddString(arguments, "-dstband");
+            arguments = CSLAddString(
+                arguments, std::to_string(index + 1).c_str());
         }
-        options->papszWarpOptions = CSLSetNameValue(
-            options->papszWarpOptions, "UNIFIED_SRC_NODATA", "YES");
-        if (GDALReprojectImage(
-                source.get(), sourceWkt, destination.get(),
-                destinationProjection.c_str(), GRA_NearestNeighbour,
-                64.0 * 1024.0 * 1024.0, 0.0, GDALDummyProgress,
-                nullptr, options.get()) != CE_None)
+        WarpAppOptionsPtr options(GDALWarpAppOptionsNew(arguments, nullptr));
+        CSLDestroy(arguments);
+        if (!options)
         {
+            error = "AlphaEarth mosaic warp options could not be created";
+            return false;
+        }
+        GDALWarpAppOptionsSetProgress(
+            options.get(), cancelProgress,
+            const_cast<std::function<bool()>*>(&cancelled));
+        GDALDatasetH sourceHandle = source.get();
+        int usageError = FALSE;
+        GDALDatasetH warpResult = nullptr;
+        {
+            QuietGdalErrors quietErrors;
+            warpResult = GDALWarp(nullptr, destination.get(), 1,
+                                  &sourceHandle, options.get(), &usageError);
+        }
+        if (!warpResult)
+        {
+            if (cancelled && cancelled())
+            {
+                error = "Cancelled";
+                return false;
+            }
             error = CPLGetLastErrorMsg();
             if (error.empty()) error = "AlphaEarth mosaic reprojection failed";
             else error = "AlphaEarth mosaic reprojection failed: " + error;

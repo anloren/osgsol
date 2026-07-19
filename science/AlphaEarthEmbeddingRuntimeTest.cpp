@@ -1,10 +1,12 @@
 #include "AlphaEarthEmbeddingRuntime.h"
 #include "AlphaEarthEmbeddingReader.h"
+#include "AlphaEarthMosaic.h"
 #include "SciencePreviewRuntime.h"
 
 #include "ScienceEmbedding.h"
 #include "ScienceQueryService.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -19,6 +21,7 @@
 #include <vector>
 
 #include <gdal_priv.h>
+#include <cpl_string.h>
 #include <ogr_spatialref.h>
 #include <sqlite3.h>
 
@@ -161,6 +164,79 @@ namespace
         std::string _path;
         double _west = WEST;
         double _east = EAST;
+    };
+
+    class OverviewFixture
+    {
+    public:
+        OverviewFixture()
+        {
+            static std::atomic<unsigned int> sequence{0};
+            const std::string name = "osgsol-alphaearth-overview-" +
+                std::to_string(++sequence) + ".tif";
+            _path = (std::filesystem::temp_directory_path() / name).string();
+
+            GDALAllRegister();
+            GDALDriver* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+            require(driver != nullptr, "GTiff driver is unavailable");
+            char** options = nullptr;
+            options = CSLSetNameValue(options, "TILED", "YES");
+            options = CSLSetNameValue(options, "BLOCKXSIZE", "128");
+            options = CSLSetNameValue(options, "BLOCKYSIZE", "128");
+            GDALDataset* dataset = driver->Create(
+                _path.c_str(), 1024, 1024, 1, GDT_Int8, options);
+            CSLDestroy(options);
+            require(dataset != nullptr, "could not create overview fixture");
+
+            double transform[6] = {
+                WEST, (EAST - WEST) / 1024.0, 0.0,
+                NORTH, 0.0, -(NORTH - SOUTH) / 1024.0};
+            require(dataset->SetGeoTransform(transform) == CE_None,
+                    "could not set overview fixture geotransform");
+            OGRSpatialReference wgs84;
+            wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            require(wgs84.importFromEPSG(4326) == OGRERR_NONE,
+                    "could not create overview fixture CRS");
+            char* projection = nullptr;
+            require(wgs84.exportToWkt(&projection) == OGRERR_NONE &&
+                        dataset->SetProjection(projection) == CE_None,
+                    "could not set overview fixture projection");
+            CPLFree(projection);
+
+            GDALRasterBand* band = dataset->GetRasterBand(1);
+            band->SetDescription("A01");
+            band->SetNoDataValue(-128.0);
+            require(band->Fill(11.0) == CE_None,
+                    "could not fill overview fixture base band");
+            const int level = 64;
+            require(dataset->BuildOverviews(
+                        "NEAREST", 1, &level, 0, nullptr,
+                        nullptr, nullptr) == CE_None,
+                    "could not build overview fixture pyramid");
+            require(band->GetOverviewCount() == 1 &&
+                        band->GetOverview(0)->Fill(77.0) == CE_None,
+                    "could not distinguish overview fixture pyramid");
+            GDALClose(dataset);
+        }
+
+        ~OverviewFixture()
+        {
+            std::error_code ignored;
+            std::filesystem::remove(_path, ignored);
+        }
+
+        earthscience::AlphaEarthAsset asset() const
+        {
+            earthscience::AlphaEarthAsset result;
+            result.datasetId = "local-overview";
+            result.pathOrUrl = _path;
+            result.sourceVersion = "fixture-v1";
+            result.indexedBounds = {WEST, SOUTH, EAST, NORTH};
+            return result;
+        }
+
+    private:
+        std::string _path;
     };
 
     earthscience::GeoTemporalQuery pointQuery()
@@ -951,10 +1027,44 @@ namespace
                 "cross-tile preview retained a clipped transparent edge: " +
                     snapshot.message);
     }
+
+    void testMosaicDownsamplingUsesSourceOverview()
+    {
+        OverviewFixture fixture;
+        earthscience::alphaearthdetail::AlphaEarthMosaicRaster mosaic;
+        std::string error;
+        const bool read = earthscience::alphaearthdetail::readAlphaEarthMosaic(
+            {fixture.asset()}, {WEST, SOUTH, EAST, NORTH}, 8, 8,
+            {1}, {"A01"}, []() { return false; }, mosaic, error);
+        const bool usedOverview = read && mosaic.values.size() == 64 &&
+            std::all_of(mosaic.values.begin(), mosaic.values.end(),
+                        [](std::int8_t value) { return value == 77; });
+        require(usedOverview,
+                "mosaic downsampling ignored the source overview: " + error);
+    }
+
+    void testMosaicWarpChecksCancellationDuringWork()
+    {
+        OverviewFixture fixture;
+        earthscience::alphaearthdetail::AlphaEarthMosaicRaster mosaic;
+        std::string error;
+        std::atomic<int> cancellationChecks{0};
+        const bool read = earthscience::alphaearthdetail::readAlphaEarthMosaic(
+            {fixture.asset()}, {WEST, SOUTH, EAST, NORTH}, 512, 512,
+            {1}, {"A01"}, [&cancellationChecks]()
+            {
+                return ++cancellationChecks >= 3;
+            }, mosaic, error);
+        require(!read && cancellationChecks.load() >= 3 &&
+                    error.find("Cancelled") != std::string::npos,
+                "mosaic warp did not observe cancellation while running");
+    }
 }
 
 int main()
 {
+    testMosaicDownsamplingUsesSourceOverview();
+    testMosaicWarpChecksCancellationDuringWork();
     testCrossTilePreviewHasNoTransparentClippedEdge();
     testCrossTileRegionalAnalysisBuildsOneCompleteGrid();
     testRealRuntimeThroughputEnablesDurationBudget();
