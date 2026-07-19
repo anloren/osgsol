@@ -36,6 +36,7 @@ SCIENCE_STRING_PATTERN = re.compile(
     r"(?:GDALAllRegister|GDALOpen(?:Ex)?|GDAL_DATA|PROJ_LIB|"
     r"proj_(?:context_create|create_crs_to_crs)|"
     r"ZSTD_(?:compress|decompress|createDStream))")
+ZSTD_MARKER_PATTERN = re.compile(r"(?:^|\s)_?ZSTD_[A-Za-z]")
 ALLOWED_SCIENCE_EXPORTS = frozenset({"_osgsol_science_g0_probe_anchor"})
 ROOT_CAUSE_CATEGORIES = {
     "science-static-linkage": {
@@ -242,6 +243,22 @@ class CommandInspector:
 def exported_symbol_name(line):
     fields = str(line).split()
     return fields[-1] if fields else ""
+
+
+def is_static_science_marker(pattern, value, owner, main_relative):
+    """Classify ambiguous static markers without claiming generic ZSTD ownership.
+
+    GDAL/OGR/OSR/PROJ markers are geospatially specific everywhere.  ZSTD is a
+    general compression library already used by the rendering/runtime stack,
+    so it is isolation evidence only when embedded in the product executable.
+    The product link-command contract independently prevents the private
+    ScienceEarth ZSTD archive from entering that executable.
+    """
+    if pattern.search(value) is None:
+        return False
+    if ZSTD_MARKER_PATTERN.search(value) and owner != main_relative:
+        return False
+    return True
 
 
 def bundle_size(path):
@@ -558,12 +575,16 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
                 add_finding(
                     relative, "forbidden_string", value,
                     f"{forbidden} string in {relative}: {value}")
-            if SCIENCE_STRING_PATTERN.search(value) and not exempt:
+            if (is_static_science_marker(
+                    SCIENCE_STRING_PATTERN, value, relative, main_relative) and
+                    not exempt):
                 add_finding(
                     relative, "static_science_string", value,
                     f"static science string in {relative}: {value}")
         for value in item["symbols"]:
-            if SCIENCE_SYMBOL_PATTERN.search(value) and not exempt:
+            if (is_static_science_marker(
+                    SCIENCE_SYMBOL_PATTERN, value, relative, main_relative) and
+                    not exempt):
                 add_finding(
                     relative, "static_science_symbol", value,
                     f"static science symbol in {relative}: {value}")
@@ -633,14 +654,19 @@ def audit_bundle(app, baseline, inspector=None, source_roots=None,
     science_closure_bytes = sum(
         (app / relative).stat().st_size for relative in science_only
         if (app / relative).is_file())
-    for relative in science_only:
-        for line in metadata[relative]["exported_symbols"]:
+    # The ABI surface belongs to the loadable plugin itself.  Ordinary support
+    # dylibs in its transitive closure (fontconfig, libpng, or a private GDAL)
+    # necessarily export their own APIs and are governed by dependency and
+    # closure rules instead of being mistaken for plugin entry points.
+    if science_relative is not None:
+        for line in metadata[science_relative]["exported_symbols"]:
             symbol = exported_symbol_name(line)
             if not symbol or symbol in ALLOWED_SCIENCE_EXPORTS:
                 continue
             add_finding(
-                relative, "exported_science_symbol", symbol,
-                f"externally visible symbol in science closure {relative}: {symbol}")
+                science_relative, "exported_science_symbol", symbol,
+                f"externally visible symbol in science plugin "
+                f"{science_relative}: {symbol}")
 
     baseline_bytes = bundle_size(baseline)
     total_bytes = bundle_size(app)

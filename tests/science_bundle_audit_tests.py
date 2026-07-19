@@ -310,10 +310,10 @@ class ScienceBundleAuditTests(unittest.TestCase):
     def test_baseline_debt_passes_but_new_non_science_identity_stops(self):
         probe = BundleFixture(self.root)
         inspector = self.valid_inspector()
-        inspector._symbols["libbase.dylib"] = ["_ZSTD_decompress"]
+        inspector._symbols["libbase.dylib"] = ["_proj_context_create"]
         baseline_finding = AUDIT.make_finding(
             "Contents/lib/libbase.dylib", "static_science_symbol",
-            "_ZSTD_decompress", [])
+            "_proj_context_create", [])
         reference, ratchet = self.manifest_chain([baseline_finding])
         result = audit(
             probe.app, self.baseline.app, inspector,
@@ -324,7 +324,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
             key in result for key in
             ("manifests", "tier_a", "tier_b", "absolute", "delta")))
         self.assertEqual(result["delta"]["new"], [])
-        inspector._symbols["libbase.dylib"].append("_ZSTD_compress")
+        inspector._symbols["libbase.dylib"].append("_proj_create_crs_to_crs")
         result = audit(
             probe.app, self.baseline.app, inspector,
             source_roots=self.policy_source_roots,
@@ -446,6 +446,44 @@ class ScienceBundleAuditTests(unittest.TestCase):
         self.assertEqual(violations[0]["subject"], "_GDALAllRegister")
         self.assertEqual(result["tier_a"]["status"], "STOP")
 
+    def test_plugin_support_dylib_exports_are_not_the_plugin_abi_surface(self):
+        probe = BundleFixture(self.root)
+        support = probe.add("Contents/lib/libplugin-support.dylib", 20)
+        inspector = self.valid_inspector()
+        inspector._dependencies["osgdb_science.so"].append(
+            "@loader_path/../libplugin-support.dylib")
+        inspector._dependencies[support.name] = ["/usr/lib/libSystem.B.dylib"]
+        inspector._exported_symbols[support.name] = [
+            "0000000000003000 T _ordinary_support_api"]
+
+        result = audit(probe.app, self.baseline.app, inspector)
+
+        self.assertFalse(any(
+            finding["category"] == "exported_science_symbol" and
+            finding["owner"] == "Contents/lib/libplugin-support.dylib"
+            for finding in result["findings"]), result["findings"])
+
+    def test_generic_zstd_in_shared_runtime_is_not_science_ownership(self):
+        probe = BundleFixture(self.root)
+        inspector = self.valid_inspector()
+        inspector._symbols["libbase.dylib"] = ["_ZSTD_decompress"]
+        inspector._strings["libbase.dylib"] = ["ZSTD_compress"]
+
+        result = audit(probe.app, self.baseline.app, inspector)
+
+        self.assertFalse(any(
+            finding["category"] in {
+                "static_science_symbol", "static_science_string"} and
+            finding["owner"] == "Contents/lib/libbase.dylib"
+            for finding in result["findings"]), result["findings"])
+
+        inspector._symbols["main"] = ["_ZSTD_decompress"]
+        result = audit(probe.app, self.baseline.app, inspector)
+        self.assertTrue(any(
+            finding["category"] == "static_science_symbol" and
+            finding["owner"] == "Contents/MacOS/main"
+            for finding in result["findings"]), result["findings"])
+
     def test_real_macho_science_export_is_found_but_anchor_is_allowed(self):
         baseline = self.root / "ExportBaseline.app"
         candidate = self.root / "ExportCandidate.app"
@@ -498,7 +536,7 @@ class ScienceBundleAuditTests(unittest.TestCase):
         probe = BundleFixture(self.root)
         old = AUDIT.make_finding(
             "Contents/lib/libbase.dylib", "static_science_symbol",
-            "_ZSTD_decompress", [])
+            "_proj_context_create", [])
         reference, ratchet = self.manifest_chain([old])
         result = audit(
             probe.app, self.baseline.app, self.valid_inspector(),
@@ -520,10 +558,10 @@ class ScienceBundleAuditTests(unittest.TestCase):
         probe = BundleFixture(self.root)
         old = AUDIT.make_finding(
             "Contents/lib/libbase.dylib", "static_science_symbol",
-            "_ZSTD_decompress", [])
+            "_proj_context_create", [])
         reference, ratchet = self.manifest_chain([old])
         inspector = self.valid_inspector()
-        inspector._symbols["libbase.dylib"] = ["_ZSTD_compress"]
+        inspector._symbols["libbase.dylib"] = ["_proj_create_crs_to_crs"]
         result = audit(
             probe.app, self.baseline.app, inspector,
             source_roots=self.policy_source_roots,
