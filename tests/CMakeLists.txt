@@ -235,6 +235,51 @@ IF(BUILD_TESTING)
         LABELS "offline;scienceearth"
         TIMEOUT 30)
 
+    IF(APPLE)
+        ADD_LIBRARY(osgSol_Test_SciencePluginFake MODULE
+            science_plugin_fake.cpp)
+        ADD_LIBRARY(osgSol_Test_SciencePluginFakeBadAbi MODULE
+            science_plugin_fake_bad_abi.cpp)
+        ADD_LIBRARY(osgSol_Test_SciencePluginFakeMissingAnchor MODULE
+            science_plugin_fake_missing_anchor.cpp)
+        ADD_LIBRARY(osgSol_Test_SciencePluginFakeNullFunction MODULE
+            science_plugin_fake_null_function.cpp)
+        FOREACH(_science_fake_target
+                osgSol_Test_SciencePluginFake
+                osgSol_Test_SciencePluginFakeBadAbi
+                osgSol_Test_SciencePluginFakeMissingAnchor
+                osgSol_Test_SciencePluginFakeNullFunction)
+            SET_TARGET_PROPERTIES(${_science_fake_target} PROPERTIES
+                PREFIX ""
+                SUFFIX ".so"
+                CXX_VISIBILITY_PRESET hidden)
+        ENDFOREACH()
+
+        ADD_EXECUTABLE(osgSol_Test_SciencePluginRuntime
+            science_plugin_runtime_tests.cpp
+            "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_plugin_runtime.cpp")
+        TARGET_COMPILE_FEATURES(osgSol_Test_SciencePluginRuntime PRIVATE cxx_std_14)
+        TARGET_INCLUDE_DIRECTORIES(osgSol_Test_SciencePluginRuntime PRIVATE
+            "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
+        TARGET_COMPILE_DEFINITIONS(osgSol_Test_SciencePluginRuntime PRIVATE
+            OSGSOL_TEST_SCIENCE_PLUGIN="$<TARGET_FILE:osgSol_Test_SciencePluginFake>"
+            OSGSOL_TEST_SCIENCE_PLUGIN_BAD_ABI="$<TARGET_FILE:osgSol_Test_SciencePluginFakeBadAbi>"
+            OSGSOL_TEST_SCIENCE_PLUGIN_MISSING_ANCHOR="$<TARGET_FILE:osgSol_Test_SciencePluginFakeMissingAnchor>"
+            OSGSOL_TEST_SCIENCE_PLUGIN_NULL_FUNCTION="$<TARGET_FILE:osgSol_Test_SciencePluginFakeNullFunction>")
+        ADD_DEPENDENCIES(osgSol_Test_SciencePluginRuntime
+            osgSol_Test_SciencePluginFake
+            osgSol_Test_SciencePluginFakeBadAbi
+            osgSol_Test_SciencePluginFakeMissingAnchor
+            osgSol_Test_SciencePluginFakeNullFunction)
+        TARGET_LINK_LIBRARIES(osgSol_Test_SciencePluginRuntime PRIVATE
+            ${CMAKE_DL_LIBS})
+        ADD_TEST(NAME osgSol_Test_SciencePluginRuntime
+                 COMMAND $<TARGET_FILE:osgSol_Test_SciencePluginRuntime>)
+        SET_TESTS_PROPERTIES(osgSol_Test_SciencePluginRuntime PROPERTIES
+            LABELS "offline;scienceearth"
+            TIMEOUT 30)
+    ENDIF()
+
     IF(OSGSOL_BUILD_SCIENCE)
         ADD_TEST(NAME osgSol_Test_ScienceQueryConsumer
                  COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
