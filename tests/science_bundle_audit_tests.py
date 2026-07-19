@@ -385,6 +385,58 @@ class ScienceBundleAuditTests(unittest.TestCase):
         self.assertEqual(delta["removed"], allowed)
         self.assertFalse(delta["ok"])
 
+    def test_static_symbol_comparison_ignores_address(self):
+        old = AUDIT.make_finding(
+            "Contents/lib/libbase.dylib", "static_science_symbol",
+            "000000000036c794 T _ZSTD_compressBound", [])
+        relocated = AUDIT.make_finding(
+            "Contents/lib/libbase.dylib", "static_science_symbol",
+            "00000000003dc794 T _ZSTD_compressBound", [])
+
+        delta = AUDIT.compare_identity_sets([relocated], [old])
+
+        self.assertTrue(delta["ok"])
+        self.assertEqual(delta["new"], [])
+        self.assertEqual(delta["removed"], [])
+        self.assertNotEqual(old["identity"], relocated["identity"])
+
+    def test_static_symbol_comparison_keeps_semantic_boundaries(self):
+        old = AUDIT.make_finding(
+            "Contents/lib/libbase.dylib", "static_science_symbol",
+            "000000000036c794 T _ZSTD_compressBound", [])
+        cases = (
+            AUDIT.make_finding(
+                "Contents/lib/libbase.dylib", "static_science_symbol",
+                "00000000003dc794 T _ZSTD_decompressBound", []),
+            AUDIT.make_finding(
+                "Contents/MacOS/main", "static_science_symbol",
+                "00000000003dc794 T _ZSTD_compressBound", []),
+            AUDIT.make_finding(
+                "Contents/lib/libbase.dylib", "static_science_symbol",
+                "00000000003dc794 t _ZSTD_compressBound", []),
+        )
+
+        for changed in cases:
+            with self.subTest(changed=changed):
+                delta = AUDIT.compare_identity_sets([changed], [old])
+                self.assertFalse(delta["ok"])
+                self.assertEqual(delta["new"], [changed])
+                self.assertEqual(delta["removed"], [old])
+
+    def test_non_symbol_comparison_remains_exact(self):
+        old = AUDIT.make_finding(
+            "Contents/MacOS/main", "forbidden_string",
+            "000000000036c794 /usr/local/lib", [])
+        changed = AUDIT.make_finding(
+            "Contents/MacOS/main", "forbidden_string",
+            "00000000003dc794 /usr/local/lib", [])
+
+        delta = AUDIT.compare_identity_sets([changed], [old])
+
+        self.assertFalse(delta["ok"])
+        self.assertEqual(delta["new"], [changed])
+        self.assertEqual(delta["removed"], [old])
+
     def test_recursively_audits_main_libraries_and_unreferenced_plugins(self):
         probe = BundleFixture(self.root)
         result = audit(probe.app, self.baseline.app, self.valid_inspector())

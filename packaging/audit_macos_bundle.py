@@ -40,6 +40,8 @@ ALLOWED_SCIENCE_EXPORTS = frozenset({"_osgsol_science_g0_probe_anchor"})
 
 
 FINDING_SCHEMA_VERSION = 1
+NM_SYMBOL_LINE = re.compile(
+    r"^(?:[0-9A-Fa-f]+\s+)?(?P<kind>[A-Za-z?])\s+(?P<name>\S+)$")
 
 
 def load_module(name, path):
@@ -83,9 +85,40 @@ def make_finding(owner, category, subject, source_roots):
     }
 
 
+def comparison_subject(finding):
+    subject = finding["subject"]
+    if finding["category"] != "static_science_symbol":
+        return subject
+    match = NM_SYMBOL_LINE.fullmatch(subject.strip())
+    if match is None:
+        return subject
+    return f"{match.group('kind')} {match.group('name')}"
+
+
+def comparison_identity(finding):
+    return finding_identity(
+        finding["owner"], finding["category"], comparison_subject(finding))
+
+
+def _index_comparison_findings(findings):
+    indexed = {}
+    semantic_keys = {}
+    for item in sorted(findings, key=lambda value: value["identity"]):
+        identity = comparison_identity(item)
+        semantic_key = (
+            item["owner"], item["category"], comparison_subject(item))
+        existing_key = semantic_keys.get(identity)
+        if existing_key is not None and existing_key != semantic_key:
+            raise ValueError(
+                "comparison identity collision between distinct findings")
+        semantic_keys[identity] = semantic_key
+        indexed.setdefault(identity, item)
+    return indexed
+
+
 def compare_identity_sets(candidate, ceiling):
-    candidate_by_id = {item["identity"]: item for item in candidate}
-    ceiling_by_id = {item["identity"]: item for item in ceiling}
+    candidate_by_id = _index_comparison_findings(candidate)
+    ceiling_by_id = _index_comparison_findings(ceiling)
     new_ids = sorted(set(candidate_by_id) - set(ceiling_by_id))
     removed_ids = sorted(set(ceiling_by_id) - set(candidate_by_id))
     return {
