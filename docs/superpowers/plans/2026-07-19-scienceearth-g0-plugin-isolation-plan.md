@@ -36,6 +36,8 @@
 - `assets/misc/fontconfig/fonts.conf`: deterministic bundle-local font discovery.
 - `packaging/relocate_runtime_prefixes.py`: exact allowlist-only, same-length staging-binary prefix relocation.
 - `tests/runtime_prefix_relocation_tests.py`: fail-closed binary relocation tests.
+- `packaging/relocate_compiled_paths.py`: same-length staging-only compiled source-root relocation.
+- `tests/compiled_path_relocation_tests.py`: fail-closed compiled-path relocation tests.
 - `packaging/package_macos.sh`: package plugin, set bundle-local fontconfig resources, relocate known fallbacks before signing, validate no forbidden prefixes.
 - `tests/package_macos_tests.sh`: package/resource/relocation contract.
 - `docs/scienceearth/g0-plugin-isolation.md`: architecture, behavior preservation, failure mode, evidence, and remaining work.
@@ -74,11 +76,11 @@ using OsgSolScienceAnchor = const OsgSolSciencePluginApiV1* (*)();
 
 The only externally visible symbol is the C anchor `_osgsol_science_g0_probe_anchor`. `SciencePluginRuntime` exposes `load`, `available`, `error`, `sceneNode`, `setVisible`, `registerAiTools`, `drawOperations`, and `drawResults`. Its destructor destroys the opaque session but intentionally keeps the module loaded until process exit so OSG-held node destructors and callbacks cannot jump into an unloaded image.
 
-- [ ] **Step 1: Write failing fake-ABI tests**
+- [x] **Step 1: Write failing fake-ABI tests**
 
 Cover successful create/forward/destroy, missing file, missing anchor, ABI version mismatch, too-small structure, create failure text, null function pointer rejection, and exactly-once session destruction. The tests must use a tiny test module and never create an OSG viewer or window.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -89,11 +91,11 @@ ctest --test-dir build/science_g3_release -R SciencePluginRuntime --output-on-fa
 
 Expected: configure/build failure because the ABI and loader do not exist.
 
-- [ ] **Step 3: Implement the minimum fail-closed loader**
+- [x] **Step 3: Implement the minimum fail-closed loader**
 
 Use `dlopen(path, RTLD_NOW | RTLD_LOCAL)`, `dlsym`, exact ABI/size checks, exact function-pointer checks, and bounded error copying. Do not link the loader to `osgSolScienceCore` or `osgSolSciencePreview`. Keep the module handle alive after session destruction.
 
-- [ ] **Step 4: Re-run the focused test**
+- [x] **Step 4: Re-run the focused test**
 
 Expected: PASS with no GUI process and no network activity.
 
@@ -108,7 +110,7 @@ Expected: PASS with no GUI process and no network activity.
 - Modify: `tests/science_build_contract_tests.cpp`
 - Create: `tests/science_plugin_contract_tests.py`
 
-- [ ] **Step 1: Write failing build/export/linkage contracts**
+- [x] **Step 1: Write failing build/export/linkage contracts**
 
 Tests must assert:
 
@@ -119,11 +121,11 @@ Tests must assert:
 - the Earth main link command does not contain `osgSolSciencePreview`, `libgdal.a`, `libproj.a`, or `libzstd.a`;
 - `nm`/`strings` on the Earth executable contain no G0 GDAL/PROJ/ZSTD science patterns.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run the build-contract CTest and Python contract. Expected: FAIL because the module does not exist and the executable still links the static preview library.
 
-- [ ] **Step 3: Implement the plugin session**
+- [x] **Step 3: Implement the plugin session**
 
 The opaque session owns, in safe destruction order:
 
@@ -134,11 +136,11 @@ The opaque session owns, in safe destruction order:
 
 Forward existing panel and AI functions without changing their implementations or defaults. Provider registration failures remain warnings and do not remove the other providers. The anchor returns one immutable function table. Build a `MODULE` target named `osgdb_science`, set `PREFIX ""`, `SUFFIX ".so"`, hidden C/C++ visibility, and on macOS pass `-Wl,-exported_symbol,_osgsol_science_g0_probe_anchor`. Install it to `${INSTALL_PLUGINDIR}`.
 
-- [ ] **Step 4: Keep existing science unit tests on internal libraries**
+- [x] **Step 4: Keep existing science unit tests on internal libraries**
 
 Do not move or delete provider/analysis tests. The product executable alone loses the static dependency; focused tests may continue linking the static science libraries for direct behavioral regression coverage.
 
-- [ ] **Step 5: Re-run build/export/linkage contracts**
+- [x] **Step 5: Re-run build/export/linkage contracts**
 
 Expected: PASS; one module and one export; no science static stack in main.
 
@@ -152,11 +154,11 @@ Expected: PASS; one module and one export; no science static stack in main.
 - Modify: `applications/earth_explorer/CMakeLists.txt`
 - Modify: `tests/science_plugin_runtime_tests.cpp`
 
-- [ ] **Step 1: Add failing forwarding-order regression tests**
+- [x] **Step 1: Add failing forwarding-order regression tests**
 
 Assert the host calls create before scene-node attachment, uses the same opaque session for visibility, AI registration, operations draw, and results draw, and destroys the session exactly once. Assert an unavailable plugin makes all facade calls safe no-ops.
 
-- [ ] **Step 2: Replace direct science types in the host**
+- [x] **Step 2: Replace direct science types in the host**
 
 Remove provider/service/panel/preview includes and source files from the product executable. Load:
 
@@ -166,11 +168,11 @@ BASE_DIR + "/" + OSGPLUGIN_PREFIX + "/osgdb_science.so"
 
 with the index at `MISC_DIR + "science/alphaearth/alphaearth.sqlite"`, preserving `OSGSOL_ALPHAEARTH_INDEX`. Attach `sceneNode()` only when available. Capture the runtime facade in the `alphaearth` layer callback, register existing AI tools through it, and inject the facade into `EarthControlUI`.
 
-- [ ] **Step 3: Preserve UI layout and failure behavior**
+- [x] **Step 3: Preserve UI layout and failure behavior**
 
 `EarthControlUI` calls the facade at the same two positions where `ScienceEarthPanel` currently draws operations and results. Do not add permanent explanatory text or enlarge either panel. When the plugin is unavailable, omit the science panel/layer and emit one log warning; ordinary Earth controls, Quit, photo, maps, camera, and layers remain unchanged.
 
-- [ ] **Step 4: Verify Science-on and Science-off compilation**
+- [x] **Step 4: Verify Science-on and Science-off compilation**
 
 ```sh
 cmake --build build/science_g3_release --target osgVerse_EarthExplorer osgdb_science -j4
@@ -187,11 +189,11 @@ Expected: both PASS. Science-off contains no plugin loader activation and needs 
 - Modify: `tests/science_deps_script_tests.sh`
 - Modify: `packaging/science_deps/build_science_deps.sh`
 
-- [ ] **Step 1: Write a failing build-script contract**
+- [x] **Step 1: Write a failing build-script contract**
 
 Require `-DGDAL_AUTOLOAD_PLUGINS=OFF`, require the generated cache value to be `OFF`, and require the final archive/runtime probe to contain no `/usr/local/lib/gdalplugins`, `/opt/homebrew`, source root, or worktree path.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```sh
 bash tests/science_deps_script_tests.sh
@@ -199,11 +201,11 @@ bash tests/science_deps_script_tests.sh
 
 Expected: FAIL because the builder leaves GDAL autoload enabled.
 
-- [ ] **Step 3: Disable only dynamic driver autoload**
+- [x] **Step 3: Disable only dynamic driver autoload**
 
 Add `-DGDAL_AUTOLOAD_PLUGINS=OFF` and cache verification. Do not remove the explicitly compiled GTiff, VRT, MEM, `/vsicurl/`, ZSTD, warp, or embedded PROJ capabilities.
 
-- [ ] **Step 4: Rebuild and verify the private dependency prefix**
+- [x] **Step 4: Rebuild and verify the private dependency prefix**
 
 Rebuild the existing `build/science-deps-g2-v5` prefix with the repository script, then run its compiled runtime probe and manifest verification. Expected active drivers and VFS remain exactly the approved lists while the forbidden GDAL fallback string disappears.
 
@@ -226,11 +228,11 @@ Rebuild the existing `build/science-deps-g2-v5` prefix with the repository scrip
 
 No other path, library, byte count, or replacement is accepted. The tool must refuse symlinks, non-Mach-O input, missing expected occurrences, unexpected counts, length changes, already signed input, and any remaining `/opt/homebrew` or `/usr/local` string.
 
-- [ ] **Step 1: Write failing relocation tests**
+- [x] **Step 1: Write failing relocation tests**
 
 Test exact replacement, same-size output, surrounding-byte preservation, allowlist ownership, missing token, unexpected token count, signed-input rejection, symlink rejection, and post-scan rejection.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
@@ -239,15 +241,15 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
 
 Expected: FAIL because the relocation tool does not exist.
 
-- [ ] **Step 3: Add a deterministic bundle fontconfig resource**
+- [x] **Step 3: Add a deterministic bundle fontconfig resource**
 
 The XML must search macOS system, local, and user font directories, use only bundle-neutral/system paths, and avoid a Homebrew cache. After `globalInitialize`, set `FONTCONFIG_FILE` to the bundled file only when the user has not already set it. This makes the patched compiled fontconfig fallback inactive and preserves user override behavior. The app already loads its Chinese UI font by explicit bundled path; do not change that path.
 
-- [ ] **Step 4: Relocate only staging copies before signing**
+- [x] **Step 4: Relocate only staging copies before signing**
 
 Run the tool after dependency closure/relocation and before code signing. Never edit Homebrew, the OSG runtime SDK, build SDK, baseline app, Desktop app, or any source binary. `libintl` has no application translation catalog in this product; replacing its unused compiled default locale prefix must not alter current UI behavior.
 
-- [ ] **Step 5: Extend package tests**
+- [x] **Step 5: Extend package tests**
 
 Require the bundled fontconfig file, environment setup source contract, identical dylib byte sizes before/after token replacement, no forbidden path strings in staged Mach-O files, resolved bundle-local dependencies, and successful strict signing verification.
 
@@ -259,7 +261,7 @@ Require the bundled fontconfig file, environment setup source contract, identica
 - Modify: `docs/scienceearth/g0-plugin-isolation.md`
 - Modify: `docs/scienceearth/g0-v2-audit-readiness.md`
 
-- [ ] **Step 1: Run all Python/Bash offline policy tests**
+- [x] **Step 1: Run all Python/Bash offline policy tests**
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest \
@@ -271,7 +273,7 @@ bash tests/science_deps_script_tests.sh
 bash tests/scienceearth_release_tests.sh
 ```
 
-- [ ] **Step 2: Build and run the Science-on offline suite**
+- [x] **Step 2: Build and run the Science-on offline suite**
 
 ```sh
 cmake --build build/science_g3_release --target install -j4
@@ -281,15 +283,15 @@ ctest --test-dir build/science_g3_release \
 
 Expected: all existing 50 offline tests plus new plugin tests PASS. Existing AlphaEarth, Sentinel-2, Copernicus DEM, analysis, panel, AI, exit, camera, photo, map, layer, and layout regressions remain green.
 
-- [ ] **Step 3: Build and test Science-off**
+- [x] **Step 3: Build and test Science-off**
 
 Reconfigure the existing `build/science_g2_off` tree if needed, build/install Earth, run its offline tests, and assert no `osgdb_science.so` is installed and no science archive is linked.
 
-- [ ] **Step 4: Produce a staging-only formal candidate**
+- [x] **Step 4: Produce a staging-only formal candidate**
 
 Package to `build/science_g0_plugin_audit/candidate/osgSol Earth.app` with the current built source commit, explicit GLCore OSG runtime, approved AlphaEarth index, and runtime smoke skipped. Do not touch the Desktop app.
 
-- [ ] **Step 5: Validate package and G0 v2 audit**
+- [x] **Step 5: Validate package and G0 v2 audit**
 
 Run package data-manifest validation, `codesign --verify --deep --strict`, `otool` closure validation, the exact one-export contract, and `packaging/audit_macos_bundle.py` against the immutable v0.2 baseline/reference/ratchet.
 
@@ -303,7 +305,7 @@ Required result:
 - Tier A PASS and Tier B PASS;
 - overall G0 result PASS, or REVIEW_REQUIRED solely when a non-stop size band is reached.
 
-- [ ] **Step 6: Record exact evidence and commit**
+- [x] **Step 6: Record exact evidence and commit**
 
 Document commit ids, candidate fingerprint, main/plugin/data hashes, four size gates, closure members, export list, finding delta, all test counts, and the explicit statement that no Desktop app was launched or overwritten. Stage only named source/test/doc files; leave both existing `__pycache__` directories untouched.
 
