@@ -64,6 +64,7 @@
 #include <iostream>
 #include <sstream>
 #include <ctime>
+#include <cstdlib>
 #include <thread>
 #include <atomic>
 #include <vector>
@@ -805,6 +806,15 @@ int main(int argc, char** argv)
     // see earth_exit.h and the real-session macOS crash evidence in normal-exit-root-cause.md.
     earthexit::pinApplicationUsageForProcessLifetime();
 #endif
+#if defined(__APPLE__)
+    // Keep font discovery bundle-local and deterministic on macOS.  Respect an explicit user or
+    // test override; the packaged config contains only system and per-user font directories.
+    const std::string bundledFontConfig =
+        MISC_DIR + std::string("fontconfig/fonts.conf");
+    if (!std::getenv("FONTCONFIG_FILE") && osgDB::fileExists(bundledFontConfig))
+        ::setenv("FONTCONFIG_FILE", bundledFontConfig.c_str(), 0);
+#endif
+
     const std::string settingsPath = osgVerse::defaultImGuiSettingsPath();
     const std::string userDataPath = osgDB::getFilePath(settingsPath);
     const std::string runtimeLogBase = userDataPath.empty() ? std::string()

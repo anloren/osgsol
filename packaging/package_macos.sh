@@ -404,6 +404,14 @@ while IFS= read -r -d '' binary; do
     done < "$AUDIT_DIR/dependency-list"
 done < "$AUDIT_DIR/macho-files"
 
+# fontconfig/gettext retain their build-prefix defaults as ordinary string data even after every
+# Mach-O dependency and rpath has been made bundle-relative.  Relocate only the two audited
+# libraries, with exact occurrence counts, after install_name_tool and before any formal signing.
+PYTHONDONTWRITEBYTECODE=1 python3 \
+    "$REPO/packaging/relocate_runtime_prefixes.py" \
+    "$BUILD_APP/Contents/lib/libfontconfig.1.dylib" \
+    "$BUILD_APP/Contents/lib/libintl.8.dylib"
+
 if [ ! -s "$AUDIT_DIR/all-macho-uuids" ]; then
     fail 67 "Packaged bundle contains no auditable Mach-O UUIDs"
 fi

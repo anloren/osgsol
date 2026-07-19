@@ -214,6 +214,16 @@ IF(BUILD_TESTING)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             LABELS "offline;macos-exit"
             TIMEOUT 30)
+        IF(APPLE)
+            ADD_TEST(NAME osgSol_Test_RuntimePrefixRelocation
+                     COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+                             "${OSGSOL_PYTHON3_EXECUTABLE}" -m unittest
+                             tests.runtime_prefix_relocation_tests -v)
+            SET_TESTS_PROPERTIES(osgSol_Test_RuntimePrefixRelocation PROPERTIES
+                WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                LABELS "offline;scienceearth;packaging"
+                TIMEOUT 30)
+        ENDIF()
     ENDIF()
 
     ADD_TEST(NAME osgSol_Test_ScienceDepsScript
