@@ -223,6 +223,14 @@ IF(BUILD_TESTING)
                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
                 LABELS "offline;scienceearth;packaging"
                 TIMEOUT 30)
+            ADD_TEST(NAME osgSol_Test_CompiledPathRelocation
+                     COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+                             "${OSGSOL_PYTHON3_EXECUTABLE}" -m unittest
+                             tests.compiled_path_relocation_tests -v)
+            SET_TESTS_PROPERTIES(osgSol_Test_CompiledPathRelocation PROPERTIES
+                WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                LABELS "offline;scienceearth;packaging"
+                TIMEOUT 30)
         ENDIF()
     ENDIF()
 

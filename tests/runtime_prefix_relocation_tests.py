@@ -94,6 +94,11 @@ class RuntimePrefixRelocationTests(unittest.TestCase):
         with self.assertRaisesRegex(RelocationError, "not allowlisted"):
             relocate_binary(path)
 
+    def test_relocates_the_fixed_lua_module_search_prefixes(self):
+        path, _ = self.write_fixture("osgdb_lua.so", 0, 6)
+        relocate_binary(path)
+        self.assertEqual(path.read_bytes().count(b"@usr_local"), 6)
+
     def test_packager_relocates_the_two_libraries_before_signing(self):
         script = (Path(__file__).parents[1] / "packaging" /
                   "package_macos.sh").read_text(encoding="utf-8")
@@ -101,6 +106,8 @@ class RuntimePrefixRelocationTests(unittest.TestCase):
         self.assertIn(call, script)
         self.assertIn('"$BUILD_APP/Contents/lib/libfontconfig.1.dylib"', script)
         self.assertIn('"$BUILD_APP/Contents/lib/libintl.8.dylib"', script)
+        self.assertIn(
+            '"$BUILD_APP/Contents/lib/$PLUGVER/osgdb_lua.so"', script)
         self.assertLess(script.index(call), script.index("codesign --force --sign"))
 
     def test_earth_uses_bundle_fontconfig_without_overriding_user_choice(self):

@@ -35,6 +35,10 @@ POLICIES = {
         b"/opt/homebrew": 1,
         b"/usr/local": 0,
     },
+    "osgdb_lua.so": {
+        b"/opt/homebrew": 0,
+        b"/usr/local": 6,
+    },
 }
 
 MACHO_MAGICS = {

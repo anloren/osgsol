@@ -9,6 +9,7 @@ export COPYFILE_DISABLE=1
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDK="${OSGVERSE_SDK:-$REPO/build/sdk_core}"
 OSG_RUNTIME_SDK="${OSG_RUNTIME_SDK:-}"
+OSG_RUNTIME_SOURCE_ROOT="${OSGSOL_OSG_RUNTIME_SOURCE_ROOT:-}"
 APP="${OSGSOL_PACKAGE_OUTPUT:-$REPO/dist/osgSol Earth.app}"
 VERSION="${OSGSOL_PACKAGE_VERSION:-0.3.0}"
 BUILD_CHANNEL="${OSGSOL_BUILD_CHANNEL:-developer}"
@@ -261,6 +262,14 @@ if [ "$COMPILE_GL3_COUNT" -lt 1 ] ||
     fail 66 "Install SDK was not built for GLCore (GL3=$COMPILE_GL3_COUNT core=$COMPILE_CORE_SUFFIX_COUNT legacy=$COMPILE_LEGACY_SUFFIX_COUNT)"
 fi
 
+if [ -z "$OSG_RUNTIME_SOURCE_ROOT" ]; then
+    OSG_RUNTIME_SOURCE_ROOT="$(cd "$OSG_RUNTIME_SDK/../.." && pwd)"
+fi
+if [[ "$OSG_RUNTIME_SOURCE_ROOT" != /* ]] || [ ! -d "$OSG_RUNTIME_SOURCE_ROOT" ]; then
+    fail 66 "OSG runtime source root is invalid: $OSG_RUNTIME_SOURCE_ROOT"
+fi
+OSG_RUNTIME_SOURCE_ROOT="$(cd "$OSG_RUNTIME_SOURCE_ROOT" && pwd)"
+
 APP_PARENT="$(dirname "$APP")"
 mkdir -p "$APP_PARENT"
 APP_PARENT="$(cd "$APP_PARENT" && pwd)"
@@ -404,13 +413,23 @@ while IFS= read -r -d '' binary; do
     done < "$AUDIT_DIR/dependency-list"
 done < "$AUDIT_DIR/macho-files"
 
-# fontconfig/gettext retain their build-prefix defaults as ordinary string data even after every
-# Mach-O dependency and rpath has been made bundle-relative.  Relocate only the two audited
-# libraries, with exact occurrence counts, after install_name_tool and before any formal signing.
+# Release objects may retain __FILE__ and compiled plugin-search paths.  Remove only the two
+# canonical source roots from staged Mach-Os with equal-length tokens; this changes diagnostics,
+# never code layout or dependency identities.
+PYTHONDONTWRITEBYTECODE=1 python3 \
+    "$REPO/packaging/relocate_compiled_paths.py" \
+    --binary-root "$BUILD_APP/Contents" \
+    --source-root "$REPO" \
+    --source-root "$OSG_RUNTIME_SOURCE_ROOT"
+
+# fontconfig/gettext/Lua retain build-prefix defaults as ordinary string data even after every
+# Mach-O dependency and rpath has been made bundle-relative.  Relocate only the audited libraries,
+# with exact occurrence counts, after install_name_tool and before any formal signing.
 PYTHONDONTWRITEBYTECODE=1 python3 \
     "$REPO/packaging/relocate_runtime_prefixes.py" \
     "$BUILD_APP/Contents/lib/libfontconfig.1.dylib" \
-    "$BUILD_APP/Contents/lib/libintl.8.dylib"
+    "$BUILD_APP/Contents/lib/libintl.8.dylib" \
+    "$BUILD_APP/Contents/lib/$PLUGVER/osgdb_lua.so"
 
 if [ ! -s "$AUDIT_DIR/all-macho-uuids" ]; then
     fail 67 "Packaged bundle contains no auditable Mach-O UUIDs"
