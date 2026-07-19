@@ -50,6 +50,14 @@ class SciencePluginContractTests(unittest.TestCase):
         self.assertEqual([line for line in symbols if SCIENCE_SYMBOL.search(line)], [])
         self.assertEqual([line for line in strings if SCIENCE_STRING.search(line)], [])
 
+    def test_macos_plugin_installs_into_the_packager_plugin_root(self):
+        cmake = (Path(__file__).parents[1] / "science" / "CMakeLists.txt").read_text(
+            encoding="utf-8")
+        self.assertIn(
+            'LIBRARY DESTINATION "lib/osgPlugins-${OSG_MAJOR_VERSION}.'
+            '${OSG_MINOR_VERSION}.${OSG_PATCH_VERSION}"',
+            cmake)
+
 
 if __name__ == "__main__":
     unittest.main()

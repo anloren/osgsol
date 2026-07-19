@@ -129,7 +129,8 @@ SET_TARGET_PROPERTIES(osgdb_science PROPERTIES
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON
     LINK_FLAGS "-Wl,-exported_symbol,_osgsol_science_g0_probe_anchor")
-INSTALL(TARGETS osgdb_science LIBRARY DESTINATION ${INSTALL_PLUGINDIR})
+INSTALL(TARGETS osgdb_science
+    LIBRARY DESTINATION "lib/osgPlugins-${OSG_MAJOR_VERSION}.${OSG_MINOR_VERSION}.${OSG_PATCH_VERSION}")
 
 ADD_EXECUTABLE(osgSol_Smoke_Sentinel2Production EXCLUDE_FROM_ALL
     Sentinel2ProductionSmoke.cpp)
