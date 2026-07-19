@@ -21,15 +21,19 @@ struct AlphaEarthEmbeddingRuntime::Impl
         std::chrono::steady_clock::time_point startedAt;
     };
 
-    explicit Impl(AlphaEarthAssetResolver value, bool localOnly)
-        : resolver(std::move(value)), injectedLocalResolver(localOnly)
+    explicit Impl(AlphaEarthAssetResolver value,
+                  AlphaEarthAssetSetResolver setValue,
+                  bool localOnly)
+        : resolver(std::move(value)), assetSetResolver(std::move(setValue)),
+          injectedLocalResolver(localOnly)
     {
-        state.state = resolver ? ScienceJobState::Idle
-                               : ScienceJobState::Unavailable;
-        state.progress.stage = resolver ? ScienceProgressStage::Idle
-                                        : ScienceProgressStage::Failed;
-        state.message = resolver ? "Ready"
-                                 : "AlphaEarth asset resolver is missing";
+        const bool available = resolver || assetSetResolver;
+        state.state = available ? ScienceJobState::Idle
+                                : ScienceJobState::Unavailable;
+        state.progress.stage = available ? ScienceProgressStage::Idle
+                                         : ScienceProgressStage::Failed;
+        state.message = available ? "Ready"
+                                  : "AlphaEarth asset resolver is missing";
         worker = std::thread([this]() { run(); });
     }
 
@@ -103,7 +107,8 @@ struct AlphaEarthEmbeddingRuntime::Impl
             std::shared_ptr<const ScienceArtifact> artifact;
             std::string error;
             const bool succeeded = alphaearthdetail::readAlphaEarthArtifact(
-                request.query, resolver, injectedLocalResolver,
+                request.query, resolver, assetSetResolver,
+                injectedLocalResolver,
                 request.generation, callbacks,
                 artifact, error);
 
@@ -147,6 +152,7 @@ struct AlphaEarthEmbeddingRuntime::Impl
     }
 
     AlphaEarthAssetResolver resolver;
+    AlphaEarthAssetSetResolver assetSetResolver;
     bool injectedLocalResolver = false;
     mutable std::mutex mutex;
     std::condition_variable condition;
@@ -166,13 +172,28 @@ AlphaEarthEmbeddingRuntime::AlphaEarthEmbeddingRuntime(
         {
             return alphaearthdetail::resolveAlphaEarthAssetFromIndex(
                 indexPath, latitude, longitude, year, asset, error);
+        },
+        [indexPath](const ScienceWgs84Bounds& bounds, int year,
+                    std::vector<AlphaEarthAsset>& assets,
+                    std::string& error)
+        {
+            return alphaearthdetail::resolveAlphaEarthAssetsFromIndex(
+                indexPath, bounds, year, assets, error);
         }, false))
 {
 }
 
 AlphaEarthEmbeddingRuntime::AlphaEarthEmbeddingRuntime(
     AlphaEarthAssetResolver resolver)
-    : _impl(std::make_unique<Impl>(std::move(resolver), true))
+    : _impl(std::make_unique<Impl>(
+        std::move(resolver), AlphaEarthAssetSetResolver(), true))
+{
+}
+
+AlphaEarthEmbeddingRuntime::AlphaEarthEmbeddingRuntime(
+    AlphaEarthAssetSetResolver resolver)
+    : _impl(std::make_unique<Impl>(
+        AlphaEarthAssetResolver(), std::move(resolver), true))
 {
 }
 
@@ -183,7 +204,7 @@ std::uint64_t AlphaEarthEmbeddingRuntime::submit(
 {
     if (!_impl) return 0;
     std::lock_guard<std::mutex> lock(_impl->mutex);
-    if (!_impl->resolver)
+    if (!_impl->resolver && !_impl->assetSetResolver)
     {
         _impl->state.state = ScienceJobState::Unavailable;
         _impl->state.progress.stage = ScienceProgressStage::Failed;

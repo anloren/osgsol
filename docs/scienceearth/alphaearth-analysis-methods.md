@@ -15,7 +15,9 @@ showing several of them is useful for inspection, but does not create independen
 ## Implemented tools
 
 - False-color context: A01/A16/A09 is loaded for the comparison year before any point or regional
-  analysis starts. It locates the exact frozen analysis scope; it is not natural-color imagery.
+  analysis starts. Every indexed tile intersecting the frozen scope is reprojected onto one WGS84
+  mosaic; incomplete mosaics are rejected rather than published as clipped rectangles. It is not
+  natural-color imagery.
 - Point baseline trajectory: compares every selected year with the first selected year using
   direction change, vector displacement, or both.
 - Largest adjacent-year interval: reports the strongest consecutive valid-year step separately

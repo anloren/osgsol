@@ -1,21 +1,17 @@
 #include "SciencePreviewRuntime.h"
 
+#include "AlphaEarthEmbeddingReader.h"
+#include "AlphaEarthMosaic.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <filesystem>
-#include <functional>
 #include <mutex>
 #include <optional>
-#include <sqlite3.h>
 #include <thread>
-
-#include <cpl_conv.h>
-#include <cpl_error.h>
-#include <gdal_priv.h>
-#include <gdal_frmts.h>
 
 namespace earthscience
 {
@@ -26,270 +22,43 @@ namespace
     constexpr int RGB_BANDS[] = {2, 17, 10};
     constexpr const char* RGB_NAMES[] = {"A01", "A16", "A09"};
 
-    struct TileRecord
+    ScienceWgs84Bounds previewBounds(double latitude, double longitude,
+                                     double requestedSpanMeters)
     {
-        std::string datasetId;
-        std::string relativePath;
-        std::string version;
-        std::string baseUrl;
-        double west = 0.0;
-        double south = 0.0;
-        double east = 0.0;
-        double north = 0.0;
-    };
-
-    struct SqliteCloser
-    {
-        void operator()(sqlite3* database) const
-        {
-            if (database) sqlite3_close(database);
-        }
-    };
-
-    struct StatementCloser
-    {
-        void operator()(sqlite3_stmt* statement) const
-        {
-            if (statement) sqlite3_finalize(statement);
-        }
-    };
-
-    struct DatasetCloser
-    {
-        void operator()(GDALDataset* dataset) const
-        {
-            if (dataset) GDALClose(dataset);
-        }
-    };
-
-    using SqlitePtr = std::unique_ptr<sqlite3, SqliteCloser>;
-    using StatementPtr = std::unique_ptr<sqlite3_stmt, StatementCloser>;
-    using DatasetPtr = std::unique_ptr<GDALDataset, DatasetCloser>;
-
-    struct PreviewReadResult
-    {
-        std::shared_ptr<const std::vector<unsigned char>> rgba;
-        std::shared_ptr<const ScienceGroundGrid> groundGrid;
-        ScienceRasterWindow window;
-        double west = 0.0;
-        double south = 0.0;
-        double east = 0.0;
-        double north = 0.0;
-    };
-
-    std::string sqliteText(sqlite3_stmt* statement, int column)
-    {
-        const unsigned char* value = sqlite3_column_text(statement, column);
-        return value ? reinterpret_cast<const char*>(value) : std::string();
+        constexpr double METERS_PER_LATITUDE_DEGREE = 110574.0;
+        constexpr double METERS_PER_LONGITUDE_DEGREE = 111320.0;
+        constexpr double PI = 3.14159265358979323846;
+        const double span = requestedSpanMeters > 0.0
+            ? requestedSpanMeters : 81920.0;
+        const double latitudeHalfSpan =
+            span * 0.5 / METERS_PER_LATITUDE_DEGREE;
+        const double longitudeScale = METERS_PER_LONGITUDE_DEGREE *
+            std::max(0.01, std::cos(latitude * PI / 180.0));
+        const double longitudeHalfSpan = span * 0.5 / longitudeScale;
+        return {
+            longitude - longitudeHalfSpan,
+            latitude - latitudeHalfSpan,
+            longitude + longitudeHalfSpan,
+            latitude + latitudeHalfSpan};
     }
 
-    bool selectTile(const std::string& indexPath, double latitude,
-                    double longitude, int year, TileRecord& tile,
-                    std::string& error)
+    std::shared_ptr<const ScienceGroundGrid> previewGroundGrid(
+        const ScienceWgs84Bounds& bounds)
     {
-        sqlite3* rawDatabase = nullptr;
-        const std::string uri = "file:" + indexPath + "?mode=ro&immutable=1";
-        if (sqlite3_open_v2(uri.c_str(), &rawDatabase,
-                            SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nullptr) !=
-            SQLITE_OK)
-        {
-            error = rawDatabase ? sqlite3_errmsg(rawDatabase)
-                                : "could not open AlphaEarth index";
-            if (rawDatabase) sqlite3_close(rawDatabase);
-            return false;
-        }
-        SqlitePtr database(rawDatabase);
-
-        const char* query =
-            "SELECT t.dataset_id,t.cog_path,t.source_version,"
-            "t.min_lon,t.min_lat,t.max_lon,t.max_lat,m.asset_base_url "
-            "FROM tile_rtree r JOIN tiles t ON t.id=r.id "
-            "CROSS JOIN metadata m "
-            "WHERE t.year=?1 AND r.min_lon<=?2 AND r.max_lon>=?2 "
-            "AND r.min_lat<=?3 AND r.max_lat>=?3 "
-            "ORDER BY t.id LIMIT 1";
-        sqlite3_stmt* rawStatement = nullptr;
-        if (sqlite3_prepare_v2(database.get(), query, -1, &rawStatement,
-                               nullptr) != SQLITE_OK)
-        {
-            error = sqlite3_errmsg(database.get());
-            return false;
-        }
-        StatementPtr statement(rawStatement);
-        sqlite3_bind_int(statement.get(), 1, year);
-        sqlite3_bind_double(statement.get(), 2, longitude);
-        sqlite3_bind_double(statement.get(), 3, latitude);
-        const int step = sqlite3_step(statement.get());
-        if (step == SQLITE_DONE)
-        {
-            error = "No AlphaEarth tile covers this point and year";
-            return false;
-        }
-        if (step != SQLITE_ROW)
-        {
-            error = sqlite3_errmsg(database.get());
-            return false;
-        }
-        tile.datasetId = sqliteText(statement.get(), 0);
-        tile.relativePath = sqliteText(statement.get(), 1);
-        tile.version = sqliteText(statement.get(), 2);
-        tile.west = sqlite3_column_double(statement.get(), 3);
-        tile.south = sqlite3_column_double(statement.get(), 4);
-        tile.east = sqlite3_column_double(statement.get(), 5);
-        tile.north = sqlite3_column_double(statement.get(), 6);
-        tile.baseUrl = sqliteText(statement.get(), 7);
-        if (tile.datasetId.empty() || tile.relativePath.empty() ||
-            tile.baseUrl.rfind("https://data.source.coop/", 0) != 0)
-        {
-            error = "AlphaEarth index returned an invalid source record";
-            return false;
-        }
-        return true;
+        ScienceGroundGrid grid;
+        grid.columns = GROUND_GRID_SIZE;
+        grid.rows = GROUND_GRID_SIZE;
+        grid.points.reserve(GROUND_GRID_SIZE * GROUND_GRID_SIZE);
+        for (int row = 0; row < GROUND_GRID_SIZE; ++row)
+            for (int column = 0; column < GROUND_GRID_SIZE; ++column)
+                grid.points.push_back({
+                    bounds.west + (bounds.east - bounds.west) * column /
+                        static_cast<double>(GROUND_GRID_SIZE - 1),
+                    bounds.north - (bounds.north - bounds.south) * row /
+                        static_cast<double>(GROUND_GRID_SIZE - 1)});
+        return std::make_shared<const ScienceGroundGrid>(std::move(grid));
     }
 
-    bool readPreview(const TileRecord& tile,
-                     double latitude, double longitude,
-                     double requestedSpanMeters,
-                     const std::function<bool()>& cancelled,
-                     PreviewReadResult& output,
-                     std::string& sourceUrl, std::string& error)
-    {
-        static std::once_flag registration;
-        std::call_once(registration, []()
-        {
-            GDALRegister_GTiff();
-            GDALRegister_VRT();
-            GDALRegister_MEM();
-            CPLSetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR");
-            CPLSetConfigOption(
-                "CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.tiff");
-            CPLSetConfigOption("GDAL_HTTP_VERSION", "2TLS");
-            CPLSetConfigOption("GDAL_HTTP_MULTIPLEX", "YES");
-            CPLSetConfigOption("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES");
-            CPLSetConfigOption("GDAL_HTTP_CONNECTTIMEOUT", "8");
-            CPLSetConfigOption("GDAL_HTTP_TIMEOUT", "25");
-        });
-
-        if (cancelled()) return false;
-        sourceUrl = tile.baseUrl + tile.relativePath;
-        const std::string vsiUrl = "/vsicurl/" + sourceUrl;
-        CPLErrorReset();
-        DatasetPtr dataset(static_cast<GDALDataset*>(GDALOpenEx(
-            vsiUrl.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
-            nullptr, nullptr, nullptr)));
-        if (!dataset)
-        {
-            error = CPLGetLastErrorMsg();
-            if (error.empty()) error = "AlphaEarth COG could not be opened";
-            return false;
-        }
-        if (cancelled()) return false;
-        if (dataset->GetRasterCount() < 17 ||
-            dataset->GetRasterXSize() <= 0 || dataset->GetRasterYSize() <= 0)
-        {
-            error = "AlphaEarth source does not expose the expected 64 bands";
-            return false;
-        }
-        for (int channel = 0; channel < 3; ++channel)
-        {
-            GDALRasterBand* band = dataset->GetRasterBand(RGB_BANDS[channel]);
-            if (!band || band->GetRasterDataType() != GDT_Int8 ||
-                std::string(band->GetDescription()) != RGB_NAMES[channel])
-            {
-                error = "AlphaEarth RGB band metadata changed";
-                return false;
-            }
-        }
-
-        double geotransform[6] = {};
-        const char* sourceWkt = dataset->GetProjectionRef();
-        if (dataset->GetGeoTransform(geotransform) != CE_None ||
-            !sourceWkt || !*sourceWkt)
-        {
-            error = "AlphaEarth source georeference is missing";
-            return false;
-        }
-        output.window = derivePreviewWindow(
-            dataset->GetRasterXSize(), dataset->GetRasterYSize(),
-            geotransform, sourceWkt, latitude, longitude,
-            requestedSpanMeters, PREVIEW_SIZE, error);
-        if (!error.empty()) return false;
-
-        double windowTransform[6] = {};
-        std::copy(geotransform, geotransform + 6, windowTransform);
-        GDALApplyGeoTransform(geotransform, output.window.x, output.window.y,
-                              &windowTransform[0], &windowTransform[3]);
-        ScienceGroundGrid groundGrid = buildPreviewGroundGrid(
-            output.window.width, output.window.height, windowTransform,
-            sourceWkt, GROUND_GRID_SIZE, GROUND_GRID_SIZE, error);
-        if (!error.empty()) return false;
-        output.groundGrid = std::make_shared<const ScienceGroundGrid>(
-            std::move(groundGrid));
-        if (!output.groundGrid || output.groundGrid->points.empty())
-        {
-            error = "AlphaEarth ground grid is empty";
-            return false;
-        }
-        output.west = output.east = output.groundGrid->points.front().longitude;
-        output.south = output.north = output.groundGrid->points.front().latitude;
-        for (const ScienceGroundPoint& point : output.groundGrid->points)
-        {
-            output.west = std::min(output.west, point.longitude);
-            output.south = std::min(output.south, point.latitude);
-            output.east = std::max(output.east, point.longitude);
-            output.north = std::max(output.north, point.latitude);
-        }
-
-        std::vector<std::int8_t> raw(PREVIEW_SIZE * PREVIEW_SIZE * 3);
-        GDALRasterIOExtraArg extra;
-        INIT_RASTERIO_EXTRA_ARG(extra);
-        extra.eResampleAlg = GRIORA_NearestNeighbour;
-        int bandMap[] = {RGB_BANDS[0], RGB_BANDS[1], RGB_BANDS[2]};
-        if (dataset->RasterIO(
-                GF_Read, output.window.x, output.window.y,
-                output.window.width, output.window.height,
-                raw.data(), PREVIEW_SIZE,
-                PREVIEW_SIZE, GDT_Int8, 3, bandMap, 3,
-                PREVIEW_SIZE * 3, 1, &extra) != CE_None)
-        {
-            error = CPLGetLastErrorMsg();
-            if (error.empty()) error = "AlphaEarth RGB read failed";
-            return false;
-        }
-        if (cancelled()) return false;
-
-        std::vector<unsigned char> masks(
-            PREVIEW_SIZE * PREVIEW_SIZE * 3, 255);
-        for (int channel = 0; channel < 3; ++channel)
-        {
-            GDALRasterBand* band = dataset->GetRasterBand(RGB_BANDS[channel]);
-            if ((band->GetMaskFlags() & GMF_ALL_VALID) != 0) continue;
-            std::vector<unsigned char> channelMask(
-                PREVIEW_SIZE * PREVIEW_SIZE, 255);
-            if (band->GetMaskBand()->RasterIO(
-                    GF_Read, output.window.x, output.window.y,
-                    output.window.width, output.window.height,
-                    channelMask.data(), PREVIEW_SIZE, PREVIEW_SIZE, GDT_Byte,
-                    0, 0, nullptr) != CE_None)
-            {
-                error = "AlphaEarth NoData mask read failed";
-                return false;
-            }
-            for (std::size_t pixel = 0; pixel < channelMask.size(); ++pixel)
-                masks[pixel * 3 + channel] = channelMask[pixel];
-        }
-
-        std::vector<unsigned char> rgba = composePreviewRgba(
-            raw, masks, PREVIEW_SIZE, PREVIEW_SIZE);
-        if (rgba.empty())
-        {
-            error = "AlphaEarth RGBA conversion failed";
-            return false;
-        }
-        output.rgba = std::make_shared<const std::vector<unsigned char>>(
-            std::move(rgba));
-        return true;
-    }
 }
 
 struct SciencePreviewRuntime::Impl
@@ -305,7 +74,28 @@ struct SciencePreviewRuntime::Impl
     };
 
     explicit Impl(const std::string& path)
-        : indexPath(path), available(std::filesystem::is_regular_file(path))
+        : assetSetResolver(
+              [path](const ScienceWgs84Bounds& bounds, int year,
+                     std::vector<AlphaEarthAsset>& assets,
+                     std::string& error)
+              {
+                  return alphaearthdetail::resolveAlphaEarthAssetsFromIndex(
+                      path, bounds, year, assets, error);
+              }),
+          available(std::filesystem::is_regular_file(path))
+    {
+        initialize();
+    }
+
+    explicit Impl(AlphaEarthAssetSetResolver resolver)
+        : assetSetResolver(std::move(resolver)),
+          available(static_cast<bool>(assetSetResolver)),
+          injectedLocalResolver(true)
+    {
+        initialize();
+    }
+
+    void initialize()
     {
         state.state = available ? AlphaEarthPreviewState::Idle
                                 : AlphaEarthPreviewState::Unavailable;
@@ -360,33 +150,71 @@ struct SciencePreviewRuntime::Impl
                 if (request.generation != generation) continue;
                 state.state = AlphaEarthPreviewState::Fetching;
                 state.progress = 0.05f;
-                state.message = "Locating AlphaEarth tile";
+                state.message = "Locating AlphaEarth indexed tiles";
             }
 
-            TileRecord tile;
             std::string error;
-            if (!selectTile(indexPath, request.latitude, request.longitude,
-                            request.year, tile, error))
-            {
-                finishFailure(request, error);
-                continue;
-            }
             if (isCancelled(request.generation)) continue;
             update(request.generation, AlphaEarthPreviewState::Fetching, 0.2f,
-                   "Reading A01/A16/A09 preview");
+                   "Mosaicking A01/A16/A09 preview");
 
-            PreviewReadResult preview;
-            std::string sourceUrl;
-            const bool read = readPreview(
-                tile, request.latitude, request.longitude,
-                request.requestedSpanMeters, [this, request]()
-                { return isCancelled(request.generation); },
-                preview, sourceUrl, error);
+            const ScienceWgs84Bounds bounds = previewBounds(
+                request.latitude, request.longitude,
+                request.requestedSpanMeters);
+            std::vector<AlphaEarthAsset> assets;
+            const bool resolved = assetSetResolver && assetSetResolver(
+                bounds, request.year, assets, error);
+            if (resolved && injectedLocalResolver)
+            {
+                for (const AlphaEarthAsset& asset : assets)
+                {
+                    const std::filesystem::path path(asset.pathOrUrl);
+                    std::error_code filesystemError;
+                    if (asset.pathOrUrl.find("://") != std::string::npos ||
+                        asset.pathOrUrl.rfind("/vsi", 0) == 0 ||
+                        !path.is_absolute() ||
+                        !std::filesystem::is_regular_file(
+                            path, filesystemError))
+                    {
+                        error = "AlphaEarth injected preview resolver requires "
+                                "absolute regular local files";
+                        break;
+                    }
+                }
+            }
+            alphaearthdetail::AlphaEarthMosaicRaster mosaic;
+            const std::vector<int> bands = {
+                RGB_BANDS[0], RGB_BANDS[1], RGB_BANDS[2]};
+            const std::vector<std::string> descriptions = {
+                RGB_NAMES[0], RGB_NAMES[1], RGB_NAMES[2]};
+            const bool read = resolved && error.empty() &&
+                alphaearthdetail::readAlphaEarthMosaic(
+                    assets, bounds, PREVIEW_SIZE, PREVIEW_SIZE,
+                    bands, descriptions, [this, request]()
+                    { return isCancelled(request.generation); },
+                    mosaic, error);
             if (isCancelled(request.generation)) continue;
             if (!read)
             {
                 finishFailure(request, error.empty()
                     ? "AlphaEarth request was cancelled" : error);
+                continue;
+            }
+            std::vector<unsigned char> rgba = composePreviewRgba(
+                mosaic.values, mosaic.masks, PREVIEW_SIZE, PREVIEW_SIZE);
+            if (rgba.empty())
+            {
+                finishFailure(request,
+                              "AlphaEarth mosaic RGBA conversion failed");
+                continue;
+            }
+            std::size_t visiblePixels = 0;
+            for (std::size_t pixel = 0; pixel < rgba.size() / 4; ++pixel)
+                if (rgba[pixel * 4 + 3] != 0) ++visiblePixels;
+            if (visiblePixels != rgba.size() / 4)
+            {
+                finishFailure(request,
+                    "AlphaEarth indexed mosaic has incomplete visible coverage");
                 continue;
             }
 
@@ -399,25 +227,33 @@ struct SciencePreviewRuntime::Impl
                 std::chrono::steady_clock::now() - request.startedAt).count();
             state.message = "AlphaEarth preview ready";
             state.artifact.generation = request.generation;
-            state.artifact.datasetId = tile.datasetId;
-            state.artifact.sourceUrl = sourceUrl;
-            state.artifact.sourceVersion = tile.version;
+            state.artifact.datasetId =
+                "mosaic-" + std::to_string(assets.size());
+            state.artifact.sourceUrl = assets.front().pathOrUrl;
+            if (assets.size() > 1)
+                state.artifact.sourceUrl += " (+" +
+                    std::to_string(assets.size() - 1) + " indexed tiles)";
+            state.artifact.sourceVersion = assets.front().sourceVersion;
             state.artifact.attribution = descriptor.attribution;
             state.artifact.year = request.year;
-            state.artifact.west = preview.west;
-            state.artifact.south = preview.south;
-            state.artifact.east = preview.east;
-            state.artifact.north = preview.north;
+            state.artifact.west = bounds.west;
+            state.artifact.south = bounds.south;
+            state.artifact.east = bounds.east;
+            state.artifact.north = bounds.north;
             state.artifact.width = PREVIEW_SIZE;
             state.artifact.height = PREVIEW_SIZE;
-            state.artifact.sourceWindowWidth = preview.window.width;
-            state.artifact.sourceWindowHeight = preview.window.height;
-            state.artifact.sourceResolutionMeters =
-                preview.window.sourceResolutionMeters;
-            state.artifact.displayResolutionMeters =
-                preview.window.displayResolutionMeters;
-            state.artifact.rgba = preview.rgba;
-            state.artifact.groundGrid = preview.groundGrid;
+            const double span = request.requestedSpanMeters > 0.0
+                ? request.requestedSpanMeters : 81920.0;
+            state.artifact.sourceWindowWidth =
+                std::max(PREVIEW_SIZE, static_cast<int>(std::ceil(span / 10.0)));
+            state.artifact.sourceWindowHeight =
+                state.artifact.sourceWindowWidth;
+            state.artifact.sourceResolutionMeters = 10.0;
+            state.artifact.displayResolutionMeters = span / PREVIEW_SIZE;
+            state.artifact.rgba =
+                std::make_shared<const std::vector<unsigned char>>(
+                    std::move(rgba));
+            state.artifact.groundGrid = previewGroundGrid(bounds);
         }
     }
 
@@ -431,8 +267,9 @@ struct SciencePreviewRuntime::Impl
         state.message = error.empty() ? "AlphaEarth request failed" : error;
     }
 
-    std::string indexPath;
+    AlphaEarthAssetSetResolver assetSetResolver;
     bool available = false;
+    bool injectedLocalResolver = false;
     AlphaEarthSourceDescriptor descriptor;
     mutable std::mutex mutex;
     std::condition_variable condition;
@@ -446,6 +283,12 @@ struct SciencePreviewRuntime::Impl
 
 SciencePreviewRuntime::SciencePreviewRuntime(const std::string& indexPath)
     : _impl(new Impl(indexPath))
+{
+}
+
+SciencePreviewRuntime::SciencePreviewRuntime(
+    AlphaEarthAssetSetResolver resolver)
+    : _impl(new Impl(std::move(resolver)))
 {
 }
 

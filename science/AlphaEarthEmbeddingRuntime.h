@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace earthscience
 {
@@ -22,11 +23,17 @@ namespace earthscience
         double latitude, double longitude, int year,
         AlphaEarthAsset& asset, std::string& error)>;
 
+    using AlphaEarthAssetSetResolver = std::function<bool(
+        const ScienceWgs84Bounds& bounds, int year,
+        std::vector<AlphaEarthAsset>& assets, std::string& error)>;
+
     class AlphaEarthEmbeddingRuntime
     {
     public:
         explicit AlphaEarthEmbeddingRuntime(const std::string& indexPath);
         explicit AlphaEarthEmbeddingRuntime(AlphaEarthAssetResolver resolver);
+        explicit AlphaEarthEmbeddingRuntime(
+            AlphaEarthAssetSetResolver resolver);
         ~AlphaEarthEmbeddingRuntime();
 
         AlphaEarthEmbeddingRuntime(const AlphaEarthEmbeddingRuntime&) = delete;

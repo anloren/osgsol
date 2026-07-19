@@ -1,12 +1,13 @@
 #ifndef OSGSOL_SCIENCE_PREVIEW_RUNTIME_H
 #define OSGSOL_SCIENCE_PREVIEW_RUNTIME_H
 
+#include "AlphaEarthEmbeddingRuntime.h"
+#include "SciencePreviewSupport.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
-
-#include "SciencePreviewSupport.h"
 
 namespace earthscience
 {
@@ -80,6 +81,7 @@ namespace earthscience
     {
     public:
         explicit SciencePreviewRuntime(const std::string& indexPath);
+        explicit SciencePreviewRuntime(AlphaEarthAssetSetResolver resolver);
         ~SciencePreviewRuntime();
 
         SciencePreviewRuntime(const SciencePreviewRuntime&) = delete;

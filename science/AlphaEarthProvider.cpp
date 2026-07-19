@@ -77,7 +77,7 @@ namespace
         reference.variables = query.variables;
         reference.units.assign(query.variables.size(), "1");
         reference.processingSteps = {
-            "AlphaEarth COG window read",
+            "indexed AlphaEarth COG mosaic on one WGS84 display grid",
             "A01/A16/A09 false-color normalization",
         };
         reference.acquisitionTime = std::to_string(legacy.year);
@@ -191,7 +191,7 @@ ScienceProviderSnapshot translateAlphaEarthSnapshot(
     artifact->raster.rgba = snapshot.artifact.rgba;
     artifact->raster.groundGrid = snapshot.artifact.groundGrid;
     artifact->visualizationId = query.visualizationId;
-    artifact->processingVersion = "alphaearth-preview-v1";
+    artifact->processingVersion = "alphaearth-preview-v2-mosaic";
     translated.artifact = std::move(artifact);
     return translated;
 }

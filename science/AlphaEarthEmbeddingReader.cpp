@@ -1,5 +1,6 @@
 #include "AlphaEarthEmbeddingReader.h"
 
+#include "AlphaEarthMosaic.h"
 #include "ScienceAnalysisEngine.h"
 #include "ScienceEmbedding.h"
 
@@ -968,6 +969,194 @@ namespace
             return fail(error, "point series requires point geometry");
         return true;
     }
+
+    std::shared_ptr<const ScienceGroundGrid> makeRegularGroundGrid(
+        const ScienceWgs84Bounds& bounds, int width, int height)
+    {
+        ScienceGroundGrid grid;
+        grid.columns = width;
+        grid.rows = height;
+        grid.points.reserve(static_cast<std::size_t>(width) * height);
+        const double longitudeStep = (bounds.east - bounds.west) / width;
+        const double latitudeStep = (bounds.north - bounds.south) / height;
+        for (int row = 0; row < height; ++row)
+            for (int column = 0; column < width; ++column)
+                grid.points.push_back({
+                    bounds.west + (column + 0.5) * longitudeStep,
+                    bounds.north - (row + 0.5) * latitudeStep});
+        return std::make_shared<const ScienceGroundGrid>(std::move(grid));
+    }
+
+    bool makeMosaicBudgetPlan(const GeoTemporalQuery& query,
+                              ReadPlan& plan, std::string& error)
+    {
+        if (!validIndexedBounds(query.geometry.bounds))
+            return fail(error, "AlphaEarth mosaic query bounds are invalid");
+        constexpr double METERS_PER_LATITUDE_DEGREE = 110574.0;
+        constexpr double METERS_PER_LONGITUDE_DEGREE = 111320.0;
+        constexpr double SOURCE_RESOLUTION_METERS = 10.0;
+        const ScienceWgs84Bounds& bounds = query.geometry.bounds;
+        const double middleLatitude = (bounds.south + bounds.north) * 0.5;
+        const double widthMeters = (bounds.east - bounds.west) *
+            METERS_PER_LONGITUDE_DEGREE *
+            std::max(0.01, std::cos(middleLatitude *
+                3.14159265358979323846 / 180.0));
+        const double heightMeters = (bounds.north - bounds.south) *
+            METERS_PER_LATITUDE_DEGREE;
+        if (!std::isfinite(widthMeters) || !std::isfinite(heightMeters) ||
+            widthMeters <= 0.0 || heightMeters <= 0.0)
+            return fail(error, "AlphaEarth mosaic source estimate is invalid");
+        plan.width = std::max(1, static_cast<int>(
+            std::ceil(widthMeters / SOURCE_RESOLUTION_METERS)) + 2);
+        plan.height = std::max(1, static_cast<int>(
+            std::ceil(heightMeters / SOURCE_RESOLUTION_METERS)) + 2);
+        plan.readWidth = plan.readHeight = std::clamp(
+            query.analysis.gridSize, 1, MAX_GRID_SIZE);
+        if (!query.limits.allowUpsampling &&
+            (plan.readWidth > plan.width || plan.readHeight > plan.height))
+            return fail(error,
+                        "AlphaEarth grid upsampling requires explicit permission");
+        plan.bounds = bounds;
+        plan.groundGrid = makeRegularGroundGrid(
+            bounds, plan.readWidth, plan.readHeight);
+        plan.actualResolutionMeters = approximateResolutionMeters(
+            bounds, plan.readWidth, plan.readHeight);
+        return true;
+    }
+
+    bool validMosaicAsset(const AlphaEarthAsset& asset, bool localOnly,
+                          std::string& error)
+    {
+        if (asset.datasetId.empty() || asset.pathOrUrl.empty() ||
+            asset.sourceVersion.empty() ||
+            !validIndexedBounds(asset.indexedBounds))
+            return fail(error,
+                        "AlphaEarth mosaic resolver returned incomplete metadata");
+        if (!localOnly)
+            return asset.pathOrUrl.rfind(SOURCE_PREFIX, 0) == 0 ? true :
+                fail(error,
+                    "AlphaEarth production mosaic requires trusted "
+                    "source.coop asset URLs");
+        const std::filesystem::path localPath(asset.pathOrUrl);
+        std::error_code filesystemError;
+        if (asset.pathOrUrl.find("://") != std::string::npos ||
+            asset.pathOrUrl.rfind("/vsi", 0) == 0 ||
+            !localPath.is_absolute() ||
+            !std::filesystem::is_regular_file(localPath, filesystemError))
+            return fail(error,
+                        "AlphaEarth injected mosaic resolver requires "
+                        "absolute regular local files");
+        return true;
+    }
+
+    bool readMosaicYear(
+        const GeoTemporalQuery& query,
+        const AlphaEarthAssetSetResolver& resolver,
+        bool injectedLocalResolver,
+        const ReadPlan& plan,
+        int year,
+        const AlphaEarthReadCallbacks& callbacks,
+        std::vector<AlphaEarthAsset>& assets,
+        std::shared_ptr<const ScienceEmbeddingPayload>& output,
+        std::string& error)
+    {
+        assets.clear();
+        if (!resolver(query.geometry.bounds, year, assets, error)) return false;
+        for (const AlphaEarthAsset& asset : assets)
+            if (!validMosaicAsset(asset, injectedLocalResolver, error))
+                return false;
+        if (!alphaEarthAssetsCoverBounds(assets, query.geometry.bounds))
+            return fail(error,
+                        "AlphaEarth indexed tiles do not fully cover the "
+                        "requested geometry");
+        std::vector<int> bands(COMPONENT_COUNT);
+        std::vector<std::string> descriptions(COMPONENT_COUNT);
+        for (std::size_t component = 0; component < COMPONENT_COUNT;
+             ++component)
+        {
+            bands[component] = static_cast<int>(component + 1);
+            char name[4] = {};
+            std::snprintf(name, sizeof(name), "A%02d",
+                          static_cast<int>(component));
+            descriptions[component] = name;
+        }
+        AlphaEarthMosaicRaster mosaic;
+        if (!readAlphaEarthMosaic(
+                assets, query.geometry.bounds, plan.readWidth,
+                plan.readHeight, bands, descriptions, callbacks.cancelled,
+                mosaic, error))
+            return false;
+        const std::size_t cellCount = static_cast<std::size_t>(
+            plan.readWidth) * plan.readHeight;
+        std::vector<float> values(cellCount * COMPONENT_COUNT);
+        std::vector<unsigned char> mask(cellCount, 1);
+        std::vector<float> norms(
+            cellCount, std::numeric_limits<float>::quiet_NaN());
+        std::uint64_t validCount = 0;
+        std::uint64_t missingFootprintCells = 0;
+        for (std::size_t cell = 0; cell < cellCount; ++cell)
+        {
+            double normSquared = 0.0;
+            bool vectorValid = true;
+            bool anyComponentPresent = false;
+            for (std::size_t component = 0;
+                 component < COMPONENT_COUNT; ++component)
+            {
+                const std::size_t index = cell * COMPONENT_COUNT + component;
+                bool componentValid = mosaic.masks[index] != 0;
+                anyComponentPresent = anyComponentPresent || componentValid;
+                const double value = dequantizeAlphaEarth(
+                    mosaic.values[index], componentValid);
+                values[index] = static_cast<float>(value);
+                vectorValid = vectorValid && componentValid;
+                if (componentValid) normSquared += value * value;
+            }
+            if (!anyComponentPresent) ++missingFootprintCells;
+            if (!vectorValid || !std::isfinite(normSquared) ||
+                normSquared <= 0.0)
+            {
+                mask[cell] = 0;
+                continue;
+            }
+            norms[cell] = static_cast<float>(std::sqrt(normSquared));
+            ++validCount;
+        }
+        if (missingFootprintCells != 0)
+            return fail(error,
+                        "AlphaEarth indexed mosaic has incomplete geometric "
+                        "coverage");
+        if (validCount == 0)
+            return fail(error,
+                        "AlphaEarth mosaic contains no valid 64D cells");
+        ScienceEmbeddingPayload payload;
+        payload.years = std::make_shared<const std::vector<int>>(
+            std::initializer_list<int>{year});
+        payload.width = plan.readWidth;
+        payload.height = plan.readHeight;
+        payload.values = std::make_shared<const std::vector<float>>(
+            std::move(values));
+        payload.mask = std::make_shared<const std::vector<unsigned char>>(
+            std::move(mask));
+        payload.bounds = query.geometry.bounds;
+        payload.groundGrid = plan.groundGrid;
+        payload.actualResolutionMeters = plan.actualResolutionMeters;
+        payload.processingSteps =
+            std::make_shared<const std::vector<std::string>>(
+                std::initializer_list<std::string>{
+                    "indexed multi-tile nearest-neighbour WGS84 mosaic",
+                    "official signed AlphaEarth dequantization",
+                    "complete-vector NoData mask",
+                    "64D Euclidean norm calculation"});
+        payload.validCellCount = validCount;
+        payload.noDataCellCount = cellCount - validCount;
+        payload.coverageFraction =
+            static_cast<double>(validCount) / cellCount;
+        payload.norms = std::make_shared<const std::vector<float>>(
+            std::move(norms));
+        output = std::make_shared<const ScienceEmbeddingPayload>(
+            std::move(payload));
+        return true;
+    }
 }
 
 bool resolveAlphaEarthAssetFromIndex(
@@ -1058,9 +1247,90 @@ bool resolveAlphaEarthAssetFromIndex(
     return true;
 }
 
+bool resolveAlphaEarthAssetsFromIndex(
+    const std::string& indexPath, const ScienceWgs84Bounds& bounds,
+    int year, std::vector<AlphaEarthAsset>& assets, std::string& error)
+{
+    assets.clear();
+    error.clear();
+    if (!validIndexedBounds(bounds))
+        return fail(error, "AlphaEarth requested mosaic bounds are invalid");
+    sqlite3* rawDatabase = nullptr;
+    const std::string uri = "file:" + indexPath + "?mode=ro&immutable=1";
+    if (sqlite3_open_v2(uri.c_str(), &rawDatabase,
+                        SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nullptr) !=
+        SQLITE_OK)
+    {
+        error = rawDatabase ? sqlite3_errmsg(rawDatabase)
+                            : "could not open AlphaEarth index";
+        if (rawDatabase) sqlite3_close(rawDatabase);
+        return false;
+    }
+    SqlitePtr database(rawDatabase);
+    const char* query =
+        "SELECT t.dataset_id,t.cog_path,t.source_version,"
+        "t.min_lon,t.min_lat,t.max_lon,t.max_lat,m.asset_base_url "
+        "FROM tile_rtree r JOIN tiles t ON t.id=r.id CROSS JOIN metadata m "
+        "WHERE t.year=?1 AND r.min_lon<?2 AND r.max_lon>?3 "
+        "AND r.min_lat<?4 AND r.max_lat>?5 ORDER BY t.id";
+    sqlite3_stmt* rawStatement = nullptr;
+    if (sqlite3_prepare_v2(database.get(), query, -1, &rawStatement,
+                           nullptr) != SQLITE_OK)
+        return fail(error, sqlite3_errmsg(database.get()));
+    StatementPtr statement(rawStatement);
+    sqlite3_bind_int(statement.get(), 1, year);
+    sqlite3_bind_double(statement.get(), 2, bounds.east);
+    sqlite3_bind_double(statement.get(), 3, bounds.west);
+    sqlite3_bind_double(statement.get(), 4, bounds.north);
+    sqlite3_bind_double(statement.get(), 5, bounds.south);
+    for (;;)
+    {
+        const int step = sqlite3_step(statement.get());
+        if (step == SQLITE_DONE) break;
+        if (step != SQLITE_ROW)
+            return fail(error, sqlite3_errmsg(database.get()));
+        const std::string baseUrl = sqliteText(statement.get(), 7);
+        if (baseUrl.rfind(SOURCE_PREFIX, 0) != 0)
+            return fail(error,
+                        "AlphaEarth index metadata fault: trusted "
+                        "source.coop asset prefix is required");
+        AlphaEarthAsset asset;
+        asset.datasetId = sqliteText(statement.get(), 0);
+        const std::string relativePath = sqliteText(statement.get(), 1);
+        asset.sourceVersion = sqliteText(statement.get(), 2);
+        asset.indexedBounds = {
+            sqlite3_column_double(statement.get(), 3),
+            sqlite3_column_double(statement.get(), 4),
+            sqlite3_column_double(statement.get(), 5),
+            sqlite3_column_double(statement.get(), 6)};
+        if (asset.datasetId.empty() || relativePath.empty() ||
+            asset.sourceVersion.empty() ||
+            !validIndexedBounds(asset.indexedBounds))
+            return fail(error,
+                        "AlphaEarth index mosaic metadata is incomplete");
+        asset.pathOrUrl = baseUrl;
+        if (asset.pathOrUrl.back() != '/' && relativePath.front() != '/')
+            asset.pathOrUrl.push_back('/');
+        else if (asset.pathOrUrl.back() == '/' &&
+                 relativePath.front() == '/')
+            asset.pathOrUrl.pop_back();
+        asset.pathOrUrl += relativePath;
+        assets.push_back(std::move(asset));
+    }
+    if (assets.empty())
+        return fail(error,
+                    "No AlphaEarth tiles intersect this region and year");
+    if (!alphaEarthAssetsCoverBounds(assets, bounds))
+        return fail(error,
+                    "AlphaEarth indexed tiles do not fully cover this region "
+                    "and year");
+    return true;
+}
+
 bool readAlphaEarthArtifact(
     const GeoTemporalQuery& query,
     const AlphaEarthAssetResolver& resolver,
+    const AlphaEarthAssetSetResolver& assetSetResolver,
     bool injectedLocalResolver,
     std::uint64_t generation,
     const AlphaEarthReadCallbacks& callbacks,
@@ -1069,7 +1339,8 @@ bool readAlphaEarthArtifact(
 {
     artifact.reset();
     error.clear();
-    if (!resolver) return fail(error, "AlphaEarth asset resolver is missing");
+    if (!resolver && !assetSetResolver)
+        return fail(error, "AlphaEarth asset resolver is missing");
     std::vector<int> years;
     if (!validateQuery(query, years, error)) return false;
     if (cancelled(callbacks)) return fail(error, "Cancelled");
@@ -1080,14 +1351,33 @@ bool readAlphaEarthArtifact(
         progress.stage = ScienceProgressStage::Locating;
         callbacks.progress(progress, "Locating AlphaEarth source metadata");
     }
+    const bool mosaicMode =
+        query.geometry.kind != ScienceGeometryKind::Point &&
+        static_cast<bool>(assetSetResolver);
+    if (!mosaicMode && !resolver)
+        return fail(error,
+                    "AlphaEarth point query requires a point asset resolver");
+    if (mosaicMode && query.aggregation == ScienceAggregation::Mean)
+        return fail(error,
+                    "AlphaEarth multi-tile mean aggregation is not supported");
     PreparedDataset firstPrepared;
-    if (!resolveAndPrepare(query, resolver, injectedLocalResolver,
-                           years.front(), years.size(), firstPrepared,
-                           error))
-        return false;
-    if (!enforceBudget(query, firstPrepared.plan, years.size(), error))
-        return false;
-    const ReadPlan referencePlan = firstPrepared.plan;
+    ReadPlan referencePlan;
+    if (mosaicMode)
+    {
+        if (!makeMosaicBudgetPlan(query, referencePlan, error) ||
+            !enforceBudget(query, referencePlan, years.size(), error))
+            return false;
+    }
+    else
+    {
+        if (!resolveAndPrepare(query, resolver, injectedLocalResolver,
+                               years.front(), years.size(), firstPrepared,
+                               error))
+            return false;
+        if (!enforceBudget(query, firstPrepared.plan, years.size(), error))
+            return false;
+        referencePlan = firstPrepared.plan;
+    }
 
     std::vector<ScienceSourceReference> sourceReferences;
     std::vector<std::shared_ptr<const ScienceEmbeddingPayload>> retained;
@@ -1101,6 +1391,40 @@ bool readAlphaEarthArtifact(
         {
             loadError = "Cancelled";
             return nullptr;
+        }
+        if (mosaicMode)
+        {
+            if (callbacks.progress)
+            {
+                ScienceProgress progress;
+                progress.stage = ScienceProgressStage::Reading;
+                callbacks.progress(progress,
+                    "Mosaicking AlphaEarth " + std::to_string(year) +
+                    " indexed tiles");
+            }
+            std::vector<AlphaEarthAsset> assets;
+            std::shared_ptr<const ScienceEmbeddingPayload> slice;
+            if (!readMosaicYear(
+                    query, assetSetResolver, injectedLocalResolver,
+                    referencePlan, year, callbacks, assets, slice,
+                    loadError))
+                return nullptr;
+            for (const AlphaEarthAsset& asset : assets)
+            {
+                ReadPlan tilePlan = referencePlan;
+                tilePlan.bounds = {
+                    std::max(query.geometry.bounds.west,
+                             asset.indexedBounds.west),
+                    std::max(query.geometry.bounds.south,
+                             asset.indexedBounds.south),
+                    std::min(query.geometry.bounds.east,
+                             asset.indexedBounds.east),
+                    std::min(query.geometry.bounds.north,
+                             asset.indexedBounds.north)};
+                sourceReferences.push_back(makeSourceReference(
+                    asset, query, tilePlan, year));
+            }
+            return slice;
         }
         PreparedDataset prepared;
         if (firstAvailable && year == years.front())
@@ -1247,7 +1571,9 @@ bool readAlphaEarthArtifact(
     result->embedding = *embedding;
     result->analysis = *analysis;
     result->visualizationId = query.visualizationId;
-    result->processingVersion = "ScienceEarth-64D-v1";
+    result->processingVersion = mosaicMode
+        ? "ScienceEarth-64D-v2-mosaic"
+        : "ScienceEarth-64D-v1";
     if (query.analysis.kind == ScienceAnalysisKind::RegionalChange)
     {
         std::string rasterError;

@@ -1,5 +1,6 @@
 #include "AlphaEarthEmbeddingRuntime.h"
 #include "AlphaEarthEmbeddingReader.h"
+#include "SciencePreviewRuntime.h"
 
 #include "ScienceEmbedding.h"
 #include "ScienceQueryService.h"
@@ -50,7 +51,10 @@ namespace
     {
     public:
         explicit LocalFixture(bool rotated = false,
-                              int firstComponent = 0)
+                              int firstComponent = 0,
+                              double west = WEST,
+                              int epsg = 4326)
+            : _west(west), _east(west + (EAST - WEST))
         {
             static std::atomic<unsigned int> sequence{0};
             const std::string name = "osgsol-alphaearth-64d-" +
@@ -64,17 +68,39 @@ namespace
                 _path.c_str(), 8, 8, 64, GDT_Int8, nullptr);
             require(dataset != nullptr, "could not create the 64-band fixture");
 
-            double transform[6] = {WEST, 0.01, rotated ? 0.002 : 0.0,
+            double transform[6] = {_west, 0.01,
+                                   rotated ? 0.002 : 0.0,
                                    NORTH, rotated ? 0.001 : 0.0, -0.01};
+            OGRSpatialReference source, wgs84;
+            source.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            require(source.importFromEPSG(epsg) == OGRERR_NONE &&
+                        wgs84.importFromEPSG(4326) == OGRERR_NONE,
+                    "could not create fixture CRS");
+            if (epsg != 4326)
+            {
+                std::unique_ptr<OGRCoordinateTransformation,
+                    decltype(&OCTDestroyCoordinateTransformation)> toSource(
+                        OGRCreateCoordinateTransformation(&wgs84, &source),
+                        OCTDestroyCoordinateTransformation);
+                double westX = _west - 0.01, northY = NORTH + 0.01;
+                double eastX = _east + 0.01, southY = SOUTH - 0.01;
+                require(toSource &&
+                            toSource->Transform(1, &westX, &northY) &&
+                            toSource->Transform(1, &eastX, &southY),
+                        "could not project fixture bounds");
+                transform[0] = westX;
+                transform[1] = (eastX - westX) / 8.0;
+                transform[2] = 0.0;
+                transform[3] = northY;
+                transform[4] = 0.0;
+                transform[5] = (southY - northY) / 8.0;
+            }
             require(dataset->SetGeoTransform(transform) == CE_None,
                     "could not set the fixture geotransform");
-            OGRSpatialReference wgs84;
-            wgs84.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-            require(wgs84.importFromEPSG(4326) == OGRERR_NONE,
-                    "could not create fixture EPSG:4326");
             char* projection = nullptr;
-            require(wgs84.exportToWkt(&projection) == OGRERR_NONE,
-                    "could not export fixture EPSG:4326");
+            require(source.exportToWkt(&projection) == OGRERR_NONE,
+                    "could not export fixture CRS");
             require(dataset->SetProjection(projection) == CE_None,
                     "could not set the fixture projection");
             CPLFree(projection);
@@ -117,7 +143,7 @@ namespace
             asset.datasetId = "local-alphaearth-" + std::to_string(year);
             asset.pathOrUrl = _path;
             asset.sourceVersion = "fixture-v1";
-            asset.indexedBounds = {WEST, SOUTH, EAST, NORTH};
+            asset.indexedBounds = {_west, SOUTH, _east, NORTH};
             return asset;
         }
 
@@ -133,6 +159,8 @@ namespace
 
     private:
         std::string _path;
+        double _west = WEST;
+        double _east = EAST;
     };
 
     earthscience::GeoTemporalQuery pointQuery()
@@ -612,7 +640,11 @@ namespace
             "INSERT INTO tiles VALUES(1,2017,'dataset-2017',"
             "'must-not-open.blocked',"
             "'v1',100,20,101,21);"
-            "INSERT INTO tile_rtree VALUES(1,100,101,20,21);";
+            "INSERT INTO tile_rtree VALUES(1,100,101,20,21);"
+            "INSERT INTO tiles VALUES(2,2017,'dataset-east-2017',"
+            "'east-must-not-open.blocked',"
+            "'v1',101,20,102,21);"
+            "INSERT INTO tile_rtree VALUES(2,101,102,20,21);";
         char* sqliteError = nullptr;
         require(sqlite3_exec(database, schema, nullptr, nullptr,
                              &sqliteError) == SQLITE_OK,
@@ -632,6 +664,16 @@ namespace
                     asset.sourceVersion == "v1" &&
                     asset.indexedBounds.west == 100.0,
                 "production resolver lost the immutable index fields");
+
+        std::vector<earthscience::AlphaEarthAsset> mosaicAssets;
+        require(earthscience::alphaearthdetail::
+                    resolveAlphaEarthAssetsFromIndex(
+                        path, {100.25, 20.25, 101.75, 20.75}, 2017,
+                        mosaicAssets, error) &&
+                    mosaicAssets.size() == 2 &&
+                    mosaicAssets.front().datasetId == "dataset-2017" &&
+                    mosaicAssets.back().datasetId == "dataset-east-2017",
+                "production resolver did not return every intersecting tile");
 
         earthscience::GeoTemporalQuery preOpenQuery = pointQuery();
         preOpenQuery.time.explicitYears = {2017};
@@ -819,10 +861,102 @@ namespace
                                 embedding.bounds.north),
                 "rotated source reused requested coordinates as actual coverage");
     }
+
+    void testCrossTileRegionalAnalysisBuildsOneCompleteGrid()
+    {
+        LocalFixture westTile(false, 0, WEST, 32647);
+        LocalFixture eastTile(false, 0, EAST, 32648);
+        earthscience::AlphaEarthAssetSetResolver resolver =
+            [&](const earthscience::ScienceWgs84Bounds&, int year,
+                std::vector<earthscience::AlphaEarthAsset>& assets,
+                std::string& error)
+            {
+                assets = {westTile.asset(year), eastTile.asset(year)};
+                error.clear();
+                return true;
+            };
+        earthscience::AlphaEarthEmbeddingRuntime runtime(resolver);
+        earthscience::GeoTemporalQuery query = regionQuery();
+        query.geometry.bounds.east = EAST + (EAST - WEST);
+        query.analysis.gridSize = 8;
+        query.limits.allowUpsampling = true;
+        const earthscience::ScienceProviderSnapshot ready =
+            waitForTerminal(runtime, runtime.submit(query));
+        const std::string diagnostics = ready.artifact
+            ? " embedding=" + std::to_string(ready.artifact->embedding.width) +
+                "x" + std::to_string(ready.artifact->embedding.height) +
+                " valid=" + std::to_string(
+                    ready.artifact->embedding.validCellCount) +
+                " refs=" + std::to_string(
+                    ready.artifact->sourceReferences.size()) +
+                " raster=" + std::to_string(ready.artifact->raster.width) +
+                "x" + std::to_string(ready.artifact->raster.height) +
+                " bounds=" + std::to_string(
+                    ready.artifact->embedding.bounds.west) + "," +
+                std::to_string(ready.artifact->embedding.bounds.east)
+            : " no-artifact";
+        require(ready.state == earthscience::ScienceJobState::Ready &&
+                    ready.artifact && ready.artifact->embedding.width == 8 &&
+                    ready.artifact->embedding.height == 8 &&
+                    ready.artifact->embedding.validCellCount >= 120 &&
+                    ready.artifact->sourceReferences.size() == 4 &&
+                    ready.artifact->raster.width == 8 &&
+                    ready.artifact->raster.height == 8 &&
+                    nearlyEqual(ready.artifact->embedding.bounds.west, WEST) &&
+                    nearlyEqual(ready.artifact->embedding.bounds.east,
+                                EAST + (EAST - WEST)),
+                "two indexed tiles did not form one complete analysis grid: " +
+                    ready.message + diagnostics);
+    }
+
+    void testCrossTilePreviewHasNoTransparentClippedEdge()
+    {
+        LocalFixture westTile(false, 0, WEST, 32647);
+        LocalFixture eastTile(false, 0, EAST, 32648);
+        earthscience::AlphaEarthAssetSetResolver resolver =
+            [&](const earthscience::ScienceWgs84Bounds&, int year,
+                std::vector<earthscience::AlphaEarthAsset>& assets,
+                std::string& error)
+            {
+                assets = {westTile.asset(year), eastTile.asset(year)};
+                error.clear();
+                return true;
+            };
+        earthscience::SciencePreviewRuntime runtime(resolver);
+        const std::uint64_t generation = runtime.queryPoint(
+            20.04, EAST, 2025, 8000.0);
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(5);
+        earthscience::AlphaEarthPreviewSnapshot snapshot;
+        do
+        {
+            snapshot = runtime.snapshot();
+            if (snapshot.generation == generation &&
+                (snapshot.state == earthscience::AlphaEarthPreviewState::Ready ||
+                 snapshot.state == earthscience::AlphaEarthPreviewState::Failed))
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        while (std::chrono::steady_clock::now() < deadline);
+        bool allVisible = snapshot.artifact.rgba &&
+            snapshot.artifact.rgba->size() == 256u * 256u * 4u;
+        if (allVisible)
+            for (std::size_t pixel = 0;
+                 pixel < snapshot.artifact.rgba->size() / 4; ++pixel)
+                allVisible = allVisible &&
+                    snapshot.artifact.rgba->at(pixel * 4 + 3) != 0;
+        require(snapshot.state == earthscience::AlphaEarthPreviewState::Ready &&
+                    allVisible &&
+                    snapshot.artifact.datasetId.find("mosaic-2") == 0,
+                "cross-tile preview retained a clipped transparent edge: " +
+                    snapshot.message);
+    }
 }
 
 int main()
 {
+    testCrossTilePreviewHasNoTransparentClippedEdge();
+    testCrossTileRegionalAnalysisBuildsOneCompleteGrid();
     testRealRuntimeThroughputEnablesDurationBudget();
     testRotatedSourcePublishesActualSampleGridAndFootprint();
     testSingleTileRejectsPartialRequestedCoverage();

@@ -41,6 +41,8 @@ SET_TARGET_PROPERTIES(osgSolScienceCore PROPERTIES
     CXX_VISIBILITY_PRESET hidden)
 
 ADD_LIBRARY(osgSolSciencePreview STATIC
+    AlphaEarthMosaic.cpp
+    AlphaEarthMosaic.h
     AlphaEarthEmbeddingReader.cpp
     AlphaEarthEmbeddingReader.h
     AlphaEarthEmbeddingRuntime.cpp
