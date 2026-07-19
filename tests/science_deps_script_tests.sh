@@ -613,6 +613,10 @@ assert_contains "$builder" 'gdal-embed-capability' \
     "GDAL embedding must be tied to an independent compiler probe"
 assert_contains "$builder" 'cache_expect.*ENABLE_GNM.*OFF' \
     "verify must require GNM disabled in the resolved cache"
+assert_contains "$builder" 'GDAL_AUTOLOAD_PLUGINS=OFF' \
+    "GDAL dynamic-driver autoload must be disabled"
+assert_contains "$builder" 'cache_expect.*GDAL_AUTOLOAD_PLUGINS.*OFF' \
+    "verify must require GDAL dynamic-driver autoload disabled"
 assert_contains "$builder" 'cache_expect.*GDAL_USE_SHAPELIB_INTERNAL.*OFF' \
     "verify must require internal Shapelib disabled"
 assert_contains "$builder" 'EMBED_RESOURCE_FILES.*gdal_embed_supported' \

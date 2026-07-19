@@ -455,6 +455,7 @@ build_gdal()
         -DCMAKE_DISABLE_FIND_PACKAGE_SWIG=ON \
         -DBUILD_TESTING=OFF \
         -DENABLE_GNM=OFF \
+        -DGDAL_AUTOLOAD_PLUGINS=OFF \
         -DGDAL_BUILD_OPTIONAL_DRIVERS=OFF \
         -DOGR_BUILD_OPTIONAL_DRIVERS=OFF \
         -DGDAL_ENABLE_DRIVER_GTIFF=ON \
@@ -668,6 +669,9 @@ verify_no_workspace_strings()
         if strings -a "$artifact" | grep -F "$science_root"; then
             die "workspace path leaked into runtime artifact: $artifact"
         fi
+        if strings -a "$artifact" | grep -E '/(opt/homebrew|usr/local)(/|$)'; then
+            die "package-manager path leaked into runtime artifact: $artifact"
+        fi
     done
 }
 
@@ -791,6 +795,7 @@ verify_resolved_caches()
     cache_expect "$gdal_cache" CMAKE_DISABLE_FIND_PACKAGE_SWIG ON
     cache_expect "$gdal_cache" BUILD_TESTING OFF
     cache_expect "$gdal_cache" ENABLE_GNM OFF
+    cache_expect "$gdal_cache" GDAL_AUTOLOAD_PLUGINS OFF
     cache_expect "$gdal_cache" GDAL_BUILD_OPTIONAL_DRIVERS OFF
     cache_expect "$gdal_cache" OGR_BUILD_OPTIONAL_DRIVERS OFF
     cache_expect "$gdal_cache" GDAL_ENABLE_DRIVER_GTIFF ON
@@ -891,6 +896,7 @@ selected_keys = {
         "CMAKE_CXX_VISIBILITY_PRESET", "BUILD_SHARED_LIBS", "BUILD_APPS",
         "BUILD_PYTHON_BINDINGS", "CMAKE_DISABLE_FIND_PACKAGE_SWIG",
         "BUILD_TESTING", "ENABLE_GNM", "GDAL_BUILD_OPTIONAL_DRIVERS",
+        "GDAL_AUTOLOAD_PLUGINS",
         "OGR_BUILD_OPTIONAL_DRIVERS",
         "GDAL_ENABLE_DRIVER_GTIFF", "GDAL_ENABLE_DRIVER_VRT",
         "GDAL_ENABLE_DRIVER_MEM", "OGR_ENABLE_DRIVER_GEOJSON",
