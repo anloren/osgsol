@@ -413,6 +413,16 @@ while IFS= read -r -d '' binary; do
     done < "$AUDIT_DIR/dependency-list"
 done < "$AUDIT_DIR/macho-files"
 
+# Apple Silicon linkers and copied bottle inputs may carry valid ad-hoc signatures even after
+# install_name_tool when a particular file needed no load-command change.  Strip only signatures
+# inside the disposable staging tree before byte-stable relocation; every Mach-O is signed and
+# strictly verified again below before publication.
+while IFS= read -r -d '' binary; do
+    if file -b "$binary" | grep -q 'Mach-O'; then
+        codesign --remove-signature "$binary" 2>/dev/null || true
+    fi
+done < "$AUDIT_DIR/macho-files"
+
 # Release objects may retain __FILE__ and compiled plugin-search paths.  Remove only the two
 # canonical source roots from staged Mach-Os with equal-length tokens; this changes diagnostics,
 # never code layout or dependency identities.

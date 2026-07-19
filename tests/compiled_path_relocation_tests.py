@@ -109,6 +109,9 @@ class CompiledPathRelocationTests(unittest.TestCase):
         self.assertIn(call, script)
         self.assertIn('--source-root "$REPO"', script)
         self.assertIn('--source-root "$OSG_RUNTIME_SOURCE_ROOT"', script)
+        strip = 'codesign --remove-signature "$binary"'
+        self.assertIn(strip, script)
+        self.assertLess(script.index(strip), script.index(call))
         self.assertLess(script.index(call), script.index("codesign --force --sign"))
 
 
