@@ -115,7 +115,7 @@ namespace
 
         earthscience::Sentinel2Scene selected;
         require(earthscience::selectSentinel2Item(
-                    scenes, 20.0, selected, error),
+                    scenes, 20.0, {35.68, 139.76}, selected, error),
                 "valid scenes could not be selected");
         require(selected.itemId == "scene-clear" &&
                     selected.cloudCoverPercent == 4.5,
@@ -131,14 +131,43 @@ namespace
         scenes[2].itemId = "a-newer";
         scenes[2].acquisitionTime = "2026-07-16T01:30:00Z";
         require(earthscience::selectSentinel2Item(
-                    scenes, 20.0, selected, error) &&
+                    scenes, 20.0, {35.68, 139.76}, selected, error) &&
                     selected.itemId == "a-newer",
                 "selection did not use newest time then lexical id");
 
         require(!earthscience::selectSentinel2Item(
-                    scenes, 10.0, selected, error) &&
+                    scenes, 10.0, {35.68, 139.76}, selected, error) &&
                     error.find("cloud") != std::string::npos,
                 "cloud threshold silently accepted a cloudier scene");
+    }
+
+    void testSelectionRequiresCoverageOfRequestedPoint()
+    {
+        earthscience::Sentinel2Scene clearerButAdjacent;
+        clearerButAdjacent.itemId = "clear-adjacent-tile";
+        clearerButAdjacent.acquisitionTime = "2026-07-16T01:30:00Z";
+        clearerButAdjacent.cloudCoverPercent = 1.0;
+        clearerButAdjacent.bounds = {139.80, 35.0, 140.5, 36.0};
+
+        earthscience::Sentinel2Scene covering;
+        covering.itemId = "covering-tile";
+        covering.acquisitionTime = "2026-07-15T01:30:00Z";
+        covering.cloudCoverPercent = 8.0;
+        covering.bounds = {138.7, 35.0, 139.79, 36.0};
+
+        earthscience::Sentinel2Scene selected;
+        std::string error;
+        require(earthscience::selectSentinel2Item(
+                    {clearerButAdjacent, covering}, 20.0,
+                    {35.68, 139.76}, selected, error) &&
+                    selected.itemId == "covering-tile",
+                "selection preferred an adjacent tile that misses the requested point");
+
+        require(!earthscience::selectSentinel2Item(
+                    {clearerButAdjacent}, 20.0, {35.68, 139.76},
+                    selected, error) &&
+                    error.find("requested point") != std::string::npos,
+                "selection did not expose missing point coverage");
     }
 
     void testUnsafeOrMalformedResponsesAreRejected()
@@ -195,6 +224,7 @@ int main()
 {
     testSearchUrlIsBoundedAndEncoded();
     testParseAndDeterministicSelection();
+    testSelectionRequiresCoverageOfRequestedPoint();
     testUnsafeOrMalformedResponsesAreRejected();
     std::cout << "[OK] Sentinel-2 STAC contract\n";
     return 0;

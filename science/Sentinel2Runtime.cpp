@@ -161,7 +161,40 @@ namespace
         }
         if (cancelled()) { error = "cancelled"; return false; }
 
+        const std::size_t previewPixels =
+            static_cast<std::size_t>(PREVIEW_SIZE) * PREVIEW_SIZE;
+        std::vector<unsigned char> validity(previewPixels, 0);
+        std::vector<unsigned char> bandMask(previewPixels, 255);
+        for (int bandIndex = 1; bandIndex <= 3; ++bandIndex)
+        {
+            GDALRasterBand* band = dataset->GetRasterBand(bandIndex);
+            if ((band->GetMaskFlags() & GMF_ALL_VALID) != 0)
+            {
+                std::fill(validity.begin(), validity.end(), 255);
+                break;
+            }
+            GDALRasterBand* mask = band->GetMaskBand();
+            if (!mask || mask->RasterIO(
+                    GF_Read, window.x, window.y, window.width, window.height,
+                    bandMask.data(), PREVIEW_SIZE, PREVIEW_SIZE, GDT_Byte,
+                    0, 0, &extra) != CE_None)
+            {
+                if (cancelled()) error = "cancelled";
+                else
+                {
+                    error = CPLGetLastErrorMsg();
+                    if (error.empty())
+                        error = "Sentinel-2 visual COG validity mask read failed";
+                }
+                return false;
+            }
+            for (std::size_t pixel = 0; pixel < previewPixels; ++pixel)
+                if (bandMask[pixel]) validity[pixel] = 255;
+        }
+        if (cancelled()) { error = "cancelled"; return false; }
+
         std::vector<unsigned char> rgba(PREVIEW_SIZE * PREVIEW_SIZE * 4);
+        std::size_t visiblePixels = 0;
         for (std::size_t pixel = 0; pixel < rgb.size() / 3; ++pixel)
         {
             const std::size_t source = pixel * 3;
@@ -169,8 +202,14 @@ namespace
             rgba[destination] = rgb[source];
             rgba[destination + 1] = rgb[source + 1];
             rgba[destination + 2] = rgb[source + 2];
-            rgba[destination + 3] =
-                (rgb[source] || rgb[source + 1] || rgb[source + 2]) ? 210 : 0;
+            rgba[destination + 3] = validity[pixel] ? 210 : 0;
+            if (validity[pixel]) ++visiblePixels;
+        }
+        if (visiblePixels == 0)
+        {
+            error = "Sentinel-2 visual COG has no visible pixels at the "
+                    "requested point and span";
+            return false;
         }
         output.bounds = {grid.points.front().longitude,
                          grid.points.front().latitude,
@@ -416,7 +455,7 @@ struct Sentinel2Runtime::Impl
         if (!parseSentinel2Items(body, scenes, error) ||
             !selectSentinel2Item(
                 scenes, request.query.sceneFilters.maximumCloudCoverPercent,
-                scene, error))
+                request.query.geometry.point, scene, error))
         {
             publish(request.generation, ScienceJobState::Failed,
                     ScienceProgressStage::Failed, error);

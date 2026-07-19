@@ -364,6 +364,7 @@ namespace
             std::fill(red.begin() + static_cast<std::size_t>(y * 512),
                       red.begin() + static_cast<std::size_t>((y + 1) * 512),
                       y < 256 ? 10 : 200);
+        red[128u * 512u + 128u] = 0;
         const std::vector<std::vector<unsigned char>*> values =
             {&red, &green, &blue};
         const GDALColorInterp colors[] =
@@ -394,8 +395,9 @@ namespace
                     output.sourceResolutionMeters == 10.0 && output.rgba &&
                     output.rgba->size() == 256u * 256u * 4u,
                 "local visual fixture lost bounded dimensions");
-        require(output.rgba->at(0) == 10 && output.rgba->at(1) == 20 &&
+        require(output.rgba->at(0) == 0 && output.rgba->at(1) == 20 &&
                     output.rgba->at(2) == 30 && output.rgba->at(3) == 210 &&
+                    output.rgba->at(4) == 10 &&
                     output.rgba->at(output.rgba->size() - 4) == 200,
                 "local visual fixture changed RGB channels or row order");
         require(output.groundGrid && output.groundGrid->columns == 33 &&
@@ -405,6 +407,54 @@ namespace
                     output.bounds.west < output.bounds.east &&
                     output.bounds.south < output.bounds.north,
                 "local visual fixture lost north-up georeference");
+
+        const auto writeBlackFixture = [&](const std::filesystem::path& fixture,
+                                           bool declareNoData)
+        {
+            GDALDataset* black = driver->Create(
+                fixture.string().c_str(), 512, 512, 3, GDT_Byte, nullptr);
+            require(black != nullptr, "could not create black visual fixture");
+            require(black->SetGeoTransform(geotransform) == CE_None,
+                    "could not georeference black visual fixture");
+            char* blackWkt = nullptr;
+            utm.exportToWkt(&blackWkt);
+            require(blackWkt && black->SetProjection(blackWkt) == CE_None,
+                    "could not project black visual fixture");
+            CPLFree(blackWkt);
+            const GDALColorInterp blackColors[] =
+                {GCI_RedBand, GCI_GreenBand, GCI_BlueBand};
+            for (int index = 0; index < 3; ++index)
+            {
+                GDALRasterBand* band = black->GetRasterBand(index + 1);
+                band->SetColorInterpretation(blackColors[index]);
+                if (declareNoData) band->SetNoDataValue(0.0);
+                require(band->Fill(0.0) == CE_None,
+                        "could not fill black visual fixture");
+            }
+            GDALClose(black);
+        };
+
+        const std::filesystem::path validBlackPath =
+            path.string() + ".valid-black.tif";
+        writeBlackFixture(validBlackPath, false);
+        output = earthscience::ScienceRasterPayload();
+        error.clear();
+        require(earthscience::readSentinel2VisualDatasetForTest(
+                    validBlackPath.string(), request, output, error) &&
+                    output.rgba && output.rgba->at(3) == 210,
+                "valid black RGB was incorrectly converted to transparent NoData");
+        std::filesystem::remove(validBlackPath);
+
+        const std::filesystem::path noDataBlackPath =
+            path.string() + ".nodata-black.tif";
+        writeBlackFixture(noDataBlackPath, true);
+        output = earthscience::ScienceRasterPayload();
+        error.clear();
+        require(!earthscience::readSentinel2VisualDatasetForTest(
+                    noDataBlackPath.string(), request, output, error) &&
+                    error.find("no visible pixels") != std::string::npos,
+                "all-NoData visual fixture published a yellow-frame-only raster");
+        std::filesystem::remove(noDataBlackPath);
 
         const std::filesystem::path wrongBandsPath =
             path.string() + ".wrong-bands.tif";

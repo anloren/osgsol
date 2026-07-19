@@ -121,11 +121,17 @@ earthscience::GeoTemporalQuery buildSciencePanelDraft(
             source, *visualization, latitude, longitude,
             state.lastYear, requestedSpanMeters);
     if (state.mode == SciencePanelMode::PointSeries)
-        return makeSciencePointSeriesQuery(
+    {
+        earthscience::GeoTemporalQuery query = makeSciencePointSeriesQuery(
             source, latitude, longitude, state.firstYear, state.lastYear);
+        query.analysis.metrics = sciencePanelSelectedMetrics(state.mode, state);
+        return query;
+    }
     if (state.mode == SciencePanelMode::RegionalChange)
     {
         earthscience::ScienceAnalysisOptions options;
+        options.metrics = sciencePanelSelectedMetrics(state.mode, state);
+        options.hotspotQuantile = state.hotspotQuantile;
         options.gridSize = state.gridSize;
         options.enablePca = state.enablePca;
         options.enableClustering = state.enableClustering;
@@ -533,6 +539,14 @@ void drawPrimaryMetrics(const earthscience::ScienceArtifact& artifact)
                     artifact.raster.displayResolutionMeters).c_str());
         return;
     }
+    const std::vector<std::string> highlights =
+        describeScienceAnalysisHighlights(artifact);
+    if (!highlights.empty())
+    {
+        for (const std::string& highlight : highlights)
+            ImGui::TextWrapped("%s", highlight.c_str());
+        return;
+    }
     int shown = 0;
     if (artifact.analysis.metrics)
     {
@@ -570,43 +584,53 @@ bool drawMetricSeries(const earthscience::ScienceArtifact& artifact)
 {
     if (!artifact.analysis.annualSeries ||
         artifact.analysis.annualSeries->empty()) return false;
-    const earthscience::ScienceAnnualSeries& series =
-        artifact.analysis.annualSeries->front();
-    if (!series.values || series.values->empty()) return false;
-
-    std::vector<float> plot;
-    plot.reserve(series.values->size());
-    float minimum = std::numeric_limits<float>::max();
-    float maximum = std::numeric_limits<float>::lowest();
-    for (std::size_t index = 0; index < series.values->size(); ++index)
+    bool drewAny = false;
+    ImGui::TextWrapped(
+        u8"相对所选起始年的年度轨迹 / Annual trajectory from baseline");
+    for (std::size_t seriesIndex = 0;
+         seriesIndex < artifact.analysis.annualSeries->size(); ++seriesIndex)
     {
-        const bool valid = !series.validity ||
-            index >= series.validity->size() || (*series.validity)[index] != 0;
-        const float value = valid
-            ? static_cast<float>((*series.values)[index])
-            : std::numeric_limits<float>::quiet_NaN();
-        plot.push_back(value);
-        if (valid && std::isfinite(value))
+        const earthscience::ScienceAnnualSeries& series =
+            artifact.analysis.annualSeries->at(seriesIndex);
+        if (!series.values || series.values->empty()) continue;
+        std::vector<float> plot;
+        plot.reserve(series.values->size());
+        float minimum = std::numeric_limits<float>::max();
+        float maximum = std::numeric_limits<float>::lowest();
+        for (std::size_t index = 0; index < series.values->size(); ++index)
         {
-            minimum = std::min(minimum, value);
-            maximum = std::max(maximum, value);
+            const bool valid = !series.validity ||
+                index >= series.validity->size() ||
+                (*series.validity)[index] != 0;
+            const float value = valid
+                ? static_cast<float>((*series.values)[index])
+                : std::numeric_limits<float>::quiet_NaN();
+            plot.push_back(value);
+            if (valid && std::isfinite(value))
+            {
+                minimum = std::min(minimum, value);
+                maximum = std::max(maximum, value);
+            }
         }
+        if (minimum > maximum) continue;
+        if (minimum == maximum)
+        {
+            minimum -= 0.01f;
+            maximum += 0.01f;
+        }
+        ImGui::TextWrapped("%s", sciencePanelMetricLabel(series.metric));
+        const std::string id =
+            "##science_metric_series_" + std::to_string(seriesIndex);
+        ImGui::PlotLines(id.c_str(), plot.data(),
+            static_cast<int>(plot.size()), 0,
+            earthscience::scienceMetricName(series.metric), minimum, maximum,
+            ImVec2(-1.0f, 82.0f));
+        if (series.years && !series.years->empty())
+            ImGui::TextWrapped("%d — %d", series.years->front(),
+                               series.years->back());
+        drewAny = true;
     }
-    if (minimum > maximum) return false;
-    if (minimum == maximum)
-    {
-        minimum -= 0.01f;
-        maximum += 0.01f;
-    }
-    ImGui::TextWrapped(u8"年度嵌入关系 / Annual embedding relationship");
-    ImGui::PlotLines("##science_metric_series", plot.data(),
-        static_cast<int>(plot.size()), 0,
-        earthscience::scienceMetricName(series.metric), minimum, maximum,
-        ImVec2(-1.0f, 92.0f));
-    if (series.years && !series.years->empty())
-        ImGui::TextWrapped("%d — %d", series.years->front(),
-                           series.years->back());
-    return true;
+    return drewAny;
 }
 
 void drawEmbeddingLegend(const earthscience::ScienceArtifact& artifact)
@@ -744,6 +768,58 @@ const char* sciencePanelModeDescription(
     SciencePanelMode mode, const std::string& sourceId)
 {
     return modeDescriptionForSource(mode, sourceId);
+}
+
+std::vector<earthscience::ScienceMetric> sciencePanelSelectedMetrics(
+    SciencePanelMode mode, const SciencePanelState& state)
+{
+    using Metric = earthscience::ScienceMetric;
+    if (mode == SciencePanelMode::RegionalChange)
+        return {state.regionalMetric};
+    switch (state.pointMetricChoice)
+    {
+    case SciencePanelMetricChoice::DirectionChange:
+        return {Metric::CosineDistance};
+    case SciencePanelMetricChoice::VectorDisplacement:
+        return {Metric::EuclideanDistance};
+    case SciencePanelMetricChoice::DirectionAndDisplacement:
+        return {Metric::CosineDistance, Metric::EuclideanDistance};
+    }
+    return {Metric::CosineDistance};
+}
+
+const char* sciencePanelMetricLabel(earthscience::ScienceMetric metric)
+{
+    using Metric = earthscience::ScienceMetric;
+    switch (metric)
+    {
+    case Metric::CosineDistance:
+        return u8"方向变化（归一化点积） / Direction change";
+    case Metric::EuclideanDistance:
+        return u8"向量位移（L2） / Vector displacement";
+    case Metric::AngularDistance:
+        return u8"方向夹角 / Angular distance";
+    case Metric::CosineSimilarity:
+        return u8"方向相似度 / Direction similarity";
+    case Metric::DotProduct:
+        return u8"点积 / Dot product";
+    }
+    return u8"未知度量 / Unknown metric";
+}
+
+const char* sciencePanelMetricDescription(SciencePanelMetricChoice choice)
+{
+    switch (choice)
+    {
+    case SciencePanelMetricChoice::DirectionChange:
+        return u8"比较归一化后的 64 维方向；值越大，嵌入关系变化越强。";
+    case SciencePanelMetricChoice::VectorDisplacement:
+        return u8"计算 64 维向量的 L2 位移；它是嵌入空间距离，不是米或物理量。";
+    case SciencePanelMetricChoice::DirectionAndDisplacement:
+        return u8"同时显示方向变化与 L2 位移。对接近单位长度的 AlphaEarth "
+               u8"向量，两者是相关刻度，不应当作两份独立证据。";
+    }
+    return "";
 }
 
 std::string sciencePanelSelectionSummary(
@@ -938,9 +1014,9 @@ const char* sciencePanelPrimaryActionLabel(SciencePanelMode mode)
     case SciencePanelMode::Preview:
         return u8"加载所选年份的空间特征图";
     case SciencePanelMode::PointSeries:
-        return u8"开始比较当前位置的历年变化";
+        return u8"先显示定位伪彩，再分析历年变化";
     case SciencePanelMode::RegionalChange:
-        return u8"开始比较当前视野的年度变化";
+        return u8"先显示定位伪彩，再生成变化热图";
     }
     return u8"开始分析";
 }
@@ -1037,6 +1113,8 @@ const char* scienceHelpTopicTitle(ScienceHelpTopic topic)
         return u8"Copernicus DEM 科学边界";
     case ScienceHelpTopic::Pca: return u8"PCA 与右侧结果";
     case ScienceHelpTopic::Clusters: return u8"无标签聚类是什么？";
+    case ScienceHelpTopic::EmbeddingMetrics: return u8"变化方法有什么区别？";
+    case ScienceHelpTopic::Hotspots: return u8"相对热点是什么？";
     case ScienceHelpTopic::ScientificLimits: return u8"科学解释边界";
     case ScienceHelpTopic::Provenance: return u8"方法、来源与导出";
     }
@@ -1083,6 +1161,14 @@ const char* scienceHelpTopicBody(ScienceHelpTopic topic)
     case ScienceHelpTopic::Clusters:
         return u8"聚类只适用于区域年度变化。它产生可复现的"
                u8"无标签数学分组，不是土地覆盖类别。";
+    case ScienceHelpTopic::EmbeddingMetrics:
+        return u8"论文的无监督变化方法先归一化 64 维向量，再比较点积。"
+               u8"方向变化沿用这一思路；L2 位移提供另一种读数刻度。由于 "
+               u8"AlphaEarth 向量接近单位球面，两者高度相关，不能当成"
+               u8"两份独立证据。";
+    case ScienceHelpTopic::Hotspots:
+        return u8"热点是在本次视野内按变化值排序后的最高一部分，例如 P90 "
+               u8"表示最高约 10%。它是相对筛选，不是物理阈值，也不说明原因。";
     case ScienceHelpTopic::ScientificLimits:
         return u8"嵌入关系不能单独证明建设、砍伐、洪水、升温或其他物理"
                u8"原因；需要与可解释数据源联合验证。";
@@ -1349,6 +1435,80 @@ std::vector<std::string> describeScienceArtifactEvidence(
     return lines;
 }
 
+std::vector<std::string> describeScienceAnalysisHighlights(
+    const earthscience::ScienceArtifact& artifact)
+{
+    std::vector<std::string> lines;
+    if (artifact.analysis.kind ==
+            earthscience::ScienceAnalysisKind::PointSeries &&
+        artifact.analysis.metrics)
+    {
+        const earthscience::ScienceMetric ordered[] = {
+            earthscience::ScienceMetric::CosineDistance,
+            earthscience::ScienceMetric::EuclideanDistance,
+            earthscience::ScienceMetric::AngularDistance,
+            earthscience::ScienceMetric::CosineSimilarity,
+            earthscience::ScienceMetric::DotProduct,
+        };
+        for (earthscience::ScienceMetric metric : ordered)
+        {
+            const earthscience::ScienceMetricResult* largest = nullptr;
+            for (const earthscience::ScienceMetricResult& result :
+                 *artifact.analysis.metrics)
+                if (result.metric == metric &&
+                    (!largest || result.value > largest->value))
+                    largest = &result;
+            if (!largest) continue;
+            std::ostringstream line;
+            line << u8"最大相邻年度 / Largest adjacent · "
+                 << sciencePanelMetricLabel(metric) << " · "
+                 << largest->baselineYear << u8"→"
+                 << largest->comparisonYear << ": "
+                 << std::fixed << std::setprecision(5) << largest->value;
+            if (!largest->unit.empty()) line << ' ' << largest->unit;
+            lines.push_back(line.str());
+        }
+    }
+    else if (artifact.analysis.kind ==
+             earthscience::ScienceAnalysisKind::RegionalChange)
+    {
+        const earthscience::ScienceRegionalChangeSummary& summary =
+            artifact.analysis.regionalChange;
+        std::ostringstream metric;
+        metric << sciencePanelMetricLabel(summary.metric) << u8" · 均值 / mean "
+               << std::fixed << std::setprecision(5) << summary.mean
+               << u8" · 中位 / median " << summary.median;
+        lines.push_back(metric.str());
+        std::ostringstream hotspot;
+        const std::size_t hotspotCount = summary.hotspotIndices
+            ? summary.hotspotIndices->size() : 0;
+        hotspot << u8"相对热点 / Hotspots · P"
+                << static_cast<int>(summary.hotspotQuantile * 100.0 + 0.5)
+                << u8" 阈值 " << std::fixed << std::setprecision(5)
+                << summary.hotspotThreshold << u8" · " << hotspotCount
+                << u8" 个网格";
+        lines.push_back(hotspot.str());
+    }
+    return lines;
+}
+
+SciencePanelWorkflowDecision sciencePanelPendingAnalysisDecision(
+    std::uint64_t contextPreviewJobId,
+    const earthscience::ScienceJobSnapshot& snapshot)
+{
+    if (contextPreviewJobId == 0 || snapshot.jobId != contextPreviewJobId)
+        return SciencePanelWorkflowDecision::Wait;
+    if (snapshot.state == earthscience::ScienceJobState::Ready &&
+        snapshot.query.outputKind ==
+            earthscience::ScienceOutputKind::RasterLayer)
+        return SciencePanelWorkflowDecision::SubmitAnalysis;
+    if (snapshot.state == earthscience::ScienceJobState::Failed ||
+        snapshot.state == earthscience::ScienceJobState::Cancelled ||
+        snapshot.state == earthscience::ScienceJobState::Unavailable)
+        return SciencePanelWorkflowDecision::Abort;
+    return SciencePanelWorkflowDecision::Wait;
+}
+
 void ScienceEarthPanel::drawOperations(
     earthscience::ScienceQueryService* service,
     SciencePreviewLayer* previewLayer,
@@ -1394,6 +1554,13 @@ void ScienceEarthPanel::drawOperations(
                     _displayedEstimateKey.clear();
                     _confirmedEstimateKey.clear();
                     _hasCurrentDraft = false;
+                    _hasPendingAnalysis = false;
+                    _pendingContextJobId = 0;
+                    _workflowFailed = false;
+                    _workflowMessage.clear();
+                    previewLayer->removeArtifact();
+                    previewLayer->setVisible(false);
+                    if (layers) layers->setEnabled("alphaearth", false);
                 }
                 if (selected) ImGui::SetItemDefaultFocus();
             }
@@ -1441,9 +1608,60 @@ void ScienceEarthPanel::drawOperations(
         source, visualization, draftState, latitude, longitude,
         requestedSpanMeters, sentinelIntervalEndUtc);
     _hasCurrentDraft = !_currentDraft.sourceId.empty();
+    earthscience::ScienceJobSnapshot snapshot = service->snapshot();
+    if (_hasPendingAnalysis)
+    {
+        const SciencePanelWorkflowDecision decision =
+            sciencePanelPendingAnalysisDecision(
+                _pendingContextJobId, snapshot);
+        if (decision == SciencePanelWorkflowDecision::SubmitAnalysis)
+        {
+            previewLayer->setVisible(true);
+            if (layers) layers->setEnabled("alphaearth", true);
+            const std::uint64_t submittedJobId =
+                service->submit(_pendingAnalysisQuery);
+            snapshot = service->snapshot();
+            acknowledgeSciencePanelSubmission(
+                submittedJobId, snapshot, &_state);
+            _hasPendingAnalysis = false;
+            _pendingContextJobId = 0;
+            _workflowFailed = false;
+            _workflowMessage =
+                u8"定位伪彩已显示；第 2/2 步正在执行 64 维分析。";
+        }
+        else if (decision == SciencePanelWorkflowDecision::Abort)
+        {
+            _hasPendingAnalysis = false;
+            _pendingContextJobId = 0;
+            _workflowFailed = true;
+            _workflowMessage = std::string(
+                u8"定位伪彩失败，分析没有启动：") + snapshot.message;
+        }
+    }
+    if (snapshot.state == earthscience::ScienceJobState::Ready &&
+        snapshot.lastSuccessfulAnalysisArtifact &&
+        snapshot.lastSuccessfulAnalysisArtifact->analysis.kind ==
+            earthscience::ScienceAnalysisKind::RegionalChange &&
+        snapshot.lastSuccessfulAnalysisArtifact->raster.width > 0 &&
+        (!snapshot.displayArtifact ||
+         snapshot.displayArtifact->artifactId !=
+             snapshot.lastSuccessfulAnalysisArtifact->artifactId))
+    {
+        if (service->showArtifact(
+                snapshot.lastSuccessfulAnalysisArtifact->artifactId))
+        {
+            previewLayer->setVisible(true);
+            if (layers) layers->setEnabled("alphaearth", true);
+            snapshot = service->snapshot();
+        }
+    }
+    if (snapshot.state == earthscience::ScienceJobState::Ready &&
+        queryMatchesMode(snapshot.query, activeMode))
+    {
+        _workflowFailed = false;
+        _workflowMessage.clear();
+    }
     if (!operationsExpanded) return;
-
-    const earthscience::ScienceJobSnapshot snapshot = service->snapshot();
 
     drawLabeledHelpButton("data_meaning", u8"? 这是什么数据 / About this data",
         source.id == "sentinel-2-l2a"
@@ -1503,6 +1721,23 @@ void ScienceEarthPanel::drawOperations(
                 if (ImGui::Selectable(
                         sciencePanelModeLabel(candidate, source.id), selected))
                 {
+                    if (candidate != activeMode)
+                    {
+                        if (_hasPendingAnalysis)
+                        {
+                            const earthscience::ScienceJobSnapshot active =
+                                service->snapshot();
+                            if (active.state ==
+                                    earthscience::ScienceJobState::Queued ||
+                                active.state ==
+                                    earthscience::ScienceJobState::Fetching)
+                                service->cancel(active.jobId);
+                            _hasPendingAnalysis = false;
+                            _pendingContextJobId = 0;
+                        }
+                        _workflowFailed = false;
+                        _workflowMessage.clear();
+                    }
                     _state.mode = candidate;
                     activeMode = candidate;
                 }
@@ -1588,11 +1823,100 @@ void ScienceEarthPanel::drawOperations(
                          &_state.comparisonYear, source.firstYear, source.lastYear);
     }
 
+    const bool embeddingAnalysis = source.id == "alphaearth-foundations" &&
+        activeMode != SciencePanelMode::Preview;
+    if (embeddingAnalysis)
+    {
+        ImGui::SeparatorText(u8"4  选择分析方法 / Choose method");
+        drawHelpButton("embedding_metrics", ScienceHelpTopic::EmbeddingMetrics);
+        if (activeMode == SciencePanelMode::PointSeries)
+        {
+            const auto choiceLabel = [](SciencePanelMetricChoice choice)
+            {
+                switch (choice)
+                {
+                case SciencePanelMetricChoice::DirectionChange:
+                    return u8"方向变化（论文同类方法）";
+                case SciencePanelMetricChoice::VectorDisplacement:
+                    return u8"64 维向量位移（L2）";
+                case SciencePanelMetricChoice::DirectionAndDisplacement:
+                    return u8"方向变化 + 向量位移（推荐）";
+                }
+                return u8"方向变化";
+            };
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::BeginCombo(
+                    "##point_metric", choiceLabel(_state.pointMetricChoice)))
+            {
+                const SciencePanelMetricChoice choices[] = {
+                    SciencePanelMetricChoice::DirectionAndDisplacement,
+                    SciencePanelMetricChoice::DirectionChange,
+                    SciencePanelMetricChoice::VectorDisplacement,
+                };
+                for (SciencePanelMetricChoice choice : choices)
+                {
+                    const bool selected = choice == _state.pointMetricChoice;
+                    if (ImGui::Selectable(choiceLabel(choice), selected))
+                        _state.pointMetricChoice = choice;
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            drawDisabledWrapped(
+                sciencePanelMetricDescription(_state.pointMetricChoice));
+        }
+        else
+        {
+            ImGui::TextWrapped(u8"变化热图数值 / Change-map value");
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::BeginCombo(
+                    "##regional_metric",
+                    sciencePanelMetricLabel(_state.regionalMetric)))
+            {
+                const earthscience::ScienceMetric metrics[] = {
+                    earthscience::ScienceMetric::CosineDistance,
+                    earthscience::ScienceMetric::EuclideanDistance,
+                };
+                for (earthscience::ScienceMetric metric : metrics)
+                {
+                    const bool selected = metric == _state.regionalMetric;
+                    if (ImGui::Selectable(
+                            sciencePanelMetricLabel(metric), selected))
+                        _state.regionalMetric = metric;
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            const SciencePanelMetricChoice descriptionChoice =
+                _state.regionalMetric ==
+                        earthscience::ScienceMetric::EuclideanDistance
+                    ? SciencePanelMetricChoice::VectorDisplacement
+                    : SciencePanelMetricChoice::DirectionChange;
+            drawDisabledWrapped(
+                sciencePanelMetricDescription(descriptionChoice));
+            ImGui::TextWrapped(u8"相对热点 / Relative hotspots");
+            drawHelpButton("hotspot_quantile", ScienceHelpTopic::Hotspots);
+            ImGui::SameLine();
+            const double quantiles[] = {0.90, 0.95, 0.99};
+            for (std::size_t index = 0;
+                 index < sizeof(quantiles) / sizeof(quantiles[0]); ++index)
+            {
+                if (index > 0) ImGui::SameLine();
+                const std::string label = "P" + std::to_string(
+                    static_cast<int>(quantiles[index] * 100.0 + 0.5));
+                if (ImGui::RadioButton(
+                        label.c_str(), _state.hotspotQuantile == quantiles[index]))
+                    _state.hotspotQuantile = quantiles[index];
+            }
+        }
+    }
+
     if (capabilities.supportsGrid || capabilities.supportsPca ||
         capabilities.supportsClustering)
     {
         ImGui::SetNextItemOpen(_state.advancedOpen, ImGuiCond_Once);
-        _state.advancedOpen = ImGui::CollapsingHeader(u8"可选分析 / Optional analysis");
+        _state.advancedOpen = ImGui::CollapsingHeader(
+            u8"更多工具 / More tools");
         if (_state.advancedOpen)
         {
             if (capabilities.supportsGrid)
@@ -1721,15 +2045,27 @@ void ScienceEarthPanel::drawOperations(
     const bool invalidPreview =
         activeMode == SciencePanelMode::Preview && !visualization;
     const bool blocked = sourceUnavailable || invalidPreview || estimateFailed ||
-        currentDraftBusy || (_estimateVisible && !estimateConfirmed);
+        currentDraftBusy || _hasPendingAnalysis ||
+        (_estimateVisible && !estimateConfirmed);
     const std::shared_ptr<const earthscience::ScienceArtifact> currentArtifact =
         selectSciencePanelArtifact(snapshot, activeMode);
     const bool currentDraftAlreadyLoaded = currentArtifact &&
         describeScienceArtifactUi(*currentArtifact, query).matchesDraft;
-    ImGui::SeparatorText(u8"4  开始 / Run");
-    if (currentDraftBusy)
+    ImGui::SeparatorText(embeddingAnalysis
+        ? u8"5  定位并分析 / Locate and run"
+        : u8"4  开始 / Run");
+    if (_hasPendingAnalysis)
+        drawColoredWrapped(ImVec4(0.35f, 0.78f, 1.0f, 1.0f),
+            u8"第 1/2 步：正在加载对比年份的伪彩图；完成后会自动开始分析。"
+            u8"相机和分析范围已固定。");
+    else if (_workflowFailed)
+        drawColoredWrapped(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
+                           _workflowMessage.c_str());
+    else if (currentDraftBusy)
         drawColoredWrapped(severityColor(presentation.severity),
-                           u8"已提交，正在处理当前设置。");
+            _workflowMessage.empty()
+                ? u8"已提交，正在处理当前设置。"
+                : _workflowMessage.c_str());
     else if (currentDraftAlreadyLoaded)
         drawColoredWrapped(ImVec4(0.35f, 0.90f, 0.55f, 1.0f),
                            u8"当前设置已完成；结果显示在右侧科学结果面板。");
@@ -1771,16 +2107,51 @@ void ScienceEarthPanel::drawOperations(
     {
         query.analysis.confirmedLargeRequest =
             _estimateVisible && estimateConfirmed;
+        std::uint64_t submittedJobId = 0;
         if (activeMode == SciencePanelMode::Preview)
         {
             previewLayer->setVisible(true);
             if (layers) layers->setEnabled("alphaearth", true);
+            submittedJobId = service->submit(query);
         }
-        const std::uint64_t submittedJobId = service->submit(query);
-        const earthscience::ScienceJobSnapshot submittedSnapshot =
-            service->snapshot();
-        acknowledgeSciencePanelSubmission(
-            submittedJobId, submittedSnapshot, &_state);
+        else if (visualization)
+        {
+            const earthscience::GeoTemporalQuery contextQuery =
+                makeScienceAnalysisContextPreviewQuery(
+                    source, *visualization, query, requestedSpanMeters);
+            const bool contextAlreadyVisible = snapshot.displayArtifact &&
+                artifactMatchesMode(
+                    *snapshot.displayArtifact, SciencePanelMode::Preview) &&
+                describeScienceArtifactUi(
+                    *snapshot.displayArtifact, contextQuery).matchesDraft;
+            previewLayer->setVisible(true);
+            if (layers) layers->setEnabled("alphaearth", true);
+            if (contextAlreadyVisible)
+                submittedJobId = service->submit(query);
+            else
+            {
+                _pendingAnalysisQuery = query;
+                _hasPendingAnalysis = true;
+                _workflowFailed = false;
+                _workflowMessage =
+                    u8"第 1/2 步：正在加载对比年份的定位伪彩。";
+                _pendingContextJobId = service->submit(contextQuery);
+                _state.resultExpanded = true;
+            }
+        }
+        if (submittedJobId != 0)
+        {
+            if (activeMode != SciencePanelMode::Preview)
+            {
+                _workflowFailed = false;
+                _workflowMessage =
+                    u8"定位伪彩已显示；第 2/2 步正在执行 64 维分析。";
+            }
+            const earthscience::ScienceJobSnapshot submittedSnapshot =
+                service->snapshot();
+            acknowledgeSciencePanelSubmission(
+                submittedJobId, submittedSnapshot, &_state);
+        }
     }
     ImGui::PopStyleColor(3);
     if (blocked) ImGui::EndDisabled();

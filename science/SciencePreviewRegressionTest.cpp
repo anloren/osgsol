@@ -14,6 +14,7 @@
 #include <osg/Depth>
 #include <osg/Geode>
 #include <osg/Geometry>
+#include <osg/Program>
 #include <osgUtil/UpdateVisitor>
 #include <readerwriter/EarthManipulator.h>
 #include <applications/earth_explorer/science_preview_layer.h>
@@ -434,6 +435,25 @@ namespace
         const osg::Vec3d triangleNormal = (b - a) ^ (c - a);
         require(triangleNormal * outward > 0.0,
                 "north-up Sentinel triangles face the globe and are back-face culled");
+
+        osg::StateSet* state = geometry ? geometry->getStateSet() : nullptr;
+        const osg::Program* program = state
+            ? dynamic_cast<const osg::Program*>(
+                state->getAttribute(osg::StateAttribute::PROGRAM)) : nullptr;
+        std::string fragmentSource;
+        if (program)
+            for (unsigned int index = 0; index < program->getNumShaders(); ++index)
+            {
+                const osg::Shader* shader = program->getShader(index);
+                if (shader && shader->getType() == osg::Shader::FRAGMENT)
+                    fragmentSource = shader->getShaderSource();
+            }
+        const std::size_t discard = fragmentSource.find(
+            "if (sampleColor.a < 0.01) discard");
+        const std::size_t border = fragmentSource.find("if (edge < 0.006)");
+        require(discard != std::string::npos && border != std::string::npos &&
+                    discard < border,
+                "transparent NoData can still render as a yellow-only frame");
     }
 
     void testLayerRetainsLastGoodUntilExplicitReplacementOrRemoval()

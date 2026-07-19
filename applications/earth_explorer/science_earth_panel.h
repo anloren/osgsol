@@ -26,6 +26,13 @@ enum class SciencePanelLocationMode
     CurrentViewFootprint,
 };
 
+enum class SciencePanelMetricChoice
+{
+    DirectionChange,
+    VectorDisplacement,
+    DirectionAndDisplacement,
+};
+
 enum class ScienceHelpTopic
 {
     DataMeaning,
@@ -39,6 +46,8 @@ enum class ScienceHelpTopic
     CopernicusDemLimits,
     Pca,
     Clusters,
+    EmbeddingMetrics,
+    Hotspots,
     ScientificLimits,
     Provenance,
 };
@@ -63,6 +72,11 @@ struct SciencePanelState
     int baselineYear = 2017;
     int comparisonYear = 2025;
     int gridSize = 128;
+    SciencePanelMetricChoice pointMetricChoice =
+        SciencePanelMetricChoice::DirectionAndDisplacement;
+    earthscience::ScienceMetric regionalMetric =
+        earthscience::ScienceMetric::CosineDistance;
+    double hotspotQuantile = 0.90;
     bool advancedOpen = false;
     bool resultExpanded = false;
     bool enablePca = false;
@@ -91,6 +105,13 @@ enum class SciencePanelSeverity
     Success,
     Warning,
     Error,
+};
+
+enum class SciencePanelWorkflowDecision
+{
+    Wait,
+    SubmitAnalysis,
+    Abort,
 };
 
 struct SciencePanelRetentionPresentation
@@ -158,6 +179,10 @@ const char* sciencePanelModeLabel(
     SciencePanelMode mode, const std::string& sourceId);
 const char* sciencePanelModeDescription(
     SciencePanelMode mode, const std::string& sourceId);
+std::vector<earthscience::ScienceMetric> sciencePanelSelectedMetrics(
+    SciencePanelMode mode, const SciencePanelState& state);
+const char* sciencePanelMetricLabel(earthscience::ScienceMetric metric);
+const char* sciencePanelMetricDescription(SciencePanelMetricChoice choice);
 std::string sciencePanelSelectionSummary(
     SciencePanelMode mode, const SciencePanelState& state,
     const std::string& sourceId);
@@ -190,6 +215,11 @@ bool sciencePanelEstimateConfirmationMatches(
     const std::string& confirmedBindingKey);
 std::vector<std::string> describeScienceArtifactEvidence(
     const earthscience::ScienceArtifact& artifact);
+std::vector<std::string> describeScienceAnalysisHighlights(
+    const earthscience::ScienceArtifact& artifact);
+SciencePanelWorkflowDecision sciencePanelPendingAnalysisDecision(
+    std::uint64_t contextPreviewJobId,
+    const earthscience::ScienceJobSnapshot& snapshot);
 
 class ScienceEarthPanel
 {
@@ -212,6 +242,11 @@ private:
     std::string _confirmedEstimateKey;
     earthscience::GeoTemporalQuery _currentDraft;
     bool _hasCurrentDraft = false;
+    earthscience::GeoTemporalQuery _pendingAnalysisQuery;
+    std::uint64_t _pendingContextJobId = 0;
+    bool _hasPendingAnalysis = false;
+    bool _workflowFailed = false;
+    std::string _workflowMessage;
 };
 
 #endif

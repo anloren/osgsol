@@ -42,6 +42,7 @@ namespace earthscience
     bool selectSentinel2Item(
         const std::vector<Sentinel2Scene>& scenes,
         double maximumCloudCoverPercent,
+        const ScienceWgs84Point& requestedPoint,
         Sentinel2Scene& selected,
         std::string& error);
 }

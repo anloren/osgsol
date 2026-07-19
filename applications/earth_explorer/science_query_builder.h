@@ -263,4 +263,30 @@ inline earthscience::GeoTemporalQuery makeScienceRegionalAnalysisQuery(
     return query;
 }
 
+inline earthscience::GeoTemporalQuery makeScienceAnalysisContextPreviewQuery(
+    const earthscience::ScienceSourceDescriptor& source,
+    const earthscience::ScienceVisualizationDescriptor& visualization,
+    const earthscience::GeoTemporalQuery& analysisQuery,
+    double requestedSpanMeters)
+{
+    double latitude = analysisQuery.geometry.point.latitude;
+    double longitude = analysisQuery.geometry.point.longitude;
+    if (analysisQuery.geometry.kind ==
+        earthscience::ScienceGeometryKind::BoundingBox)
+    {
+        latitude = (analysisQuery.geometry.bounds.south +
+                    analysisQuery.geometry.bounds.north) * 0.5;
+        longitude = (analysisQuery.geometry.bounds.west +
+                     analysisQuery.geometry.bounds.east) * 0.5;
+    }
+    int year = source.lastYear;
+    if (analysisQuery.analysis.comparisonYear != 0)
+        year = analysisQuery.analysis.comparisonYear;
+    else if (!analysisQuery.time.explicitYears.empty())
+        year = analysisQuery.time.explicitYears.back();
+    return makeSciencePointQuery(
+        source, visualization, latitude, longitude, year,
+        requestedSpanMeters);
+}
+
 #endif

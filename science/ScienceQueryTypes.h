@@ -134,8 +134,8 @@ namespace earthscience
     struct ScienceAnalysisOptions
     {
         ScienceAnalysisKind kind = ScienceAnalysisKind::None;
-        std::vector<ScienceMetric> metrics = {ScienceMetric::CosineSimilarity,
-                                              ScienceMetric::CosineDistance};
+        std::vector<ScienceMetric> metrics = {ScienceMetric::CosineDistance,
+                                              ScienceMetric::EuclideanDistance};
         int baselineYear = 0, comparisonYear = 0, gridSize = 128;
         double hotspotQuantile = 0.90;
         bool enablePca = false, enableClustering = false;

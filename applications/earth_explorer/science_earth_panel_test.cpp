@@ -81,6 +81,11 @@ int main()
     CHECK(defaults.baselineYear == 2017);
     CHECK(defaults.comparisonYear == 2025);
     CHECK(defaults.gridSize == 128);
+    CHECK(defaults.pointMetricChoice ==
+          SciencePanelMetricChoice::DirectionAndDisplacement);
+    CHECK(defaults.regionalMetric ==
+          earthscience::ScienceMetric::CosineDistance);
+    CHECK(defaults.hotspotQuantile == 0.90);
     CHECK(!defaults.advancedOpen);
     CHECK(!defaults.resultExpanded);
     CHECK(!defaults.enablePca);
@@ -261,7 +266,7 @@ int main()
     CHECK(!seriesCapabilities.supportsClustering);
     CHECK(std::string(sciencePanelPrimaryActionLabel(
               SciencePanelMode::PointSeries)) ==
-          u8"开始比较当前位置的历年变化");
+          u8"先显示定位伪彩，再分析历年变化");
     CHECK(std::string(sciencePanelModeLabel(
               SciencePanelMode::PointSeries, alphaSource.id)) ==
           u8"比较当前位置的历年变化");
@@ -278,6 +283,34 @@ int main()
     CHECK(pointSummary.find("2025") != std::string::npos);
     CHECK(pointSummary.find(u8"6 个年度") != std::string::npos);
     CHECK(pointSummary.find(u8"尚未开始") != std::string::npos);
+    CHECK(sciencePanelSelectedMetrics(
+              SciencePanelMode::PointSeries, defaults) ==
+          std::vector<earthscience::ScienceMetric>({
+              earthscience::ScienceMetric::CosineDistance,
+              earthscience::ScienceMetric::EuclideanDistance}));
+    CHECK(std::string(sciencePanelMetricLabel(
+              earthscience::ScienceMetric::CosineDistance)).find(
+                  u8"方向变化") != std::string::npos);
+    CHECK(std::string(sciencePanelMetricDescription(
+              SciencePanelMetricChoice::DirectionAndDisplacement)).find(
+                  u8"独立证据") != std::string::npos);
+
+    const earthscience::GeoTemporalQuery pointAnalysis =
+        makeSciencePointSeriesQuery(
+            alphaSource, 35.68, 139.76, 2017, 2025);
+    CHECK(pointAnalysis.analysis.metrics ==
+          std::vector<earthscience::ScienceMetric>({
+              earthscience::ScienceMetric::CosineDistance,
+              earthscience::ScienceMetric::EuclideanDistance}));
+    const earthscience::GeoTemporalQuery pointContext =
+        makeScienceAnalysisContextPreviewQuery(
+            alphaSource, alphaVisualization, pointAnalysis, 10000.0);
+    CHECK(pointContext.outputKind ==
+          earthscience::ScienceOutputKind::RasterLayer);
+    CHECK(pointContext.time.explicitYears == std::vector<int>({2025}));
+    CHECK(pointContext.geometry.point.latitude == 35.68);
+    CHECK(pointContext.geometry.point.longitude == 139.76);
+    CHECK(pointContext.geometry.requestedSpanMeters == 10000.0);
 
     const SciencePanelModeCapabilities regionalCapabilities =
         sciencePanelModeCapabilities(SciencePanelMode::RegionalChange);
@@ -289,7 +322,25 @@ int main()
     CHECK(regionalCapabilities.supportsClustering);
     CHECK(std::string(sciencePanelPrimaryActionLabel(
               SciencePanelMode::RegionalChange)) ==
-          u8"开始比较当前视野的年度变化");
+          u8"先显示定位伪彩，再生成变化热图");
+    earthscience::ScienceAnalysisOptions displacementOptions;
+    displacementOptions.metrics = {
+        earthscience::ScienceMetric::EuclideanDistance};
+    displacementOptions.hotspotQuantile = 0.95;
+    const earthscience::GeoTemporalQuery regionalAnalysis =
+        makeScienceRegionalAnalysisQuery(
+            alphaSource, 35.68, 139.76, 10000.0, 2017, 2025,
+            displacementOptions);
+    const earthscience::GeoTemporalQuery regionalContext =
+        makeScienceAnalysisContextPreviewQuery(
+            alphaSource, alphaVisualization, regionalAnalysis, 10000.0);
+    CHECK(regionalAnalysis.analysis.metrics ==
+          std::vector<earthscience::ScienceMetric>({
+              earthscience::ScienceMetric::EuclideanDistance}));
+    CHECK(regionalAnalysis.analysis.hotspotQuantile == 0.95);
+    CHECK(regionalContext.time.explicitYears == std::vector<int>({2025}));
+    CHECK(regionalContext.geometry.point.latitude == 35.68);
+    CHECK(regionalContext.geometry.point.longitude == 139.76);
 
     const SciencePanelPresentation queued = describeScienceSnapshot(snapshot(
         earthscience::ScienceJobState::Queued,
@@ -347,6 +398,19 @@ int main()
     CHECK(stale.title != cancelled.title);
     CHECK(failed.severity == SciencePanelSeverity::Error);
     CHECK(noCoverage.severity == SciencePanelSeverity::Warning);
+    earthscience::ScienceJobSnapshot contextReady = snapshot(
+        earthscience::ScienceJobState::Ready,
+        earthscience::ScienceProgressStage::Ready, "preview ready");
+    contextReady.jobId = 42;
+    contextReady.query.outputKind =
+        earthscience::ScienceOutputKind::RasterLayer;
+    CHECK(sciencePanelPendingAnalysisDecision(42, contextReady) ==
+          SciencePanelWorkflowDecision::SubmitAnalysis);
+    contextReady.state = earthscience::ScienceJobState::Failed;
+    CHECK(sciencePanelPendingAnalysisDecision(42, contextReady) ==
+          SciencePanelWorkflowDecision::Abort);
+    CHECK(sciencePanelPendingAnalysisDecision(41, contextReady) ==
+          SciencePanelWorkflowDecision::Wait);
 
     earthscience::ScienceJobSnapshot replacementFailure = snapshot(
         earthscience::ScienceJobState::Failed,
@@ -877,6 +941,28 @@ int main()
     CHECK(regionalEvidenceText.find("21.1000") != std::string::npos);
     CHECK(regionalEvidenceText.find("25.5000") != std::string::npos);
     CHECK(regionalEvidenceText.find("22.5 m") != std::string::npos);
+
+    earthscience::ScienceArtifact metricHighlights;
+    metricHighlights.analysis.kind =
+        earthscience::ScienceAnalysisKind::PointSeries;
+    metricHighlights.analysis.metrics = std::make_shared<const std::vector<
+        earthscience::ScienceMetricResult>>(
+        std::initializer_list<earthscience::ScienceMetricResult>{
+            {earthscience::ScienceMetric::CosineDistance,
+             2020, 2021, 0.1, "unitless"},
+            {earthscience::ScienceMetric::EuclideanDistance,
+             2020, 2021, 0.3, "embedding-space units"},
+            {earthscience::ScienceMetric::CosineDistance,
+             2021, 2022, 0.4, "unitless"},
+            {earthscience::ScienceMetric::EuclideanDistance,
+             2021, 2022, 0.8, "embedding-space units"},
+        });
+    const std::string highlightText = joined(
+        describeScienceAnalysisHighlights(metricHighlights));
+    CHECK(highlightText.find(u8"方向变化") != std::string::npos);
+    CHECK(highlightText.find(u8"向量位移") != std::string::npos);
+    CHECK(highlightText.find("2021") != std::string::npos);
+    CHECK(highlightText.find("2022") != std::string::npos);
 
     SciencePanelState changedInput = panel.state();
     changedInput.lastYear = 2025;

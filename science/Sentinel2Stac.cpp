@@ -398,6 +398,7 @@ bool parseSentinel2Items(
 bool selectSentinel2Item(
     const std::vector<Sentinel2Scene>& scenes,
     double maximumCloudCoverPercent,
+    const ScienceWgs84Point& requestedPoint,
     Sentinel2Scene& selected,
     std::string& error)
 {
@@ -408,14 +409,33 @@ bool selectSentinel2Item(
         error = "Sentinel-2 cloud threshold must be inside [0, 100]";
         return false;
     }
+    if (!std::isfinite(requestedPoint.latitude) ||
+        !std::isfinite(requestedPoint.longitude) ||
+        requestedPoint.latitude < -90.0 || requestedPoint.latitude > 90.0 ||
+        requestedPoint.longitude < -180.0 || requestedPoint.longitude > 180.0)
+    {
+        error = "Sentinel-2 requested point must be valid WGS84 coordinates";
+        return false;
+    }
+    bool cloudCandidateExists = false;
     std::vector<const Sentinel2Scene*> candidates;
     for (const Sentinel2Scene& scene : scenes)
         if (scene.cloudCoverPercent <= maximumCloudCoverPercent)
-            candidates.push_back(&scene);
+        {
+            cloudCandidateExists = true;
+            if (requestedPoint.longitude >= scene.bounds.west &&
+                requestedPoint.longitude <= scene.bounds.east &&
+                requestedPoint.latitude >= scene.bounds.south &&
+                requestedPoint.latitude <= scene.bounds.north)
+                candidates.push_back(&scene);
+        }
     if (candidates.empty())
     {
-        error = "No Sentinel-2 scene satisfies the selected cloud threshold; "
-                "raise maximum cloud or widen time window";
+        error = cloudCandidateExists
+            ? "No Sentinel-2 scene covers the requested point; widen the time "
+              "window"
+            : "No Sentinel-2 scene satisfies the selected cloud threshold; "
+              "raise maximum cloud or widen time window";
         return false;
     }
     std::sort(candidates.begin(), candidates.end(),
