@@ -753,6 +753,29 @@ std::string sciencePanelSelectionSummary(
     return selectionSummaryForState(mode, state, sourceId);
 }
 
+bool sciencePanelSnapshotMatchesDraft(
+    const earthscience::ScienceJobSnapshot& snapshot,
+    const earthscience::GeoTemporalQuery& currentDraft)
+{
+    if (snapshot.jobId == 0) return false;
+    const earthscience::ScienceQueryCost emptyCost;
+    return queryEstimateKey(snapshot.query, emptyCost) ==
+        queryEstimateKey(currentDraft, emptyCost);
+}
+
+bool acknowledgeSciencePanelSubmission(
+    std::uint64_t submittedJobId,
+    const earthscience::ScienceJobSnapshot& submittedSnapshot,
+    SciencePanelState* state)
+{
+    if (!state || submittedJobId == 0 ||
+        submittedSnapshot.jobId != submittedJobId ||
+        submittedSnapshot.state == earthscience::ScienceJobState::Idle)
+        return false;
+    state->resultExpanded = true;
+    return true;
+}
+
 SciencePanelPresentation describeScienceSnapshot(
     const earthscience::ScienceJobSnapshot& snapshot)
 {
@@ -1686,21 +1709,37 @@ void ScienceEarthPanel::drawOperations(
 
     const SciencePanelPresentation presentation =
         describeScienceSnapshot(snapshot, activeMode);
+    const bool currentSnapshotMatchesDraft =
+        sciencePanelSnapshotMatchesDraft(snapshot, query);
+    const bool currentDraftBusy =
+        currentSnapshotMatchesDraft && presentation.busy;
+    const bool currentDraftProblem = currentSnapshotMatchesDraft &&
+        (presentation.kind == SciencePanelResultKind::NoCoverage ||
+         presentation.kind == SciencePanelResultKind::Failed ||
+         presentation.kind == SciencePanelResultKind::Cancelled ||
+         presentation.kind == SciencePanelResultKind::Stale);
     const bool invalidPreview =
         activeMode == SciencePanelMode::Preview && !visualization;
     const bool blocked = sourceUnavailable || invalidPreview || estimateFailed ||
-        presentation.busy || (_estimateVisible && !estimateConfirmed);
+        currentDraftBusy || (_estimateVisible && !estimateConfirmed);
     const std::shared_ptr<const earthscience::ScienceArtifact> currentArtifact =
         selectSciencePanelArtifact(snapshot, activeMode);
     const bool currentDraftAlreadyLoaded = currentArtifact &&
         describeScienceArtifactUi(*currentArtifact, query).matchesDraft;
     ImGui::SeparatorText(u8"4  开始 / Run");
-    if (presentation.busy)
+    if (currentDraftBusy)
         drawColoredWrapped(severityColor(presentation.severity),
                            u8"已提交，正在处理当前设置。");
     else if (currentDraftAlreadyLoaded)
         drawColoredWrapped(ImVec4(0.35f, 0.90f, 0.55f, 1.0f),
                            u8"当前设置已完成；结果显示在右侧科学结果面板。");
+    else if (currentDraftProblem)
+    {
+        drawColoredWrapped(severityColor(presentation.severity),
+                           presentation.title.c_str());
+        if (!presentation.detail.empty())
+            ImGui::TextWrapped("%s", presentation.detail.c_str());
+    }
     else
     {
         const std::string selection = sciencePanelSelectionSummary(
@@ -1737,7 +1776,11 @@ void ScienceEarthPanel::drawOperations(
             previewLayer->setVisible(true);
             if (layers) layers->setEnabled("alphaearth", true);
         }
-        service->submit(query);
+        const std::uint64_t submittedJobId = service->submit(query);
+        const earthscience::ScienceJobSnapshot submittedSnapshot =
+            service->snapshot();
+        acknowledgeSciencePanelSubmission(
+            submittedJobId, submittedSnapshot, &_state);
     }
     ImGui::PopStyleColor(3);
     if (blocked) ImGui::EndDisabled();

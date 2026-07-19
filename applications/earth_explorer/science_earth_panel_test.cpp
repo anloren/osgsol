@@ -86,6 +86,42 @@ int main()
     CHECK(!defaults.enablePca);
     CHECK(!defaults.enableClustering);
 
+    SciencePanelState submittedState;
+    earthscience::ScienceJobSnapshot submittedSnapshot = snapshot(
+        earthscience::ScienceJobState::Queued,
+        earthscience::ScienceProgressStage::Queued, "Queued");
+    submittedSnapshot.jobId = 41;
+    CHECK(acknowledgeSciencePanelSubmission(
+        41, submittedSnapshot, &submittedState));
+    CHECK(submittedState.resultExpanded);
+
+    SciencePanelState failedSubmissionState;
+    earthscience::ScienceJobSnapshot failedSubmission = snapshot(
+        earthscience::ScienceJobState::Failed,
+        earthscience::ScienceProgressStage::Failed,
+        "provider rejected query");
+    failedSubmission.jobId = 42;
+    CHECK(acknowledgeSciencePanelSubmission(
+        42, failedSubmission, &failedSubmissionState));
+    CHECK(failedSubmissionState.resultExpanded);
+
+    SciencePanelState mismatchedSubmissionState;
+    CHECK(!acknowledgeSciencePanelSubmission(
+        43, failedSubmission, &mismatchedSubmissionState));
+    CHECK(!mismatchedSubmissionState.resultExpanded);
+
+    earthscience::GeoTemporalQuery submittedQuery;
+    submittedQuery.sourceId = "alphaearth-foundations";
+    submittedQuery.outputKind = earthscience::ScienceOutputKind::TimeSeries;
+    submittedQuery.analysis.kind =
+        earthscience::ScienceAnalysisKind::PointSeries;
+    submittedQuery.time.explicitYears = {2020, 2021, 2022};
+    submittedSnapshot.query = submittedQuery;
+    CHECK(sciencePanelSnapshotMatchesDraft(submittedSnapshot, submittedQuery));
+    earthscience::GeoTemporalQuery changedQuery = submittedQuery;
+    changedQuery.time.explicitYears.push_back(2023);
+    CHECK(!sciencePanelSnapshotMatchesDraft(submittedSnapshot, changedQuery));
+
     earthscience::ScienceSourceDescriptor alphaSource;
     alphaSource.id = "alphaearth-foundations";
     alphaSource.name = "AlphaEarth Foundations";

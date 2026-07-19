@@ -3,6 +3,7 @@
 
 #include <ScienceQueryTypes.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -160,6 +161,13 @@ const char* sciencePanelModeDescription(
 std::string sciencePanelSelectionSummary(
     SciencePanelMode mode, const SciencePanelState& state,
     const std::string& sourceId);
+bool sciencePanelSnapshotMatchesDraft(
+    const earthscience::ScienceJobSnapshot& snapshot,
+    const earthscience::GeoTemporalQuery& currentDraft);
+bool acknowledgeSciencePanelSubmission(
+    std::uint64_t submittedJobId,
+    const earthscience::ScienceJobSnapshot& submittedSnapshot,
+    SciencePanelState* state);
 ScienceArtifactUiPresentation describeScienceArtifactUi(
     const earthscience::ScienceArtifact& artifact,
     const earthscience::GeoTemporalQuery& currentDraft);
