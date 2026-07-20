@@ -24,6 +24,8 @@ namespace earthscience
         ScienceQueryService& operator=(const ScienceQueryService&) = delete;
 
         std::vector<ScienceSourceDescriptor> listSources() const;
+        bool validateQuery(
+            const GeoTemporalQuery& query, std::string& error) const;
         ScienceQueryCost estimate(const GeoTemporalQuery& query) const;
         std::uint64_t submit(const GeoTemporalQuery& query);
         void cancel(std::uint64_t jobId);

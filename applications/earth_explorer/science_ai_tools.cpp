@@ -14,6 +14,7 @@
 #include <ScienceQueryService.h>
 #include <ScienceResearchBrief.h>
 #include <ScienceResearchManager.h>
+#include <ScienceResearchSequencer.h>
 #include <modeling/Math.h>
 #include <readerwriter/EarthManipulator.h>
 
@@ -728,6 +729,243 @@ namespace
         result["layer_changed"] = picojson::value(false);
         return picojson::value(result);
     }
+
+    bool buildScienceToolQuery(
+        const picojson::value& args,
+        earthscience::ScienceQueryService* service,
+        osgVerse::EarthManipulator* manipulator,
+        earthscience::GeoTemporalQuery& query,
+        std::string& error)
+    {
+        if (!args.is<picojson::object>())
+        {
+            error = "science research arguments must be an object";
+            return false;
+        }
+        const std::vector<earthscience::ScienceSourceDescriptor> sources =
+            service->listSources();
+        if (sources.empty())
+        {
+            error = "no science sources are registered";
+            return false;
+        }
+
+        std::string sourceId = "alphaearth-foundations";
+        if (std::none_of(
+                sources.begin(), sources.end(), [](const auto& candidate)
+                { return candidate.id == "alphaearth-foundations"; }))
+            sourceId = sources.front().id;
+        if (!optionalString(args, "source_id", sourceId))
+        {
+            error = "source_id must be a string";
+            return false;
+        }
+        const auto sourceIterator = std::find_if(
+            sources.begin(), sources.end(), [&sourceId](const auto& source)
+            { return source.id == sourceId; });
+        if (sourceIterator == sources.end())
+        {
+            error = "unknown science source: " + sourceId;
+            return false;
+        }
+        const earthscience::ScienceSourceDescriptor& source = *sourceIterator;
+
+        std::string visualizationId = source.visualizations.empty()
+            ? std::string() : source.visualizations.front().id;
+        if (!optionalString(args, "visualization_id", visualizationId))
+        {
+            error = "visualization_id must be a string";
+            return false;
+        }
+        const earthscience::ScienceVisualizationDescriptor* visualization =
+            findScienceVisualization(source, visualizationId);
+        if (!visualization || visualization->id != visualizationId)
+        {
+            error = "unknown science visualization: " + visualizationId;
+            return false;
+        }
+
+        std::string mode = "preview";
+        if (!optionalString(args, "mode", mode))
+        {
+            error = "mode must be a string";
+            return false;
+        }
+        if (mode != "preview" && mode != "point_series" &&
+            mode != "regional_embedding")
+        {
+            error = "mode must be preview, point_series, or regional_embedding";
+            return false;
+        }
+
+        const osg::Vec3d targetLla =
+            manipulator->computeViewPointLatLonHeight();
+        const osg::Vec3d eyeLla = manipulator->computeEyeLatLonHeight();
+        double latitude = osg::RadiansToDegrees(targetLla[0]);
+        double longitude = osg::RadiansToDegrees(targetLla[1]);
+        if (!optionalNumber(args, "lat", latitude) ||
+            !optionalNumber(args, "lon", longitude))
+        {
+            error = "lat and lon must be numbers";
+            return false;
+        }
+        if (!validCoordinates(latitude, longitude))
+        {
+            error = "lat and lon must be finite WGS84 coordinates";
+            return false;
+        }
+
+        if (source.id == "copernicus-dem-glo-30")
+        {
+            if (mode != "preview")
+            {
+                error = "Copernicus DEM supports preview mode only; it is a "
+                        "static DSM";
+                return false;
+            }
+            for (const char* timeKey : {
+                     "year", "first_year", "last_year",
+                     "baseline_year", "comparison_year",
+                     "time_start", "time_end", "max_cloud_percent"})
+                if (args.contains(timeKey))
+                {
+                    error = "Copernicus DEM is the static 2021 release; omit "
+                            "time and cloud fields";
+                    return false;
+                }
+            query = makeCopernicusDemPreviewQuery(
+                source, latitude, longitude, eyeLla[2] * 0.85);
+        }
+        else if (source.id == "sentinel-2-l2a")
+        {
+            if (mode != "preview")
+            {
+                error = "Sentinel-2 supports preview mode only; it is not a "
+                        "64D source";
+                return false;
+            }
+            for (const char* yearKey : {
+                     "year", "first_year", "last_year",
+                     "baseline_year", "comparison_year"})
+                if (args.contains(yearKey))
+                {
+                    error = "Sentinel-2 uses time_start/time_end, not year fields";
+                    return false;
+                }
+            std::string timeStart;
+            std::string timeEnd;
+            if (!requiredString(args, "time_start", timeStart) ||
+                !requiredString(args, "time_end", timeEnd))
+            {
+                error = "Sentinel-2 requires non-empty time_start and time_end";
+                return false;
+            }
+            if (timeStart > timeEnd)
+            {
+                error = "Sentinel-2 time_start must not be after time_end";
+                return false;
+            }
+            double maximumCloudPercent = 20.0;
+            if (!optionalNumber(
+                    args, "max_cloud_percent", maximumCloudPercent) ||
+                !std::isfinite(maximumCloudPercent) ||
+                maximumCloudPercent < 0.0 || maximumCloudPercent > 100.0)
+            {
+                error = "max_cloud_percent must be a number inside [0, 100]";
+                return false;
+            }
+            query = makeSentinel2PreviewIntervalQuery(
+                source, latitude, longitude, timeStart, timeEnd,
+                maximumCloudPercent, eyeLla[2] * 0.85);
+        }
+        else if (mode == "preview")
+        {
+            int year = source.lastYear;
+            if (!optionalInteger(args, "year", year))
+            {
+                error = "year must be an integer";
+                return false;
+            }
+            if (!validYear(source, year))
+            {
+                error = "year is outside the science source range";
+                return false;
+            }
+            query = makeSciencePointQuery(
+                source, *visualization, latitude, longitude, year,
+                eyeLla[2] * 0.85);
+        }
+        else if (mode == "point_series")
+        {
+            int firstYear = source.firstYear;
+            int lastYear = source.lastYear;
+            if (!optionalInteger(args, "first_year", firstYear) ||
+                !optionalInteger(args, "last_year", lastYear))
+            {
+                error = "first_year and last_year must be integers";
+                return false;
+            }
+            if (!validYear(source, firstYear) ||
+                !validYear(source, lastYear) || firstYear > lastYear)
+            {
+                error = "point-series years must be ordered inside the source "
+                        "range";
+                return false;
+            }
+            query = makeSciencePointSeriesQuery(
+                source, latitude, longitude, firstYear, lastYear);
+        }
+        else
+        {
+            int baselineYear = source.firstYear;
+            int comparisonYear = source.lastYear;
+            int gridSize = 128;
+            bool enablePca = false;
+            int clusterCount = 4;
+            const bool enableClustering = args.contains("cluster_count");
+            if (!optionalInteger(args, "baseline_year", baselineYear) ||
+                !optionalInteger(args, "comparison_year", comparisonYear))
+            {
+                error = "baseline_year and comparison_year must be integers";
+                return false;
+            }
+            if (!validYear(source, baselineYear) ||
+                !validYear(source, comparisonYear) ||
+                baselineYear >= comparisonYear)
+            {
+                error = "regional years must increase inside the source range";
+                return false;
+            }
+            if (!optionalInteger(args, "grid_size", gridSize) ||
+                gridSize < 1 || gridSize > 256)
+            {
+                error = "grid_size must be an integer inside [1, 256]";
+                return false;
+            }
+            if (!optionalBoolean(args, "enable_pca", enablePca))
+            {
+                error = "enable_pca must be a boolean";
+                return false;
+            }
+            if (!optionalInteger(args, "cluster_count", clusterCount) ||
+                (enableClustering &&
+                 (clusterCount < 2 || clusterCount > 8)))
+            {
+                error = "cluster_count must be an integer inside [2, 8]";
+                return false;
+            }
+            earthscience::ScienceAnalysisOptions options;
+            options.gridSize = gridSize;
+            options.enablePca = enablePca;
+            options.enableClustering = enableClustering;
+            options.clusterCount = clusterCount;
+            query = makeScienceRegionalAnalysisQuery(
+                source, latitude, longitude, eyeLla[2] * 0.85,
+                baselineYear, comparisonYear, options);
+        }
+        error.clear();
+        return true;
+    }
 }
 
 void registerScienceResearchTools(
@@ -744,6 +982,9 @@ void registerScienceResearchTools(
             researchRoot.empty()
                 ? earthscience::defaultScienceResearchRoot()
                 : researchRoot);
+    const auto researchSequencer =
+        std::make_shared<earthscience::ScienceResearchSequencer>(
+            service, researchManager.get());
 
     earthai::Tool search;
     search.name = "search_science_sources";
@@ -770,7 +1011,7 @@ void registerScienceResearchTools(
         u8"max_cloud_percent 限制场景级云量。lat/lon 省略时使用当前视野"
         u8"中心；本工具不会改变相机或图层可见性，结果需显式调用 "
         u8"show_science_artifact 显示。";
-    start.parametersJson = "{\"type\":\"object\",\"properties\":{" 
+    start.parametersJson = "{\"type\":\"object\",\"properties\":{"
         "\"source_id\":{\"type\":\"string\"},"
         "\"visualization_id\":{\"type\":\"string\"},"
         "\"mode\":{\"type\":\"string\",\"enum\":[\"preview\","
@@ -794,160 +1035,11 @@ void registerScienceResearchTools(
     start.execute = [service, manipulator, researchManager](
         const picojson::value& args)
     {
-        if (!args.is<picojson::object>())
-            return errorJson("science research arguments must be an object");
-        const std::vector<earthscience::ScienceSourceDescriptor> sources =
-            service->listSources();
-        if (sources.empty()) return errorJson("no science sources are registered");
-
-        std::string sourceId = "alphaearth-foundations";
-        if (std::none_of(
-                sources.begin(), sources.end(), [](const auto& candidate)
-                { return candidate.id == "alphaearth-foundations"; }))
-            sourceId = sources.front().id;
-        if (!optionalString(args, "source_id", sourceId))
-            return errorJson("source_id must be a string");
-        const auto sourceIterator = std::find_if(
-            sources.begin(), sources.end(), [&sourceId](const auto& source)
-            { return source.id == sourceId; });
-        if (sourceIterator == sources.end())
-            return errorJson("unknown science source: " + sourceId);
-        const earthscience::ScienceSourceDescriptor& source = *sourceIterator;
-
-        std::string visualizationId = source.visualizations.empty()
-            ? std::string() : source.visualizations.front().id;
-        if (!optionalString(args, "visualization_id", visualizationId))
-            return errorJson("visualization_id must be a string");
-        const earthscience::ScienceVisualizationDescriptor* visualization =
-            findScienceVisualization(source, visualizationId);
-        if (!visualization || visualization->id != visualizationId)
-            return errorJson("unknown science visualization: " + visualizationId);
-
-        std::string mode = "preview";
-        if (!optionalString(args, "mode", mode))
-            return errorJson("mode must be a string");
-        if (mode != "preview" && mode != "point_series" &&
-            mode != "regional_embedding")
-            return errorJson("mode must be preview, point_series, or "
-                             "regional_embedding");
-
-        const osg::Vec3d targetLla =
-            manipulator->computeViewPointLatLonHeight();
-        const osg::Vec3d eyeLla = manipulator->computeEyeLatLonHeight();
-        double latitude = osg::RadiansToDegrees(targetLla[0]);
-        double longitude = osg::RadiansToDegrees(targetLla[1]);
-        if (!optionalNumber(args, "lat", latitude) ||
-            !optionalNumber(args, "lon", longitude))
-            return errorJson("lat and lon must be numbers");
-        if (!validCoordinates(latitude, longitude))
-            return errorJson("lat and lon must be finite WGS84 coordinates");
-
         earthscience::GeoTemporalQuery query;
-        if (source.id == "copernicus-dem-glo-30")
-        {
-            if (mode != "preview")
-                return errorJson(
-                    "Copernicus DEM supports preview mode only; it is a static DSM");
-            for (const char* timeKey : {
-                     "year", "first_year", "last_year",
-                     "baseline_year", "comparison_year",
-                     "time_start", "time_end", "max_cloud_percent"})
-                if (args.contains(timeKey))
-                    return errorJson(
-                        "Copernicus DEM is the static 2021 release; omit time and cloud fields");
-            query = makeCopernicusDemPreviewQuery(
-                source, latitude, longitude, eyeLla[2] * 0.85);
-        }
-        else if (source.id == "sentinel-2-l2a")
-        {
-            if (mode != "preview")
-                return errorJson(
-                    "Sentinel-2 supports preview mode only; it is not a 64D source");
-            for (const char* yearKey : {
-                     "year", "first_year", "last_year",
-                     "baseline_year", "comparison_year"})
-                if (args.contains(yearKey))
-                    return errorJson(
-                        "Sentinel-2 uses time_start/time_end, not year fields");
-            std::string timeStart;
-            std::string timeEnd;
-            if (!requiredString(args, "time_start", timeStart) ||
-                !requiredString(args, "time_end", timeEnd))
-                return errorJson(
-                    "Sentinel-2 requires non-empty time_start and time_end");
-            if (timeStart > timeEnd)
-                return errorJson(
-                    "Sentinel-2 time_start must not be after time_end");
-            double maximumCloudPercent = 20.0;
-            if (!optionalNumber(
-                    args, "max_cloud_percent", maximumCloudPercent) ||
-                !std::isfinite(maximumCloudPercent) ||
-                maximumCloudPercent < 0.0 || maximumCloudPercent > 100.0)
-                return errorJson(
-                    "max_cloud_percent must be a number inside [0, 100]");
-            query = makeSentinel2PreviewIntervalQuery(
-                source, latitude, longitude, timeStart, timeEnd,
-                maximumCloudPercent, eyeLla[2] * 0.85);
-        }
-        else if (mode == "preview")
-        {
-            int year = source.lastYear;
-            if (!optionalInteger(args, "year", year))
-                return errorJson("year must be an integer");
-            if (!validYear(source, year))
-                return errorJson("year is outside the science source range");
-            query = makeSciencePointQuery(
-                source, *visualization, latitude, longitude, year,
-                eyeLla[2] * 0.85);
-        }
-        else if (mode == "point_series")
-        {
-            int firstYear = source.firstYear;
-            int lastYear = source.lastYear;
-            if (!optionalInteger(args, "first_year", firstYear) ||
-                !optionalInteger(args, "last_year", lastYear))
-                return errorJson("first_year and last_year must be integers");
-            if (!validYear(source, firstYear) ||
-                !validYear(source, lastYear) || firstYear > lastYear)
-                return errorJson(
-                    "point-series years must be ordered inside the source range");
-            query = makeSciencePointSeriesQuery(
-                source, latitude, longitude, firstYear, lastYear);
-        }
-        else
-        {
-            int baselineYear = source.firstYear;
-            int comparisonYear = source.lastYear;
-            int gridSize = 128;
-            bool enablePca = false;
-            int clusterCount = 4;
-            const bool enableClustering = args.contains("cluster_count");
-            if (!optionalInteger(args, "baseline_year", baselineYear) ||
-                !optionalInteger(args, "comparison_year", comparisonYear))
-                return errorJson(
-                    "baseline_year and comparison_year must be integers");
-            if (!validYear(source, baselineYear) ||
-                !validYear(source, comparisonYear) ||
-                baselineYear >= comparisonYear)
-                return errorJson(
-                    "regional years must increase inside the source range");
-            if (!optionalInteger(args, "grid_size", gridSize) ||
-                gridSize < 1 || gridSize > 256)
-                return errorJson("grid_size must be an integer inside [1, 256]");
-            if (!optionalBoolean(args, "enable_pca", enablePca))
-                return errorJson("enable_pca must be a boolean");
-            if (!optionalInteger(args, "cluster_count", clusterCount) ||
-                (enableClustering && (clusterCount < 2 || clusterCount > 8)))
-                return errorJson("cluster_count must be an integer inside [2, 8]");
-            earthscience::ScienceAnalysisOptions options;
-            options.gridSize = gridSize;
-            options.enablePca = enablePca;
-            options.enableClustering = enableClustering;
-            options.clusterCount = clusterCount;
-            query = makeScienceRegionalAnalysisQuery(
-                source, latitude, longitude, eyeLla[2] * 0.85,
-                baselineYear, comparisonYear, options);
-        }
+        std::string queryError;
+        if (!buildScienceToolQuery(
+                args, service, manipulator, query, queryError))
+            return errorJson(queryError);
 
         std::string persistentId, question;
         const bool hasResearchId = args.contains("research_id");
@@ -979,7 +1071,7 @@ void registerScienceResearchTools(
         if (!persistentId.empty())
         {
             if (!researchManager->addStep(
-                    persistentId, snapshot.jobId, source.id, research,
+                    persistentId, snapshot.jobId, query.sourceId, research,
                     persistenceError))
                 return errorJson("research step could not be saved: " +
                                  persistenceError);
@@ -993,13 +1085,91 @@ void registerScienceResearchTools(
     };
     tools->add(start);
 
+    earthai::Tool multiSource;
+    multiSource.name = "start_multisource_research";
+    multiSource.description = u8"按给定顺序串行执行多个科学数据源步骤。"
+        u8"每一步的证据落盘后才会提交下一步；另一个研究请求只会排队，"
+        u8"不会取消当前步骤。本工具不移动相机或改变图层可见性。";
+    multiSource.parametersJson =
+        "{\"type\":\"object\",\"properties\":{"
+        "\"question\":{\"type\":\"string\"},"
+        "\"steps\":{\"type\":\"array\",\"minItems\":1,"
+        "\"maxItems\":16,\"items\":{\"type\":\"object\","
+        "\"properties\":{"
+        "\"source_id\":{\"type\":\"string\"},"
+        "\"visualization_id\":{\"type\":\"string\"},"
+        "\"mode\":{\"type\":\"string\",\"enum\":[\"preview\","
+            "\"point_series\",\"regional_embedding\"]},"
+        "\"lat\":{\"type\":\"number\"},"
+        "\"lon\":{\"type\":\"number\"},"
+        "\"year\":{\"type\":\"integer\"},"
+        "\"first_year\":{\"type\":\"integer\"},"
+        "\"last_year\":{\"type\":\"integer\"},"
+        "\"baseline_year\":{\"type\":\"integer\"},"
+        "\"comparison_year\":{\"type\":\"integer\"},"
+        "\"time_start\":{\"type\":\"string\"},"
+        "\"time_end\":{\"type\":\"string\"},"
+        "\"max_cloud_percent\":{\"type\":\"number\","
+            "\"minimum\":0,\"maximum\":100},"
+        "\"grid_size\":{\"type\":\"integer\"},"
+        "\"enable_pca\":{\"type\":\"boolean\"},"
+        "\"cluster_count\":{\"type\":\"integer\"}},"
+        "\"required\":[\"source_id\"]}}},"
+        "\"required\":[\"question\",\"steps\"]}";
+    multiSource.execute = [service, manipulator, researchSequencer](
+        const picojson::value& args)
+    {
+        std::string question;
+        if (!requiredString(args, "question", question))
+            return errorJson("question is required");
+        if (!args.contains("steps") ||
+            !args.get("steps").is<picojson::array>())
+            return errorJson("steps must be an ordered array");
+        const picojson::array& requested =
+            args.get("steps").get<picojson::array>();
+        if (requested.empty() || requested.size() > 16)
+            return errorJson(
+                "steps must contain between 1 and 16 ordered requests");
+
+        std::vector<earthscience::ScienceResearchRequestStep> steps;
+        steps.reserve(requested.size());
+        for (const picojson::value& item : requested)
+        {
+            std::string sourceId;
+            if (!requiredString(item, "source_id", sourceId))
+                return errorJson(
+                    "every multi-source step requires source_id");
+            earthscience::GeoTemporalQuery query;
+            std::string queryError;
+            if (!buildScienceToolQuery(
+                    item, service, manipulator, query, queryError))
+                return errorJson("invalid " + sourceId + " step: " +
+                                 queryError);
+            steps.push_back({sourceId, std::move(query)});
+        }
+
+        std::string sequenceError;
+        const std::string researchId = researchSequencer->start(
+            question, steps, sequenceError);
+        if (researchId.empty())
+            return errorJson("multi-source research could not start: " +
+                             sequenceError);
+        const earthscience::ScienceResearchRecord record =
+            researchSequencer->poll(researchId, sequenceError);
+        if (!sequenceError.empty())
+            return errorJson("multi-source research could not be read: " +
+                             sequenceError);
+        return researchJson(record);
+    };
+    tools->add(multiSource);
+
     earthai::Tool get;
     get.name = "get_research_job";
     get.description = u8"查询当前科学研究任务的状态、进度、来源证据和结果范围。";
     get.parametersJson = "{\"type\":\"object\",\"properties\":{" 
         "\"job_id\":{\"type\":\"integer\"},"
         "\"research_id\":{\"type\":\"string\"}}}";
-    get.execute = [service, researchManager](const picojson::value& args)
+    get.execute = [service, researchSequencer](const picojson::value& args)
     {
         const earthscience::ScienceJobSnapshot snapshot = service->snapshot();
         if (args.is<picojson::object>() && args.contains("research_id"))
@@ -1007,34 +1177,12 @@ void registerScienceResearchTools(
             std::string researchId;
             if (!requiredString(args, "research_id", researchId))
                 return errorJson("research_id must be a non-empty string");
-            earthscience::ScienceResearchRecord research;
             std::string persistenceError;
-            if (!researchManager->get(
-                    researchId, research, persistenceError))
+            const earthscience::ScienceResearchRecord research =
+                researchSequencer->poll(researchId, persistenceError);
+            if (!persistenceError.empty())
                 return errorJson("research record unavailable: " +
                                  persistenceError);
-            const auto step = std::find_if(
-                research.steps.begin(), research.steps.end(),
-                [&snapshot](const earthscience::ScienceResearchStep& value)
-                { return value.liveJobId == snapshot.jobId; });
-            if (step != research.steps.end())
-            {
-                const std::vector<earthscience::ScienceSourceDescriptor> sources =
-                    service->listSources();
-                const auto source = std::find_if(
-                    sources.begin(), sources.end(),
-                    [&step](const earthscience::ScienceSourceDescriptor& value)
-                    { return value.id == step->sourceId; });
-                if (source == sources.end())
-                    return errorJson(
-                        "research source is no longer registered: " +
-                        step->sourceId);
-                if (!researchManager->observe(
-                        researchId, snapshot, *source, research,
-                        persistenceError))
-                    return errorJson("research status could not be saved: " +
-                                     persistenceError);
-            }
             return researchJson(research);
         }
         double requested = static_cast<double>(snapshot.jobId);
@@ -1046,6 +1194,32 @@ void registerScienceResearchTools(
         return snapshotJson(snapshot);
     };
     tools->add(get);
+
+    earthai::Tool cancelResearch;
+    cancelResearch.name = "cancel_science_research";
+    cancelResearch.description = u8"取消持久化研究的当前步骤，并将尚未提交的"
+        u8"步骤标记为已取消；已经保存的成功证据会保留。";
+    cancelResearch.parametersJson =
+        "{\"type\":\"object\",\"properties\":{"
+        "\"research_id\":{\"type\":\"string\"}},"
+        "\"required\":[\"research_id\"]}";
+    cancelResearch.execute = [researchSequencer](const picojson::value& args)
+    {
+        std::string researchId;
+        if (!requiredString(args, "research_id", researchId))
+            return errorJson("research_id is required");
+        std::string cancellationError;
+        if (!researchSequencer->cancel(researchId, cancellationError))
+            return errorJson("research could not be cancelled: " +
+                             cancellationError);
+        const earthscience::ScienceResearchRecord record =
+            researchSequencer->poll(researchId, cancellationError);
+        if (!cancellationError.empty())
+            return errorJson("cancelled research could not be read: " +
+                             cancellationError);
+        return researchJson(record);
+    };
+    tools->add(cancelResearch);
 
     earthai::Tool show;
     show.name = "show_science_artifact";

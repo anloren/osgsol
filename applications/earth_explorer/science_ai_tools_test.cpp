@@ -203,6 +203,7 @@ namespace
         void cancel(std::uint64_t generation) override
         {
             if (generation != _snapshot.generation) return;
+            ++cancelCount;
             _snapshot.state = earthscience::ScienceJobState::Cancelled;
             _snapshot.progress = earthscience::ScienceProgress();
             _snapshot.progress.stage =
@@ -393,6 +394,7 @@ namespace
         }
 
         std::uint64_t generation() const { return _generation; }
+        int cancelCount = 0;
         earthscience::GeoTemporalQuery lastQuery;
 
     private:
@@ -526,7 +528,8 @@ namespace
             &tools, &service, layer.get(), &layers, manipulator.get());
         const std::vector<std::string> expectedNames = {
             "search_science_sources", "start_science_research",
-            "get_research_job", "show_science_artifact",
+            "start_multisource_research", "get_research_job",
+            "cancel_science_research", "show_science_artifact",
             "compare_science_artifacts", "run_change_analysis",
             "build_research_brief"};
         require(tools.tools().size() == expectedNames.size(),
@@ -1150,6 +1153,153 @@ namespace
         requireMatrixUnchanged(originalMatrix, *manipulator);
     }
 
+    void testMultiSourceToolIsSerialAndPreservesWorldState()
+    {
+        TempDirectory temporary;
+        auto registry =
+            std::make_unique<earthscience::ScienceSourceRegistry>();
+        auto alphaValue = std::make_unique<ToolProvider>();
+        auto sentinelValue =
+            std::make_unique<ToolProvider>(makeSentinelDescriptor());
+        auto demValue = std::make_unique<ToolProvider>(makeDemDescriptor());
+        ToolProvider* alpha = alphaValue.get();
+        ToolProvider* sentinel = sentinelValue.get();
+        ToolProvider* dem = demValue.get();
+        std::string registrationError;
+        require(registry->add(std::move(alphaValue), registrationError) &&
+                    registry->add(
+                        std::move(sentinelValue), registrationError) &&
+                    registry->add(std::move(demValue), registrationError),
+                "multi-source providers failed to register");
+        earthscience::ScienceQueryService service(std::move(registry));
+        osg::ref_ptr<SciencePreviewLayer> layer =
+            new SciencePreviewLayer(&service);
+        LayerManager layers;
+        OverlayLayer catalogLayer;
+        catalogLayer.id = "alphaearth";
+        catalogLayer.displayName = "AlphaEarth";
+        catalogLayer.group = "Science";
+        catalogLayer.apply = [](const OverlayLayer&) {};
+        layers.add(catalogLayer);
+        layer->setVisible(false);
+        layers.setEnabled("alphaearth", false);
+        osg::ref_ptr<osgVerse::EarthManipulator> manipulator =
+            new osgVerse::EarthManipulator;
+        manipulator->setByEye(
+            osg::inDegrees(35.68), osg::inDegrees(139.76), 150000.0);
+        const osg::Matrixd originalMatrix = manipulator->getMatrix();
+
+        earthai::ToolRegistry tools;
+        registerScienceResearchTools(
+            &tools, &service, layer.get(), &layers, manipulator.get(),
+            temporary.path());
+        const earthai::Tool& multi =
+            findTool(tools, "start_multisource_research");
+        picojson::value schema;
+        require(picojson::parse(schema, multi.parametersJson).empty() &&
+                    multi.parametersJson.find("steps") != std::string::npos &&
+                    multi.parametersJson.find("source_id") !=
+                        std::string::npos,
+                "multi-source tool schema is invalid");
+
+        picojson::object alphaStep;
+        alphaStep["source_id"] =
+            picojson::value("alphaearth-foundations");
+        alphaStep["visualization_id"] =
+            picojson::value("false-color-a01-a16-a09");
+        alphaStep["mode"] = picojson::value("preview");
+        alphaStep["lat"] = picojson::value(35.68);
+        alphaStep["lon"] = picojson::value(139.76);
+        alphaStep["year"] = picojson::value(2025.0);
+
+        picojson::object sentinelStep;
+        sentinelStep["source_id"] = picojson::value("sentinel-2-l2a");
+        sentinelStep["visualization_id"] =
+            picojson::value("natural-color-visual");
+        sentinelStep["mode"] = picojson::value("preview");
+        sentinelStep["lat"] = picojson::value(35.68);
+        sentinelStep["lon"] = picojson::value(139.76);
+        sentinelStep["time_start"] =
+            picojson::value("2026-06-18T00:00:00Z");
+        sentinelStep["time_end"] =
+            picojson::value("2026-07-18T00:00:00Z");
+
+        picojson::object demStep;
+        demStep["source_id"] =
+            picojson::value("copernicus-dem-glo-30");
+        demStep["visualization_id"] =
+            picojson::value("surface-elevation-hypsometric");
+        demStep["mode"] = picojson::value("preview");
+        demStep["lat"] = picojson::value(35.68);
+        demStep["lon"] = picojson::value(139.76);
+
+        picojson::object request;
+        request["question"] = picojson::value("Ordered three-source study");
+        request["steps"] = picojson::value(picojson::array{
+            picojson::value(alphaStep), picojson::value(sentinelStep),
+            picojson::value(demStep)});
+        picojson::value result;
+        require(tools.dispatch(
+                    "start_multisource_research",
+                    picojson::value(request), result) &&
+                    !result.contains("error") &&
+                    result.get("steps").get<picojson::array>().size() == 3 &&
+                    alpha->generation() == 1 &&
+                    sentinel->generation() == 0 && dem->generation() == 0,
+                "multi-source tool did not queue only its first step");
+        const std::string firstId =
+            result.get("research_id").get<std::string>();
+
+        picojson::object secondRequest;
+        secondRequest["question"] = picojson::value("Queued second study");
+        secondRequest["steps"] = picojson::value(picojson::array{
+            picojson::value(demStep)});
+        require(tools.dispatch(
+                    "start_multisource_research",
+                    picojson::value(secondRequest), result) &&
+                    !result.contains("error") && dem->generation() == 0 &&
+                    alpha->cancelCount == 0,
+                "second research cancelled or overwrote the first research");
+        const std::string secondId =
+            result.get("research_id").get<std::string>();
+
+        picojson::object firstPoll;
+        firstPoll["research_id"] = picojson::value(firstId);
+        alpha->publishReady("multisource-alpha");
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(firstPoll), result) &&
+                    sentinel->generation() == 1 && dem->generation() == 0,
+                "AlphaEarth evidence did not precede Sentinel submission");
+        sentinel->publishReady("multisource-sentinel");
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(firstPoll), result) &&
+                    dem->generation() == 1,
+                "Sentinel evidence did not precede DEM submission");
+        dem->publishReady("multisource-dem", 0,
+                          "copernicus-dem-hypsometric-v1",
+                          "aws-glo30-2021");
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(firstPoll), result) &&
+                    result.get("state").get<std::string>() == "ready" &&
+                    result.get("evidence_count").get<double>() == 3.0 &&
+                    dem->generation() == 2,
+                "first research did not finish before second research began");
+
+        picojson::object cancelArgs;
+        cancelArgs["research_id"] = picojson::value(secondId);
+        require(tools.dispatch(
+                    "cancel_science_research", picojson::value(cancelArgs),
+                    result) && !result.contains("error") &&
+                    dem->cancelCount == 1 &&
+                    result.get("steps").get<picojson::array>().front().
+                        get("state").get<std::string>() == "cancelled",
+                "multi-source cancellation did not stop the active provider");
+        require(!layer->isVisible() && layers.find("alphaearth") &&
+                    !layers.find("alphaearth")->enabled,
+                "multi-source research changed layer visibility");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+    }
+
     void testPersistentResearchSurvivesRestartAndStaysCompact()
     {
         TempDirectory temporary;
@@ -1345,6 +1495,7 @@ int main()
 {
     testAnalysisQueryBuildersKeepExactScientificIntent();
     testScienceToolsUseServiceAndPreserveCamera();
+    testMultiSourceToolIsSerialAndPreservesWorldState();
     testPersistentResearchSurvivesRestartAndStaysCompact();
     std::cout << "[OK] ScienceEarth Agent tools use the query service without camera writes\n";
     return 0;

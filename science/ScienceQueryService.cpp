@@ -194,6 +194,20 @@ std::vector<ScienceSourceDescriptor> ScienceQueryService::listSources() const
                      : std::vector<ScienceSourceDescriptor>();
 }
 
+bool ScienceQueryService::validateQuery(
+    const GeoTemporalQuery& query, std::string& error) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const IScienceProvider* provider =
+        _registry ? _registry->find(query.sourceId) : nullptr;
+    if (!provider)
+    {
+        error = "unknown science source: " + query.sourceId;
+        return false;
+    }
+    return validate(query, *provider, error);
+}
+
 ScienceQueryCost ScienceQueryService::estimate(
     const GeoTemporalQuery& query) const
 {

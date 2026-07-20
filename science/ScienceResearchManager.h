@@ -29,6 +29,24 @@ namespace earthscience
             const std::string& sourceId,
             ScienceResearchRecord& record,
             std::string& error);
+        bool planSteps(
+            const std::string& researchId,
+            const std::vector<std::string>& sourceIds,
+            ScienceResearchRecord& record,
+            std::string& error);
+        bool activateStep(
+            const std::string& researchId,
+            std::size_t stepIndex,
+            std::uint64_t liveJobId,
+            ScienceResearchRecord& record,
+            std::string& error);
+        bool markStepTerminal(
+            const std::string& researchId,
+            std::size_t stepIndex,
+            ScienceJobState state,
+            const std::string& message,
+            ScienceResearchRecord& record,
+            std::string& error);
         bool observe(
             const std::string& researchId,
             const ScienceJobSnapshot& snapshot,

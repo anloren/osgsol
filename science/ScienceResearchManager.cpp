@@ -194,6 +194,119 @@ bool ScienceResearchManager::addStep(
     return true;
 }
 
+bool ScienceResearchManager::planSteps(
+    const std::string& id, const std::vector<std::string>& sourceIds,
+    ScienceResearchRecord& output, std::string& error)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    ScienceResearchRecord* record = nullptr;
+    if (!loadUnlocked(id, record, error)) return false;
+    if (!record->steps.empty())
+    {
+        error = "research steps are already planned";
+        return false;
+    }
+    if (sourceIds.empty() || sourceIds.size() > 16)
+    {
+        error = "research sequence requires between 1 and 16 steps";
+        return false;
+    }
+    for (const std::string& sourceId : sourceIds)
+    {
+        if (sourceId.empty())
+        {
+            error = "research step source is empty";
+            return false;
+        }
+        ScienceResearchStep step;
+        step.sourceId = sourceId;
+        step.state = ScienceJobState::Idle;
+        step.message = "Waiting";
+        record->steps.push_back(std::move(step));
+    }
+    updateState(*record);
+    if (!persistUnlocked(*record, error)) return false;
+    output = *record;
+    error.clear();
+    return true;
+}
+
+bool ScienceResearchManager::activateStep(
+    const std::string& id, std::size_t stepIndex,
+    std::uint64_t liveJobId, ScienceResearchRecord& output,
+    std::string& error)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    ScienceResearchRecord* record = nullptr;
+    if (!loadUnlocked(id, record, error)) return false;
+    if (stepIndex >= record->steps.size())
+    {
+        error = "research step index is out of range";
+        return false;
+    }
+    if (liveJobId == 0)
+    {
+        error = "research step requires a live job id";
+        return false;
+    }
+    if (std::any_of(record->steps.begin(), record->steps.end(),
+            [liveJobId](const ScienceResearchStep& step)
+            { return step.liveJobId == liveJobId; }))
+    {
+        error = "duplicate live job id";
+        return false;
+    }
+    ScienceResearchStep& step = record->steps[stepIndex];
+    if (step.state != ScienceJobState::Idle || step.liveJobId != 0)
+    {
+        error = "research step is not waiting";
+        return false;
+    }
+    step.liveJobId = liveJobId;
+    step.state = ScienceJobState::Queued;
+    step.message = "Queued";
+    updateState(*record);
+    if (!persistUnlocked(*record, error)) return false;
+    output = *record;
+    error.clear();
+    return true;
+}
+
+bool ScienceResearchManager::markStepTerminal(
+    const std::string& id, std::size_t stepIndex, ScienceJobState state,
+    const std::string& message, ScienceResearchRecord& output,
+    std::string& error)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    ScienceResearchRecord* record = nullptr;
+    if (!loadUnlocked(id, record, error)) return false;
+    if (stepIndex >= record->steps.size())
+    {
+        error = "research step index is out of range";
+        return false;
+    }
+    if (state != ScienceJobState::Failed &&
+        state != ScienceJobState::Cancelled &&
+        state != ScienceJobState::Unavailable)
+    {
+        error = "research step terminal state is invalid";
+        return false;
+    }
+    ScienceResearchStep& step = record->steps[stepIndex];
+    if (step.state == ScienceJobState::Ready || !step.evidenceId.empty())
+    {
+        error = "successful research evidence cannot be replaced";
+        return false;
+    }
+    step.state = state;
+    step.message = message.empty() ? scienceJobStateName(state) : message;
+    updateState(*record);
+    if (!persistUnlocked(*record, error)) return false;
+    output = *record;
+    error.clear();
+    return true;
+}
+
 bool ScienceResearchManager::observe(
     const std::string& id, const ScienceJobSnapshot& snapshot,
     const ScienceSourceDescriptor& source,
