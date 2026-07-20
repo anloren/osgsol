@@ -15,7 +15,7 @@
 // Release 构建带 -DNDEBUG 会吞掉 assert —— 用自定义 CHECK 保证断言永远生效
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ << ": " #x << std::endl; \
-    std::abort(); } } while (0)
+    std::exit(EXIT_FAILURE); } } while (0)
 
 // 沿用 ai_chat_tests.cpp 的先例:NEW_TEST 宏只接受单个源文件,被测实现文件直接
 // #include 进本测试的翻译单元(与 ai_chat_tests 是两个独立链接单元,不会重定义)。

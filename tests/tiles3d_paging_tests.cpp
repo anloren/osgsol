@@ -21,7 +21,7 @@
 
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ \
-              << ": " #x << std::endl; std::abort(); } } while (0)
+              << ": " #x << std::endl; std::exit(EXIT_FAILURE); } } while (0)
 
 namespace
 {

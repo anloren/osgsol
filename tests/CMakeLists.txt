@@ -423,7 +423,7 @@ IF(BUILD_TESTING)
         ADD_TEST(NAME osgVerse_Test_ScienceHttpRanges
                  COMMAND $<TARGET_FILE:osgVerse_Test_ScienceHttpRanges>)
         SET_TESTS_PROPERTIES(osgVerse_Test_ScienceHttpRanges PROPERTIES
-            LABELS "offline;scienceearth;network-local"
+            LABELS "scienceearth;network-local"
             TIMEOUT 120)
         IF(APPLE)
             SET_PROPERTY(TEST osgVerse_Test_ScienceHttpRanges APPEND PROPERTY
@@ -442,7 +442,7 @@ IF(BUILD_TESTING)
             "OSGSOL_TEST_MULTIRANGE_CASE=global-only")
         SET_TESTS_PROPERTIES(
             osgVerse_Test_ScienceHttpRangesCoordinatorAbandonment PROPERTIES
-            LABELS "offline;scienceearth;network-local"
+            LABELS "scienceearth;network-local"
             TIMEOUT 120
             ENVIRONMENT "${_OSGSOL_COORDINATOR_ABANDONMENT_ENV}")
         UNSET(_OSGSOL_COORDINATOR_ABANDONMENT_ENV)
@@ -465,7 +465,7 @@ IF(BUILD_TESTING)
             "OSGSOL_TEST_MULTIRANGE_CASE=global-only")
         SET_TESTS_PROPERTIES(
             osgVerse_Test_ScienceHttpRangesBlockedOperationCapacity PROPERTIES
-            LABELS "offline;scienceearth;network-local"
+            LABELS "scienceearth;network-local"
             TIMEOUT 180
             ENVIRONMENT "${_OSGSOL_BLOCKED_OPERATION_CAPACITY_ENV}")
         UNSET(_OSGSOL_BLOCKED_OPERATION_CAPACITY_ENV)
@@ -485,7 +485,7 @@ IF(BUILD_TESTING)
                     "${OSGSOL_PYTHON3_EXECUTABLE}" -m unittest
                     tests.science_http_range_server_tests -v)
         SET_TESTS_PROPERTIES(osgSol_Test_ScienceHttpRangeServer PROPERTIES
-            LABELS "offline;scienceearth;network-local"
+            LABELS "scienceearth;network-local"
             WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
             TIMEOUT 30)
         IF(OSGSOL_SCIENCE_NETWORK_TESTS)

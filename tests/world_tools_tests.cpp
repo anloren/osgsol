@@ -24,7 +24,7 @@
 
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ << ": " #x << std::endl; \
-    std::abort(); } } while (0)
+    std::exit(EXIT_FAILURE); } } while (0)
 
 #ifdef _WIN32
 static void setEnvVar(const char* k, const char* v) { _putenv_s(k, v); }

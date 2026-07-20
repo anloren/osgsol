@@ -54,6 +54,9 @@ jobs:
 
       - name: Shader and plugin ABI source contracts
         run: |
+          OSGSOL_SCIENCE_PLUGIN="$PWD/build/ci-science-on/science/osgdb_science.so" \
+          OSGSOL_SCIENCE_MAIN="$PWD/build/ci-science-on/bin/osgVerse_EarthExplorer" \
+          OSGSOL_SCIENCE_MAIN_LINK_FILE="$PWD/build/ci-science-on/applications/earth_explorer/CMakeFiles/osgVerse_EarthExplorer.dir/link.txt" \
           python3 -m unittest \
             tests.terrain_science_overlay_contract_tests \
             tests.terrain_science_shader_tests \

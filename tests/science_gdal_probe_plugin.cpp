@@ -18,7 +18,7 @@ namespace
         PJ_CONTEXT* context = proj_context_create();
         if (!context || ZSTD_versionNumber() == 0 ||
             GetGDALDriverManager()->GetDriverByName("GTiff") == nullptr)
-            std::abort();
+            std::exit(EXIT_FAILURE);
         proj_context_destroy(context);
     }
 }

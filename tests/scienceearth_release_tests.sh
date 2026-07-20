@@ -159,6 +159,14 @@ if grep -Fq 'VERSION="${OSGSOL_PACKAGE_VERSION:-0.3.0}"' \
         packaging/package_macos.sh; then
     fail "packaging retains the stale 0.3.0 default"
 fi
+if rg -n 'std::abort\(|(^|[^[:alnum:]_])abort\(' tests \
+        --glob '*.cpp' --glob '*.h' >/dev/null; then
+    fail "test executables must report normal failure instead of generating macOS crash reports"
+fi
+if rg -n 'LABELS "[^"]*offline[^"]*network-local|LABELS "[^"]*network-local[^"]*offline' \
+        tests/CMakeLists.txt >/dev/null; then
+    fail "loopback-listener tests must not be included in the offline no-port suite"
+fi
 
 test "$(git rev-list -n 1 v0.2.0)" = "$(git rev-list -n 1 ScienceEarth)" || \
     fail "v0.2.0 and ScienceEarth do not resolve to the same commit"
