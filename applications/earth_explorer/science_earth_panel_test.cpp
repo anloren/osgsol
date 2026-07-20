@@ -1,11 +1,13 @@
 #include "science_earth_panel.h"
 #include "science_query_builder.h"
+#include "ai_prompts.h"
 
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <set>
 #include <vector>
 
 #define CHECK(x) do { if (!(x)) { \
@@ -769,6 +771,7 @@ int main()
         earthscience::ScienceJobState::Failed,
         earthscience::ScienceProgressStage::Failed,
         "provider read failed: checksum mismatch");
+    providerFailureRetained.query.sourceId = "alphaearth-foundations";
     providerFailureRetained.lastSuccessfulPreviewArtifact =
         artifact("preview-provider-failure-retained");
     const SciencePanelPresentation providerFailureRetainedView =
@@ -781,6 +784,10 @@ int main()
     CHECK(providerFailureRetainedView.stageText.find("Failed") !=
           std::string::npos);
     CHECK(providerFailureRetainedView.detail == providerFailureRetained.message);
+    CHECK(providerFailureRetainedView.sourceText.find(
+              "alphaearth-foundations") != std::string::npos);
+    CHECK(providerFailureRetainedView.retryText.find("Retry") !=
+          std::string::npos);
     CHECK(providerFailureRetainedView.retention.present);
     CHECK(providerFailureRetainedView.retention.mode == SciencePanelMode::Preview);
     CHECK(providerFailureRetainedView.retention.severity ==
@@ -1003,6 +1010,104 @@ int main()
         describeScienceArtifactEvidence(*retainedYear));
     CHECK(retainedYearText.find("2022") != std::string::npos);
     CHECK(retainedYearText.find("2025") == std::string::npos);
+
+    earthscience::GeoTemporalQuery workflowDraft = regionalAnalysis;
+    workflowDraft.geometry.bounds = {113.80, 22.10, 114.50, 22.80};
+    earthscience::ScienceJobSnapshot workflowQueued = snapshot(
+        earthscience::ScienceJobState::Queued,
+        earthscience::ScienceProgressStage::Queued, "queued");
+    workflowQueued.jobId = 77;
+    workflowQueued.query = workflowDraft;
+    workflowQueued.displayArtifact = artifact("visible-false-color");
+    const SciencePanelWorkflowStrip workflow = describeScienceWorkflowStrip(
+        alphaSource, SciencePanelMode::RegionalChange, pointSelection,
+        workflowDraft, workflowQueued, "visible-false-color");
+    CHECK(workflow.source.find("AlphaEarth") != std::string::npos);
+    CHECK(workflow.area.find("113.8000") != std::string::npos);
+    CHECK(workflow.area.find("114.5000") != std::string::npos);
+    CHECK(workflow.time.find("2017") != std::string::npos);
+    CHECK(workflow.time.find("2025") != std::string::npos);
+    CHECK(workflow.method.find("Euclidean") != std::string::npos);
+    CHECK(workflow.stage.find("Queued") != std::string::npos);
+    CHECK(workflow.visibleArtifactId == "visible-false-color");
+
+    earthscience::ScienceJobSnapshot displayReady = snapshot(
+        earthscience::ScienceJobState::Ready,
+        earthscience::ScienceProgressStage::Ready, "ready");
+    std::shared_ptr<earthscience::ScienceArtifact> rasterDisplay =
+        std::make_shared<earthscience::ScienceArtifact>();
+    rasterDisplay->artifactId = "raster-ready";
+    rasterDisplay->query.outputKind =
+        earthscience::ScienceOutputKind::RasterLayer;
+    rasterDisplay->raster.width = 256;
+    rasterDisplay->raster.height = 256;
+    rasterDisplay->raster.rgba =
+        std::make_shared<const std::vector<unsigned char>>(
+            256u * 256u * 4u, 255u);
+    displayReady.lastSuccessfulPreviewArtifact = rasterDisplay;
+    displayReady.displayArtifact = rasterDisplay;
+    CHECK(describeScienceDisplayState(
+              displayReady, SciencePanelMode::Preview, true, true,
+              false, std::string()).kind ==
+          SciencePanelDisplayKind::LoadedVisible);
+    CHECK(describeScienceDisplayState(
+              displayReady, SciencePanelMode::Preview, false, true,
+              false, std::string()).kind ==
+          SciencePanelDisplayKind::LoadedHidden);
+    const SciencePanelDisplayPresentation rendererUnavailable =
+        describeScienceDisplayState(
+            displayReady, SciencePanelMode::Preview, true, false, true,
+            "terrain overlay capacity exceeded");
+    CHECK(rendererUnavailable.kind ==
+          SciencePanelDisplayKind::RendererUnavailable);
+    CHECK(rendererUnavailable.detail.find("capacity exceeded") !=
+          std::string::npos);
+
+    earthscience::ScienceJobSnapshot analysisOnly = snapshot(
+        earthscience::ScienceJobState::Ready,
+        earthscience::ScienceProgressStage::Ready, "ready");
+    analysisOnly.lastSuccessfulAnalysisArtifact = artifact(
+        "point-analysis-only", earthscience::ScienceOutputKind::TimeSeries,
+        earthscience::ScienceAnalysisKind::PointSeries);
+    CHECK(describeScienceDisplayState(
+              analysisOnly, SciencePanelMode::PointSeries, true, false,
+              false, std::string()).kind ==
+          SciencePanelDisplayKind::AnalysisReadyWithoutRaster);
+
+    earthscience::ScienceJobSnapshot failedRetainedDisplay = snapshot(
+        earthscience::ScienceJobState::Failed,
+        earthscience::ScienceProgressStage::Failed,
+        "provider timeout");
+    failedRetainedDisplay.lastSuccessfulPreviewArtifact = rasterDisplay;
+    failedRetainedDisplay.displayArtifact = rasterDisplay;
+    const SciencePanelDisplayPresentation retainedDisplay =
+        describeScienceDisplayState(
+            failedRetainedDisplay, SciencePanelMode::Preview, true, true,
+            false, std::string());
+    CHECK(retainedDisplay.kind == SciencePanelDisplayKind::FailureRetained);
+    CHECK(retainedDisplay.detail.find("raster-ready") != std::string::npos);
+
+    const auto& promptExamples = earthai::scienceEarthPromptExamples();
+    CHECK(promptExamples.size() == 10);
+    CHECK(std::string(promptExamples.front().prompt) ==
+          u8"研究香港当前视野 2017—2025 年的地表表征变化：先显示 AlphaEarth 伪彩，再找变化热点，用 Sentinel-2 影像和 Copernicus DEM 补充背景，最后给出带来源和局限的简报。");
+    std::set<std::string> uniquePrompts;
+    for (const earthai::ScienceEarthPromptExample& example : promptExamples)
+    {
+        CHECK(example.title && example.title[0] != '\0');
+        CHECK(example.sources && example.sources[0] != '\0');
+        CHECK(example.prompt && example.prompt[0] != '\0');
+        uniquePrompts.insert(example.prompt);
+    }
+    CHECK(uniquePrompts.size() == promptExamples.size());
+    char insertedPrompt[1024] = {};
+    CHECK(earthai::insertPromptSuggestion(
+        promptExamples[3].prompt, insertedPrompt, sizeof(insertedPrompt)));
+    CHECK(std::string(insertedPrompt) == promptExamples[3].prompt);
+    char tooSmall[8] = {'k', 'e', 'e', 'p', '\0'};
+    CHECK(!earthai::insertPromptSuggestion(
+        promptExamples[0].prompt, tooSmall, sizeof(tooSmall)));
+    CHECK(std::string(tooSmall) == "keep");
 
     std::cout << "[OK] ScienceEarth progressive panel state\n";
     return EXIT_SUCCESS;

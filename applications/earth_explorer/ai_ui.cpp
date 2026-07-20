@@ -1,5 +1,6 @@
 #include "ai_ui.h"
 #include "ai_media.h"
+#include "ai_prompts.h"
 #if defined(__APPLE__)
 #include "ime_bridge.h"   // 中文 IME:上报输入框矩形给候选窗定位
 #endif
@@ -7,9 +8,12 @@
 #include <readerwriter/EarthManipulator.h>
 #include <osg/Math>
 #include <osg/Notify>
+#include <algorithm>
 #include <cstring>
 
-AIChatUI::AIChatUI() : _historyCollapsed(false), _lastEntryCount(0)
+AIChatUI::AIChatUI()
+    : _historyCollapsed(false), _scienceExamplesOpen(false),
+      _lastEntryCount(0)
 {
     _inputBuf[0] = '\0';
 }
@@ -137,6 +141,52 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
                 static const char spin[4] = { '|', '/', '-', '\\' };
                 int idx = (int)(ImGui::GetTime() * 8.0) % 4;
                 ImGui::TextDisabled(u8"思考中 %c", spin[idx]);
+            }
+        }
+
+        // ---- ScienceEarth 提示词示例：只填入，不提交 ----
+        if (core)
+        {
+            if (ImGui::SmallButton(
+                    _scienceExamplesOpen
+                        ? u8"收起 ScienceEarth 示例"
+                        : u8"ScienceEarth 分析示例"))
+                _scienceExamplesOpen = !_scienceExamplesOpen;
+            if (_scienceExamplesOpen)
+            {
+                const float galleryHeight = std::min(
+                    250.0f, std::max(150.0f, io.DisplaySize.y * 0.28f));
+                ImGui::BeginChild(
+                    "##scienceearth_prompt_gallery",
+                    ImVec2(winWidth - 24.0f, galleryHeight), true,
+                    ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                ImGui::TextWrapped(
+                    u8"点击“填入”只会复制到输入框；请检查或修改后再按回车。"
+                    u8"不会自动运行，也不会移动相机。");
+                const auto& examples = earthai::scienceEarthPromptExamples();
+                for (std::size_t index = 0; index < examples.size(); ++index)
+                {
+                    const earthai::ScienceEarthPromptExample& example =
+                        examples[index];
+                    ImGui::PushID(static_cast<int>(index));
+                    if (ImGui::SmallButton(u8"填入"))
+                        earthai::insertPromptSuggestion(
+                            example.prompt, _inputBuf, sizeof(_inputBuf));
+                    ImGui::SameLine();
+                    ImGui::TextWrapped("%zu. %s", index + 1, example.title);
+                    ImGui::TextDisabled(u8"数据源：%s", example.sources);
+                    if (ImGui::TreeNodeEx(
+                            "##prompt_text",
+                            ImGuiTreeNodeFlags_SpanAvailWidth,
+                            u8"查看完整提示词"))
+                    {
+                        ImGui::TextWrapped("%s", example.prompt);
+                        ImGui::TreePop();
+                    }
+                    ImGui::Separator();
+                    ImGui::PopID();
+                }
+                ImGui::EndChild();
             }
         }
 

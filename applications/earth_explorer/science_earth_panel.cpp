@@ -794,15 +794,15 @@ const char* sciencePanelMetricLabel(earthscience::ScienceMetric metric)
     switch (metric)
     {
     case Metric::CosineDistance:
-        return u8"潜在方向变化（余弦距离） / Cosine distance";
+        return u8"方向变化 / Cosine distance";
     case Metric::EuclideanDistance:
-        return u8"潜在向量位移（L2） / Euclidean distance";
+        return u8"向量位移 / Euclidean distance";
     case Metric::AngularDistance:
-        return u8"潜在方向夹角（弧度） / Angular distance";
+        return u8"方向夹角 / Angular distance";
     case Metric::CosineSimilarity:
-        return u8"潜在方向相似度 / Cosine similarity";
+        return u8"方向相似 / Cosine similarity";
     case Metric::DotProduct:
-        return u8"原始向量点积（高级） / Dot product";
+        return u8"点积（高级） / Dot product";
     }
     return u8"未知度量 / Unknown metric";
 }
@@ -937,6 +937,178 @@ SciencePanelPresentation describeScienceSnapshot(
         }
     }
 
+    if (!snapshot.query.sourceId.empty())
+        view.sourceText = std::string(u8"数据源 / Source: ") +
+            snapshot.query.sourceId;
+    switch (view.kind)
+    {
+    case SciencePanelResultKind::NoCoverage:
+        view.retryText =
+            u8"可重试 / Retry: 调整位置、年份或筛选条件后重新运行";
+        break;
+    case SciencePanelResultKind::Failed:
+        view.retryText =
+            u8"可重试 / Retry: 数据源恢复后可重新运行；旧结果不会被覆盖";
+        break;
+    case SciencePanelResultKind::Cancelled:
+        view.retryText = u8"可重试 / Retry: 可以重新开始同一设置";
+        break;
+    case SciencePanelResultKind::Stale:
+        view.retryText =
+            u8"无需重试 / Retry not needed: 已有更新的请求接替";
+        break;
+    default:
+        break;
+    }
+
+    return view;
+}
+
+SciencePanelWorkflowStrip describeScienceWorkflowStrip(
+    const earthscience::ScienceSourceDescriptor& source,
+    SciencePanelMode mode,
+    const SciencePanelState& state,
+    const earthscience::GeoTemporalQuery& draft,
+    const earthscience::ScienceJobSnapshot& snapshot,
+    const std::string& visibleArtifactId)
+{
+    (void)mode;
+    (void)state;
+    SciencePanelWorkflowStrip strip;
+    strip.source = source.name.empty() ? source.id : source.name;
+
+    std::ostringstream area;
+    area << std::fixed << std::setprecision(4);
+    if (draft.geometry.kind == earthscience::ScienceGeometryKind::Point)
+        area << draft.geometry.point.latitude << ", "
+             << draft.geometry.point.longitude;
+    else
+        area << "W " << draft.geometry.bounds.west
+             << " · S " << draft.geometry.bounds.south
+             << " · E " << draft.geometry.bounds.east
+             << " · N " << draft.geometry.bounds.north;
+    strip.area = area.str();
+
+    std::ostringstream time;
+    if (draft.time.mode == earthscience::ScienceTimeMode::ExplicitYears)
+    {
+        if (!draft.time.explicitYears.empty())
+        {
+            time << draft.time.explicitYears.front();
+            if (draft.time.explicitYears.size() > 1)
+                time << u8"→" << draft.time.explicitYears.back()
+                     << u8" · " << draft.time.explicitYears.size()
+                     << u8" 年";
+        }
+    }
+    else if (draft.time.mode == earthscience::ScienceTimeMode::Interval)
+        time << draft.time.intervalStart << " — " << draft.time.intervalEnd;
+    else
+        time << (draft.time.publicationTime.empty()
+            ? draft.time.instant : draft.time.publicationTime);
+    strip.time = time.str().empty() ? u8"未选择 / not selected" : time.str();
+
+    std::ostringstream method;
+    if (draft.analysis.kind == earthscience::ScienceAnalysisKind::None)
+    {
+        if (draft.visualizationId == "natural-color-visual")
+            method << u8"自然色影像 / Natural color";
+        else if (draft.visualizationId == "surface-elevation-hypsometric")
+            method << u8"地表高程设色 / Elevation";
+        else
+            method << u8"64 维定位伪彩 / False color";
+    }
+    else
+    {
+        for (std::size_t index = 0;
+             index < draft.analysis.metrics.size(); ++index)
+        {
+            if (index > 0) method << " + ";
+            method << sciencePanelMetricLabel(draft.analysis.metrics[index]);
+        }
+        if (draft.analysis.enablePca) method << " + PCA";
+        if (draft.analysis.enableClustering)
+            method << u8" + 聚类 " << draft.analysis.clusterCount;
+    }
+    strip.method = method.str();
+    strip.stage = sciencePanelSnapshotMatchesDraft(snapshot, draft)
+        ? stageLabel(snapshot.progress.stage)
+        : u8"尚未提交 / Not submitted";
+    strip.visibleArtifactId = visibleArtifactId.empty()
+        ? u8"无 / none" : visibleArtifactId;
+    return strip;
+}
+
+SciencePanelDisplayPresentation describeScienceDisplayState(
+    const earthscience::ScienceJobSnapshot& snapshot,
+    SciencePanelMode mode,
+    bool layerVisible,
+    bool publisherHasArtifact,
+    bool rendererUnavailable,
+    const std::string& rendererMessage)
+{
+    SciencePanelDisplayPresentation view;
+    const std::shared_ptr<const earthscience::ScienceArtifact> artifact =
+        selectSciencePanelArtifact(snapshot, mode);
+    if (!artifact)
+    {
+        view.title = u8"尚无可显示结果 / No display artifact";
+        return view;
+    }
+
+    const bool failedReplacement =
+        snapshot.state == earthscience::ScienceJobState::Failed ||
+        snapshot.state == earthscience::ScienceJobState::Unavailable ||
+        snapshot.state == earthscience::ScienceJobState::Cancelled;
+    if (failedReplacement)
+    {
+        view.kind = SciencePanelDisplayKind::FailureRetained;
+        view.severity = SciencePanelSeverity::Warning;
+        view.title = u8"本次失败，保留上一次显示 / Previous display retained";
+        view.detail = std::string(u8"保留结果 / Artifact: ") +
+            artifact->artifactId;
+        return view;
+    }
+    if (artifact->raster.width <= 0 || artifact->raster.height <= 0 ||
+        !artifact->raster.rgba)
+    {
+        view.kind = SciencePanelDisplayKind::AnalysisReadyWithoutRaster;
+        view.severity = SciencePanelSeverity::Success;
+        view.title = u8"分析结果已就绪；没有地图栅格 / Analysis ready without raster";
+        view.detail = std::string(u8"结果 / Artifact: ") + artifact->artifactId;
+        return view;
+    }
+    if (!layerVisible)
+    {
+        view.kind = SciencePanelDisplayKind::LoadedHidden;
+        view.severity = SciencePanelSeverity::Warning;
+        view.title = u8"数据已载入，图层已隐藏 / Loaded, layer hidden";
+        view.detail = std::string(u8"结果 / Artifact: ") + artifact->artifactId;
+        return view;
+    }
+    if (rendererUnavailable)
+    {
+        view.kind = SciencePanelDisplayKind::RendererUnavailable;
+        view.severity = SciencePanelSeverity::Error;
+        view.title = u8"数据已载入，但渲染器无法显示 / Renderer unavailable";
+        view.detail = rendererMessage.empty()
+            ? u8"地形栅格渲染能力不可用；未创建悬浮替代图层。"
+            : rendererMessage;
+        return view;
+    }
+    if (publisherHasArtifact)
+    {
+        view.kind = SciencePanelDisplayKind::LoadedVisible;
+        view.severity = SciencePanelSeverity::Success;
+        view.title = u8"数据已载入并显示 / Loaded and visible";
+        view.detail = std::string(u8"显示结果 / Artifact: ") +
+            artifact->artifactId;
+        return view;
+    }
+    view.kind = SciencePanelDisplayKind::Publishing;
+    view.severity = SciencePanelSeverity::Info;
+    view.title = u8"数据已载入，正在交给地形渲染器 / Publishing to renderer";
+    view.detail = std::string(u8"结果 / Artifact: ") + artifact->artifactId;
     return view;
 }
 
@@ -1529,12 +1701,28 @@ void ScienceEarthPanel::drawOperations(
                                u8"没有注册科学数据源 / No science source");
         return;
     }
+    earthscience::ScienceJobSnapshot snapshot = service->snapshot();
+    const bool configurationLocked = _hasPendingAnalysis ||
+        snapshot.state == earthscience::ScienceJobState::Queued ||
+        snapshot.state == earthscience::ScienceJobState::Fetching;
+    const osg::Vec3d target = manipulator->computeViewPointLatLonHeight();
+    const osg::Vec3d eye = manipulator->computeEyeLatLonHeight();
+    const double latitude = osg::RadiansToDegrees(target[0]);
+    const double longitude = osg::RadiansToDegrees(target[1]);
+    const double requestedSpanMeters = std::clamp(
+        eye[2] * 0.85, 2560.0, 81920.0);
     const earthscience::ScienceSourceDescriptor* selectedSource =
         resolveSciencePanelSource(sources, _state.sourceId);
     if (!selectedSource) return;
     if (operationsExpanded)
     {
-        ImGui::SeparatorText(u8"1  选择数据 / Choose data");
+        ImGui::SeparatorText(u8"1  定位区域 / Locate area");
+        ImGui::TextWrapped(
+            u8"屏幕中心 / Center: %.4f, %.4f · 当前视野约 %.1f km",
+            latitude, longitude, requestedSpanMeters / 1000.0);
+        ImGui::SeparatorText(u8"2  选择数据源与时间 / Source and time");
+        ImGui::TextWrapped(u8"数据源 / Source");
+        if (configurationLocked) ImGui::BeginDisabled();
         ImGui::SetNextItemWidth(-1.0f);
         if (ImGui::BeginCombo(
                 "##science_source", selectedSource->name.c_str()))
@@ -1567,6 +1755,7 @@ void ScienceEarthPanel::drawOperations(
             }
             ImGui::EndCombo();
         }
+        if (configurationLocked) ImGui::EndDisabled();
     }
     const earthscience::ScienceSourceDescriptor& source = *selectedSource;
     _state.sourceId = source.id;
@@ -1580,13 +1769,6 @@ void ScienceEarthPanel::drawOperations(
         findScienceVisualization(source, expectedVisualizationId);
     if (visualization && visualization->id != expectedVisualizationId)
         visualization = nullptr;
-    const osg::Vec3d target = manipulator->computeViewPointLatLonHeight();
-    const osg::Vec3d eye = manipulator->computeEyeLatLonHeight();
-    const double latitude = osg::RadiansToDegrees(target[0]);
-    const double longitude = osg::RadiansToDegrees(target[1]);
-    const double requestedSpanMeters = std::clamp(
-        eye[2] * 0.85, 2560.0, 81920.0);
-
     if (source.capabilities.explicitYears)
     {
         _state.firstYear = std::clamp(
@@ -1609,7 +1791,6 @@ void ScienceEarthPanel::drawOperations(
         source, visualization, draftState, latitude, longitude,
         requestedSpanMeters, sentinelIntervalEndUtc);
     _hasCurrentDraft = !_currentDraft.sourceId.empty();
-    earthscience::ScienceJobSnapshot snapshot = service->snapshot();
     if (_hasPendingAnalysis)
     {
         const SciencePanelWorkflowDecision decision =
@@ -1664,6 +1845,27 @@ void ScienceEarthPanel::drawOperations(
     }
     if (!operationsExpanded) return;
 
+    const SciencePreviewPublishStatus publishStatus =
+        previewLayer->displayStatus();
+    std::string visibleArtifactId;
+    if (previewLayer->isVisible() &&
+        publishStatus.state == SciencePreviewPublishState::Published &&
+        snapshot.displayArtifact)
+        visibleArtifactId = snapshot.displayArtifact->artifactId;
+    const SciencePanelWorkflowStrip workflowStrip =
+        describeScienceWorkflowStrip(
+            source, activeMode, _state, _currentDraft, snapshot,
+            visibleArtifactId);
+    ImGui::SeparatorText(u8"当前状态 / Current state");
+    ImGui::TextWrapped(u8"数据：%s · 时间：%s",
+                       workflowStrip.source.c_str(),
+                       workflowStrip.time.c_str());
+    ImGui::TextWrapped(u8"范围：%s", workflowStrip.area.c_str());
+    ImGui::TextWrapped(u8"方法：%s", workflowStrip.method.c_str());
+    ImGui::TextWrapped(u8"阶段：%s · 可见结果：%s",
+                       workflowStrip.stage.c_str(),
+                       workflowStrip.visibleArtifactId.c_str());
+
     drawLabeledHelpButton("data_meaning", u8"? 这是什么数据 / About this data",
         source.id == "sentinel-2-l2a"
             ? ScienceHelpTopic::Sentinel2Meaning
@@ -1687,7 +1889,8 @@ void ScienceEarthPanel::drawOperations(
         source.health == earthscience::ScienceSourceHealth::Unavailable;
     if (source.health != earthscience::ScienceSourceHealth::Ready)
     {
-        const std::string health = std::string(u8"数据源状态 / Source: ") +
+        const std::string health = std::string(u8"数据源 / Source: ") +
+            source.id + " · " +
             earthscience::scienceSourceHealthName(source.health);
         drawColoredWrapped(
             sourceUnavailable
@@ -1696,22 +1899,18 @@ void ScienceEarthPanel::drawOperations(
             health.c_str());
         if (!source.healthMessage.empty())
             ImGui::TextWrapped("%s", source.healthMessage.c_str());
+        ImGui::TextWrapped("%s", sourceUnavailable
+            ? u8"可重试：数据源恢复后重新运行；旧结果保持不变。"
+            : u8"可重试：当前源可用但性能下降；可稍后重试，旧结果保持不变。");
     }
-    if (_state.locationMode == SciencePanelLocationMode::CurrentLocation)
-        ImGui::TextWrapped(u8"分析位置：屏幕中心 %.4f, %.4f",
-                           latitude, longitude);
-    else
-        ImGui::TextWrapped(
-            u8"分析范围：当前视野 · 中心 %.4f, %.4f · 约 %.1f km",
-            latitude, longitude, requestedSpanMeters / 1000.0);
-
-    ImGui::SeparatorText(u8"2  选择任务 / Choose task");
+    ImGui::TextWrapped(u8"分析范围 / Analysis scope");
     const std::vector<SciencePanelMode> modes =
         sciencePanelModesForSource(source);
     if (modes.size() == 1)
         ImGui::TextWrapped("%s", sciencePanelModeLabel(modes.front(), source.id));
     else
     {
+        if (configurationLocked) ImGui::BeginDisabled();
         ImGui::SetNextItemWidth(-1.0f);
         if (ImGui::BeginCombo(
                 "##science_mode", sciencePanelModeLabel(activeMode, source.id)))
@@ -1746,11 +1945,13 @@ void ScienceEarthPanel::drawOperations(
             }
             ImGui::EndCombo();
         }
+        if (configurationLocked) ImGui::EndDisabled();
     }
     const SciencePanelModeCapabilities capabilities =
         sciencePanelModeCapabilities(source, activeMode);
 
-    ImGui::SeparatorText(u8"3  选择时间 / Choose time");
+    ImGui::TextWrapped(u8"时间 / Time");
+    if (configurationLocked) ImGui::BeginDisabled();
     if (source.id == "sentinel-2-l2a")
     {
         static const int WINDOWS[] = {7, 30, 90};
@@ -1818,13 +2019,15 @@ void ScienceEarthPanel::drawOperations(
         drawDiscreteYear("comparison", u8"之后 / After",
                          &_state.comparisonYear, source.firstYear, source.lastYear);
     }
+    if (configurationLocked) ImGui::EndDisabled();
 
     const bool embeddingAnalysis = source.id == "alphaearth-foundations" &&
         activeMode != SciencePanelMode::Preview;
     if (embeddingAnalysis)
     {
-        ImGui::SeparatorText(u8"4  选择分析方法 / Choose method");
+        ImGui::SeparatorText(u8"3  选择分析方法 / Choose method");
         drawHelpButton("embedding_metrics", ScienceHelpTopic::EmbeddingMetrics);
+        if (configurationLocked) ImGui::BeginDisabled();
         if (activeMode == SciencePanelMode::PointSeries)
         {
             const auto choiceLabel = [](SciencePanelMetricChoice choice)
@@ -1899,6 +2102,7 @@ void ScienceEarthPanel::drawOperations(
                     _state.hotspotQuantile = quantiles[index];
             }
         }
+        if (configurationLocked) ImGui::EndDisabled();
     }
 
     if (capabilities.supportsGrid || capabilities.supportsPca ||
@@ -1912,6 +2116,7 @@ void ScienceEarthPanel::drawOperations(
             if (capabilities.supportsGrid)
             {
                 ImGui::TextWrapped(u8"分析网格");
+                if (configurationLocked) ImGui::BeginDisabled();
                 if (ImGui::RadioButton(
                         "128 × 128##grid", _state.gridSize == 128))
                     _state.gridSize = 128;
@@ -1919,17 +2124,22 @@ void ScienceEarthPanel::drawOperations(
                 if (ImGui::RadioButton(
                         "256 × 256##grid", _state.gridSize == 256))
                     _state.gridSize = 256;
+                if (configurationLocked) ImGui::EndDisabled();
             }
             if (capabilities.supportsPca)
             {
+                if (configurationLocked) ImGui::BeginDisabled();
                 drawWrappedCheckbox("##science_pca",
                     u8"附加 PCA 结构摘要", &_state.enablePca);
+                if (configurationLocked) ImGui::EndDisabled();
                 drawHelpButton("pca_setting", ScienceHelpTopic::Pca);
             }
             if (capabilities.supportsClustering)
             {
+                if (configurationLocked) ImGui::BeginDisabled();
                 drawWrappedCheckbox("##science_clusters",
                     u8"附加无标签聚类", &_state.enableClustering);
+                if (configurationLocked) ImGui::EndDisabled();
                 drawHelpButton(
                     "cluster_setting", ScienceHelpTopic::Clusters);
             }
@@ -1937,6 +2147,7 @@ void ScienceEarthPanel::drawOperations(
             {
                 ImGui::TextWrapped(u8"聚类数量：%d（2–8）",
                                    _state.clusterCount);
+                if (configurationLocked) ImGui::BeginDisabled();
                 if (_state.clusterCount <= 2) ImGui::BeginDisabled();
                 if (ImGui::SmallButton("-##clusters")) --_state.clusterCount;
                 if (_state.clusterCount <= 2) ImGui::EndDisabled();
@@ -1945,6 +2156,7 @@ void ScienceEarthPanel::drawOperations(
                 if (ImGui::SmallButton("+##clusters")) ++_state.clusterCount;
                 if (_state.clusterCount >= 8) ImGui::EndDisabled();
                 _state.clusterCount = std::clamp(_state.clusterCount, 2, 8);
+                if (configurationLocked) ImGui::EndDisabled();
             }
         }
     }
@@ -1985,28 +2197,26 @@ void ScienceEarthPanel::drawOperations(
     bool estimateConfirmed = !estimateFailed &&
         sciencePanelEstimateConfirmationMatches(
             query, cost, _confirmedEstimateKey);
-    if (_estimateVisible)
+    ImGui::SeparatorText(u8"4  复核资源 / Review exact cost");
+    if (!estimateFailed)
     {
         const ScienceCostPresentation estimate = describeScienceCost(cost);
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f),
-                           u8"此任务超过数据源的普通资源上限");
-        if (ImGui::CollapsingHeader(u8"查看资源估算 / Resource estimate"))
+        ImGui::TextWrapped(u8"源数据 ≤ %s · 驻留内存 ≤ %s",
+                           estimate.sourceBytes.c_str(),
+                           estimate.residentMemory.c_str());
+        ImGui::TextWrapped(u8"结果单元：%s · 时长：%s",
+                           estimate.resultCells.c_str(),
+                           estimate.duration.c_str());
+        if (_estimateVisible)
         {
-            ImGui::TextWrapped(u8"源数据上限 / Source bytes: %s",
-                               estimate.sourceBytes.c_str());
-            ImGui::TextWrapped(u8"驻留内存上限 / Resident memory: %s",
-                               estimate.residentMemory.c_str());
-            ImGui::TextWrapped(u8"结果单元 / Result cells: %s",
-                               estimate.resultCells.c_str());
-            ImGui::TextWrapped(u8"时长 / Duration: %s",
-                               estimate.duration.c_str());
+            ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f),
+                               u8"此任务超过数据源的普通资源上限");
+            if (drawWrappedCheckbox("##confirm_science_cost",
+                u8"我确认运行这项较大任务 / Confirm large request",
+                &estimateConfirmed))
+                _confirmedEstimateKey = estimateConfirmed
+                    ? _displayedEstimateKey : std::string();
         }
-        if (drawWrappedCheckbox("##confirm_science_cost",
-            u8"我确认运行这项较大任务 / Confirm large request",
-            &estimateConfirmed))
-            _confirmedEstimateKey = estimateConfirmed
-                ? _displayedEstimateKey : std::string();
     }
     if (estimateFailed)
     {
@@ -2036,9 +2246,7 @@ void ScienceEarthPanel::drawOperations(
         selectSciencePanelArtifact(snapshot, activeMode);
     const bool currentDraftAlreadyLoaded = currentArtifact &&
         describeScienceArtifactUi(*currentArtifact, query).matchesDraft;
-    ImGui::SeparatorText(embeddingAnalysis
-        ? u8"5  定位并分析 / Locate and run"
-        : u8"4  开始 / Run");
+    ImGui::SeparatorText(u8"5  开始或取消 / Start or cancel");
     if (_hasPendingAnalysis)
         drawColoredWrapped(ImVec4(0.35f, 0.78f, 1.0f, 1.0f),
             u8"第 1/2 步：正在加载对比年份的伪彩图；完成后会自动开始分析。"
@@ -2058,6 +2266,10 @@ void ScienceEarthPanel::drawOperations(
     {
         drawColoredWrapped(severityColor(presentation.severity),
                            presentation.title.c_str());
+        if (!presentation.sourceText.empty())
+            ImGui::TextWrapped("%s", presentation.sourceText.c_str());
+        if (!presentation.retryText.empty())
+            ImGui::TextWrapped("%s", presentation.retryText.c_str());
         if (!presentation.detail.empty())
             ImGui::TextWrapped("%s", presentation.detail.c_str());
     }
@@ -2139,17 +2351,42 @@ void ScienceEarthPanel::drawOperations(
     ImGui::PopStyleColor(3);
     if (blocked) ImGui::EndDisabled();
 
-    if (presentation.busy)
+    const earthscience::ScienceJobSnapshot snapshotAfterAction =
+        service->snapshot();
+    const SciencePanelPresentation presentationAfterAction =
+        describeScienceSnapshot(snapshotAfterAction, activeMode);
+    if (presentationAfterAction.busy || _hasPendingAnalysis)
     {
-        drawColoredWrapped(severityColor(presentation.severity),
-                           presentation.stageText.c_str());
-        ImGui::TextWrapped("%s", presentation.progressText.c_str());
-        if (!presentation.detail.empty())
-            ImGui::TextWrapped("%s", presentation.detail.c_str());
+        drawColoredWrapped(severityColor(presentationAfterAction.severity),
+                           presentationAfterAction.stageText.c_str());
+        ImGui::TextWrapped("%s",
+                           presentationAfterAction.progressText.c_str());
+        if (!presentationAfterAction.detail.empty())
+            ImGui::TextWrapped("%s",
+                               presentationAfterAction.detail.c_str());
         if (ImGui::Button(u8"取消当前请求 / Cancel request",
                           ImVec2(-1.0f, 0.0f)))
-            service->cancel(snapshot.jobId);
+            service->cancel(snapshotAfterAction.jobId);
     }
+
+    ImGui::SeparatorText(u8"6  查看地图、结果与证据 / View results");
+    const SciencePreviewPublishStatus statusAfterAction =
+        previewLayer->displayStatus();
+    const bool rendererUnavailable =
+        statusAfterAction.state ==
+            SciencePreviewPublishState::RendererUnavailable;
+    const SciencePanelDisplayPresentation display =
+        describeScienceDisplayState(
+            snapshotAfterAction, activeMode, previewLayer->isVisible(),
+            previewLayer->hasArtifact(), rendererUnavailable,
+            statusAfterAction.message);
+    drawColoredWrapped(severityColor(display.severity),
+                       display.title.c_str());
+    if (!display.detail.empty())
+        ImGui::TextWrapped("%s", display.detail.c_str());
+    if (ImGui::Button(u8"查看结果与证据 / View result and evidence",
+                      ImVec2(-1.0f, 0.0f)))
+        _state.resultExpanded = true;
 }
 
 void ScienceEarthPanel::drawResults(
@@ -2207,6 +2444,15 @@ void ScienceEarthPanel::drawResults(
         describeScienceSnapshot(snapshot, activeMode);
     const std::shared_ptr<const earthscience::ScienceArtifact> artifact =
         selectSciencePanelArtifact(snapshot, activeMode);
+    const SciencePreviewPublishStatus publishStatus =
+        previewLayer->displayStatus();
+    const SciencePanelDisplayPresentation display =
+        describeScienceDisplayState(
+            snapshot, activeMode, previewLayer->isVisible(),
+            previewLayer->hasArtifact(),
+            publishStatus.state ==
+                SciencePreviewPublishState::RendererUnavailable,
+            publishStatus.message);
     const bool activeOrProblem = presentation.busy ||
         presentation.kind == SciencePanelResultKind::NoCoverage ||
         presentation.kind == SciencePanelResultKind::Failed ||
@@ -2219,6 +2465,10 @@ void ScienceEarthPanel::drawResults(
         if (!presentation.stageText.empty() &&
             presentation.kind != SciencePanelResultKind::Idle)
             ImGui::TextWrapped("%s", presentation.stageText.c_str());
+        if (!presentation.sourceText.empty())
+            ImGui::TextWrapped("%s", presentation.sourceText.c_str());
+        if (!presentation.retryText.empty())
+            ImGui::TextWrapped("%s", presentation.retryText.c_str());
         if (!presentation.detail.empty())
             ImGui::TextWrapped("%s", presentation.detail.c_str());
         if (!presentation.progressText.empty())
@@ -2240,6 +2490,10 @@ void ScienceEarthPanel::drawResults(
             describeScienceArtifactUi(*artifact, draft);
         drawColoredWrapped(ImVec4(0.35f, 0.85f, 1.0f, 1.0f),
                            artifactUi.scopeLabel.c_str());
+        drawColoredWrapped(severityColor(display.severity),
+                           display.title.c_str());
+        if (!display.detail.empty())
+            ImGui::TextWrapped("%s", display.detail.c_str());
         if (!artifactUi.pendingSettingsLabel.empty())
             drawColoredWrapped(ImVec4(1.0f, 0.78f, 0.25f, 1.0f),
                                artifactUi.pendingSettingsLabel.c_str());

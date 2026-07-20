@@ -33,6 +33,7 @@ public:
 private:
     char _inputBuf[1024];      // InputText 缓冲区，提交时转 std::string 再清空
     bool _historyCollapsed;    // 历史面板折叠状态（默认展开）
+    bool _scienceExamplesOpen; // ScienceEarth 示例仅填入输入框，不自动提交
     size_t _lastEntryCount;    // 上次绘制时的历史条数，用于检测新增条目并自动滚动到底部
     AICardPanel _cards;
 };

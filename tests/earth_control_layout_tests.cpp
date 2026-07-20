@@ -144,8 +144,6 @@ int main()
     CHECK(panel.find(u8"尚无可测时长") != std::string::npos);
     CHECK(panel.find("sciencePanelModeCapabilities(source, activeMode)") !=
           std::string::npos);
-    CHECK(panel.find(u8"静态 2021 公共发布 · 无年份控件") !=
-          std::string::npos);
     CHECK(panel.find("sciencePanelPrimaryActionLabel(activeMode, source.id)") !=
           std::string::npos);
     CHECK(panel.find("resolveSciencePanelSource(sources, _state.sourceId)") !=
@@ -174,6 +172,58 @@ int main()
     CHECK(draftRefresh != std::string::npos);
     CHECK(collapsedOperationsReturn != std::string::npos);
     CHECK(draftRefresh < collapsedOperationsReturn);
+
+    const size_t step1 = panel.find(u8"1  定位区域 / Locate area");
+    const size_t step2 = panel.find(
+        u8"2  选择数据源与时间 / Source and time");
+    const size_t step3 = panel.find(
+        u8"3  选择分析方法 / Choose method");
+    const size_t step4 = panel.find(
+        u8"4  复核资源 / Review exact cost");
+    const size_t step5 = panel.find(
+        u8"5  开始或取消 / Start or cancel");
+    const size_t step6 = panel.find(
+        u8"6  查看地图、结果与证据 / View results");
+    CHECK(step1 != std::string::npos && step2 != std::string::npos &&
+          step3 != std::string::npos && step4 != std::string::npos &&
+          step5 != std::string::npos && step6 != std::string::npos);
+    CHECK(step1 < step2 && step2 < step3 && step3 < step4 &&
+          step4 < step5 && step5 < step6);
+    CHECK(panel.find(u8"当前状态 / Current state") != std::string::npos);
+    CHECK(panel.find(u8"取消当前请求 / Cancel request") !=
+          std::string::npos);
+    CHECK(panel.find(u8"查看结果与证据 / View result and evidence") !=
+          std::string::npos);
+    CHECK(panel.find("configurationLocked") != std::string::npos);
+    CHECK(panel.find("presentation.sourceText") != std::string::npos);
+    CHECK(panel.find("presentation.retryText") != std::string::npos);
+    CHECK(panel.find(u8"数据已载入并显示") != std::string::npos);
+    CHECK(panel.find(u8"数据已载入，图层已隐藏") != std::string::npos);
+    CHECK(panel.find(u8"分析结果已就绪；没有地图栅格") !=
+          std::string::npos);
+    CHECK(panel.find(u8"本次失败，保留上一次显示") !=
+          std::string::npos);
+    CHECK(panel.find(u8"渲染器无法显示") != std::string::npos);
+
+    std::ifstream aiInput(std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/ai_ui.cpp");
+    std::ostringstream aiBuffer;
+    aiBuffer << aiInput.rdbuf();
+    const std::string aiUi = aiBuffer.str();
+    CHECK(aiInput.good() || aiInput.eof());
+    const size_t galleryBegin = aiUi.find(
+        "// ---- ScienceEarth 提示词示例：只填入，不提交 ----");
+    const size_t galleryEnd = aiUi.find("// ---- 输入行 ----", galleryBegin);
+    CHECK(galleryBegin != std::string::npos &&
+          galleryEnd != std::string::npos && galleryBegin < galleryEnd);
+    const std::string gallery = aiUi.substr(
+        galleryBegin, galleryEnd - galleryBegin);
+    CHECK(gallery.find("scienceEarthPromptExamples") != std::string::npos);
+    CHECK(gallery.find("insertPromptSuggestion") != std::string::npos);
+    CHECK(gallery.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") !=
+          std::string::npos);
+    CHECK(gallery.find(u8"不会自动运行") != std::string::npos);
+    CHECK(gallery.find("submit(") == std::string::npos);
 
 
     std::cout << "[OK] Earth control panel responsive layout\n";

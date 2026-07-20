@@ -594,6 +594,16 @@ namespace
         earthscience::ScienceQueryService service(std::move(registry));
         osg::ref_ptr<SciencePreviewLayer> layer =
             new SciencePreviewLayer(&service);
+        require(layer->displayStatus().state ==
+                    SciencePreviewPublishState::Idle,
+                "science preview publisher did not start idle");
+        layer->setVisible(true);
+        require(layer->displayStatus().state ==
+                    SciencePreviewPublishState::RendererUnavailable &&
+                    layer->displayStatus().message.find("bridge") !=
+                        std::string::npos,
+                "missing terrain renderer bridge was not user-visible");
+        layer->setVisible(false);
         LayerManager layers;
         OverlayLayer catalogLayer;
         catalogLayer.id = "alphaearth";

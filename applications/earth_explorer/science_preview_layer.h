@@ -7,9 +7,25 @@
 #include <cstdint>
 #include <mutex>
 #include <osg/Group>
+#include <string>
 
 namespace earthscience { class ScienceQueryService; }
 namespace earthscience { struct ScienceArtifact; }
+
+enum class SciencePreviewPublishState
+{
+    Idle,
+    Waiting,
+    Published,
+    RendererUnavailable,
+};
+
+struct SciencePreviewPublishStatus
+{
+    SciencePreviewPublishState state = SciencePreviewPublishState::Idle;
+    std::uint64_t artifactGeneration = 0;
+    std::string message;
+};
 
 // Plugin-side display publisher. This node exists only to receive update
 // traversal; it owns no drawable, texture, depth state, or render bin.
@@ -23,6 +39,7 @@ public:
     bool isVisible() const;
     bool hasArtifact() const;
     std::uint64_t artifactGeneration() const;
+    SciencePreviewPublishStatus displayStatus() const;
     void removeArtifact();
 
 protected:
@@ -34,6 +51,9 @@ private:
     void syncFromService();
     bool publishArtifact(const earthscience::ScienceArtifact& artifact);
     void clearHostOverlay();
+    void setDisplayStatus(SciencePreviewPublishState state,
+                          std::uint64_t generation,
+                          const std::string& message);
 
     earthscience::ScienceQueryService* _service;
     mutable std::mutex _bridgeMutex;
@@ -45,6 +65,9 @@ private:
     std::atomic<bool> _republishRequested;
     std::atomic<std::uint64_t> _artifactGeneration;
     std::atomic<std::uint64_t> _suppressedGeneration;
+    std::atomic<SciencePreviewPublishState> _publishState;
+    std::uint64_t _statusGeneration;
+    std::string _statusMessage;
     std::uint64_t _publishedArtifactGeneration;
     std::uint64_t _transportGeneration;
 };

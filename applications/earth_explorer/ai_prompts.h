@@ -1,7 +1,7 @@
 #ifndef EARTH_AI_PROMPTS_H
 #define EARTH_AI_PROMPTS_H
 // 生成式媒体的提示词工程(实景照片 + 巡航视频):header-only 纯函数,只依赖
-// <osg/Vec3d>/<string>/<cmath>/<cstdio>,风格与 ai_motion.h 一致——方便
+// <osg/Vec3d>/<string>/<array>/<cstring>/<cmath>/<cstdio>,风格与 ai_motion.h 一致——方便
 // tests/ai_chat_tests.cpp 直接 include 单测,不必拖 ai_media.cpp 的 osgViewer/libhv 重依赖。
 //
 // 背景(用户反馈 2):nano-banana-pro-preview 是带推理能力的图像模型,不是简单的
@@ -10,6 +10,9 @@
 // 才能生成真正贴近现实的照片,而不是把三维引擎的合成质感原样描一遍。
 // 英文提示词:Gemini 系列模型对英文指令的理解与遵循力最佳(与 ai_motion.h 的选择一致)。
 #include <osg/Vec3d>
+#include <array>
+#include <cstddef>
+#include <cstring>
 #include <string>
 #include <cmath>
 #include <cstdio>
@@ -21,6 +24,81 @@
 
 namespace earthai
 {
+    struct ScienceEarthPromptExample
+    {
+        const char* title;
+        const char* sources;
+        const char* prompt;
+    };
+
+    inline const std::array<ScienceEarthPromptExample, 10>&
+    scienceEarthPromptExamples()
+    {
+        static const std::array<ScienceEarthPromptExample, 10> examples = {{
+            {
+                u8"香港：三源年度变化简报",
+                u8"AlphaEarth + Sentinel-2 + Copernicus DEM",
+                u8"研究香港当前视野 2017—2025 年的地表表征变化：先显示 AlphaEarth 伪彩，再找变化热点，用 Sentinel-2 影像和 Copernicus DEM 补充背景，最后给出带来源和局限的简报。"
+            },
+            {
+                u8"深圳湾：两年潜在表征差异",
+                u8"AlphaEarth",
+                u8"比较深圳湾两侧 2018 与 2025 年的 AlphaEarth 表征差异，分别列出余弦距离、角距离和热点分位数；不要把 64 维分量解释成具体地物。"
+            },
+            {
+                u8"东京：点位年度变化曲线",
+                u8"AlphaEarth + Sentinel-2",
+                u8"分析东京当前点位 2017—2025 的年度变化曲线，并说明哪一年变化最大；再找一景可用的 Sentinel-2 影像作为观测背景。"
+            },
+            {
+                u8"富士山：变化、PCA、聚类与地形",
+                u8"AlphaEarth + Copernicus DEM",
+                u8"在富士山当前视野运行区域变化、PCA 和无监督聚类，再结合 Copernicus DEM 的高程证据讨论变化与地形的空间对应；明确这不是因果证明。"
+            },
+            {
+                u8"悉尼海岸：覆盖与 NoData 核查",
+                u8"AlphaEarth",
+                u8"检查悉尼海岸当前科学图层的真实覆盖范围、NoData、年份和分辨率，显示伪彩并解释黄色边界与颜色分别代表什么。"
+            },
+            {
+                u8"当前视野：可降级三源研究",
+                u8"AlphaEarth + Sentinel-2 + Copernicus DEM",
+                u8"为当前视野建立 AlphaEarth、Sentinel-2、Copernicus DEM 三源研究；任何一个源失败时也要生成诚实的部分结果和缺失项说明。"
+            },
+            {
+                u8"变化热点：可复核证据输出",
+                u8"AlphaEarth",
+                u8"比较当前区域两个年份的变化热点，并输出可复核的来源、处理步骤、有效像元数、NoData 数和局限，不要只给结论。"
+            },
+            {
+                u8"先盘点数据，再建议方法",
+                u8"当前注册的全部 ScienceEarth 数据源",
+                u8"先告诉我当前相机位置和可用科学数据源，再建议最适合这个区域的两种分析方法；等我选择后再提交，不要移动相机。"
+            },
+            {
+                u8"解释本次 PCA、聚类与距离",
+                u8"当前 AlphaEarth 结果",
+                u8"解释当前 AlphaEarth 结果中的 PCA、聚类和余弦距离各回答什么问题、不能回答什么问题，并用本次结果里的数值举例。"
+            },
+            {
+                u8"生成可审计研究简报",
+                u8"当前研究中的全部证据源",
+                u8"把当前研究整理成一份可审计简报：区分直接观测与跨数据源推断，逐条附证据编号、时间、覆盖范围和限制。"
+            },
+        }};
+        return examples;
+    }
+
+    inline bool insertPromptSuggestion(
+        const char* prompt, char* destination, std::size_t capacity)
+    {
+        if (!prompt || !destination || capacity == 0) return false;
+        const std::size_t length = std::strlen(prompt);
+        if (length >= capacity) return false;
+        std::memcpy(destination, prompt, length + 1);
+        return true;
+    }
+
     // 经纬度格式化:带正负号的十进制度 + N/S/E/W 半球字母,例如 "22.2980°N, 114.1720°E"。
     // lat/lon 单位为度(调用方负责把弧度转成度——与 ai_motion.h 里"内部只吃弧度"的约定
     // 相反,这里刻意先转好度再传入,因为格式化本身就是给模型/用户看的文本,弧度不直观)。

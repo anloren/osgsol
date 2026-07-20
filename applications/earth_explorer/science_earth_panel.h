@@ -107,6 +107,17 @@ enum class SciencePanelSeverity
     Error,
 };
 
+enum class SciencePanelDisplayKind
+{
+    NoArtifact,
+    Publishing,
+    LoadedVisible,
+    LoadedHidden,
+    AnalysisReadyWithoutRaster,
+    FailureRetained,
+    RendererUnavailable,
+};
+
 enum class SciencePanelWorkflowDecision
 {
     Wait,
@@ -129,11 +140,31 @@ struct SciencePanelPresentation
     SciencePanelSeverity severity = SciencePanelSeverity::Neutral;
     std::string title;
     std::string stageText;
+    std::string sourceText;
+    std::string retryText;
     std::string detail;
     std::string progressText;
     SciencePanelRetentionPresentation retention;
     bool busy = false;
     bool progressDeterminate = false;
+};
+
+struct SciencePanelWorkflowStrip
+{
+    std::string source;
+    std::string area;
+    std::string time;
+    std::string method;
+    std::string stage;
+    std::string visibleArtifactId;
+};
+
+struct SciencePanelDisplayPresentation
+{
+    SciencePanelDisplayKind kind = SciencePanelDisplayKind::NoArtifact;
+    SciencePanelSeverity severity = SciencePanelSeverity::Neutral;
+    std::string title;
+    std::string detail;
 };
 
 struct ScienceCostPresentation
@@ -159,6 +190,20 @@ SciencePanelPresentation describeScienceSnapshot(
 SciencePanelPresentation describeScienceSnapshot(
     const earthscience::ScienceJobSnapshot& snapshot,
     SciencePanelMode mode);
+SciencePanelWorkflowStrip describeScienceWorkflowStrip(
+    const earthscience::ScienceSourceDescriptor& source,
+    SciencePanelMode mode,
+    const SciencePanelState& state,
+    const earthscience::GeoTemporalQuery& draft,
+    const earthscience::ScienceJobSnapshot& snapshot,
+    const std::string& visibleArtifactId);
+SciencePanelDisplayPresentation describeScienceDisplayState(
+    const earthscience::ScienceJobSnapshot& snapshot,
+    SciencePanelMode mode,
+    bool layerVisible,
+    bool publisherHasArtifact,
+    bool rendererUnavailable,
+    const std::string& rendererMessage);
 SciencePanelModeCapabilities sciencePanelModeCapabilities(
     SciencePanelMode mode);
 SciencePanelModeCapabilities sciencePanelModeCapabilities(
