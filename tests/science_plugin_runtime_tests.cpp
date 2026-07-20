@@ -83,6 +83,9 @@ int main()
     }
     CHECK(fakeCounters() != nullptr);
     CHECK(fakeCounters()[1] == 1);
+    CHECK(fakeCounters()[9] == 2);
+    CHECK(fakeCounters()[10] == 0);
+    CHECK(fakeCounters()[11] == 0);
 
     {
         SciencePluginRuntime runtime;

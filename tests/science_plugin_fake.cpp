@@ -5,7 +5,7 @@
 
 namespace
 {
-    int counters[10] = {};
+    int counters[12] = {};
     OsgSolScienceGuiBridgeV1 lastGuiBridge = {};
 
     void* createSession(const char* indexPath, char* error, std::size_t errorSize)
@@ -20,12 +20,20 @@ namespace
         return counters;
     }
 
-    void destroySession(void*) { ++counters[1]; }
+    void destroySession(void*)
+    {
+        // Record whether the host callback bridge was still retained when the
+        // session was destroyed. A retained bridge can be called later by a
+        // scene-owned plugin node after the host object has gone away.
+        counters[11] = counters[10];
+        ++counters[1];
+    }
     osg::Node* sceneNode(void*) { ++counters[6]; return nullptr; }
     void setVisible(void*, bool) { ++counters[2]; }
-    void bindGeoRaster(void*, const OsgSolGeoRasterBridgeV1*)
+    void bindGeoRaster(void*, const OsgSolGeoRasterBridgeV1* bridge)
     {
         ++counters[9];
+        counters[10] = bridge ? 1 : 0;
     }
     void registerAiTools(void*, earthai::ToolRegistry*, LayerManager*,
                          osgVerse::EarthManipulator*) { ++counters[3]; }

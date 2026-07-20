@@ -66,8 +66,17 @@ SciencePluginRuntime::SciencePluginRuntime()
 
 SciencePluginRuntime::~SciencePluginRuntime()
 {
-    if (_session && _api && _api->destroy)
-        _api->destroy(_session);
+    if (_session && _api)
+    {
+        // The viewer scene graph can retain the plugin-created preview node
+        // beyond the session facade. Remove its raw host callback before the
+        // host TerrainScienceOverlay can be destroyed; otherwise the node's
+        // later destructor can call clear() through a dangling userData.
+        if (_api->bindGeoRaster)
+            _api->bindGeoRaster(_session, nullptr);
+        if (_api->destroy)
+            _api->destroy(_session);
+    }
 
     // OSG may retain a plugin-created node until after this facade is destroyed.
     // Keep the successfully loaded image resident until process exit so its node
