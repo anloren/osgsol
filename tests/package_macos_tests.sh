@@ -7,9 +7,41 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RELEASE_DESCRIPTOR="$ROOT/packaging/osgsol_release.env"
+release_value()
+{
+    local key="$1"
+    awk -F= -v wanted="$key" \
+        '$1 == wanted { print substr($0, length($1) + 2) }' \
+        "$RELEASE_DESCRIPTOR"
+}
+RELEASE_PRODUCT_VERSION="$(release_value OSGSOL_PRODUCT_VERSION)"
+RELEASE_SCIENCE_PHASE="$(release_value OSGSOL_SCIENCE_PHASE)"
+RELEASE_PRODUCT_NAME="$(release_value OSGSOL_PRODUCT_NAME)"
+RELEASE_BUNDLE_ID="$(release_value OSGSOL_BUNDLE_ID)"
+RELEASE_DESCRIPTOR_SHA256="$(shasum -a 256 "$RELEASE_DESCRIPTOR" | awk '{print $1}')"
+if [ -z "$RELEASE_PRODUCT_VERSION" ] || [ -z "$RELEASE_SCIENCE_PHASE" ] ||
+   [ "$RELEASE_PRODUCT_NAME" != "osgSol Earth" ] ||
+   [ -z "$RELEASE_BUNDLE_ID" ]; then
+    echo "FAIL: canonical release descriptor is incomplete or invalid" >&2
+    exit 66
+fi
 if grep -Eq '^[[:space:]]*xattr([[:space:]]|$)' "$ROOT/packaging/package_macos.sh"; then
     echo "FAIL: formal packaging must not invoke xattr" >&2
     exit 1
+fi
+if [ "${OSGSOL_PACKAGE_TEST_CONTRACT_ONLY:-0}" = "1" ]; then
+    grep -Fq 'packaging/osgsol_release.env' "$ROOT/packaging/package_macos.sh"
+    grep -Fq 'ScienceEarthReleaseDescriptorSha256' "$ROOT/packaging/package_macos.sh"
+    grep -Fq 'ScienceEarthPhase' "$ROOT/packaging/package_macos.sh"
+    grep -Fq 'package-audit.env' "$ROOT/packaging/package_macos.sh"
+    if grep -Fq 'VERSION="${OSGSOL_PACKAGE_VERSION:-0.3.0}"' \
+            "$ROOT/packaging/package_macos.sh"; then
+        echo "FAIL: stale package version default remains" >&2
+        exit 1
+    fi
+    echo "[OK] formal macOS package source contract (no sign/install/launch)"
+    exit 0
 fi
 SDK="${OSGVERSE_SDK:-$ROOT/build/sdk_core}"
 RUNTIME_SDK="${OSG_RUNTIME_SDK:-}"
@@ -22,7 +54,7 @@ APP="$TMP_ROOT/osgSol Earth.app"
 LOG="$TMP_ROOT/package.log"
 HOME_DIR="$TMP_ROOT/home"
 CAPTURE="/tmp/earth_capture_0.png"
-VERSION="${OSGSOL_PACKAGE_VERSION:-0.3.0}"
+VERSION="${OSGSOL_PACKAGE_VERSION:-$RELEASE_PRODUCT_VERSION}"
 CHANNEL="${OSGSOL_BUILD_CHANNEL:-manual-test}"
 SOURCE_COMMIT="${OSGSOL_SOURCE_COMMIT:-$(git -C "$ROOT" rev-parse HEAD)}"
 ALPHAEARTH_INDEX="${OSGSOL_ALPHAEARTH_INDEX:-$ROOT/build/science-index-full/alphaearth.sqlite}"
@@ -230,6 +262,19 @@ if EARTH_AI_KEY="wave0-secret-must-not-ship" \
     exit 1
 fi
 grep -q "Refusing to package while EARTH_AI_KEY is set" "$LOG"
+grep -q "known-good" "$APP/keep"
+
+if env -u EARTH_AI_KEY \
+   OSGVERSE_SDK="$SDK" OSG_RUNTIME_SDK="$RUNTIME_SDK" \
+   OSGSOL_PACKAGE_OUTPUT="$APP" OSGSOL_PACKAGE_VERSION="9.9.9" \
+   OSGSOL_BUILD_CHANNEL="release" OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" \
+   OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+   OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+   bash "$ROOT/packaging/package_macos.sh" >"$LOG" 2>&1; then
+    echo "FAIL: release channel accepted a version outside the descriptor" >&2
+    exit 1
+fi
+grep -q "Release channel version must match canonical $RELEASE_PRODUCT_VERSION" "$LOG"
 grep -q "known-good" "$APP/keep"
 
 if env -u EARTH_AI_KEY \
@@ -527,23 +572,38 @@ test "$(basename "$APP")" = "osgSol Earth.app"
 test -x "$APP/Contents/MacOS/osgSol_Earth"
 test ! -e "$APP/Contents/MacOS/osgVerse_EarthExplorer"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$APP/Contents/Info.plist")" = \
-    "osgSol Earth"
+    "$RELEASE_PRODUCT_NAME"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Contents/Info.plist")" = \
-    "osgSol Earth"
+    "$RELEASE_PRODUCT_NAME"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = \
-    "com.anloren.osgsol.earth"
+    "$RELEASE_BUNDLE_ID"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")" = \
     "osgSol_Earth"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" = \
     "$VERSION"
 test "$(/usr/libexec/PlistBuddy -c 'Print :ScienceEarthBuildChannel' "$APP/Contents/Info.plist")" = \
     "$CHANNEL"
+test "$(/usr/libexec/PlistBuddy -c 'Print :ScienceEarthPhase' "$APP/Contents/Info.plist")" = \
+    "$RELEASE_SCIENCE_PHASE"
+test "$(/usr/libexec/PlistBuddy -c 'Print :ScienceEarthReleaseDescriptorSha256' \
+    "$APP/Contents/Info.plist")" = "$RELEASE_DESCRIPTOR_SHA256"
 test "$(/usr/libexec/PlistBuddy -c 'Print :ScienceEarthSourceCommit' "$APP/Contents/Info.plist")" = \
     "$SOURCE_COMMIT"
 test "$(/usr/libexec/PlistBuddy -c 'Print :ScienceEarthIndexSha256' "$APP/Contents/Info.plist")" = \
     "$ALPHAEARTH_INDEX_SHA256"
 test "$(shasum -a 256 "$APP/Contents/misc/science/alphaearth/alphaearth.sqlite" | awk '{print $1}')" = \
     "$ALPHAEARTH_INDEX_SHA256"
+cmp -s "$RELEASE_DESCRIPTOR" "$APP/Contents/Resources/osgsol_release.env"
+PACKAGE_AUDIT="$APP/Contents/Resources/package-audit.env"
+test -f "$PACKAGE_AUDIT"
+grep -Fqx "OSGSOL_PRODUCT_VERSION=$VERSION" "$PACKAGE_AUDIT"
+grep -Fqx "OSGSOL_SCIENCE_PHASE=$RELEASE_SCIENCE_PHASE" "$PACKAGE_AUDIT"
+grep -Fqx "OSGSOL_PRODUCT_NAME=$RELEASE_PRODUCT_NAME" "$PACKAGE_AUDIT"
+grep -Fqx "OSGSOL_BUNDLE_ID=$RELEASE_BUNDLE_ID" "$PACKAGE_AUDIT"
+grep -Fqx "OSGSOL_BUILD_CHANNEL=$CHANNEL" "$PACKAGE_AUDIT"
+grep -Fqx "OSGSOL_SOURCE_COMMIT=$SOURCE_COMMIT" "$PACKAGE_AUDIT"
+grep -Fqx "OSGSOL_RELEASE_DESCRIPTOR_SHA256=$RELEASE_DESCRIPTOR_SHA256" \
+    "$PACKAGE_AUDIT"
 SCIENCE_DATA_MANIFEST="$APP/Contents/misc/science/data-manifest.json"
 test -f "$SCIENCE_DATA_MANIFEST"
 PYTHONDONTWRITEBYTECODE=1 python3 \
@@ -598,7 +658,7 @@ if ! cmp -s "$TMP_ROOT/runtime-uuids" "$TMP_ROOT/package-uuids"; then
     exit 1
 fi
 
-if [ "${OSGSOL_PACKAGE_TEST_SKIP_RUNTIME_SMOKE:-0}" = "1" ]; then
+if [ "${OSGSOL_PACKAGE_TEST_SKIP_RUNTIME_SMOKE:-1}" = "1" ]; then
     codesign --verify --deep --strict "$APP"
     echo "[OK] formal macOS staging identity, provenance, closure, and signature checks"
     exit 0

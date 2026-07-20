@@ -7,17 +7,6 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-SDK="${OSGVERSE_SDK:-$REPO/build/sdk_core}"
-OSG_RUNTIME_SDK="${OSG_RUNTIME_SDK:-}"
-OSG_RUNTIME_SOURCE_ROOT="${OSGSOL_OSG_RUNTIME_SOURCE_ROOT:-}"
-APP="${OSGSOL_PACKAGE_OUTPUT:-$REPO/dist/osgSol Earth.app}"
-VERSION="${OSGSOL_PACKAGE_VERSION:-0.3.0}"
-BUILD_CHANNEL="${OSGSOL_BUILD_CHANNEL:-developer}"
-SOURCE_COMMIT="${OSGSOL_SOURCE_COMMIT:-$(git -C "$REPO" rev-parse HEAD)}"
-PRODUCT_EXECUTABLE="${OSGSOL_PACKAGE_EXECUTABLE:-osgSol_Earth}"
-SOURCE_EXECUTABLE="osgVerse_EarthExplorer"
-PLUGVER="osgPlugins-3.6.5"
-ALPHAEARTH_INDEX="${OSGSOL_ALPHAEARTH_INDEX:-$SDK/misc/science/alphaearth/alphaearth.sqlite}"
 
 fail()
 {
@@ -26,6 +15,59 @@ fail()
     echo "[error] $*" >&2
     exit "$code"
 }
+
+RELEASE_DESCRIPTOR="$REPO/packaging/osgsol_release.env"
+RELEASE_PRODUCT_VERSION=""
+RELEASE_SCIENCE_PHASE=""
+RELEASE_PRODUCT_NAME=""
+RELEASE_BUNDLE_ID=""
+[ -f "$RELEASE_DESCRIPTOR" ] || fail 66 \
+    "Canonical release descriptor is missing: $RELEASE_DESCRIPTOR"
+while IFS='=' read -r key value || [ -n "$key" ]; do
+    [ -n "$key" ] && [ -n "$value" ] || \
+        fail 66 "Malformed canonical release descriptor"
+    case "$key" in
+        OSGSOL_PRODUCT_VERSION)
+            [ -z "$RELEASE_PRODUCT_VERSION" ] || fail 66 "Duplicate $key"
+            RELEASE_PRODUCT_VERSION="$value"
+            ;;
+        OSGSOL_SCIENCE_PHASE)
+            [ -z "$RELEASE_SCIENCE_PHASE" ] || fail 66 "Duplicate $key"
+            RELEASE_SCIENCE_PHASE="$value"
+            ;;
+        OSGSOL_PRODUCT_NAME)
+            [ -z "$RELEASE_PRODUCT_NAME" ] || fail 66 "Duplicate $key"
+            RELEASE_PRODUCT_NAME="$value"
+            ;;
+        OSGSOL_BUNDLE_ID)
+            [ -z "$RELEASE_BUNDLE_ID" ] || fail 66 "Duplicate $key"
+            RELEASE_BUNDLE_ID="$value"
+            ;;
+        *) fail 66 "Unknown canonical release descriptor key: $key" ;;
+    esac
+done < "$RELEASE_DESCRIPTOR"
+[ -n "$RELEASE_PRODUCT_VERSION" ] && [ -n "$RELEASE_SCIENCE_PHASE" ] && \
+[ "$RELEASE_PRODUCT_NAME" = "osgSol Earth" ] && [ -n "$RELEASE_BUNDLE_ID" ] || \
+    fail 66 "Canonical release descriptor is incomplete or invalid"
+[[ "$RELEASE_PRODUCT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+    fail 66 "Invalid canonical product version: $RELEASE_PRODUCT_VERSION"
+[[ "$RELEASE_SCIENCE_PHASE" =~ ^G[0-9]+\.[0-9]+$ ]] || \
+    fail 66 "Invalid canonical ScienceEarth phase: $RELEASE_SCIENCE_PHASE"
+[[ "$RELEASE_BUNDLE_ID" =~ ^[A-Za-z0-9.-]+$ ]] || \
+    fail 66 "Invalid canonical bundle id: $RELEASE_BUNDLE_ID"
+
+SDK="${OSGVERSE_SDK:-$REPO/build/sdk_core}"
+OSG_RUNTIME_SDK="${OSG_RUNTIME_SDK:-}"
+OSG_RUNTIME_SOURCE_ROOT="${OSGSOL_OSG_RUNTIME_SOURCE_ROOT:-}"
+APP="${OSGSOL_PACKAGE_OUTPUT:-$REPO/dist/osgSol Earth.app}"
+VERSION="${OSGSOL_PACKAGE_VERSION:-$RELEASE_PRODUCT_VERSION}"
+BUILD_CHANNEL="${OSGSOL_BUILD_CHANNEL:-developer}"
+SOURCE_COMMIT="${OSGSOL_SOURCE_COMMIT:-$(git -C "$REPO" rev-parse HEAD)}"
+PRODUCT_EXECUTABLE="${OSGSOL_PACKAGE_EXECUTABLE:-osgSol_Earth}"
+SOURCE_EXECUTABLE="osgVerse_EarthExplorer"
+PLUGVER="osgPlugins-3.6.5"
+ALPHAEARTH_INDEX="${OSGSOL_ALPHAEARTH_INDEX:-$SDK/misc/science/alphaearth/alphaearth.sqlite}"
+RELEASE_DESCRIPTOR_SHA256="$(shasum -a 256 "$RELEASE_DESCRIPTOR" | awk '{print $1}')"
 
 list_macho_dependencies()
 {
@@ -179,8 +221,8 @@ close_non_system_dependencies()
 if [ -n "${EARTH_AI_KEY:-}" ]; then
     fail 64 "Refusing to package while EARTH_AI_KEY is set; unset it and use per-user configuration."
 fi
-if [ "$(basename "$APP")" != "osgSol Earth.app" ]; then
-    fail 68 "Package output must use the fixed product name osgSol Earth.app"
+if [ "$(basename "$APP")" != "$RELEASE_PRODUCT_NAME.app" ]; then
+    fail 68 "Package output must use the fixed product name $RELEASE_PRODUCT_NAME.app"
 fi
 if [ "$APP" = "${HOME}/Desktop/osgSol Earth.app" ]; then
     fail 68 "Refusing to package directly over the fixed Desktop app; use a staging path"
@@ -190,6 +232,10 @@ if [[ ! "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]; then
 fi
 if [[ ! "$BUILD_CHANNEL" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
     fail 68 "Invalid build channel: $BUILD_CHANNEL"
+fi
+if [ "$BUILD_CHANNEL" = "release" ] &&
+   [ "$VERSION" != "$RELEASE_PRODUCT_VERSION" ]; then
+    fail 68 "Release channel version must match canonical $RELEASE_PRODUCT_VERSION"
 fi
 if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
     fail 68 "Source commit must be an exact 40-character lowercase Git object id"
@@ -273,7 +319,7 @@ OSG_RUNTIME_SOURCE_ROOT="$(cd "$OSG_RUNTIME_SOURCE_ROOT" && pwd)"
 APP_PARENT="$(dirname "$APP")"
 mkdir -p "$APP_PARENT"
 APP_PARENT="$(cd "$APP_PARENT" && pwd)"
-APP="$APP_PARENT/osgSol Earth.app"
+APP="$APP_PARENT/$RELEASE_PRODUCT_NAME.app"
 BUILD_APP="$APP_PARENT/.osgSol Earth.app.packaging.$$"
 PREVIOUS_APP="$APP_PARENT/.osgSol Earth.app.previous.$$"
 AUDIT_DIR="$APP_PARENT/.osgSol Earth.app.audit.$$"
@@ -292,7 +338,9 @@ rm -rf "$BUILD_APP" "$PREVIOUS_APP" "$AUDIT_DIR"
 mkdir -p "$BUILD_APP/Contents/MacOS"
 mkdir -p "$BUILD_APP/Contents/lib/$PLUGVER"
 mkdir -p "$BUILD_APP/Contents/bin"
+mkdir -p "$BUILD_APP/Contents/Resources"
 mkdir -p "$AUDIT_DIR"
+cp "$RELEASE_DESCRIPTOR" "$BUILD_APP/Contents/Resources/osgsol_release.env"
 
 # Executable and all runtime libraries come only from the explicit install/runtime trees.
 cp "$SDK/bin/$SOURCE_EXECUTABLE" "$BUILD_APP/Contents/MacOS/$PRODUCT_EXECUTABLE"
@@ -521,15 +569,17 @@ cat > "$BUILD_APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>osgSol Earth</string>
-  <key>CFBundleDisplayName</key><string>osgSol Earth</string>
-  <key>CFBundleIdentifier</key><string>com.anloren.osgsol.earth</string>
+  <key>CFBundleName</key><string>$RELEASE_PRODUCT_NAME</string>
+  <key>CFBundleDisplayName</key><string>$RELEASE_PRODUCT_NAME</string>
+  <key>CFBundleIdentifier</key><string>$RELEASE_BUNDLE_ID</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>$PRODUCT_EXECUTABLE</string>
   <key>ScienceEarthBuildChannel</key><string>$BUILD_CHANNEL</string>
+  <key>ScienceEarthPhase</key><string>$RELEASE_SCIENCE_PHASE</string>
   <key>ScienceEarthSourceCommit</key><string>$SOURCE_COMMIT</string>
+  <key>ScienceEarthReleaseDescriptorSha256</key><string>$RELEASE_DESCRIPTOR_SHA256</string>
   <key>ScienceEarthIndexSha256</key><string>$ALPHAEARTH_INDEX_SHA256</string>
   <key>ScienceEarthDataManifestSha256</key><string>$SCIENCE_DATA_MANIFEST_SHA256</string>
   <key>NSHighResolutionCapable</key><false/>
@@ -537,6 +587,16 @@ cat > "$BUILD_APP/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+cat > "$BUILD_APP/Contents/Resources/package-audit.env" <<AUDIT
+OSGSOL_PRODUCT_VERSION=$VERSION
+OSGSOL_SCIENCE_PHASE=$RELEASE_SCIENCE_PHASE
+OSGSOL_PRODUCT_NAME=$RELEASE_PRODUCT_NAME
+OSGSOL_BUNDLE_ID=$RELEASE_BUNDLE_ID
+OSGSOL_BUILD_CHANNEL=$BUILD_CHANNEL
+OSGSOL_SOURCE_COMMIT=$SOURCE_COMMIT
+OSGSOL_RELEASE_DESCRIPTOR_SHA256=$RELEASE_DESCRIPTOR_SHA256
+AUDIT
 
 if find "$BUILD_APP" -name imgui.ini -print -quit | grep -q .; then
     fail 65 "Refusing to sign a bundle containing imgui.ini"

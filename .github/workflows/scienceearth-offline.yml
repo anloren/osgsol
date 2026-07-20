@@ -1,0 +1,76 @@
+name: ScienceEarth offline preservation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-preservation:
+    # This runner image is provisioned with the pinned OSG and GDAL science SDKs. The job itself
+    # performs no dependency downloads, opens no listeners and never launches the application.
+    runs-on: [self-hosted, macOS, ARM64, osgsol-science]
+    timeout-minutes: 60
+    env:
+      OSG_ROOT: /opt/osgsol/sdk_core
+      OSGSOL_SCIENCE_DEPS_ROOT: /opt/osgsol/science-deps
+      CTEST_OUTPUT_ON_FAILURE: "1"
+      OSGSOL_PACKAGE_TEST_CONTRACT_ONLY: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Release and package source contracts
+        run: |
+          bash tests/scienceearth_release_tests.sh
+          bash tests/package_macos_tests.sh
+
+      - name: Changed-file dependency boundary scan
+        run: |
+          python3 tests/terrain_science_overlay_contract_tests.py
+          ! rg -n 'GDAL|ScienceQueryService|AlphaEarthProvider|Sentinel2Provider|CopernicusDemProvider' \
+            applications/earth_explorer/terrain_science_overlay.h \
+            applications/earth_explorer/terrain_science_overlay.cpp \
+            applications/earth_explorer/earth_main.cpp
+
+      - name: Configure and build science-on contracts
+        run: |
+          cmake -S . -B build/ci-science-on \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DVERSE_BUILD_EXAMPLES=ON \
+            -DOSGSOL_BUILD_SCIENCE=ON \
+            -DOSG_ROOT="$OSG_ROOT" \
+            -DOSGSOL_SCIENCE_DEPS_ROOT="$OSGSOL_SCIENCE_DEPS_ROOT"
+          cmake --build build/ci-science-on --target \
+            osgVerse_Test_ScienceBuildContract \
+            osgSol_Test_TerrainScienceOverlay \
+            osgSol_Test_TerrainScienceOverlayMath -j8
+          ctest --test-dir build/ci-science-on \
+            -R 'ScienceBuildContract|SciencePluginContract|TerrainScienceOverlay' \
+            --output-on-failure
+
+      - name: Shader and plugin ABI source contracts
+        run: |
+          python3 -m unittest \
+            tests.terrain_science_overlay_contract_tests \
+            tests.terrain_science_shader_tests \
+            tests.science_plugin_contract_tests \
+            tests.science_query_consumer_contract_tests -v
+
+      - name: Configure and build science-off contracts
+        run: |
+          cmake -S . -B build/ci-science-off \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DVERSE_BUILD_EXAMPLES=ON \
+            -DOSGSOL_BUILD_SCIENCE=OFF \
+            -DOSG_ROOT="$OSG_ROOT"
+          cmake --build build/ci-science-off --target \
+            osgVerse_Test_ScienceBuildContract \
+            osgSol_Test_TerrainScienceOverlay \
+            osgSol_Test_TerrainScienceOverlayMath -j8
+          ctest --test-dir build/ci-science-off \
+            -R 'ScienceBuildContract|TerrainScienceOverlay' --output-on-failure

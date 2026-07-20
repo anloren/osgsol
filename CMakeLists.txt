@@ -1,5 +1,6 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.10)
 PROJECT(osgVerse)
+INCLUDE("${CMAKE_SOURCE_DIR}/cmake/OsgSolRelease.cmake")
 INCLUDE(CTest)
 
 IF(BUILD_TESTING)
@@ -821,7 +822,10 @@ IF(OSG_INCLUDE_DIR AND OSG_LIB_DIR)
         FILE(WRITE "${CMAKE_BINARY_DIR}/generated/ScienceEarthBuildContract.h"
             "#pragma once\n"
             "#define OSGSOL_BUILD_SCIENCE_VALUE ${_OSGSOL_BUILD_SCIENCE_VALUE}\n"
-            "#define OSGSOL_SCIENCE_PHASE_VALUE \"G2-1\"\n"
+            "#define OSGSOL_PRODUCT_VERSION_VALUE \"${OSGSOL_PRODUCT_VERSION}\"\n"
+            "#define OSGSOL_SCIENCE_PHASE_VALUE \"${OSGSOL_SCIENCE_PHASE}\"\n"
+            "#define OSGSOL_PRODUCT_NAME_VALUE \"${OSGSOL_PRODUCT_NAME}\"\n"
+            "#define OSGSOL_BUNDLE_ID_VALUE \"${OSGSOL_BUNDLE_ID}\"\n"
             "#define OSGSOL_BUILD_TARGETS_VALUE \"${_OSGSOL_BUILD_TARGETS_VALUE}\"\n")
 
         UNSET(_OSGSOL_BUILD_SCIENCE_VALUE)

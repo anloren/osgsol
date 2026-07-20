@@ -11,7 +11,11 @@
 
 int main()
 {
-    CHECK(std::string(OSGSOL_SCIENCE_PHASE_VALUE) == "G2-1");
+    CHECK(std::string(OSGSOL_PRODUCT_VERSION_VALUE) == "0.6.1");
+    CHECK(std::string(OSGSOL_SCIENCE_PHASE_VALUE) == "G3.1");
+    CHECK(std::string(OSGSOL_PRODUCT_NAME_VALUE) == "osgSol Earth");
+    CHECK(std::string(OSGSOL_BUNDLE_ID_VALUE) ==
+          "com.anloren.osgsol.earth");
 
     const std::string targets = OSGSOL_BUILD_TARGETS_VALUE;
     if (OSGSOL_BUILD_SCIENCE_VALUE == 1)
@@ -32,6 +36,6 @@ int main()
     rootCMakeBuffer << rootCMakeFile.rdbuf();
     CHECK(rootCMakeBuffer.str().find("$<TARGET_EXISTS:") == std::string::npos);
 
-    std::cout << "[OK] ScienceEarth G2-1 build contract\n";
+    std::cout << "[OK] ScienceEarth G3.1 / v0.6.1 build contract\n";
     return 0;
 }

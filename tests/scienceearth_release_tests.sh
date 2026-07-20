@@ -9,6 +9,8 @@ baseline_document="${repo_root}/docs/scienceearth/g0-g1-baseline.md"
 reference_manifest="${repo_root}/packaging/scienceearth/baselines/v0.2.0-macos-arm64-reference.json"
 ratchet_manifest="${repo_root}/packaging/scienceearth/baselines/current-macos-arm64-ratchet.json"
 manifest_module="${repo_root}/packaging/scienceearth/g0_manifest.py"
+release_descriptor="${repo_root}/packaging/osgsol_release.env"
+verification_document="${repo_root}/docs/scienceearth/v0.6.1-verification.md"
 failures=0
 
 fail()
@@ -42,6 +44,23 @@ validate_release_pair()
     fi
 
     printf '[OK] release refs share commit %s\n' "${normal_commit}"
+}
+
+descriptor_value()
+{
+    local key="$1"
+    awk -F= -v wanted="${key}" '$1 == wanted { print substr($0, length($1) + 2) }' \
+        "${release_descriptor}"
+}
+
+validate_release_names()
+{
+    local normal_ref="$1"
+    local scienceearth_ref="$2"
+    local version
+    version="$(descriptor_value OSGSOL_PRODUCT_VERSION)"
+    [[ "${normal_ref}" == "v${version}" &&
+       "${scienceearth_ref}" == "ScienceEarth-v${version}" ]]
 }
 
 validate_manifests()
@@ -86,15 +105,60 @@ if [[ $# -gt 0 ]]; then
             validate_manifests "$2" "$3"
             exit $?
             ;;
+        --validate-release-names)
+            [[ $# -eq 3 ]] || exit 64
+            validate_release_names "$2" "$3"
+            exit $?
+            ;;
         *)
             printf 'usage: %s --validate-release-pair REF REF | \
---validate-manifests REFERENCE RATCHET\n' "${BASH_SOURCE[0]}" >&2
+--validate-manifests REFERENCE RATCHET | \
+--validate-release-names TAG SCIENCE_TAG\n' "${BASH_SOURCE[0]}" >&2
             exit 64
             ;;
     esac
 fi
 
 cd "${repo_root}"
+
+[[ -f "${release_descriptor}" ]] || \
+    fail "canonical release descriptor is missing"
+[[ -f "${verification_document}" ]] || \
+    fail "v0.6.1 verification document is missing"
+if [[ -f "${release_descriptor}" ]]; then
+    [[ "$(descriptor_value OSGSOL_PRODUCT_VERSION)" == "0.6.1" ]] ||
+        fail "release descriptor product version disagrees"
+    [[ "$(descriptor_value OSGSOL_SCIENCE_PHASE)" == "G3.1" ]] ||
+        fail "release descriptor science phase disagrees"
+    [[ "$(descriptor_value OSGSOL_PRODUCT_NAME)" == "osgSol Earth" ]] ||
+        fail "release descriptor product name disagrees"
+    [[ "$(descriptor_value OSGSOL_BUNDLE_ID)" == \
+        "com.anloren.osgsol.earth" ]] ||
+        fail "release descriptor bundle id disagrees"
+fi
+
+if ! validate_release_names v0.6.1 ScienceEarth-v0.6.1; then
+    fail "formal paired tag names do not match the release descriptor"
+fi
+if validate_release_names v0.6.0 ScienceEarth-v0.6.1; then
+    fail "paired tag validation accepted a version mismatch"
+fi
+
+if [[ -f "${verification_document}" ]]; then
+    grep -Fq 'Product version: `0.6.1`' "${verification_document}" ||
+        fail "verification document version disagrees"
+    grep -Fq 'Science phase: `G3.1`' "${verification_document}" ||
+        fail "verification document phase disagrees"
+fi
+
+grep -Fq 'INCLUDE("${CMAKE_SOURCE_DIR}/cmake/OsgSolRelease.cmake")' \
+    CMakeLists.txt || fail "CMake does not load the canonical release descriptor"
+grep -Fq 'packaging/osgsol_release.env' packaging/package_macos.sh ||
+    fail "packaging does not load the canonical release descriptor"
+if grep -Fq 'VERSION="${OSGSOL_PACKAGE_VERSION:-0.3.0}"' \
+        packaging/package_macos.sh; then
+    fail "packaging retains the stale 0.3.0 default"
+fi
 
 test "$(git rev-list -n 1 v0.2.0)" = "$(git rev-list -n 1 ScienceEarth)" || \
     fail "v0.2.0 and ScienceEarth do not resolve to the same commit"
