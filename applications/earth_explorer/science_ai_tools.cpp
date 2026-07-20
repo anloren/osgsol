@@ -1785,7 +1785,7 @@ void registerScienceResearchTools(
         "\"grid_size\":{\"type\":\"integer\",\"minimum\":1,"
             "\"maximum\":256},"
         "\"metrics\":{\"type\":\"array\",\"minItems\":1,"
-            "\"maxItems\":5,\"uniqueItems\":true,\"items\":{"
+            "\"maxItems\":5,\"items\":{"
             "\"type\":\"string\",\"enum\":[\"cosine-distance\","
             "\"cosine-similarity\",\"angular-distance\","
             "\"euclidean-distance\",\"dot-product\"]}},"

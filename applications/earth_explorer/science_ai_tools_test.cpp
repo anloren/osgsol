@@ -710,7 +710,9 @@ namespace
                     changeTool.parametersJson.find("cluster_count") !=
                         std::string::npos &&
                     changeTool.parametersJson.find(
-                        "confirmed_large_request") != std::string::npos,
+                        "confirmed_large_request") != std::string::npos &&
+                    changeTool.parametersJson.find("uniqueItems") ==
+                        std::string::npos,
                 "change-analysis schema omitted validated analysis methods");
         layer->setVisible(false);
         layers.setEnabled("alphaearth", false);
