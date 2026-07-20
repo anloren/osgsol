@@ -233,6 +233,11 @@ namespace
             if (preview)
             {
                 artifact->raster.bounds = {-122.2, 37.4, -122.0, 37.6};
+                artifact->raster.width = 2;
+                artifact->raster.height = 2;
+                artifact->raster.rgba =
+                    std::make_shared<const std::vector<unsigned char>>(
+                        16, static_cast<unsigned char>(127));
                 const bool dem =
                     lastQuery.sourceId == "copernicus-dem-glo-30";
                 artifact->raster.sourceResolutionMeters = dem ? 30.0 : 10.0;
@@ -634,6 +639,17 @@ namespace
         for (std::size_t i = 0; i < expectedNames.size(); ++i)
             require(tools.tools()[i].name == expectedNames[i],
                     "science tool name or order changed");
+        require(findTool(tools, "search_science_sources").description.find(
+                    u8"不可信证据") != std::string::npos &&
+                    findTool(tools, "start_science_research").description.find(
+                        "start_multisource_research") != std::string::npos &&
+                    findTool(tools, "start_multisource_research").description.find(
+                        u8"不会取消") != std::string::npos &&
+                    findTool(tools, "get_research_job").description.find(
+                        u8"终态") != std::string::npos &&
+                    findTool(tools, "show_science_artifact").description.find(
+                        "RGBA raster") != std::string::npos,
+                "science tool instructions lost ordering, trust, or display contracts");
 
         picojson::value result;
         require(tools.dispatch("search_science_sources", emptyArgs(), result),
@@ -738,7 +754,11 @@ namespace
                     result.get("artifact").contains("source") &&
                     result.get("artifact").contains("processing") &&
                     result.get("artifact").contains("warnings") &&
-                    result.get("artifact").contains("limitations"),
+                    result.get("artifact").contains("limitations") &&
+                    result.get("artifact").get(
+                        "display_raster_available").is<bool>() &&
+                    result.get("artifact").get(
+                        "display_raster_available").get<bool>(),
                 "job result omitted compact artifact evidence");
         const picojson::value& previewCoverage =
             result.get("artifact").get("coverage");
@@ -1217,9 +1237,22 @@ namespace
         showArgs["artifact_id"] = picojson::value("left-artifact");
         require(tools.dispatch(
                     "show_science_artifact", picojson::value(showArgs), result) &&
+                    result.contains("error") && !layer->isVisible(),
+                "show accepted a point-series artifact without a display raster");
+        require(tools.dispatch(
+                    "start_science_research", emptyArgs(), result),
+                "showable preview research did not dispatch");
+        providerPointer->publishReady("showable-raster-artifact");
+        service.snapshot();
+        showArgs["artifact_id"] = picojson::value("showable-raster-artifact");
+        require(tools.dispatch(
+                    "show_science_artifact", picojson::value(showArgs), result) &&
+                    result.contains("ok") && result.get("ok").is<bool>() &&
+                    result.get("ok").get<bool>() &&
                     service.snapshot().displayArtifact &&
-                    service.snapshot().displayArtifact->artifactId == "left-artifact",
-                "show did not explicitly materialize a retained artifact id");
+                    service.snapshot().displayArtifact->artifactId ==
+                        "showable-raster-artifact",
+                "show did not explicitly materialize a retained raster artifact id");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
         const std::string displayBeforeInvalidShow =
@@ -1259,10 +1292,10 @@ namespace
         require(tools.dispatch(
                     "show_science_artifact", picojson::value(invalidShowArgs),
                     result) &&
-                    result.get("ok").get<bool>() &&
+                    result.contains("error") &&
                     service.snapshot().displayArtifact->artifactId ==
-                        "right-artifact",
-                "show rejected matching artifact_id and job_id");
+                        displayBeforeInvalidShow,
+                "show accepted a matching but non-raster artifact");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
         layer->setVisible(false);
@@ -1715,14 +1748,37 @@ namespace
                     result.contains("error"),
                 "missing research record was not reported");
     }
+
+    void testMissingSciencePluginRegistersNoPhantomTools()
+    {
+        earthai::ToolRegistry tools;
+        registerScienceResearchTools(
+            &tools, nullptr, nullptr, nullptr, nullptr);
+        require(tools.tools().empty(),
+                "missing science plugin registered phantom Agent tools");
+    }
 }
 
 int main()
 {
-    testAnalysisQueryBuildersKeepExactScientificIntent();
-    testScienceToolsUseServiceAndPreserveCamera();
-    testMultiSourceToolIsSerialAndPreservesWorldState();
-    testPersistentResearchSurvivesRestartAndStaysCompact();
-    std::cout << "[OK] ScienceEarth Agent tools use the query service without camera writes\n";
-    return 0;
+    try
+    {
+        testAnalysisQueryBuildersKeepExactScientificIntent();
+        testMissingSciencePluginRegistersNoPhantomTools();
+        testScienceToolsUseServiceAndPreserveCamera();
+        testMultiSourceToolIsSerialAndPreservesWorldState();
+        testPersistentResearchSurvivesRestartAndStaysCompact();
+        std::cout << "[OK] ScienceEarth Agent tools use the query service without camera writes\n";
+        return 0;
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "[FAIL] uncaught test exception: " << error.what() << '\n';
+        return 1;
+    }
+    catch (...)
+    {
+        std::cerr << "[FAIL] uncaught non-standard test exception\n";
+        return 1;
+    }
 }

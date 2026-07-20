@@ -3,6 +3,7 @@
 #include "flight_data.h"
 #include "ai_ui.h"
 #include "ai_media.h"
+#include "ai_prompts.h"
 #include "earth_config.h"
 #include <readerwriter/EarthManipulator.h>
 #include <modeling/Math.h>
@@ -230,10 +231,20 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
         aiRegistry->add(fly);
 
         earthai::Tool setLayer; setLayer.name = "set_layer";
-        setLayer.description = u8"开关或调整一个数据图层。可用 id："
-            u8"labels(路网·地名)、clouds(GIBS 影像/云图)、precip(降水雷达)、"
-            u8"quakes(实时地震)、flights(实时航班)、hk3d(香港实景三维)。"
-            u8"opacity 仅对支持透明度的图层有效（可选，0-1）。";
+        std::vector<earthai::LayerToolPromptEntry> layerPromptEntries;
+        const std::vector<OverlayLayer> registeredLayers =
+            layerMgr->layersSnapshot();
+        for (const OverlayLayer& layer : registeredLayers)
+        {
+            if (!layer.apply) continue;
+            earthai::LayerToolPromptEntry entry;
+            entry.id = layer.id;
+            entry.displayName = layer.displayName;
+            entry.supportsOpacity = layer.hasOpacity;
+            layerPromptEntries.push_back(entry);
+        }
+        setLayer.description =
+            earthai::buildSetLayerToolDescription(layerPromptEntries);
         setLayer.parametersJson = "{\"type\":\"object\",\"properties\":{"
             "\"id\":{\"type\":\"string\"},\"enabled\":{\"type\":\"boolean\"},"
             "\"opacity\":{\"type\":\"number\"}},\"required\":[\"id\",\"enabled\"]}";
@@ -527,15 +538,7 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
         const char* m = getenv("EARTH_AI_MODEL");
         earthai::GeminiProvider* gp = new earthai::GeminiProvider(
             aiKey, (m && *m) ? m : "gemini-3.5-flash");
-        gp->setSystemPrompt(u8"你是 EarthExplorer 三维地球应用的中文助手。优先使用提供的工具完成用户请求；"
-                            u8"用户提到地名时自行换算经纬度；回答保持简洁；不要编造工具没有返回的数据。"
-                            u8"generate_photo 只拍摄屏幕当前可见视角，绝不移动或重置相机。目标不在当前视角时，"
-                            u8"必须先调用 fly_to(for_photo=true)。目标拍照严格分两轮：本轮只飞到并显示目标，"
-                            u8"告诉用户调整/确认视角后再拍；绝对不能在同一条用户指令里继续调用 generate_photo。"
-                            u8"收到用户下一条拍照确认后，才调用 generate_photo。每次请求仍必须传本次"
-                            u8"目标的 lat/lon，坐标只描述照片地点，不控制快门相机。"
-                            u8"从 ISS 俯拍表示相机在 ISS 位置向下看，show_camera_platform=false；"
-                            u8"除非用户明确要求，不得在画面叠加空间站、太阳能板或飞行器。 ");
+        gp->setSystemPrompt(earthai::buildEarthAssistantSystemPrompt());
         aiCore = new earthai::AIChatCore(gp, aiRegistry);
         // 启动信号(不打 key 值,只打长度):证明 AI key 从环境变量或磁盘 keys.env 读到。
         OSG_NOTICE << "[AIChat] provider=gemini, key configured (len=" << aiKey.size() << ")" << std::endl;

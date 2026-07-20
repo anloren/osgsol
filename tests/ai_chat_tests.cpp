@@ -10,7 +10,7 @@
 // Release 构建带 -DNDEBUG 会吞掉 assert —— 用自定义 CHECK 保证断言永远生效
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ << ": " #x << std::endl; \
-    std::abort(); } } while (0)
+    std::exit(1); } } while (0)
 
 // ai_chat.cpp 的 httpRequestRetry 依赖 earthcfg::getInt("http.retries")——同 ais_tests.cpp/
 // feed_layer_tests.cpp/world_tools_tests.cpp 的既有模式,直接 include 实现文件把符号编译进本单元
@@ -194,6 +194,41 @@ int main(int, char**)
         CHECK(!ts.empty());
         CHECK(ts.back().text == u8"已带你飞到纽约");
         std::cout << "AIChatCore basic agent loop OK\n";
+    }
+
+    // ---- 同一模型回复的多个工具调用必须按原顺序全部执行 ----
+    {
+        const char* script =
+            "[{\"calls\":["
+            "{\"name\":\"first\",\"args\":{}},"
+            "{\"name\":\"second\",\"args\":{}}]},"
+            "{\"text\":\"两个工具均已按顺序完成\"}]";
+        FakeProvider fp; CHECK(fp.loadFromString(script));
+        ToolRegistry registry;
+        std::vector<std::string> order;
+        Tool first; first.name = "first"; first.description = "";
+        first.parametersJson = "{\"type\":\"object\",\"properties\":{}}";
+        first.execute = [&order](const picojson::value&) {
+            order.push_back("first"); return parse("{\"ok\":true}");
+        };
+        Tool second; second.name = "second"; second.description = "";
+        second.parametersJson = "{\"type\":\"object\",\"properties\":{}}";
+        second.execute = [&order](const picojson::value&) {
+            order.push_back("second"); return parse("{\"ok\":true}");
+        };
+        registry.add(first); registry.add(second);
+
+        AIChatCore core(&fp, &registry);
+        core.submit(u8"按顺序做两步");
+        for (int i = 0; i < 500 && core.busy(); ++i)
+        { core.drainMainThread(); usleep(10000); }
+        core.drainMainThread();
+
+        CHECK(order.size() == 2);
+        CHECK(order[0] == "first");
+        CHECK(order[1] == "second");
+        CHECK(core.transcript().back().text == u8"两个工具均已按顺序完成");
+        std::cout << "AIChatCore same-turn tool ordering OK\n";
     }
 
     // ---- submit while busy 被礼貌忽略 ----
@@ -645,6 +680,34 @@ int main(int, char**)
     // ---- buildPhotoPrompt / buildVideoPrompt(提示词工程,header-only ai_prompts.h)----
     {
         const double kDeg = 0.017453292519943295;   // 度→弧度,与 osg::DegreesToRadians 等价
+
+        // set_layer 的能力描述来自当前注册表，而不是六个旧 id 的写死文案。
+        {
+            std::vector<earthai::LayerToolPromptEntry> entries;
+            entries.push_back({"alphaearth", "AlphaEarth", true});
+            entries.push_back({"flights", u8"实时航班", false});
+            const std::string description =
+                earthai::buildSetLayerToolDescription(entries);
+            CHECK(description.find("alphaearth(AlphaEarth)") != std::string::npos);
+            CHECK(description.find(u8"flights(实时航班)") != std::string::npos);
+            CHECK(description.find("opacity") != std::string::npos);
+            CHECK(description.find("hk3d") == std::string::npos);
+        }
+
+        // ScienceEarth 没加载时不得编造能力；加载时须严格遵循串行、
+        // 终态轮询、可显示产物、64D 语义和证据不可信边界。
+        {
+            const std::string prompt = earthai::buildEarthAssistantSystemPrompt();
+            CHECK(prompt.find("start_multisource_research") != std::string::npos);
+            CHECK(prompt.find("get_research_job") != std::string::npos);
+            CHECK(prompt.find("show_science_artifact") != std::string::npos);
+            CHECK(prompt.find(u8"终态") != std::string::npos);
+            CHECK(prompt.find(u8"64 维") != std::string::npos);
+            CHECK(prompt.find(u8"因果") != std::string::npos);
+            CHECK(prompt.find(u8"不可信证据") != std::string::npos);
+            CHECK(prompt.find(u8"未加载") != std::string::npos);
+            CHECK(prompt.find(u8"不得移动相机") != std::string::npos);
+        }
 
         // 高空/轨道快门的 prompt 必须由同一不可变 capture context 构造。目标地点、相机
         // 眼点和画面中心是三个不同概念；姿态/FOV/覆盖尺度来自快门时的 view/projection/
