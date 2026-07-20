@@ -573,7 +573,8 @@ bool ScienceAnalysisEngine::computeSphericalClusters(
         std::make_shared<const std::vector<std::string>>(
             1, "Spherical clusters summarize local embedding directions by cosine similarity.");
     std::vector<std::string> limitations = {
-        "Cluster ids are deterministic mathematical groups, not physical class labels."};
+        "Cluster ids are deterministic structural groups, not validated "
+        "land-cover classes or physical class labels."};
     if (!converged)
         limitations.push_back(
             "Spherical k-means reached the 100-iteration limit without convergence.");

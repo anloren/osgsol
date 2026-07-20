@@ -291,6 +291,7 @@ ScienceAnalysisEngine::analyzeRegionalChange(
     std::vector<unsigned char> rasterMask(cellCount, 0);
     std::vector<double> observed;
     observed.reserve(cellCount);
+    std::vector<long double> metricSums(options.metrics.size(), 0.0L);
     const std::size_t baselineOffset = baselineIndex * cellCount;
     const std::size_t comparisonOffset = comparisonIndex * cellCount;
     for (std::size_t cell = 0; cell < cellCount; ++cell)
@@ -311,11 +312,22 @@ ScienceAnalysisEngine::analyzeRegionalChange(
                 vectorAt(embedding, comparisonOffset + cell),
                 vectorMetrics, error, context.str()))
             return nullptr;
-        const double score = metricValue(vectorMetrics, selectedMetric);
-        if (!std::isfinite(score) ||
-            std::abs(score) > std::numeric_limits<float>::max())
+        for (std::size_t metricIndex = 0;
+             metricIndex < options.metrics.size(); ++metricIndex)
         {
-            error = "regional change produced a non-finite result";
+            const double value = metricValue(
+                vectorMetrics, options.metrics[metricIndex]);
+            if (!std::isfinite(value))
+            {
+                error = "regional change produced a non-finite metric";
+                return nullptr;
+            }
+            metricSums[metricIndex] += static_cast<long double>(value);
+        }
+        const double score = metricValue(vectorMetrics, selectedMetric);
+        if (std::abs(score) > std::numeric_limits<float>::max())
+        {
+            error = "regional display metric exceeds float range";
             return nullptr;
         }
         rasterValues[cell] = static_cast<float>(score);
@@ -430,14 +442,32 @@ ScienceAnalysisEngine::analyzeRegionalChange(
     summary.groundGrid = embedding.groundGrid;
     summary.actualResolutionMeters = embedding.actualResolutionMeters;
 
-    ScienceMetricResult meanMetric;
-    meanMetric.metric = selectedMetric;
-    meanMetric.baselineYear = baselineYear;
-    meanMetric.comparisonYear = comparisonYear;
-    meanMetric.value = mean;
-    meanMetric.unit = metricUnit(selectedMetric);
+    std::vector<ScienceMetricResult> meanMetrics;
+    meanMetrics.reserve(options.metrics.size());
+    for (std::size_t metricIndex = 0;
+         metricIndex < options.metrics.size(); ++metricIndex)
+    {
+        const double metricMean = static_cast<double>(
+            metricSums[metricIndex] /
+            static_cast<long double>(observed.size()));
+        if (!std::isfinite(metricMean))
+        {
+            error = "regional metric mean overflowed";
+            return nullptr;
+        }
+        ScienceMetricResult meanMetric;
+        meanMetric.metric = options.metrics[metricIndex];
+        meanMetric.baselineYear = baselineYear;
+        meanMetric.comparisonYear = comparisonYear;
+        meanMetric.value = metricMean;
+        meanMetric.unit = metricUnit(options.metrics[metricIndex]);
+        meanMetrics.push_back(std::move(meanMetric));
+    }
     std::vector<std::string> interpretation = {
-        "Regional values summarize the both-valid overlap in embedding space.",
+        "Every requested metric reports the mean over the same both-valid "
+        "overlap in embedding space.",
+        "The displayed raster and relative hotspots use the selected regional "
+        "display metric only.",
         "Hotspots are relative to the displayed embedding-space quantile."};
     std::vector<std::string> limitations = {
         "The hotspot threshold is relative and is not a physical-change "
@@ -453,7 +483,7 @@ ScienceAnalysisEngine::analyzeRegionalChange(
     output.kind = ScienceAnalysisKind::RegionalChange;
     output.metrics =
         std::make_shared<const std::vector<ScienceMetricResult>>(
-            std::initializer_list<ScienceMetricResult>{meanMetric});
+            std::move(meanMetrics));
     output.scalarChangeRaster = std::move(changeRaster);
     output.regionalChange = std::move(summary);
     output.interpretation =

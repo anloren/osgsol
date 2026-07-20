@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <memory>
 #include <string>
@@ -96,12 +97,102 @@ namespace
                optionalNumber(args, key, value) && std::isfinite(value);
     }
 
+    bool scienceMetricFromName(
+        const std::string& name, earthscience::ScienceMetric& metric)
+    {
+        using Metric = earthscience::ScienceMetric;
+        if (name == "dot-product") metric = Metric::DotProduct;
+        else if (name == "cosine-similarity")
+            metric = Metric::CosineSimilarity;
+        else if (name == "cosine-distance")
+            metric = Metric::CosineDistance;
+        else if (name == "euclidean-distance")
+            metric = Metric::EuclideanDistance;
+        else if (name == "angular-distance")
+            metric = Metric::AngularDistance;
+        else return false;
+        return true;
+    }
+
+    bool optionalMetrics(
+        const picojson::value& args, const char* key,
+        std::vector<earthscience::ScienceMetric>& metrics,
+        std::string& error)
+    {
+        if (!args.is<picojson::object>() || !args.contains(key)) return true;
+        const picojson::value& value = args.get(key);
+        if (!value.is<picojson::array>())
+        {
+            error = "metrics must be an array of metric names";
+            return false;
+        }
+        const picojson::array& values = value.get<picojson::array>();
+        if (values.empty() || values.size() > 5)
+        {
+            error = "metrics must contain one to five unique methods";
+            return false;
+        }
+        std::vector<earthscience::ScienceMetric> parsed;
+        parsed.reserve(values.size());
+        for (const picojson::value& entry : values)
+        {
+            if (!entry.is<std::string>())
+            {
+                error = "each metric must be a string";
+                return false;
+            }
+            earthscience::ScienceMetric metric;
+            if (!scienceMetricFromName(entry.get<std::string>(), metric))
+            {
+                error = "unknown analysis metric: " + entry.get<std::string>();
+                return false;
+            }
+            if (std::find(parsed.begin(), parsed.end(), metric) != parsed.end())
+            {
+                error = "analysis metrics must be unique";
+                return false;
+            }
+            parsed.push_back(metric);
+        }
+        metrics = std::move(parsed);
+        return true;
+    }
+
+    bool hasEmbedding64(
+        const earthscience::ScienceSourceDescriptor& source)
+    {
+        if (!source.capabilities.analysisOutput ||
+            source.componentCount !=
+                earthscience::ScienceEmbeddingPayload::componentCount)
+            return false;
+        const auto variable = std::find_if(
+            source.variables.begin(), source.variables.end(),
+            [](const earthscience::ScienceVariableDescriptor& candidate)
+            {
+                return candidate.id == "embedding64" &&
+                    candidate.componentCount ==
+                        earthscience::ScienceEmbeddingPayload::componentCount;
+            });
+        return variable != source.variables.end();
+    }
+
     picojson::array stringsJson(const std::vector<std::string>& values)
     {
         picojson::array result;
         result.reserve(values.size());
         for (const std::string& value : values)
             result.push_back(picojson::value(value));
+        return result;
+    }
+
+    picojson::array boundedStringsJson(
+        const std::vector<std::string>& values, std::size_t limit)
+    {
+        picojson::array result;
+        result.reserve(std::min(values.size(), limit));
+        for (std::size_t index = 0;
+             index < values.size() && index < limit; ++index)
+            result.push_back(picojson::value(values[index]));
         return result;
     }
 
@@ -140,6 +231,56 @@ namespace
                 std::clamp(fraction * 100.0, 0.0, 100.0));
         }
         return picojson::value(item);
+    }
+
+    picojson::value metricRangeJson(earthscience::ScienceMetric metric)
+    {
+        using Metric = earthscience::ScienceMetric;
+        picojson::object range;
+        range["bounded"] = picojson::value(false);
+        if (metric == Metric::CosineSimilarity)
+        {
+            range["minimum"] = picojson::value(-1.0);
+            range["maximum"] = picojson::value(1.0);
+            range["bounded"] = picojson::value(true);
+        }
+        else if (metric == Metric::CosineDistance)
+        {
+            range["minimum"] = picojson::value(0.0);
+            range["maximum"] = picojson::value(2.0);
+            range["bounded"] = picojson::value(true);
+        }
+        else if (metric == Metric::AngularDistance)
+        {
+            range["minimum"] = picojson::value(0.0);
+            range["maximum"] = picojson::value(3.14159265358979323846);
+            range["unit"] = picojson::value("radians");
+            range["bounded"] = picojson::value(true);
+        }
+        else if (metric == Metric::EuclideanDistance)
+        {
+            range["minimum"] = picojson::value(0.0);
+        }
+        return picojson::value(range);
+    }
+
+    picojson::value costJson(const earthscience::ScienceQueryCost& cost)
+    {
+        picojson::object result;
+        result["source_bytes_upper_bound"] = picojson::value(
+            static_cast<double>(cost.sourceBytesUpperBound));
+        result["resident_bytes_upper_bound"] = picojson::value(
+            static_cast<double>(cost.residentBytesUpperBound));
+        result["result_cells"] = picojson::value(
+            static_cast<double>(cost.resultCells));
+        result["duration_determinate"] = picojson::value(
+            cost.durationDeterminate);
+        if (cost.durationDeterminate)
+            result["estimated_duration_seconds"] = picojson::value(
+                cost.estimatedDurationSeconds);
+        result["requires_confirmation"] = picojson::value(
+            cost.requiresConfirmation);
+        return picojson::value(result);
     }
 
     constexpr std::size_t MAX_PRIMARY_METRIC_ENTRIES = 32;
@@ -287,6 +428,56 @@ namespace
             artifact.analysis.metrics &&
             artifact.analysis.metrics->size() > metrics.size());
 
+        constexpr std::size_t MAX_ANNUAL_SERIES = 5;
+        constexpr std::size_t MAX_ANNUAL_POINTS = 9;
+        picojson::array annualSeries;
+        if (artifact.analysis.annualSeries)
+        {
+            for (const earthscience::ScienceAnnualSeries& series :
+                 *artifact.analysis.annualSeries)
+            {
+                if (annualSeries.size() >= MAX_ANNUAL_SERIES) break;
+                picojson::object entry;
+                entry["metric"] = picojson::value(std::string(
+                    earthscience::scienceMetricName(series.metric)));
+                entry["unit"] = picojson::value(series.unit);
+                entry["metric_range"] = metricRangeJson(series.metric);
+                picojson::array points;
+                if (series.years && series.values)
+                {
+                    const std::size_t available = std::min(
+                        series.years->size(), series.values->size());
+                    const std::size_t count = std::min(
+                        available, MAX_ANNUAL_POINTS);
+                    for (std::size_t index = 0; index < count; ++index)
+                    {
+                        const bool valid =
+                            (!series.validity ||
+                             index >= series.validity->size() ||
+                             series.validity->at(index) != 0) &&
+                            std::isfinite(series.values->at(index));
+                        picojson::object point;
+                        point["year"] = picojson::value(
+                            static_cast<double>(series.years->at(index)));
+                        point["valid"] = picojson::value(valid);
+                        if (valid)
+                            point["value"] = picojson::value(
+                                series.values->at(index));
+                        points.push_back(picojson::value(point));
+                    }
+                    entry["truncated"] = picojson::value(
+                        available > points.size());
+                }
+                else entry["truncated"] = picojson::value(false);
+                entry["points"] = picojson::value(points);
+                annualSeries.push_back(picojson::value(entry));
+            }
+        }
+        item["annual_series"] = picojson::value(annualSeries);
+        item["annual_series_truncated"] = picojson::value(
+            artifact.analysis.annualSeries &&
+            artifact.analysis.annualSeries->size() > annualSeries.size());
+
         constexpr std::size_t MAX_SCALAR_SUMMARIES = 16;
         picojson::array scalarSummaries;
         for (const earthscience::ScienceScalarSummary& summary :
@@ -320,6 +511,13 @@ namespace
         if (analysisKind == earthscience::ScienceAnalysisKind::RegionalChange)
         {
             picojson::object statistics;
+            statistics["metric"] = picojson::value(std::string(
+                earthscience::scienceMetricName(regional.metric)));
+            statistics["metric_range"] = metricRangeJson(regional.metric);
+            statistics["baseline_year"] = picojson::value(
+                static_cast<double>(regional.baselineYear));
+            statistics["comparison_year"] = picojson::value(
+                static_cast<double>(regional.comparisonYear));
             if (std::isfinite(regional.mean))
                 statistics["mean"] = picojson::value(regional.mean);
             if (std::isfinite(regional.median))
@@ -331,7 +529,106 @@ namespace
                 statistics["minimum"] = picojson::value(regional.minimum);
             if (std::isfinite(regional.maximum))
                 statistics["maximum"] = picojson::value(regional.maximum);
+            constexpr std::size_t MAX_QUANTILES = 16;
+            picojson::array quantiles;
+            if (regional.quantiles)
+            {
+                for (const earthscience::ScienceQuantileResult& quantile :
+                     *regional.quantiles)
+                {
+                    if (quantiles.size() >= MAX_QUANTILES) break;
+                    if (!std::isfinite(quantile.probability) ||
+                        !std::isfinite(quantile.value))
+                        continue;
+                    picojson::object entry;
+                    entry["probability"] = picojson::value(
+                        quantile.probability);
+                    entry["value"] = picojson::value(quantile.value);
+                    quantiles.push_back(picojson::value(entry));
+                }
+            }
+            statistics["quantiles"] = picojson::value(quantiles);
+            statistics["quantiles_truncated"] = picojson::value(
+                regional.quantiles &&
+                regional.quantiles->size() > quantiles.size());
+            if (std::isfinite(regional.hotspotQuantile))
+                statistics["hotspot_quantile"] = picojson::value(
+                    regional.hotspotQuantile);
+            if (std::isfinite(regional.hotspotThreshold))
+                statistics["hotspot_threshold"] = picojson::value(
+                    regional.hotspotThreshold);
+            statistics["hotspot_semantics"] = picojson::value(
+                "relative within this result, not a physical threshold");
             item["regional_statistics"] = picojson::value(statistics);
+        }
+
+        const earthscience::SciencePcaResult& pca = artifact.analysis.pca;
+        if (pca.componentCount > 0)
+        {
+            constexpr std::size_t MAX_PCA_COMPONENTS = 8;
+            picojson::object summary;
+            summary["input_component_count"] = picojson::value(
+                static_cast<double>(pca.inputComponentCount));
+            summary["component_count"] = picojson::value(
+                static_cast<double>(pca.componentCount));
+            picojson::array eigenvalues;
+            if (pca.eigenvalues)
+                for (double value : *pca.eigenvalues)
+                {
+                    if (eigenvalues.size() >= MAX_PCA_COMPONENTS) break;
+                    if (std::isfinite(value))
+                        eigenvalues.push_back(picojson::value(value));
+                }
+            picojson::array ratios;
+            if (pca.explainedVarianceRatios)
+                for (double value : *pca.explainedVarianceRatios)
+                {
+                    if (ratios.size() >= MAX_PCA_COMPONENTS) break;
+                    if (std::isfinite(value))
+                        ratios.push_back(picojson::value(value));
+                }
+            summary["eigenvalues"] = picojson::value(eigenvalues);
+            summary["explained_variance_ratios"] = picojson::value(ratios);
+            summary["semantics"] = picojson::value(
+                "result-local variance directions; components have no named "
+                "land-cover meaning");
+            item["pca_summary"] = picojson::value(summary);
+        }
+
+        const earthscience::ScienceClusterResult& clusters =
+            artifact.analysis.clusters;
+        if (clusters.clusterCount > 0)
+        {
+            constexpr std::size_t MAX_CLUSTERS = 8;
+            picojson::object summary;
+            summary["metric"] = picojson::value(std::string(
+                earthscience::scienceMetricName(clusters.metric)));
+            summary["cluster_count"] = picojson::value(
+                static_cast<double>(clusters.clusterCount));
+            picojson::array populations;
+            if (clusters.populations)
+                for (std::uint64_t value : *clusters.populations)
+                {
+                    if (populations.size() >= MAX_CLUSTERS) break;
+                    populations.push_back(picojson::value(
+                        static_cast<double>(value)));
+                }
+            picojson::array concentrations;
+            if (clusters.concentrations)
+                for (double value : *clusters.concentrations)
+                {
+                    if (concentrations.size() >= MAX_CLUSTERS) break;
+                    if (std::isfinite(value))
+                        concentrations.push_back(picojson::value(value));
+                }
+            summary["populations"] = picojson::value(populations);
+            summary["concentrations"] = picojson::value(concentrations);
+            summary["converged"] = picojson::value(clusters.converged);
+            summary["iterations"] = picojson::value(
+                static_cast<double>(clusters.iterations));
+            summary["semantics"] = picojson::value(
+                "unlabeled structural groups, not validated land-cover classes");
+            item["cluster_summary"] = picojson::value(summary);
         }
 
         const CoverageEvidence evidence = coverageEvidence(
@@ -418,7 +715,11 @@ namespace
              artifact.sourceReferences)
             steps.insert(steps.end(), reference.processingSteps.begin(),
                          reference.processingSteps.end());
-        processing["steps"] = picojson::value(stringsJson(steps));
+        constexpr std::size_t MAX_PROCESSING_STEPS = 32;
+        processing["steps"] = picojson::value(
+            boundedStringsJson(steps, MAX_PROCESSING_STEPS));
+        processing["steps_truncated"] = picojson::value(
+            steps.size() > MAX_PROCESSING_STEPS);
         item["processing"] = picojson::value(processing);
         item["processing_version"] = picojson::value(
             artifact.processingVersion);
@@ -427,9 +728,44 @@ namespace
         if (artifact.embedding.warnings)
             warnings.insert(warnings.end(), artifact.embedding.warnings->begin(),
                             artifact.embedding.warnings->end());
-        item["warnings"] = picojson::value(stringsJson(warnings));
-        item["limitations"] = picojson::value(artifact.analysis.limitations
-            ? stringsJson(*artifact.analysis.limitations) : picojson::array{});
+        constexpr std::size_t MAX_NARRATIVE_ENTRIES = 32;
+        item["warnings"] = picojson::value(
+            boundedStringsJson(warnings, MAX_NARRATIVE_ENTRIES));
+        item["warnings_truncated"] = picojson::value(
+            warnings.size() > MAX_NARRATIVE_ENTRIES);
+
+        std::vector<std::string> interpretations;
+        if (artifact.analysis.interpretation)
+            interpretations.insert(
+                interpretations.end(),
+                artifact.analysis.interpretation->begin(),
+                artifact.analysis.interpretation->end());
+        std::vector<std::string> limitations;
+        if (artifact.analysis.limitations)
+            limitations.insert(
+                limitations.end(), artifact.analysis.limitations->begin(),
+                artifact.analysis.limitations->end());
+        if (artifact.query.sourceId == "alphaearth-foundations")
+            limitations.push_back(
+                "AlphaEarth values are a 64-dimensional latent geographic "
+                "representation; change is not a named land-cover or physical "
+                "variable.");
+        else if (artifact.query.sourceId == "sentinel-2-l2a")
+            limitations.push_back(
+                "Sentinel-2 natural color is visual context from a selected "
+                "acquisition, not causal proof of change.");
+        else if (artifact.query.sourceId == "copernicus-dem-glo-30")
+            limitations.push_back(
+                "Copernicus DEM values are static surface heights in the "
+                "recorded EGM2008 vertical datum, not temporal change.");
+        item["interpretations"] = picojson::value(
+            boundedStringsJson(interpretations, MAX_NARRATIVE_ENTRIES));
+        item["interpretations_truncated"] = picojson::value(
+            interpretations.size() > MAX_NARRATIVE_ENTRIES);
+        item["limitations"] = picojson::value(
+            boundedStringsJson(limitations, MAX_NARRATIVE_ENTRIES));
+        item["limitations_truncated"] = picojson::value(
+            limitations.size() > MAX_NARRATIVE_ENTRIES);
 
         item["west"] = picojson::value(evidence.bounds.west);
         item["south"] = picojson::value(evidence.bounds.south);
@@ -1407,7 +1743,9 @@ void registerScienceResearchTools(
 
     earthai::Tool change;
     change.name = "run_change_analysis";
-    change.description = u8"提交两个年份之间的区域 64D 变化分析。"
+    change.description = u8"提交两个年份之间的区域 64D 潜在表征变化分析。"
+        u8"可选择余弦距离、余弦相似度、角距离、欧氏距离、点积，并可附加"
+        u8"结果内 PCA 结构摘要与无标签聚类；这些结果都不是已命名的地表指标。"
         u8"本工具不会显示图层或改变相机。";
     change.parametersJson =
         "{\"type\":\"object\","
@@ -1418,7 +1756,19 @@ void registerScienceResearchTools(
         "\"lon\":{\"type\":\"number\"},"
         "\"baseline_year\":{\"type\":\"integer\"},"
         "\"comparison_year\":{\"type\":\"integer\"},"
-        "\"grid_size\":{\"type\":\"integer\"}},"
+        "\"grid_size\":{\"type\":\"integer\",\"minimum\":1,"
+            "\"maximum\":256},"
+        "\"metrics\":{\"type\":\"array\",\"minItems\":1,"
+            "\"maxItems\":5,\"uniqueItems\":true,\"items\":{"
+            "\"type\":\"string\",\"enum\":[\"cosine-distance\","
+            "\"cosine-similarity\",\"angular-distance\","
+            "\"euclidean-distance\",\"dot-product\"]}},"
+        "\"hotspot_quantile\":{\"type\":\"number\",\"minimum\":0,"
+            "\"maximum\":1},"
+        "\"include_pca\":{\"type\":\"boolean\"},"
+        "\"cluster_count\":{\"type\":\"integer\",\"minimum\":2,"
+            "\"maximum\":8},"
+        "\"confirmed_large_request\":{\"type\":\"boolean\"}},"
         "\"required\":[\"lat\",\"lon\",\"baseline_year\","
             "\"comparison_year\"]}";
     change.execute = [service](const picojson::value& args)
@@ -1434,9 +1784,16 @@ void registerScienceResearchTools(
             { return source.id == sourceId; });
         if (found == sources.end())
             return errorJson("unknown science source: " + sourceId);
+        if (!hasEmbedding64(*found))
+            return errorJson(
+                "change analysis requires an analysis-capable 64D "
+                "embedding64 source");
 
         double latitude = 0.0, longitude = 0.0;
         int baselineYear = 0, comparisonYear = 0, gridSize = 128;
+        bool includePca = false;
+        bool confirmedLargeRequest = false;
+        double hotspotQuantile = 0.90;
         if (!requiredNumber(args, "lat", latitude) ||
             !requiredNumber(args, "lon", longitude))
             return errorJson("lat and lon are required finite numbers");
@@ -1454,18 +1811,59 @@ void registerScienceResearchTools(
         if (!optionalInteger(args, "grid_size", gridSize) ||
             gridSize < 1 || gridSize > 256)
             return errorJson("grid_size must be an integer inside [1, 256]");
+        if (!optionalBoolean(args, "include_pca", includePca))
+            return errorJson("include_pca must be a boolean");
+        if (!optionalBoolean(
+                args, "confirmed_large_request", confirmedLargeRequest))
+            return errorJson("confirmed_large_request must be a boolean");
+        if (!optionalNumber(args, "hotspot_quantile", hotspotQuantile) ||
+            !std::isfinite(hotspotQuantile) || hotspotQuantile < 0.0 ||
+            hotspotQuantile > 1.0)
+            return errorJson("hotspot_quantile must be inside [0, 1]");
 
         earthscience::ScienceAnalysisOptions options;
         options.metrics = {earthscience::ScienceMetric::CosineDistance};
+        std::string optionError;
+        if (!optionalMetrics(args, "metrics", options.metrics, optionError))
+            return errorJson(optionError);
         options.gridSize = gridSize;
+        options.hotspotQuantile = hotspotQuantile;
+        options.enablePca = includePca;
+        options.confirmedLargeRequest = confirmedLargeRequest;
+        const bool enableClustering = args.contains("cluster_count");
+        int clusterCount = 4;
+        if (!optionalInteger(args, "cluster_count", clusterCount) ||
+            (enableClustering && (clusterCount < 2 || clusterCount > 8)))
+            return errorJson("cluster_count must be an integer inside [2, 8]");
+        options.enableClustering = enableClustering;
+        options.clusterCount = clusterCount;
         const double span = found->capabilities.minimumSpanMeters > 0.0
             ? found->capabilities.minimumSpanMeters : 2560.0;
         const earthscience::GeoTemporalQuery query =
             makeScienceRegionalAnalysisQuery(
                 *found, latitude, longitude, span,
                 baselineYear, comparisonYear, options);
+        std::string validationError;
+        if (!service->validateQuery(query, validationError))
+            return errorJson("invalid change analysis: " + validationError);
+        earthscience::ScienceQueryCost cost;
+        try
+        {
+            cost = service->estimate(query);
+        }
+        catch (const std::exception& exception)
+        {
+            return errorJson(
+                "change-analysis estimate failed: " +
+                std::string(exception.what()));
+        }
+        if (cost.requiresConfirmation && !confirmedLargeRequest)
+            return errorJson(
+                "large change analysis requires explicit confirmation");
         service->submit(query);
-        return snapshotJson(service->snapshot());
+        picojson::value result = snapshotJson(service->snapshot());
+        result.get<picojson::object>()["estimate"] = costJson(cost);
+        return result;
     };
     tools->add(change);
 

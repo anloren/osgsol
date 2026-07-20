@@ -134,6 +134,18 @@ namespace
         return nullptr;
     }
 
+    const earthscience::ScienceMetricResult* findMetric(
+        const earthscience::ScienceAnalysisPayload& result,
+        earthscience::ScienceMetric metric)
+    {
+        if (!result.metrics) return nullptr;
+        for (const earthscience::ScienceMetricResult& value : *result.metrics)
+        {
+            if (value.metric == metric) return &value;
+        }
+        return nullptr;
+    }
+
     bool containsText(
         const std::shared_ptr<const std::vector<std::string>>& values,
         const std::string& needle)
@@ -755,6 +767,65 @@ namespace
                 "relative hotspot semantics are not explicit");
     }
 
+    void testRegionalChangeReportsEveryRequestedMetricMean()
+    {
+        const earthscience::ScienceEmbeddingPayload embedding =
+            makeRegionalFixture();
+        earthscience::ScienceAnalysisOptions options;
+        options.kind = earthscience::ScienceAnalysisKind::RegionalChange;
+        options.baselineYear = 2020;
+        options.comparisonYear = 2021;
+        options.metrics = {
+            earthscience::ScienceMetric::DotProduct,
+            earthscience::ScienceMetric::CosineSimilarity,
+            earthscience::ScienceMetric::CosineDistance,
+            earthscience::ScienceMetric::EuclideanDistance,
+            earthscience::ScienceMetric::AngularDistance};
+        std::string error;
+
+        const auto result =
+            earthscience::ScienceAnalysisEngine::analyzeRegionalChange(
+                embedding, options, [] { return false; }, error);
+
+        require(result && error.empty(),
+                "multi-metric regional change analysis failed");
+        require(result->metrics && result->metrics->size() == 5,
+                "regional change omitted requested metric means");
+        double expectedEuclidean = 0.0;
+        double expectedAngular = 0.0;
+        for (int index = 0; index < 12; ++index)
+        {
+            const double cosineDistance = static_cast<double>(index) / 10.0;
+            expectedEuclidean += std::sqrt(2.0 * cosineDistance);
+            expectedAngular += std::acos(1.0 - cosineDistance);
+        }
+        expectedEuclidean /= 12.0;
+        expectedAngular /= 12.0;
+        const earthscience::ScienceMetricResult* dot = findMetric(
+            *result, earthscience::ScienceMetric::DotProduct);
+        const earthscience::ScienceMetricResult* similarity = findMetric(
+            *result, earthscience::ScienceMetric::CosineSimilarity);
+        const earthscience::ScienceMetricResult* distance = findMetric(
+            *result, earthscience::ScienceMetric::CosineDistance);
+        const earthscience::ScienceMetricResult* euclidean = findMetric(
+            *result, earthscience::ScienceMetric::EuclideanDistance);
+        const earthscience::ScienceMetricResult* angular = findMetric(
+            *result, earthscience::ScienceMetric::AngularDistance);
+        require(dot && similarity && distance && euclidean && angular,
+                "regional change result does not identify every metric");
+        require(nearlyEqual(dot->value, 0.45) &&
+                    nearlyEqual(similarity->value, 0.45) &&
+                    nearlyEqual(distance->value, 0.55) &&
+                    nearlyEqual(euclidean->value, expectedEuclidean) &&
+                    nearlyEqual(angular->value, expectedAngular),
+                "regional requested metric means are incorrect");
+        require(result->scalarChangeRaster.metric ==
+                    earthscience::ScienceMetric::CosineDistance &&
+                    result->regionalChange.metric ==
+                    earthscience::ScienceMetric::CosineDistance,
+                "multi-metric request changed the deterministic display metric");
+    }
+
     void testRegionalValidationRejectsGridOverlapAndFiniteFailures()
     {
         earthscience::ScienceAnalysisOptions options;
@@ -1014,6 +1085,7 @@ int main()
     testLateLatentCancellationPublishesNothing();
     testPointSeriesPreservesGapAndFindsLargestConsecutiveChange();
     testRegionalChangeReportsExactOverlapDistributionAndHotspots();
+    testRegionalChangeReportsEveryRequestedMetricMean();
     testRegionalValidationRejectsGridOverlapAndFiniteFailures();
     testRegionalHotspotQuantileIncludesAllExactTies();
     testAnnualRegionalSummariesLoadOnceAscendingAndReleaseSlices();

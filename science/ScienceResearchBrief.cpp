@@ -97,8 +97,8 @@ namespace
                 text << " for " << metric.baselineYear << " to "
                      << metric.comparisonYear;
         }
-        text << ". Its components are not named physical variables and do "
-             << "not identify a named domain category or cause.";
+        text << ". Its components are not named physical variables or named "
+             << "land-cover variables and do not identify a cause.";
         statement.text = text.str();
         return statement;
     }
@@ -299,6 +299,11 @@ bool buildScienceResearchBrief(
         else
             brief.observations.push_back(genericObservation(*evidence));
 
+        for (const std::string& value : evidence->interpretations)
+            if (!value.empty())
+                brief.observations.push_back(
+                    {"Analysis interpretation", value,
+                     {evidence->evidenceId}});
         for (const std::string& value : evidence->warnings)
             if (!value.empty())
                 brief.limitations.push_back(

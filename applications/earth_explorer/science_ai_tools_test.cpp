@@ -344,10 +344,43 @@ namespace
             artifact->analysis.metrics =
                 std::make_shared<const std::vector<earthscience::ScienceMetricResult>>(
                     std::move(metrics));
+            if (lastQuery.analysis.kind ==
+                earthscience::ScienceAnalysisKind::PointSeries)
+            {
+                earthscience::ScienceAnnualSeries series;
+                series.metric = earthscience::ScienceMetric::CosineDistance;
+                series.years =
+                    std::make_shared<const std::vector<int>>(years);
+                std::vector<double> values;
+                std::vector<unsigned char> validity;
+                values.reserve(years.size());
+                validity.reserve(years.size());
+                for (std::size_t index = 0; index < years.size(); ++index)
+                {
+                    values.push_back(0.05 * static_cast<double>(index));
+                    validity.push_back(index == 1 ? 0 : 1);
+                }
+                series.values =
+                    std::make_shared<const std::vector<double>>(
+                        std::move(values));
+                series.validity =
+                    std::make_shared<const std::vector<unsigned char>>(
+                        std::move(validity));
+                series.unit = "unitless";
+                artifact->analysis.annualSeries =
+                    std::make_shared<const std::vector<
+                        earthscience::ScienceAnnualSeries>>(
+                            std::initializer_list<
+                                earthscience::ScienceAnnualSeries>{series});
+            }
             artifact->analysis.regionalChange.baselineYear = years.front();
             artifact->analysis.regionalChange.comparisonYear = years.back();
             if (includeRegionalSummary)
             {
+                artifact->analysis.regionalChange.metric =
+                    lastQuery.analysis.metrics.empty()
+                        ? earthscience::ScienceMetric::CosineDistance
+                        : lastQuery.analysis.metrics.front();
                 artifact->analysis.regionalChange.totalCellCount = 4;
                 artifact->analysis.regionalChange.coverageFraction = 0.75;
                 artifact->analysis.regionalChange.validOverlapCount = 3;
@@ -360,6 +393,20 @@ namespace
                 artifact->analysis.regionalChange.bounds =
                     {11.0, 21.0, 31.0, 41.0};
                 artifact->analysis.regionalChange.actualResolutionMeters = 25.0;
+                artifact->analysis.regionalChange.quantiles =
+                    std::make_shared<const std::vector<
+                        earthscience::ScienceQuantileResult>>(
+                            std::initializer_list<
+                                earthscience::ScienceQuantileResult>{
+                                {0.50, 0.20}, {0.90, 0.35}});
+                artifact->analysis.regionalChange.hotspotQuantile = 0.90;
+                artifact->analysis.regionalChange.hotspotThreshold = 0.35;
+                artifact->analysis.regionalChange.hotspotMask =
+                    std::make_shared<const std::vector<unsigned char>>(
+                        std::initializer_list<unsigned char>{0, 0, 1, 0});
+                artifact->analysis.regionalChange.hotspotIndices =
+                    std::make_shared<const std::vector<std::uint64_t>>(
+                        std::initializer_list<std::uint64_t>{2});
             }
             artifact->analysis.scalarChangeRaster.bounds =
                 {12.0, 22.0, 32.0, 42.0};
@@ -367,6 +414,46 @@ namespace
             artifact->analysis.scalarChangeRaster.validCellCount = 2;
             artifact->analysis.scalarChangeRaster.noDataCellCount = 2;
             artifact->analysis.scalarChangeRaster.coverageFraction = 0.5;
+            if (lastQuery.analysis.enablePca)
+            {
+                artifact->analysis.pca.inputComponentCount = 64;
+                artifact->analysis.pca.componentCount = 3;
+                artifact->analysis.pca.eigenvalues =
+                    std::make_shared<const std::vector<double>>(
+                        std::initializer_list<double>{4.0, 2.0, 1.0});
+                artifact->analysis.pca.explainedVarianceRatios =
+                    std::make_shared<const std::vector<double>>(
+                        std::initializer_list<double>{0.50, 0.25, 0.125});
+                artifact->analysis.pca.components =
+                    std::make_shared<const std::vector<float>>(192, 0.1f);
+                artifact->analysis.pca.scores =
+                    std::make_shared<const std::vector<float>>(12, 0.2f);
+            }
+            if (lastQuery.analysis.enableClustering)
+            {
+                const int count = lastQuery.analysis.clusterCount;
+                artifact->analysis.clusters.metric =
+                    earthscience::ScienceMetric::CosineDistance;
+                artifact->analysis.clusters.clusterCount = count;
+                artifact->analysis.clusters.populations =
+                    std::make_shared<const std::vector<std::uint64_t>>(
+                        static_cast<std::size_t>(count), 3);
+                artifact->analysis.clusters.concentrations =
+                    std::make_shared<const std::vector<double>>(
+                        static_cast<std::size_t>(count), 0.75);
+                artifact->analysis.clusters.assignments =
+                    std::make_shared<const std::vector<int>>(12, 0);
+                artifact->analysis.clusters.centroids =
+                    std::make_shared<const std::vector<float>>(
+                        static_cast<std::size_t>(count) * 64, 0.1f);
+                artifact->analysis.clusters.converged = true;
+                artifact->analysis.clusters.iterations = 7;
+            }
+            if (!preview)
+                artifact->analysis.interpretation =
+                    std::make_shared<const std::vector<std::string>>(
+                        std::initializer_list<std::string>{
+                            "Larger values indicate stronger latent change."});
             artifact->analysis.limitations =
                 std::make_shared<const std::vector<std::string>>(
                     std::initializer_list<std::string>{
@@ -587,6 +674,18 @@ namespace
                     start.parametersJson.find("research_id") !=
                         std::string::npos,
                 "start schema omitted compatible preview or 64D research options");
+        const earthai::Tool& changeTool = findTool(tools, "run_change_analysis");
+        picojson::value changeSchema;
+        require(picojson::parse(changeSchema, changeTool.parametersJson).empty() &&
+                    changeTool.parametersJson.find("metrics") !=
+                        std::string::npos &&
+                    changeTool.parametersJson.find("include_pca") !=
+                        std::string::npos &&
+                    changeTool.parametersJson.find("cluster_count") !=
+                        std::string::npos &&
+                    changeTool.parametersJson.find(
+                        "confirmed_large_request") != std::string::npos,
+                "change-analysis schema omitted validated analysis methods");
         layer->setVisible(false);
         layers.setEnabled("alphaearth", false);
         require(tools.dispatch("start_science_research", emptyArgs(), result),
@@ -872,6 +971,16 @@ namespace
                 "point-series summary did not use embedding coverage and resolution");
         require(seriesArtifact.get("primary_metrics").is<picojson::array>(),
                 "point-series primary metrics were not bounded entries");
+        require(seriesArtifact.contains("annual_series") &&
+                    seriesArtifact.get("annual_series").
+                        get<picojson::array>().size() == 1 &&
+                    seriesArtifact.get("annual_series").
+                        get<picojson::array>().front().get("points").
+                        get<picojson::array>().size() == 4 &&
+                    !seriesArtifact.get("annual_series").
+                        get<picojson::array>().front().get("points").
+                        get<picojson::array>()[1].get("valid").get<bool>(),
+                "point-series compact annual values or NoData state are absent");
         const picojson::array& seriesMetrics =
             seriesArtifact.get("primary_metrics").get<picojson::array>();
         require(seriesMetrics.size() == 3 && seriesMetrics.size() <= 32 &&
@@ -947,8 +1056,27 @@ namespace
                     regionalArtifact.contains("source") &&
                     regionalArtifact.contains("processing") &&
                     regionalArtifact.contains("warnings") &&
-                    regionalArtifact.contains("limitations"),
+                    regionalArtifact.contains("interpretations") &&
+                    regionalArtifact.contains("limitations") &&
+                    regionalArtifact.contains("pca_summary") &&
+                    regionalArtifact.contains("cluster_summary"),
                 "analysis artifact omitted required compact evidence");
+        require(regionalArtifact.get("regional_statistics").contains("metric") &&
+                    regionalArtifact.get("regional_statistics").contains(
+                        "metric_range") &&
+                    regionalArtifact.get("regional_statistics").get(
+                        "quantiles").get<picojson::array>().size() == 2 &&
+                    regionalArtifact.get("regional_statistics").get(
+                        "hotspot_threshold").get<double>() == 0.35,
+                "regional result omitted metric semantics or relative hotspots");
+        require(regionalArtifact.get("pca_summary").get(
+                        "explained_variance_ratios").get<picojson::array>().size() ==
+                    3 &&
+                    regionalArtifact.get("cluster_summary").get(
+                        "populations").get<picojson::array>().size() == 3 &&
+                    regionalArtifact.get("cluster_summary").get(
+                        "converged").get<bool>(),
+                "latent structure summaries are absent or unbounded");
         const picojson::value& regionalCoverage =
             regionalArtifact.get("coverage");
         require(regionalCoverage.contains("basis") &&
@@ -967,7 +1095,18 @@ namespace
                     regionalJson.find("change_values") == std::string::npos &&
                     regionalJson.find("rgba") == std::string::npos &&
                     regionalJson.find("\"A01\"") == std::string::npos &&
-                    regionalJson.find("\"A64\"") == std::string::npos,
+                    regionalJson.find("\"A64\"") == std::string::npos &&
+                    regionalJson.find("\"hotspot_mask\"") ==
+                        std::string::npos &&
+                    regionalJson.find("\"hotspot_indices\"") ==
+                        std::string::npos &&
+                    regionalJson.find("\"components\"") ==
+                        std::string::npos &&
+                    regionalJson.find("\"scores\"") == std::string::npos &&
+                    regionalJson.find("\"assignments\"") ==
+                        std::string::npos &&
+                    regionalJson.find("\"centroids\"") ==
+                        std::string::npos && regionalJson.size() < 65536,
                 "analysis artifact leaked raw scientific arrays");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
@@ -1130,10 +1269,87 @@ namespace
                     earthscience::ScienceAnalysisKind::RegionalChange &&
                     providerPointer->lastQuery.time.explicitYears ==
                         std::vector<int>({2019, 2022}) &&
+                    providerPointer->lastQuery.analysis.metrics ==
+                        std::vector<earthscience::ScienceMetric>{
+                            earthscience::ScienceMetric::CosineDistance} &&
+                    !providerPointer->lastQuery.analysis.enablePca &&
+                    !providerPointer->lastQuery.analysis.enableClustering &&
+                    result.get("state").get<std::string>() == "queued" &&
                     !layer->isVisible() && layers.find("alphaearth") &&
                     !layers.find("alphaearth")->enabled,
-                "change analysis did not submit a hidden regional query");
+                "default change analysis is no longer one hidden cosine-distance job");
         requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        const std::uint64_t beforeAdvanced = providerPointer->generation();
+        picojson::array requestedMetrics;
+        requestedMetrics.push_back(picojson::value("cosine-distance"));
+        requestedMetrics.push_back(picojson::value("cosine-similarity"));
+        requestedMetrics.push_back(picojson::value("angular-distance"));
+        requestedMetrics.push_back(picojson::value("euclidean-distance"));
+        requestedMetrics.push_back(picojson::value("dot-product"));
+        changeArgs["metrics"] = picojson::value(requestedMetrics);
+        changeArgs["include_pca"] = picojson::value(true);
+        changeArgs["cluster_count"] = picojson::value(4.0);
+        changeArgs["grid_size"] = picojson::value(128.0);
+        require(tools.dispatch(
+                    "run_change_analysis", picojson::value(changeArgs), result) &&
+                    !result.contains("error") &&
+                    providerPointer->generation() == beforeAdvanced + 1 &&
+                    providerPointer->lastQuery.analysis.metrics ==
+                        std::vector<earthscience::ScienceMetric>{
+                            earthscience::ScienceMetric::CosineDistance,
+                            earthscience::ScienceMetric::CosineSimilarity,
+                            earthscience::ScienceMetric::AngularDistance,
+                            earthscience::ScienceMetric::EuclideanDistance,
+                            earthscience::ScienceMetric::DotProduct} &&
+                    providerPointer->lastQuery.analysis.enablePca &&
+                    providerPointer->lastQuery.analysis.enableClustering &&
+                    providerPointer->lastQuery.analysis.clusterCount == 4,
+                "advanced change methods were not validated and submitted exactly");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        const std::uint64_t beforeInvalidChange = providerPointer->generation();
+        picojson::array invalidMetrics;
+        invalidMetrics.push_back(picojson::value("land-cover-change"));
+        changeArgs["metrics"] = picojson::value(invalidMetrics);
+        require(tools.dispatch(
+                    "run_change_analysis", picojson::value(changeArgs), result) &&
+                    result.contains("error") &&
+                    providerPointer->generation() == beforeInvalidChange,
+                "unknown metric reached the provider");
+        invalidMetrics.clear();
+        invalidMetrics.push_back(picojson::value("cosine-distance"));
+        invalidMetrics.push_back(picojson::value("cosine-distance"));
+        changeArgs["metrics"] = picojson::value(invalidMetrics);
+        require(tools.dispatch(
+                    "run_change_analysis", picojson::value(changeArgs), result) &&
+                    result.contains("error") &&
+                    providerPointer->generation() == beforeInvalidChange,
+                "duplicate metric reached the provider");
+        changeArgs["metrics"] = picojson::value(requestedMetrics);
+        changeArgs["cluster_count"] = picojson::value(9.0);
+        require(tools.dispatch(
+                    "run_change_analysis", picojson::value(changeArgs), result) &&
+                    result.contains("error") &&
+                    providerPointer->generation() == beforeInvalidChange,
+                "invalid cluster count reached the provider");
+        changeArgs["cluster_count"] = picojson::value(4.0);
+        changeArgs["grid_size"] = picojson::value(256.0);
+        require(tools.dispatch(
+                    "run_change_analysis", picojson::value(changeArgs), result) &&
+                    result.contains("error") &&
+                    providerPointer->generation() == beforeInvalidChange,
+                "large request bypassed explicit confirmation");
+        changeArgs["source_id"] = picojson::value("sentinel-2-l2a");
+        changeArgs["grid_size"] = picojson::value(128.0);
+        const std::uint64_t sentinelBeforeInvalidChange =
+            sentinelProviderPointer->generation();
+        require(tools.dispatch(
+                    "run_change_analysis", picojson::value(changeArgs), result) &&
+                    result.contains("error") &&
+                    sentinelProviderPointer->generation() ==
+                        sentinelBeforeInvalidChange,
+                "non-64D source accepted latent PCA or clustering");
 
         const std::uint64_t failedJob = service.snapshot().jobId;
         providerPointer->publishFailure();

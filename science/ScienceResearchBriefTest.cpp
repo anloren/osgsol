@@ -55,8 +55,13 @@ namespace
             metric.value = 0.12;
             metric.unit = "unitless";
             value.primaryMetrics.push_back(metric);
+            value.interpretations = {
+                "PCA summarizes result-local variance in latent space.",
+                "Spherical clusters summarize local embedding structure."};
             value.limitations = {
-                "Latent components are not named physical variables"};
+                "Latent components are not named physical variables",
+                "PCA axes do not create semantic components.",
+                "Clusters are structural groups, not validated land-cover classes."};
         }
         else if (sourceId == "sentinel-2-l2a")
         {
@@ -164,7 +169,7 @@ int main()
             "three-source brief build failed");
     require(brief.state == earthscience::ScienceResearchState::Ready &&
                 brief.sources.size() == 3 && brief.citations.size() == 3 &&
-                brief.observations.size() == 3 &&
+                brief.observations.size() == 5 &&
                 !brief.inferences.empty() && !brief.limitations.empty(),
             "three-source brief sections are incomplete");
     requireCitationsCovered(brief);
@@ -186,6 +191,14 @@ int main()
     require(brief.markdown.find("latent representation") != std::string::npos &&
                 brief.markdown.find("named physical variable") !=
                     std::string::npos &&
+                brief.markdown.find("named land-cover variable") !=
+                    std::string::npos &&
+                brief.markdown.find("result-local variance") !=
+                    std::string::npos &&
+                brief.markdown.find("do not create semantic components") !=
+                    std::string::npos &&
+                brief.markdown.find("not validated land-cover classes") !=
+                    std::string::npos &&
                 brief.markdown.find("cloud-free composite") !=
                     std::string::npos &&
                 brief.markdown.find("selected acquisition") !=
@@ -197,7 +210,8 @@ int main()
                     std::string::npos,
             "scientific source semantics are not explicit");
     require(brief.markdown.find("vegetation change") == std::string::npos &&
-                brief.markdown.find("land-cover class") == std::string::npos &&
+                brief.markdown.find("validated as land-cover") ==
+                    std::string::npos &&
                 brief.markdown.find("cloud-free imagery") == std::string::npos &&
                 brief.markdown.find("terrain elevation change") ==
                     std::string::npos,

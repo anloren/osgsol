@@ -407,11 +407,11 @@ const char* simpleModeLabel(SciencePanelMode mode)
     switch (mode)
     {
     case SciencePanelMode::Preview:
-        return u8"查看某一年的空间特征图";
+        return u8"单个年份：查看空间特征图";
     case SciencePanelMode::PointSeries:
-        return u8"比较当前位置的历年变化";
+        return u8"固定位置：比较历年变化";
     case SciencePanelMode::RegionalChange:
-        return u8"比较当前视野的年度变化";
+        return u8"当前视野：比较两个年份";
     }
     return u8"未知 / Unknown";
 }
@@ -794,15 +794,15 @@ const char* sciencePanelMetricLabel(earthscience::ScienceMetric metric)
     switch (metric)
     {
     case Metric::CosineDistance:
-        return u8"方向变化（归一化点积） / Direction change";
+        return u8"潜在方向变化（余弦距离） / Cosine distance";
     case Metric::EuclideanDistance:
-        return u8"向量位移（L2） / Vector displacement";
+        return u8"潜在向量位移（L2） / Euclidean distance";
     case Metric::AngularDistance:
-        return u8"方向夹角 / Angular distance";
+        return u8"潜在方向夹角（弧度） / Angular distance";
     case Metric::CosineSimilarity:
-        return u8"方向相似度 / Direction similarity";
+        return u8"潜在方向相似度 / Cosine similarity";
     case Metric::DotProduct:
-        return u8"点积 / Dot product";
+        return u8"原始向量点积（高级） / Dot product";
     }
     return u8"未知度量 / Unknown metric";
 }
@@ -1114,7 +1114,7 @@ const char* scienceHelpTopicTitle(ScienceHelpTopic topic)
     case ScienceHelpTopic::Pca: return u8"PCA 与右侧结果";
     case ScienceHelpTopic::Clusters: return u8"无标签聚类是什么？";
     case ScienceHelpTopic::EmbeddingMetrics: return u8"变化方法有什么区别？";
-    case ScienceHelpTopic::Hotspots: return u8"相对热点是什么？";
+    case ScienceHelpTopic::Hotspots: return u8"相对高值是什么？";
     case ScienceHelpTopic::ScientificLimits: return u8"科学解释边界";
     case ScienceHelpTopic::Provenance: return u8"方法、来源与导出";
     }
@@ -1162,13 +1162,14 @@ const char* scienceHelpTopicBody(ScienceHelpTopic topic)
         return u8"聚类只适用于区域年度变化。它产生可复现的"
                u8"无标签数学分组，不是土地覆盖类别。";
     case ScienceHelpTopic::EmbeddingMetrics:
-        return u8"论文的无监督变化方法先归一化 64 维向量，再比较点积。"
-               u8"方向变化沿用这一思路；L2 位移提供另一种读数刻度。由于 "
-               u8"AlphaEarth 向量接近单位球面，两者高度相关，不能当成"
-               u8"两份独立证据。";
+        return u8"余弦距离 [0,2] 与方向夹角 [0,π] 越大，潜在方向变化越强；"
+               u8"余弦相似度 [-1,1] 越大则越相似。L2 是向量位移，点积还受"
+               u8"向量长度影响。它们都是 64 维表征空间的数学读数，不是米、"
+               u8"温度、植被或土地覆盖类别；相关方法不能当成多份独立证据。";
     case ScienceHelpTopic::Hotspots:
-        return u8"热点是在本次视野内按变化值排序后的最高一部分，例如 P90 "
-               u8"表示最高约 10%。它是相对筛选，不是物理阈值，也不说明原因。";
+        return u8"相对高值是在本次视野内按所选数学读数排序后的最高一部分，"
+               u8"例如 P90 表示最高约 10%。选择相似度或点积时，高值不等于"
+               u8"变化更强；它始终只是相对筛选，不是物理阈值，也不说明原因。";
     case ScienceHelpTopic::ScientificLimits:
         return u8"嵌入关系不能单独证明建设、砍伐、洪水、升温或其他物理"
                u8"原因；需要与可解释数据源联合验证。";
@@ -1482,7 +1483,7 @@ std::vector<std::string> describeScienceAnalysisHighlights(
         std::ostringstream hotspot;
         const std::size_t hotspotCount = summary.hotspotIndices
             ? summary.hotspotIndices->size() : 0;
-        hotspot << u8"相对热点 / Hotspots · P"
+        hotspot << u8"相对高值 / High values · P"
                 << static_cast<int>(summary.hotspotQuantile * 100.0 + 0.5)
                 << u8" 阈值 " << std::fixed << std::setprecision(5)
                 << summary.hotspotThreshold << u8" · " << hotspotCount
@@ -1746,8 +1747,6 @@ void ScienceEarthPanel::drawOperations(
             ImGui::EndCombo();
         }
     }
-    drawDisabledWrapped(sciencePanelModeDescription(activeMode, source.id));
-
     const SciencePanelModeCapabilities capabilities =
         sciencePanelModeCapabilities(source, activeMode);
 
@@ -1798,12 +1797,9 @@ void ScienceEarthPanel::drawOperations(
             }
             ImGui::EndCombo();
         }
-        drawDisabledWrapped(u8"截至 UTC 今日；选择不会移动相机");
     }
-    else if (source.id == "copernicus-dem-glo-30")
-        drawDisabledWrapped(
-            u8"静态 2021 公共发布 · 无年份控件 · 选择不会移动相机");
-    else if (capabilities.showsSingleYear)
+    else if (source.id != "copernicus-dem-glo-30" &&
+             capabilities.showsSingleYear)
         drawDiscreteYear("preview", u8"年份 / Year", &_state.lastYear,
                          source.firstYear, source.lastYear);
     else if (capabilities.showsYearRange)
@@ -1862,8 +1858,6 @@ void ScienceEarthPanel::drawOperations(
                 }
                 ImGui::EndCombo();
             }
-            drawDisabledWrapped(
-                sciencePanelMetricDescription(_state.pointMetricChoice));
         }
         else
         {
@@ -1875,7 +1869,10 @@ void ScienceEarthPanel::drawOperations(
             {
                 const earthscience::ScienceMetric metrics[] = {
                     earthscience::ScienceMetric::CosineDistance,
+                    earthscience::ScienceMetric::AngularDistance,
                     earthscience::ScienceMetric::EuclideanDistance,
+                    earthscience::ScienceMetric::CosineSimilarity,
+                    earthscience::ScienceMetric::DotProduct,
                 };
                 for (earthscience::ScienceMetric metric : metrics)
                 {
@@ -1887,14 +1884,7 @@ void ScienceEarthPanel::drawOperations(
                 }
                 ImGui::EndCombo();
             }
-            const SciencePanelMetricChoice descriptionChoice =
-                _state.regionalMetric ==
-                        earthscience::ScienceMetric::EuclideanDistance
-                    ? SciencePanelMetricChoice::VectorDisplacement
-                    : SciencePanelMetricChoice::DirectionChange;
-            drawDisabledWrapped(
-                sciencePanelMetricDescription(descriptionChoice));
-            ImGui::TextWrapped(u8"相对热点 / Relative hotspots");
+            ImGui::TextWrapped(u8"相对高值 / Relative high values");
             drawHelpButton("hotspot_quantile", ScienceHelpTopic::Hotspots);
             ImGui::SameLine();
             const double quantiles[] = {0.90, 0.95, 0.99};
@@ -1956,11 +1946,6 @@ void ScienceEarthPanel::drawOperations(
                 if (_state.clusterCount >= 8) ImGui::EndDisabled();
                 _state.clusterCount = std::clamp(_state.clusterCount, 2, 8);
             }
-            if ((_state.enablePca && capabilities.supportsPca) ||
-                (_state.enableClustering &&
-                 capabilities.supportsClustering))
-                drawDisabledWrapped(
-                    u8"本次设置将在运行后显示于右侧“结构分析”。");
         }
     }
 
@@ -2082,8 +2067,6 @@ void ScienceEarthPanel::drawOperations(
             activeMode, _state, source.id);
         drawColoredWrapped(ImVec4(0.35f, 0.78f, 1.0f, 1.0f),
                            selection.c_str());
-        drawDisabledWrapped(
-            u8"修改选项只更新设置；点击下方蓝色按钮才开始读取数据。");
     }
     if (sourceUnavailable)
         drawColoredWrapped(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
@@ -2278,9 +2261,8 @@ void ScienceEarthPanel::drawResults(
                     : ScienceHelpTopic::PreviewColors,
                        false);
 
-        drawDisabledWrapped(u8"科学解释边界");
-        drawHelpButton(
-            "scientific_limits",
+        drawLabeledHelpButton(
+            "scientific_limits", u8"? 科学解释边界 / Limits",
             artifact->query.sourceId == "sentinel-2-l2a"
                 ? ScienceHelpTopic::Sentinel2Limits
                 : artifact->query.sourceId == "copernicus-dem-glo-30"

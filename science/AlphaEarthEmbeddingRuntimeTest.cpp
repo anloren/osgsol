@@ -485,7 +485,12 @@ namespace
                     earthscience::ScienceAnalysisKind::PointSeries,
                 "point-series analysis was not requested after decoding");
 
-        const std::uint64_t regionGeneration = runtime.submit(regionQuery());
+        earthscience::GeoTemporalQuery regionalQuery = regionQuery();
+        regionalQuery.analysis.enablePca = true;
+        regionalQuery.analysis.pcaComponents = 3;
+        regionalQuery.analysis.enableClustering = true;
+        regionalQuery.analysis.clusterCount = 3;
+        const std::uint64_t regionGeneration = runtime.submit(regionalQuery);
         const earthscience::ScienceProviderSnapshot region =
             waitForTerminal(runtime, regionGeneration);
         require(region.state == earthscience::ScienceJobState::Ready &&
@@ -525,6 +530,23 @@ namespace
                     region.artifact->analysis.scalarChangeRaster.groundGrid ==
                         regionEmbedding.groundGrid,
                 "regional analysis lost the actual shared grid");
+        require(region.artifact->analysis.pca.componentCount == 3 &&
+                    region.artifact->analysis.pca.explainedVarianceRatios &&
+                    region.artifact->analysis.pca.explainedVarianceRatios->size() ==
+                        3 &&
+                    region.artifact->analysis.clusters.clusterCount == 3 &&
+                    region.artifact->analysis.clusters.populations &&
+                    region.artifact->analysis.clusters.populations->size() == 3,
+                "regional PCA or clustering options did not produce results");
+        require(region.artifact->analysis.interpretation &&
+                    contains(*region.artifact->analysis.interpretation,
+                             "local mathematical structure") &&
+                    region.artifact->analysis.limitations &&
+                    contains(*region.artifact->analysis.limitations,
+                             "no assigned physical labels") &&
+                    contains(*region.artifact->analysis.limitations,
+                             "not validated land-cover classes"),
+                "regional latent structure methods lost scientific guardrails");
     }
 
     void testCancellationPublishesNoPartialReady()

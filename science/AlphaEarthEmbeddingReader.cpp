@@ -36,6 +36,15 @@ namespace
     constexpr int MAX_YEARS = 9;
     constexpr const char* SOURCE_PREFIX = "https://data.source.coop/";
 
+    void appendNarrative(
+        const std::shared_ptr<const std::vector<std::string>>& source,
+        std::vector<std::string>& destination)
+    {
+        if (!source) return;
+        destination.insert(
+            destination.end(), source->begin(), source->end());
+    }
+
     struct SqliteCloser
     {
         void operator()(sqlite3* database) const
@@ -1493,6 +1502,18 @@ bool readAlphaEarthArtifact(
         if (!regional) return false;
         ScienceAnalysisPayload merged = *regional;
         merged.annualSeries = annual.annualSeries;
+        std::vector<std::string> interpretations;
+        std::vector<std::string> limitations;
+        appendNarrative(regional->interpretation, interpretations);
+        appendNarrative(annual.interpretation, interpretations);
+        appendNarrative(regional->limitations, limitations);
+        appendNarrative(annual.limitations, limitations);
+        merged.interpretation =
+            std::make_shared<const std::vector<std::string>>(
+                std::move(interpretations));
+        merged.limitations =
+            std::make_shared<const std::vector<std::string>>(
+                std::move(limitations));
         analysis = std::make_shared<const ScienceAnalysisPayload>(
             std::move(merged));
         retained.clear();
@@ -1517,6 +1538,47 @@ bool readAlphaEarthArtifact(
     else
         embedding = combineSlices(retained, error);
     if (!embedding) return false;
+
+    if (query.analysis.kind == ScienceAnalysisKind::RegionalChange &&
+        analysis && (query.analysis.enablePca ||
+                     query.analysis.enableClustering))
+    {
+        ScienceAnalysisPayload merged = *analysis;
+        std::vector<std::string> interpretations;
+        std::vector<std::string> limitations;
+        appendNarrative(merged.interpretation, interpretations);
+        appendNarrative(merged.limitations, limitations);
+        if (query.analysis.enablePca)
+        {
+            ScienceAnalysisPayload pca;
+            if (!ScienceAnalysisEngine::computeLocalPca(
+                    *embedding, query.analysis.pcaComponents, pca,
+                    callbacks.cancelled, error))
+                return false;
+            merged.pca = std::move(pca.pca);
+            appendNarrative(pca.interpretation, interpretations);
+            appendNarrative(pca.limitations, limitations);
+        }
+        if (query.analysis.enableClustering)
+        {
+            ScienceAnalysisPayload clusters;
+            if (!ScienceAnalysisEngine::computeSphericalClusters(
+                    *embedding, query.analysis.clusterCount, clusters,
+                    callbacks.cancelled, error))
+                return false;
+            merged.clusters = std::move(clusters.clusters);
+            appendNarrative(clusters.interpretation, interpretations);
+            appendNarrative(clusters.limitations, limitations);
+        }
+        merged.interpretation =
+            std::make_shared<const std::vector<std::string>>(
+                std::move(interpretations));
+        merged.limitations =
+            std::make_shared<const std::vector<std::string>>(
+                std::move(limitations));
+        analysis = std::make_shared<const ScienceAnalysisPayload>(
+            std::move(merged));
+    }
 
     if (query.analysis.kind == ScienceAnalysisKind::PointSeries)
     {

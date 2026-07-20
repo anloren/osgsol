@@ -269,7 +269,7 @@ int main()
           u8"先显示定位伪彩，再分析历年变化");
     CHECK(std::string(sciencePanelModeLabel(
               SciencePanelMode::PointSeries, alphaSource.id)) ==
-          u8"比较当前位置的历年变化");
+          u8"固定位置：比较历年变化");
     const std::string pointExplanation = sciencePanelModeDescription(
         SciencePanelMode::PointSeries, alphaSource.id);
     CHECK(pointExplanation.find(u8"64 维") != std::string::npos);
@@ -291,6 +291,22 @@ int main()
     CHECK(std::string(sciencePanelMetricLabel(
               earthscience::ScienceMetric::CosineDistance)).find(
                   u8"方向变化") != std::string::npos);
+    const earthscience::ScienceMetric supportedMetrics[] = {
+        earthscience::ScienceMetric::CosineDistance,
+        earthscience::ScienceMetric::AngularDistance,
+        earthscience::ScienceMetric::EuclideanDistance,
+        earthscience::ScienceMetric::CosineSimilarity,
+        earthscience::ScienceMetric::DotProduct,
+    };
+    for (earthscience::ScienceMetric metric : supportedMetrics)
+    {
+        SciencePanelState selected;
+        selected.regionalMetric = metric;
+        CHECK(sciencePanelSelectedMetrics(
+                  SciencePanelMode::RegionalChange, selected) ==
+              std::vector<earthscience::ScienceMetric>({metric}));
+        CHECK(std::string(sciencePanelMetricLabel(metric)).size() > 8);
+    }
     CHECK(std::string(sciencePanelMetricDescription(
               SciencePanelMetricChoice::DirectionAndDisplacement)).find(
                   u8"独立证据") != std::string::npos);
@@ -569,6 +585,8 @@ int main()
         ScienceHelpTopic::CopernicusDemLimits,
         ScienceHelpTopic::Pca,
         ScienceHelpTopic::Clusters,
+        ScienceHelpTopic::EmbeddingMetrics,
+        ScienceHelpTopic::Hotspots,
         ScienceHelpTopic::ScientificLimits,
         ScienceHelpTopic::Provenance,
     };
@@ -579,6 +597,15 @@ int main()
     }
     CHECK(std::string(scienceHelpTopicBody(
               ScienceHelpTopic::Pca)).find(u8"局部数学") !=
+          std::string::npos);
+    const std::string metricHelp = scienceHelpTopicBody(
+        ScienceHelpTopic::EmbeddingMetrics);
+    CHECK(metricHelp.find("[0,2]") != std::string::npos);
+    CHECK(metricHelp.find("[-1,1]") != std::string::npos);
+    CHECK(metricHelp.find("[0,π]") != std::string::npos);
+    CHECK(metricHelp.find(u8"不是米") != std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::Hotspots)).find(u8"相似度") !=
           std::string::npos);
     CHECK(std::string(scienceHelpTopicBody(
               ScienceHelpTopic::PreviewColors)).find(u8"不是自然色") !=
