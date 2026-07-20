@@ -70,6 +70,18 @@ IF(APPLE AND OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
 ENDIF()
 
 IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_TerrainScienceOverlayMath
+        terrain_science_overlay_math_test.cpp
+        terrain_science_overlay_math.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_TerrainScienceOverlayMath PRIVATE cxx_std_14)
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_TerrainScienceOverlayMath PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    ADD_TEST(NAME osgSol_Test_TerrainScienceOverlayMath
+             COMMAND $<TARGET_FILE:osgSol_Test_TerrainScienceOverlayMath>)
+    SET_TESTS_PROPERTIES(osgSol_Test_TerrainScienceOverlayMath PROPERTIES
+        LABELS "offline;scienceearth;terrain"
+        TIMEOUT 30)
+
     ADD_EXECUTABLE(osgSol_Test_ScienceEarthPanel
         science_earth_panel_test.cpp
         science_earth_panel.cpp
