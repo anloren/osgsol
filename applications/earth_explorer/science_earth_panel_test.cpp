@@ -1092,14 +1092,36 @@ int main()
     CHECK(std::string(promptExamples.front().prompt) ==
           u8"研究香港当前视野 2017—2025 年的地表表征变化：先显示 AlphaEarth 伪彩，再找变化热点，用 Sentinel-2 影像和 Copernicus DEM 补充背景，最后给出带来源和局限的简报。");
     std::set<std::string> uniquePrompts;
+    std::size_t locationPresetCount = 0;
+    std::size_t currentViewPresetCount = 0;
     for (const earthai::ScienceEarthPromptExample& example : promptExamples)
     {
         CHECK(example.title && example.title[0] != '\0');
         CHECK(example.sources && example.sources[0] != '\0');
+        CHECK(example.parameters && example.parameters[0] != '\0');
         CHECK(example.prompt && example.prompt[0] != '\0');
+        CHECK(example.locationName && example.locationName[0] != '\0');
+        if (example.navigateToLocation)
+        {
+            ++locationPresetCount;
+            CHECK(example.latitudeDeg >= -90.0 && example.latitudeDeg <= 90.0);
+            CHECK(example.longitudeDeg >= -180.0 && example.longitudeDeg <= 180.0);
+            CHECK(example.altitudeKm >= 10.0 && example.altitudeKm <= 200.0);
+        }
+        else
+        {
+            ++currentViewPresetCount;
+            CHECK(std::string(example.locationName) == u8"当前视野");
+        }
         uniquePrompts.insert(example.prompt);
     }
     CHECK(uniquePrompts.size() == promptExamples.size());
+    CHECK(locationPresetCount == 5);
+    CHECK(currentViewPresetCount == 5);
+    CHECK(promptExamples.front().navigateToLocation);
+    CHECK(std::string(promptExamples.front().locationName) == u8"香港");
+    CHECK(std::fabs(promptExamples.front().latitudeDeg - 22.3193) < 0.0001);
+    CHECK(std::fabs(promptExamples.front().longitudeDeg - 114.1694) < 0.0001);
     char insertedPrompt[1024] = {};
     CHECK(earthai::insertPromptSuggestion(
         promptExamples[3].prompt, insertedPrompt, sizeof(insertedPrompt)));

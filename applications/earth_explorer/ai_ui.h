@@ -3,13 +3,15 @@
 #include "ai_chat.h"
 #include "ai_cards.h"
 #include <picojson.h>
+#include <string>
 
 namespace earthai { class MediaManager; }
 namespace osgVerse { class EarthManipulator; }
 namespace earthui { class CardStack; }
 
-// 底部悬浮聊天条：输入框 + 历史面板（历史在输入行上方，同一窗口内）+ 右上角卡片堆叠
-// (卡片存储/绘制委托给 AICardPanel，见 ai_cards.h)。
+// 底部悬浮 AI 操作条：默认只显示紧凑输入与明确发送按钮；历史按需展开，ScienceEarth
+// 模板使用独立弹层，避免二者把地图可视区向上遮住。右上角卡片存储/绘制委托给
+// AICardPanel（见 ai_cards.h）。
 // core 为 null 时画禁用态输入框（提示设置 EARTH_AI_KEY），不画历史/按钮——对无 AI 场景零干扰。
 class AIChatUI
 {
@@ -32,9 +34,9 @@ public:
 
 private:
     char _inputBuf[1024];      // InputText 缓冲区，提交时转 std::string 再清空
-    bool _historyCollapsed;    // 历史面板折叠状态（默认展开）
-    bool _scienceExamplesOpen; // ScienceEarth 示例仅填入输入框，不自动提交
+    bool _historyCollapsed;    // 历史面板折叠状态（默认折叠，地图优先）
     size_t _lastEntryCount;    // 上次绘制时的历史条数，用于检测新增条目并自动滚动到底部
+    std::string _preparedTemplateStatus; // 已准备的地点/参数摘要，发送前保持可见
     AICardPanel _cards;
 };
 #endif

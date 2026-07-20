@@ -211,8 +211,12 @@ int main()
     aiBuffer << aiInput.rdbuf();
     const std::string aiUi = aiBuffer.str();
     CHECK(aiInput.good() || aiInput.eof());
+    CHECK(aiUi.find("_historyCollapsed(true)") != std::string::npos);
+    CHECK(aiUi.find(u8"AI 地球助手") != std::string::npos);
+    CHECK(aiUi.find(u8"发送") != std::string::npos);
+    CHECK(aiUi.find(u8"已准备：") != std::string::npos);
     const size_t galleryBegin = aiUi.find(
-        "// ---- ScienceEarth 提示词示例：只填入，不提交 ----");
+        "// ---- ScienceEarth 分析模板：准备视角和参数，不自动提交 ----");
     const size_t galleryEnd = aiUi.find("// ---- 输入行 ----", galleryBegin);
     CHECK(galleryBegin != std::string::npos &&
           galleryEnd != std::string::npos && galleryBegin < galleryEnd);
@@ -220,8 +224,11 @@ int main()
         galleryBegin, galleryEnd - galleryBegin);
     CHECK(gallery.find("scienceEarthPromptExamples") != std::string::npos);
     CHECK(gallery.find("insertPromptSuggestion") != std::string::npos);
-    CHECK(gallery.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") !=
-          std::string::npos);
+    CHECK(gallery.find("ImGui::BeginPopup") != std::string::npos);
+    CHECK(gallery.find(u8"使用并定位") != std::string::npos);
+    CHECK(gallery.find("navigateToLocation") != std::string::npos);
+    CHECK(gallery.find("setByEye(") != std::string::npos);
+    CHECK(gallery.find("DegreesToRadians") != std::string::npos);
     CHECK(gallery.find(u8"不会自动运行") != std::string::npos);
     CHECK(gallery.find("submit(") == std::string::npos);
 

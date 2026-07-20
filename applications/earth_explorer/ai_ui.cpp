@@ -12,8 +12,7 @@
 #include <cstring>
 
 AIChatUI::AIChatUI()
-    : _historyCollapsed(false), _scienceExamplesOpen(false),
-      _lastEntryCount(0)
+    : _historyCollapsed(true), _lastEntryCount(0)
 {
     _inputBuf[0] = '\0';
 }
@@ -28,7 +27,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
                      earthui::CardStack& cardStack)
 {
     ImGuiIO& io = ImGui::GetIO();
-    float winWidth = (720.0f < io.DisplaySize.x * 0.6f) ? 720.0f : io.DisplaySize.x * 0.6f;
+    float winWidth = (680.0f < io.DisplaySize.x * 0.55f) ? 680.0f : io.DisplaySize.x * 0.55f;
 
     // 底部居中悬浮，锚点在窗口底边中点——不与左上角操作面板 / 右上角信息卡重叠。
     // 左侧操作面板（Earth Control）自适应宽度约 610px（含"透明度"滑块最长行），且默认展开时
@@ -50,10 +49,15 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
                             ImGuiCond_Always, ImVec2(0.5f, 1.0f));
     ImGui::SetNextWindowSize(ImVec2(winWidth, 0.0f), ImGuiCond_Always);
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.11f, 0.85f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.12f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.045f, 0.055f, 0.075f, 0.94f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.32f, 0.56f, 0.82f, 0.28f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.18f, 0.25f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.30f, 0.43f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.43f, 0.66f, 1.0f));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
@@ -67,22 +71,28 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
     {
         bool busy = core && core->busy();
 
-        // ---- 历史面板（在输入行上方；无内容或无 core 时不画）----
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.72f, 0.88f, 1.0f, 1.0f));
+        ImGui::TextUnformatted(u8"AI 地球助手");
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::TextDisabled(busy ? u8"正在执行…" : u8"就绪");
+
+        // ---- 历史抽屉（默认折叠；只有用户主动打开时占用地图空间）----
         if (core)
         {
             std::vector<earthai::ChatEntry> transcript = core->transcript();   // 每帧一次快照
             if (!transcript.empty())
             {
-                if (ImGui::SmallButton(_historyCollapsed ? u8"展开 v" : u8"收起 ^"))
+                if (ImGui::SmallButton(_historyCollapsed ? u8"历史" : u8"收起历史"))
                     _historyCollapsed = !_historyCollapsed;
                 ImGui::SameLine();
-                ImGui::TextDisabled(u8"对话历史（%d 条）", (int)transcript.size());
+                ImGui::TextDisabled(u8"%d 条", (int)transcript.size());
 
                 if (!_historyCollapsed)
                 {
-                    float maxH = io.DisplaySize.y * 0.3f;
-                    ImGui::BeginChild("##ai_history", ImVec2(winWidth - 24.0f, maxH), true,
-                                      ImGuiWindowFlags_HorizontalScrollbar);
+                    float maxH = std::min(360.0f, io.DisplaySize.y * 0.32f);
+                    ImGui::BeginChild("##ai_history", ImVec2(winWidth - 28.0f, maxH), true,
+                                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
                     for (size_t i = 0; i < transcript.size(); ++i)
                     {
                         const earthai::ChatEntry& e = transcript[i];
@@ -144,37 +154,50 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
             }
         }
 
-        // ---- ScienceEarth 提示词示例：只填入，不提交 ----
+        // ---- ScienceEarth 分析模板：准备视角和参数，不自动提交 ----
         if (core)
         {
-            if (ImGui::SmallButton(
-                    _scienceExamplesOpen
-                        ? u8"收起 ScienceEarth 示例"
-                        : u8"ScienceEarth 分析示例"))
-                _scienceExamplesOpen = !_scienceExamplesOpen;
-            if (_scienceExamplesOpen)
+            if (ImGui::SmallButton(u8"分析模板"))
+                ImGui::OpenPopup("##scienceearth_templates");
+
+            const float popupWidth = std::min(520.0f,
+                std::max(320.0f, io.DisplaySize.x - 40.0f));
+            const float popupHeight = std::min(540.0f,
+                std::max(260.0f, io.DisplaySize.y * 0.62f));
+            ImGui::SetNextWindowSize(ImVec2(popupWidth, popupHeight),
+                                     ImGuiCond_Appearing);
+            if (ImGui::BeginPopup("##scienceearth_templates"))
             {
-                const float galleryHeight = std::min(
-                    250.0f, std::max(150.0f, io.DisplaySize.y * 0.28f));
+                ImGui::TextUnformatted(u8"ScienceEarth 分析模板");
+                ImGui::TextDisabled(
+                    u8"带地点模板会先定位并填好参数；当前视野模板保留相机。"
+                    u8"都不会自动运行，检查后点“发送”。");
+                ImGui::Separator();
                 ImGui::BeginChild(
                     "##scienceearth_prompt_gallery",
-                    ImVec2(winWidth - 24.0f, galleryHeight), true,
+                    ImVec2(0.0f, 0.0f), false,
                     ImGuiWindowFlags_AlwaysVerticalScrollbar);
-                ImGui::TextWrapped(
-                    u8"点击“填入”只会复制到输入框；请检查或修改后再按回车。"
-                    u8"不会自动运行，也不会移动相机。");
                 const auto& examples = earthai::scienceEarthPromptExamples();
                 for (std::size_t index = 0; index < examples.size(); ++index)
                 {
                     const earthai::ScienceEarthPromptExample& example =
                         examples[index];
                     ImGui::PushID(static_cast<int>(index));
-                    if (ImGui::SmallButton(u8"填入"))
-                        earthai::insertPromptSuggestion(
-                            example.prompt, _inputBuf, sizeof(_inputBuf));
-                    ImGui::SameLine();
                     ImGui::TextWrapped("%zu. %s", index + 1, example.title);
                     ImGui::TextDisabled(u8"数据源：%s", example.sources);
+                    ImGui::TextDisabled(u8"参数：%s", example.parameters);
+                    if (example.navigateToLocation)
+                    {
+                        ImGui::TextDisabled(u8"视角：%s · %.4f, %.4f · %.0f km",
+                                            example.locationName,
+                                            example.latitudeDeg,
+                                            example.longitudeDeg,
+                                            example.altitudeKm);
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled(u8"视角：保留当前视野");
+                    }
                     if (ImGui::TreeNodeEx(
                             "##prompt_text",
                             ImGuiTreeNodeFlags_SpanAvailWidth,
@@ -183,21 +206,53 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
                         ImGui::TextWrapped("%s", example.prompt);
                         ImGui::TreePop();
                     }
+                    const char* actionLabel = example.navigateToLocation
+                        ? u8"使用并定位" : u8"使用当前视野";
+                    const bool needsManipulator =
+                        example.navigateToLocation && !mani;
+                    if (needsManipulator) ImGui::BeginDisabled();
+                    if (ImGui::Button(actionLabel, ImVec2(-1.0f, 0.0f)))
+                    {
+                        if (earthai::insertPromptSuggestion(
+                                example.prompt, _inputBuf, sizeof(_inputBuf)))
+                        {
+                            if (example.navigateToLocation && mani)
+                            {
+                                mani->setByEye(
+                                    osg::DegreesToRadians(example.latitudeDeg),
+                                    osg::DegreesToRadians(example.longitudeDeg),
+                                    example.altitudeKm * 1000.0);
+                            }
+                            _preparedTemplateStatus = u8"已准备：";
+                            _preparedTemplateStatus += example.locationName;
+                            _preparedTemplateStatus += u8" · ";
+                            _preparedTemplateStatus += example.parameters;
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                    if (needsManipulator) ImGui::EndDisabled();
+                    if (needsManipulator &&
+                        ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip(u8"当前相机未就绪，暂时不能定位");
                     ImGui::Separator();
                     ImGui::PopID();
                 }
                 ImGui::EndChild();
+                ImGui::EndPopup();
             }
         }
 
         // ---- 输入行 ----
         bool submitted = false;
         std::string submitText;
+        if (!_preparedTemplateStatus.empty())
+            ImGui::TextDisabled("%s", _preparedTemplateStatus.c_str());
         if (!core) ImGui::BeginDisabled();
         else if (busy) ImGui::BeginDisabled();
 
-        // 24=窗口左右 padding 12x2；44=后面两个按钮各占「按钮宽 40 + SameLine 间距 4」。
-        ImGui::SetNextItemWidth(winWidth - (core ? 24.0f + 2.0f * 44.0f : 24.0f));
+        // 输入框、明确发送按钮和媒体操作保持同一行；模板只负责准备，不会越过发送确认。
+        const float actionWidth = core ? 184.0f : 0.0f;
+        ImGui::SetNextItemWidth(winWidth - 28.0f - actionWidth);
         const char* hint = core ? u8"问我：飞到纽约 / 打开航班层 / 统计全球地震…"
                                  : u8"设置 EARTH_AI_KEY 启用 AI 对话";
         if (ImGui::InputTextWithHint("##ai_input", hint, _inputBuf, sizeof(_inputBuf),
@@ -218,6 +273,20 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
 #endif
 
         if (!core || busy) ImGui::EndDisabled();
+
+        if (core)
+        {
+            ImGui::SameLine();
+            const bool canSubmit = !busy && _inputBuf[0] != '\0';
+            if (!canSubmit) ImGui::BeginDisabled();
+            if (ImGui::Button(u8"发送", ImVec2(52.0f, 0.0f)))
+            {
+                submitText = _inputBuf;
+                submitted = true;
+                _inputBuf[0] = '\0';
+            }
+            if (!canSubmit) ImGui::EndDisabled();
+        }
 
         bool photoSubmit = false;
         // openVideoModal 声明在外层函数作用域(见上方),本帧是否需要 OpenPopup
@@ -297,12 +366,16 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
         // 两点采集 + 确认 Modal 是强 UI 流程；FRAME owner 会在下一个 update() tick 执行请求。
         // generate_video 工具仍在 main-thread drain 里直调同一套 MediaManager 状态机。
         if (photoSubmit && core) core->submit(u8"生成一张当前视角的实景照片");
-        if (submitted && core) core->submit(submitText);
+        if (submitted && core)
+        {
+            core->submit(submitText);
+            _preparedTemplateStatus.clear();
+        }
     }
     ImGui::End();
 
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(5);
+    ImGui::PopStyleVar(4);
 
     // ---- 视频确认 Modal(Task 9):居中弹窗,展示 A/B 坐标 + 运动提示词预览 + 费用提示。----
     // 放在 AI 对话条窗口 Begin/End 之外(Modal 是独立的顶层窗口,不依赖对话条是否展开)。
