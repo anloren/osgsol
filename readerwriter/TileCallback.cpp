@@ -7,6 +7,7 @@
 #include <osgDB/FileNameUtils>
 #include <osgDB/FileUtils>
 #include <osgUtil/SmoothingVisitor>
+#include <cmath>
 #include <mutex>
 
 #include <modeling/Math.h>
@@ -15,6 +16,40 @@
 #include "TileCallback.h"
 
 using namespace osgVerse;
+
+namespace
+{
+    void setTerrainMapUniforms(osg::StateSet* state,
+                               const osg::Vec3d& tileMin,
+                               const osg::Vec3d& tileMax,
+                               bool useWebMercator)
+    {
+        if (!state) return;
+        const double originHighX = std::floor(tileMin.x());
+        const double originHighY = std::floor(tileMin.y());
+        state->getOrCreateUniform(
+            "TerrainMapBounds", osg::Uniform::FLOAT_VEC4)->set(osg::Vec4(
+                static_cast<float>(tileMin.x()),
+                static_cast<float>(tileMin.y()),
+                static_cast<float>(tileMax.x()),
+                static_cast<float>(tileMax.y())));
+        state->getOrCreateUniform(
+            "TerrainMapOriginHigh", osg::Uniform::FLOAT_VEC2)->set(osg::Vec2(
+                static_cast<float>(originHighX),
+                static_cast<float>(originHighY)));
+        state->getOrCreateUniform(
+            "TerrainMapOriginLow", osg::Uniform::FLOAT_VEC2)->set(osg::Vec2(
+                static_cast<float>(tileMin.x() - originHighX),
+                static_cast<float>(tileMin.y() - originHighY)));
+        state->getOrCreateUniform(
+            "TerrainMapSpan", osg::Uniform::FLOAT_VEC2)->set(osg::Vec2(
+                static_cast<float>(tileMax.x() - tileMin.x()),
+                static_cast<float>(tileMax.y() - tileMin.y())));
+        state->getOrCreateUniform(
+            "TerrainUsesWebMercator", osg::Uniform::BOOL)->set(
+                useWebMercator);
+    }
+}
 
 class FindTileGeometry : public osg::NodeVisitor
 {
@@ -232,18 +267,9 @@ osg::Geometry* TileCallback::createTileGeometry(osg::Matrix& outMatrix, TileGeom
         ? handler->create(this, outMatrix, tileMin, tileMax, width, height)
         : NULL;
     if (geometry)
-    {
-        osg::StateSet* state = geometry->getOrCreateStateSet();
-        state->getOrCreateUniform(
-            "TerrainMapBounds", osg::Uniform::FLOAT_VEC4)->set(osg::Vec4(
-                static_cast<float>(tileMin.x()),
-                static_cast<float>(tileMin.y()),
-                static_cast<float>(tileMax.x()),
-                static_cast<float>(tileMax.y())));
-        state->getOrCreateUniform(
-            "TerrainUsesWebMercator", osg::Uniform::BOOL)->set(
-                _useWebMercator);
-    }
+        setTerrainMapUniforms(
+            geometry->getOrCreateStateSet(), tileMin, tileMax,
+            _useWebMercator);
     return geometry;
 }
 
@@ -374,15 +400,8 @@ osg::Geometry* TileCallback::createTileGeometry(osg::Matrix& outMatrix, osg::Tex
     geom->addPrimitiveSet(de.get());
     if (!_flatten && _skirtRatio > 0.0f)
         updateSkirtData(geom, osg::inDegrees(tileMax.y() - tileMin.y()), true);
-    osg::StateSet* state = geom->getOrCreateStateSet();
-    state->getOrCreateUniform(
-        "TerrainMapBounds", osg::Uniform::FLOAT_VEC4)->set(osg::Vec4(
-            static_cast<float>(tileMin.x()),
-            static_cast<float>(tileMin.y()),
-            static_cast<float>(tileMax.x()),
-            static_cast<float>(tileMax.y())));
-    state->getOrCreateUniform(
-        "TerrainUsesWebMercator", osg::Uniform::BOOL)->set(_useWebMercator);
+    setTerrainMapUniforms(
+        geom->getOrCreateStateSet(), tileMin, tileMax, _useWebMercator);
     return geom;
 }
 

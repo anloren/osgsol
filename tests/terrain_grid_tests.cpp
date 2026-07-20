@@ -111,6 +111,83 @@ static void checkTerrainMapUniform(osg::Geometry* geometry,
     CHECK(actualWebMercator == expectedWebMercator);
 }
 
+static osg::Vec2 readVec2Uniform(osg::Geometry* geometry, const char* name)
+{
+    CHECK(geometry && geometry->getStateSet());
+    osg::Uniform* uniform = geometry->getStateSet()->getUniform(name);
+    CHECK(uniform);
+    osg::Vec2 value;
+    CHECK(uniform->get(value));
+    return value;
+}
+
+static osg::Geometry* makeTmsTile(osgVerse::TileCallback* callback,
+                                  int x, int y, int z,
+                                  osg::Vec3d& tileMin,
+                                  osg::Vec3d& tileMax)
+{
+    callback->setTotalExtent(
+        osg::Vec3d(-180.0, -90.0, 0.0),
+        osg::Vec3d(180.0, 90.0, 0.0));
+    callback->setTileNumber(x, y, z);
+    callback->setBottomLeft(true);
+    callback->setUseWebMercator(true);
+    callback->setFlatten(false);
+    callback->setSkirtRatio(0.0f);
+    double width = 0.0, height = 0.0;
+    callback->computeTileExtent(tileMin, tileMax, width, height);
+    osg::Matrix matrix;
+    osg::ref_ptr<osg::Texture2D> elevation = constantElevation(10.0f);
+    return callback->createTileGeometry(
+        matrix, elevation.get(), tileMin, tileMax, width, height);
+}
+
+static void checkHighZoomMapPrecision()
+{
+    const int level = 19;
+    const TmsTile tile = tmsTileForLonLat(114.17, 22.30, level);
+    osg::ref_ptr<osgVerse::TileCallback> leftCallback =
+        new osgVerse::TileCallback(true);
+    osg::Vec3d leftMin, leftMax;
+    osg::ref_ptr<osg::Geometry> left = makeTmsTile(
+        leftCallback.get(), tile.x, tile.y, level, leftMin, leftMax);
+    const osg::Vec2 leftHigh = readVec2Uniform(
+        left.get(), "TerrainMapOriginHigh");
+    const osg::Vec2 leftLow = readVec2Uniform(
+        left.get(), "TerrainMapOriginLow");
+    const osg::Vec2 leftSpan = readVec2Uniform(
+        left.get(), "TerrainMapSpan");
+
+    const double reconstructedWest =
+        static_cast<double>(leftHigh.x()) + leftLow.x();
+    const double reconstructedSouth =
+        static_cast<double>(leftHigh.y()) + leftLow.y();
+    const double sourcePixelDegrees = (leftMax.x() - leftMin.x()) / 256.0;
+    CHECK(std::fabs(reconstructedWest - leftMin.x()) <
+          sourcePixelDegrees * 0.25);
+    CHECK(std::fabs(reconstructedSouth - leftMin.y()) <
+          sourcePixelDegrees * 0.25);
+    CHECK(std::fabs(static_cast<double>(leftSpan.x()) -
+                    (leftMax.x() - leftMin.x())) < sourcePixelDegrees * 0.25);
+
+    osg::ref_ptr<osgVerse::TileCallback> rightCallback =
+        new osgVerse::TileCallback(true);
+    osg::Vec3d rightMin, rightMax;
+    osg::ref_ptr<osg::Geometry> right = makeTmsTile(
+        rightCallback.get(), tile.x + 1, tile.y, level, rightMin, rightMax);
+    const osg::Vec2 rightHigh = readVec2Uniform(
+        right.get(), "TerrainMapOriginHigh");
+    const osg::Vec2 rightLow = readVec2Uniform(
+        right.get(), "TerrainMapOriginLow");
+    const double reconstructedLeftEast =
+        reconstructedWest + static_cast<double>(leftSpan.x());
+    const double reconstructedRightWest =
+        static_cast<double>(rightHigh.x()) + rightLow.x();
+    CHECK(std::fabs(reconstructedLeftEast - reconstructedRightWest) <
+          sourcePixelDegrees * 0.25);
+    CHECK(std::fabs(leftMax.x() - rightMin.x()) < 1.0e-12);
+}
+
 static osg::Geometry* makeAncestorSubtile(osgVerse::TileCallback* callback, int z,
                                           osg::Texture2D* elevation,
                                           const osg::Vec3d& tileMin,
@@ -175,6 +252,8 @@ static double checkSiblingEdge(int z, osg::Texture2D* elevation,
 
 static int runTests()
 {
+    checkHighZoomMapPrecision();
+
     const osg::Vec4 levelOneBounds[] = {
         osg::Vec4(-180.0f, -90.0f, 0.0f, 0.0f),
         osg::Vec4(0.0f, -90.0f, 180.0f, 0.0f),
