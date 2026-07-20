@@ -78,8 +78,8 @@ namespace
     {
     public:
         bool failFetch = false;
-        bool blockFetch = false;
-        bool blockRead = false;
+        std::atomic<bool> blockFetch{false};
+        std::atomic<bool> blockRead{false};
         std::atomic<bool> fetchStarted{false};
         std::atomic<bool> readStarted{false};
         std::atomic<int> fetches{0};
@@ -93,7 +93,8 @@ namespace
             ++fetches;
             lastUrl = url;
             fetchStarted.store(true, std::memory_order_release);
-            while (blockFetch && !cancelled()) std::this_thread::yield();
+            while (blockFetch.load(std::memory_order_acquire) && !cancelled())
+                std::this_thread::yield();
             if (cancelled())
             {
                 error = "cancelled";
@@ -124,7 +125,8 @@ namespace
         {
             ++reads;
             readStarted.store(true, std::memory_order_release);
-            while (blockRead && !cancelled()) std::this_thread::yield();
+            while (blockRead.load(std::memory_order_acquire) && !cancelled())
+                std::this_thread::yield();
             if (cancelled())
             {
                 error = "cancelled";
@@ -213,7 +215,7 @@ namespace
     {
         auto fetchingIo = std::make_unique<FakeIo>();
         FakeIo* fetchingObserved = fetchingIo.get();
-        fetchingObserved->blockFetch = true;
+        fetchingObserved->blockFetch.store(true, std::memory_order_release);
         earthscience::Sentinel2Runtime fetching(std::move(fetchingIo));
         const std::uint64_t fetchingGeneration = fetching.submit(query());
         const auto fetchDeadline = std::chrono::steady_clock::now() +
@@ -233,7 +235,7 @@ namespace
 
         auto blockingIo = std::make_unique<FakeIo>();
         FakeIo* observed = blockingIo.get();
-        observed->blockRead = true;
+        observed->blockRead.store(true, std::memory_order_release);
         earthscience::Sentinel2Runtime runtime(std::move(blockingIo));
         const std::uint64_t generation = runtime.submit(query());
         const auto deadline = std::chrono::steady_clock::now() +
@@ -281,7 +283,7 @@ namespace
     {
         auto io = std::make_unique<FakeIo>();
         FakeIo* observed = io.get();
-        observed->blockRead = true;
+        observed->blockRead.store(true, std::memory_order_release);
         earthscience::Sentinel2Runtime runtime(std::move(io));
         const std::uint64_t first = runtime.submit(query(35.68));
         const auto deadline = std::chrono::steady_clock::now() +
@@ -292,7 +294,7 @@ namespace
         require(observed->readStarted.load(std::memory_order_acquire),
                 "stale-generation read did not start");
         const std::uint64_t second = runtime.submit(query(35.69));
-        observed->blockRead = false;
+        observed->blockRead.store(false, std::memory_order_release);
         const earthscience::ScienceProviderSnapshot ready =
             waitForTerminal(runtime);
         require(second > first && ready.generation == second &&
@@ -300,7 +302,7 @@ namespace
                     ready.artifact && ready.artifact->generation == second,
                 "stale generation replaced the newer Sentinel result");
 
-        observed->blockRead = true;
+        observed->blockRead.store(true, std::memory_order_release);
         observed->readStarted.store(false, std::memory_order_release);
         runtime.submit(query(35.70));
         const auto clearDeadline = std::chrono::steady_clock::now() +
@@ -311,7 +313,7 @@ namespace
         require(observed->readStarted.load(std::memory_order_acquire),
                 "clear-generation read did not start");
         runtime.clear();
-        observed->blockRead = false;
+        observed->blockRead.store(false, std::memory_order_release);
         for (int index = 0; index < 1000; ++index) std::this_thread::yield();
         const earthscience::ScienceProviderSnapshot cleared = runtime.snapshot();
         require(cleared.state == earthscience::ScienceJobState::Idle &&
