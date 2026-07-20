@@ -214,6 +214,14 @@ IF(BUILD_TESTING)
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             LABELS "offline;scienceearth;terrain"
             TIMEOUT 30)
+        ADD_TEST(NAME osgSol_Test_TerrainScienceShader
+                 COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+                         "${OSGSOL_PYTHON3_EXECUTABLE}" -m unittest
+                         tests.terrain_science_shader_tests -v)
+        SET_TESTS_PROPERTIES(osgSol_Test_TerrainScienceShader PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            LABELS "offline;scienceearth;terrain"
+            TIMEOUT 30)
         ADD_TEST(NAME osgSol_Test_MacosNormalExitGuard
                  COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
                          "${OSGSOL_PYTHON3_EXECUTABLE}" -m unittest
@@ -283,7 +291,9 @@ IF(BUILD_TESTING)
 
         ADD_EXECUTABLE(osgSol_Test_SciencePluginRuntime
             science_plugin_runtime_tests.cpp
-            "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_plugin_runtime.cpp")
+            "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_plugin_runtime.cpp"
+            "${CMAKE_SOURCE_DIR}/applications/earth_explorer/terrain_science_overlay.cpp"
+            "${CMAKE_SOURCE_DIR}/applications/earth_explorer/terrain_science_overlay_math.cpp")
         TARGET_COMPILE_FEATURES(osgSol_Test_SciencePluginRuntime PRIVATE cxx_std_14)
         TARGET_INCLUDE_DIRECTORIES(osgSol_Test_SciencePluginRuntime PRIVATE
             "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
@@ -299,6 +309,8 @@ IF(BUILD_TESTING)
             osgSol_Test_SciencePluginFakeNullFunction)
         TARGET_LINK_LIBRARIES(osgSol_Test_SciencePluginRuntime PRIVATE
             ${CMAKE_DL_LIBS})
+        LINK_OSG_LIBRARY(osgSol_Test_SciencePluginRuntime
+            OpenThreads osg osgDB)
         ADD_TEST(NAME osgSol_Test_SciencePluginRuntime
                  COMMAND $<TARGET_FILE:osgSol_Test_SciencePluginRuntime>)
         SET_TESTS_PROPERTIES(osgSol_Test_SciencePluginRuntime PROPERTIES

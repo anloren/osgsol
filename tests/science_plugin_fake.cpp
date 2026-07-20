@@ -5,7 +5,7 @@
 
 namespace
 {
-    int counters[9] = {};
+    int counters[10] = {};
     OsgSolScienceGuiBridgeV1 lastGuiBridge = {};
 
     void* createSession(const char* indexPath, char* error, std::size_t errorSize)
@@ -23,6 +23,10 @@ namespace
     void destroySession(void*) { ++counters[1]; }
     osg::Node* sceneNode(void*) { ++counters[6]; return nullptr; }
     void setVisible(void*, bool) { ++counters[2]; }
+    void bindGeoRaster(void*, const OsgSolGeoRasterBridgeV1*)
+    {
+        ++counters[9];
+    }
     void registerAiTools(void*, earthai::ToolRegistry*, LayerManager*,
                          osgVerse::EarthManipulator*) { ++counters[3]; }
     void bindGui(void*, const OsgSolScienceGuiBridgeV1* bridge)
@@ -45,13 +49,14 @@ namespace
         ++counters[5];
     }
 
-    const OsgSolSciencePluginApiV2 api = {
-        OSGSOL_SCIENCE_PLUGIN_ABI_V2,
-        sizeof(OsgSolSciencePluginApiV2),
+    const OsgSolSciencePluginApiV3 api = {
+        OSGSOL_SCIENCE_PLUGIN_ABI_V3,
+        sizeof(OsgSolSciencePluginApiV3),
         createSession,
         destroySession,
         sceneNode,
         setVisible,
+        bindGeoRaster,
         registerAiTools,
         bindGui,
         drawOperations,
@@ -60,7 +65,7 @@ namespace
 }
 
 extern "C" __attribute__((visibility("default")))
-const OsgSolSciencePluginApiV2* osgsol_science_g0_probe_anchor()
+const OsgSolSciencePluginApiV3* osgsol_science_g0_probe_anchor()
 {
     return &api;
 }

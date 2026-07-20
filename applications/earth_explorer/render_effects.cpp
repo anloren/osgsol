@@ -1,3 +1,5 @@
+#include "render_effects.h"
+
 #include <osg/io_utils>
 #include <osg/Texture2D>
 #include <osg/Texture3D>
@@ -20,6 +22,11 @@
 #include <VerseCommon.h>
 #include <iostream>
 #include <sstream>
+
+#if OSGSOL_BUILD_SCIENCE
+#include "terrain_science_overlay.h"
+#include <atomic>
+#endif
 
 const char* finalVertCode = {
     "VERSE_VS_OUT vec4 texCoord; \n"
@@ -62,9 +69,55 @@ protected:
     osgVerse::EarthAtmosphereOcean* _earthData;
 };
 
+#if OSGSOL_BUILD_SCIENCE
+class TerrainScienceCapabilityCallback : public osg::Camera::DrawCallback
+{
+public:
+    explicit TerrainScienceCapabilityCallback(
+        terrainoverlay::TerrainScienceOverlay* overlay)
+        : _overlay(overlay), _checked(false) {}
+
+    void operator()(osg::RenderInfo&) const override
+    {
+        if (!_overlay || _checked.exchange(true, std::memory_order_acq_rel))
+            return;
+        GLint units = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &units);
+        _overlay->setRendererFragmentTextureUnits(static_cast<int>(units));
+    }
+
+private:
+    terrainoverlay::TerrainScienceOverlay* _overlay;
+    mutable std::atomic<bool> _checked;
+};
+
+class TerrainScienceDrainHandler : public osgGA::GUIEventHandler
+{
+public:
+    TerrainScienceDrainHandler(
+        terrainoverlay::TerrainScienceOverlay* overlay,
+        osg::StateSet* state)
+        : _overlay(overlay), _state(state) {}
+
+    bool handle(const osgGA::GUIEventAdapter& event,
+                osgGA::GUIActionAdapter&) override
+    {
+        if (_overlay && _state.valid() &&
+            event.getEventType() == osgGA::GUIEventAdapter::FRAME)
+            _overlay->drainTo(*_state);
+        return false;
+    }
+
+private:
+    terrainoverlay::TerrainScienceOverlay* _overlay;
+    osg::ref_ptr<osg::StateSet> _state;
+};
+#endif
+
 std::vector<osg::Camera*> configureEarthRendering(
         osgViewer::View& viewer, osg::Group* root,
         osg::Node* earth, osgVerse::EarthAtmosphereOcean& earthRenderingUtils,
+        terrainoverlay::TerrainScienceOverlay* scienceOverlay,
         const std::string& mainFolder, unsigned int mask, int w, int h)
 {
     // Initialize earth utilities
@@ -91,9 +144,27 @@ std::vector<osg::Camera*> configureEarthRendering(
     // 未加载影像的底图默认从白改为深海蓝：白色经大气散射在向阳侧会被染成刺眼橙色（缩放外推时
     // 大块中低 LOD 瓦片正在重载就会出现"半个地球橙色"）。深色让加载中的瓦片看起来像暗海/阴影。
     osg::Texture* defBase = osgVerse::createDefaultTexture(osg::Vec4(0.03f, 0.06f, 0.10f, 1.0f));
+    std::string globeFragmentShader = "scattering_globe.frag.glsl";
+#if OSGSOL_BUILD_SCIENCE
+    if (scienceOverlay)
+        globeFragmentShader = "scattering_globe_science.frag.glsl";
+#else
+    (void)scienceOverlay;
+#endif
     earthRenderingUtils.applyToGlobe(earthCamera->getOrCreateStateSet(), defBase, defTex0, defTex1,
         osgDB::readShaderFile(osg::Shader::VERTEX, SHADER_DIR + "scattering_globe.vert.glsl"),
-        osgDB::readShaderFile(osg::Shader::FRAGMENT, SHADER_DIR + "scattering_globe.frag.glsl"));
+        osgDB::readShaderFile(osg::Shader::FRAGMENT, SHADER_DIR + globeFragmentShader));
+#if OSGSOL_BUILD_SCIENCE
+    if (scienceOverlay)
+    {
+        osg::StateSet* globeState = earthCamera->getOrCreateStateSet();
+        scienceOverlay->drainTo(*globeState);
+        earthCamera->setPreDrawCallback(
+            new TerrainScienceCapabilityCallback(scienceOverlay));
+        viewer.addEventHandler(
+            new TerrainScienceDrainHandler(scienceOverlay, globeState));
+    }
+#endif
     // 地表清晰度高度 band(消"补丁"):相机高度 < AltLo → 完全清晰影像;> AltHi → 完全太空大气观感。
     // env EARTH_CLARITY_ALTLO / EARTH_CLARITY_ALTHI(km)可调,默认 2000 / 8000 km。
     {

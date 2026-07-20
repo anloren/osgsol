@@ -1,25 +1,24 @@
 #ifndef EARTH_SCIENCE_PREVIEW_LAYER_H
 #define EARTH_SCIENCE_PREVIEW_LAYER_H
 
+#include "science_plugin_api.h"
+
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <osg/Group>
 
 namespace earthscience { class ScienceQueryService; }
 namespace earthscience { struct ScienceArtifact; }
-namespace osg { class Node; }
 
-osg::Node* createSciencePreviewArtifactNode(
-    const earthscience::ScienceArtifact& artifact);
-
-// Dedicated AlphaEarth preview overlay. It is independent from the globe TMS,
-// elevation, 3D Tiles, camera, and photo paths: a completed science artifact is
-// materialized as its own curved ECEF mesh during scene update traversal.
+// Plugin-side display publisher. This node exists only to receive update
+// traversal; it owns no drawable, texture, depth state, or render bin.
 class SciencePreviewLayer : public osg::Group
 {
 public:
     explicit SciencePreviewLayer(earthscience::ScienceQueryService* service);
 
+    void bindGeoRaster(const OsgSolGeoRasterBridgeV1* bridge);
     void setVisible(bool visible);
     bool isVisible() const;
     bool hasArtifact() const;
@@ -33,14 +32,21 @@ private:
     class SyncCallback;
     friend class SyncCallback;
     void syncFromService();
+    bool publishArtifact(const earthscience::ScienceArtifact& artifact);
+    void clearHostOverlay();
 
     earthscience::ScienceQueryService* _service;
-    osg::ref_ptr<osg::Group> _artifactRoot;
+    mutable std::mutex _bridgeMutex;
+    OsgSolGeoRasterBridgeV1 _bridge;
     std::atomic<bool> _visible;
     std::atomic<bool> _hasArtifact;
     std::atomic<bool> _removeRequested;
+    std::atomic<bool> _clearRequested;
+    std::atomic<bool> _republishRequested;
     std::atomic<std::uint64_t> _artifactGeneration;
     std::atomic<std::uint64_t> _suppressedGeneration;
+    std::uint64_t _publishedArtifactGeneration;
+    std::uint64_t _transportGeneration;
 };
 
 #endif

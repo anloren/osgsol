@@ -114,6 +114,13 @@ namespace
         if (runtime) runtime->layer->setVisible(visible);
     }
 
+    void bindGeoRaster(void* value,
+                       const OsgSolGeoRasterBridgeV1* bridge)
+    {
+        SciencePluginSession* runtime = session(value);
+        if (runtime) runtime->layer->bindGeoRaster(bridge);
+    }
+
     void registerAiTools(void* value, earthai::ToolRegistry* tools,
                          LayerManager* layers,
                          osgVerse::EarthManipulator* manipulator)
@@ -152,13 +159,14 @@ namespace
                                    runtime->layer.get(), layers);
     }
 
-    const OsgSolSciencePluginApiV2 pluginApi = {
-        OSGSOL_SCIENCE_PLUGIN_ABI_V2,
-        sizeof(OsgSolSciencePluginApiV2),
+    const OsgSolSciencePluginApiV3 pluginApi = {
+        OSGSOL_SCIENCE_PLUGIN_ABI_V3,
+        sizeof(OsgSolSciencePluginApiV3),
         createSession,
         destroySession,
         sceneNode,
         setVisible,
+        bindGeoRaster,
         registerAiTools,
         bindGui,
         drawOperations,
@@ -167,7 +175,7 @@ namespace
 }
 
 extern "C" __attribute__((visibility("default")))
-const OsgSolSciencePluginApiV2* osgsol_science_g0_probe_anchor()
+const OsgSolSciencePluginApiV3* osgsol_science_g0_probe_anchor()
 {
     return &pluginApi;
 }

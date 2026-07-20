@@ -20,6 +20,7 @@ layout(location = 1) VERSE_FS_OUT vec4 fragOrigin;
 #define SUN_INTENSITY 100.0
 #define PLANET_RADIUS 6360000.0
 #include "scattering.module.glsl"
+#include "scattering_globe_ground.module.glsl"
 
 vec3 hdr(vec3 L)
 {
@@ -53,10 +54,7 @@ void main()
     }*/
 
     vec4 groundColor = VERSE_TEX2D(SceneSampler, texCoord.st * UvOffset1.zw + UvOffset1.xy);
-    vec4 layerColor = VERSE_TEX2D(ExtraLayerSampler, texCoord.st * UvOffset3.zw + UvOffset3.xy);
-    groundColor.rgb = mix(groundColor.rgb, layerColor.rgb, layerColor.a * clamp(LabelOpacity, 0.0, 1.0));
-    vec4 overlay2Color = VERSE_TEX2D(Overlay2Sampler, texCoord.st * UvOffset4.zw + UvOffset4.xy);
-    groundColor.rgb = mix(groundColor.rgb, overlay2Color.rgb, overlay2Color.a * clamp(Overlay2Opacity, 0.0, 1.0));
+    groundColor = composeGroundLayers(groundColor, texCoord.st);
     if (isSkirt < -0.1 && GlobalOpaque < 0.9) discard;  // hide skirt if transparent
 
     // Mask color: r = aspect, g = slope, b = mask (0 - 0.5: ocean, 0.5 - 1: land)

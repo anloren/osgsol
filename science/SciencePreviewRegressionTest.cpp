@@ -104,6 +104,7 @@ namespace
         artifact->generation = generation;
         artifact->raster.width = 2;
         artifact->raster.height = 2;
+        artifact->raster.bounds = {138.70, 35.34, 138.76, 35.40};
         artifact->raster.rgba =
             std::make_shared<const std::vector<unsigned char>>(16, 166);
         auto grid = std::make_shared<earthscience::ScienceGroundGrid>();
@@ -174,6 +175,53 @@ namespace
     {
         osgUtil::UpdateVisitor visitor;
         layer.accept(visitor);
+    }
+
+    struct RasterCapture
+    {
+        int publishCount = 0;
+        int clearCount = 0;
+        std::uint64_t generation = 0;
+        int width = 0;
+        int height = 0;
+        std::vector<unsigned char> pixels;
+    };
+
+    bool captureRaster(const OsgSolGeoRasterFrameV1* frame,
+                       void* userData, char*, std::size_t)
+    {
+        RasterCapture* capture = static_cast<RasterCapture*>(userData);
+        if (!capture || !frame ||
+            frame->structSize < sizeof(OsgSolGeoRasterFrameV1) ||
+            !frame->rgba || frame->width <= 0 || frame->height <= 0)
+            return false;
+        ++capture->publishCount;
+        capture->generation = frame->generation;
+        capture->width = frame->width;
+        capture->height = frame->height;
+        const std::size_t byteCount = static_cast<std::size_t>(
+            frame->rowBytes * static_cast<std::uint64_t>(frame->height));
+        capture->pixels.assign(frame->rgba, frame->rgba + byteCount);
+        return true;
+    }
+
+    void captureClear(std::uint64_t generation, void* userData)
+    {
+        RasterCapture* capture = static_cast<RasterCapture*>(userData);
+        if (!capture) return;
+        ++capture->clearCount;
+        capture->generation = generation;
+        capture->pixels.clear();
+    }
+
+    OsgSolGeoRasterBridgeV1 captureBridge(RasterCapture& capture)
+    {
+        return OsgSolGeoRasterBridgeV1{
+            sizeof(OsgSolGeoRasterBridgeV1),
+            &capture,
+            captureRaster,
+            captureClear,
+        };
     }
 
     earthscience::ScienceProgress layerProgress(
@@ -347,115 +395,6 @@ namespace
                 "preview display range is not declared");
     }
 
-    void testTerrainCannotHideAReadyScienceArtifact()
-    {
-        earthscience::ScienceArtifact artifact;
-        artifact.raster.width = 2;
-        artifact.raster.height = 2;
-        artifact.raster.rgba =
-            std::make_shared<const std::vector<unsigned char>>(
-            16, 166);
-        auto grid = std::make_shared<earthscience::ScienceGroundGrid>();
-        grid->columns = 2;
-        grid->rows = 2;
-        grid->points = {
-            {138.70, 35.34}, {138.76, 35.34},
-            {138.70, 35.40}, {138.76, 35.40},
-        };
-        artifact.raster.groundGrid = grid;
-
-        osg::ref_ptr<osg::Node> node = createSciencePreviewArtifactNode(artifact);
-        osg::Geode* geode = dynamic_cast<osg::Geode*>(node.get());
-        require(geode && geode->getNumDrawables() == 1,
-                "science artifact node was not created");
-        osg::StateSet* state = geode->getDrawable(0)->getStateSet();
-        require(state != nullptr, "science artifact has no render state");
-        const osg::Depth* depth = dynamic_cast<const osg::Depth*>(
-            state->getAttribute(osg::StateAttribute::DEPTH));
-        require(depth && depth->getFunction() == osg::Depth::ALWAYS &&
-                !depth->getWriteMask(),
-                "terrain depth can still bury a ready science artifact");
-        const osg::CullFace* cull = dynamic_cast<const osg::CullFace*>(
-            state->getAttribute(osg::StateAttribute::CULLFACE));
-        require(cull && cull->getMode() == osg::CullFace::BACK,
-                "depth-independent artifact can leak through the globe back face");
-
-        osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(
-            geode->getDrawable(0));
-        osg::Vec3Array* vertices = geometry
-            ? dynamic_cast<osg::Vec3Array*>(geometry->getVertexArray()) : nullptr;
-        osg::DrawElementsUInt* indices = geometry &&
-            geometry->getNumPrimitiveSets() == 1
-            ? dynamic_cast<osg::DrawElementsUInt*>(
-                geometry->getPrimitiveSet(0)) : nullptr;
-        require(vertices && indices && indices->size() == 6,
-                "south-up AlphaEarth artifact lost its render geometry");
-        const osg::Vec3d a((*vertices)[indices->at(0)]);
-        const osg::Vec3d b((*vertices)[indices->at(1)]);
-        const osg::Vec3d c((*vertices)[indices->at(2)]);
-        require(((b - a) ^ (c - a)) * (a + b + c) > 0.0,
-                "south-up AlphaEarth triangles no longer face the camera");
-    }
-
-    void testNorthUpSentinelRasterFacesTheCamera()
-    {
-        earthscience::ScienceArtifact artifact;
-        artifact.query.sourceId = "sentinel-2-l2a";
-        artifact.raster.width = 2;
-        artifact.raster.height = 2;
-        artifact.raster.rgba =
-            std::make_shared<const std::vector<unsigned char>>(16, 210);
-        auto grid = std::make_shared<earthscience::ScienceGroundGrid>();
-        grid->columns = 2;
-        grid->rows = 2;
-        grid->points = {
-            {139.70, 35.75}, {139.82, 35.75},
-            {139.70, 35.63}, {139.82, 35.63},
-        };
-        artifact.raster.groundGrid = grid;
-
-        osg::ref_ptr<osg::Node> node = createSciencePreviewArtifactNode(artifact);
-        osg::Geode* geode = dynamic_cast<osg::Geode*>(node.get());
-        osg::Geometry* geometry = geode && geode->getNumDrawables() == 1
-            ? dynamic_cast<osg::Geometry*>(geode->getDrawable(0)) : nullptr;
-        osg::Vec3Array* vertices = geometry
-            ? dynamic_cast<osg::Vec3Array*>(geometry->getVertexArray()) : nullptr;
-        osg::DrawElementsUInt* indices = geometry &&
-            geometry->getNumPrimitiveSets() == 1
-            ? dynamic_cast<osg::DrawElementsUInt*>(
-                geometry->getPrimitiveSet(0)) : nullptr;
-        require(vertices && vertices->size() == 4 &&
-                    indices && indices->size() == 6,
-                "north-up Sentinel artifact did not build one complete quad");
-
-        const osg::Vec3d a((*vertices)[indices->at(0)]);
-        const osg::Vec3d b((*vertices)[indices->at(1)]);
-        const osg::Vec3d c((*vertices)[indices->at(2)]);
-        const osg::Vec3d outward = (a + b + c) / 3.0;
-        const osg::Vec3d triangleNormal = (b - a) ^ (c - a);
-        require(triangleNormal * outward > 0.0,
-                "north-up Sentinel triangles face the globe and are back-face culled");
-
-        osg::StateSet* state = geometry ? geometry->getStateSet() : nullptr;
-        const osg::Program* program = state
-            ? dynamic_cast<const osg::Program*>(
-                state->getAttribute(osg::StateAttribute::PROGRAM)) : nullptr;
-        std::string fragmentSource;
-        if (program)
-            for (unsigned int index = 0; index < program->getNumShaders(); ++index)
-            {
-                const osg::Shader* shader = program->getShader(index);
-                if (shader && shader->getType() == osg::Shader::FRAGMENT)
-                    fragmentSource = shader->getShaderSource();
-            }
-        const std::size_t discard = fragmentSource.find(
-            "if (sampleColor.a < 0.01) discard");
-        const std::size_t border = fragmentSource.find("if (edge < 0.006)");
-        require(discard != std::string::npos && border != std::string::npos &&
-                    discard < border,
-                "transparent NoData can still render as a yellow-only frame");
-    }
-
     void testLayerRetainsLastGoodUntilExplicitReplacementOrRemoval()
     {
         auto registry =
@@ -466,8 +405,11 @@ namespace
         require(registry->add(std::move(provider), error),
                 "layer provider registration failed");
         earthscience::ScienceQueryService service(std::move(registry));
+        RasterCapture capture;
         osg::ref_ptr<SciencePreviewLayer> layer =
             new SciencePreviewLayer(&service);
+        const OsgSolGeoRasterBridgeV1 bridge = captureBridge(capture);
+        layer->bindGeoRaster(&bridge);
         layer->setVisible(true);
 
         const std::uint64_t firstJob = service.submit(makeLayerQuery(2025));
@@ -483,6 +425,12 @@ namespace
         require(layer->hasArtifact() &&
                     layer->artifactGeneration() == firstJob,
                 "layer did not materialize the first service artifact");
+        require(capture.publishCount == 1 && capture.width == 2 &&
+                    capture.height == 2 && capture.pixels.size() == 16,
+                "first display generation was not published exactly once");
+        updateLayer(*layer);
+        require(capture.publishCount == 1,
+                "unchanged display generation was published twice");
 
         const std::uint64_t secondJob = service.submit(makeLayerQuery(2018));
         providerPointer->publish(
@@ -494,6 +442,8 @@ namespace
         updateLayer(*layer);
         require(layer->artifactGeneration() == firstJob,
                 "replacement fetch removed the visible last-good artifact");
+        require(capture.publishCount == 1,
+                "fetching replacement republished the last-good artifact");
 
         providerPointer->publish(
             earthscience::ScienceJobState::Failed,
@@ -517,6 +467,8 @@ namespace
         require(thirdJob > secondJob &&
                     layer->artifactGeneration() == thirdJob,
                 "new successful artifact did not replace the last-good node");
+        require(capture.publishCount == 2,
+                "new successful display generation was not published once");
 
         const earthscience::ScienceJobSnapshot beforeVisibility =
             service.snapshot();
@@ -529,12 +481,16 @@ namespace
                     beforeVisibility.lastSuccessfulArtifact ==
                         afterVisibility.lastSuccessfulArtifact,
                 "layer visibility mutated service state");
+        require(capture.clearCount == 1 && capture.pixels.empty(),
+                "disabling the layer did not clear the host overlay");
 
         layer->removeArtifact();
         updateLayer(*layer);
         require(!layer->hasArtifact() &&
                     layer->artifactGeneration() == 0,
                 "explicit layer removal left an artifact node");
+        require(capture.clearCount == 2,
+                "explicit removal did not clear the host overlay");
     }
 
     void testLayerRendersOnlyTheExplicitDisplayArtifact()
@@ -547,8 +503,11 @@ namespace
         require(registry->add(std::move(provider), error),
                 "display-selection provider registration failed");
         earthscience::ScienceQueryService service(std::move(registry));
+        RasterCapture capture;
         osg::ref_ptr<SciencePreviewLayer> layer =
             new SciencePreviewLayer(&service);
+        const OsgSolGeoRasterBridgeV1 bridge = captureBridge(capture);
+        layer->bindGeoRaster(&bridge);
         layer->setVisible(true);
 
         const std::uint64_t previewJob = service.submit(makeLayerQuery(2025));
@@ -598,8 +557,6 @@ int main()
     testRequestedViewSelectsAVisibleNativeResolutionWindow();
     testViewTargetDoesNotMoveWhenOnlyCameraHeightChanges();
     testFalseColorMeaningIsMachineReadable();
-    testTerrainCannotHideAReadyScienceArtifact();
-    testNorthUpSentinelRasterFacesTheCamera();
     testLayerRetainsLastGoodUntilExplicitReplacementOrRemoval();
     testLayerRendersOnlyTheExplicitDisplayArtifact();
     std::cout << "[OK] ScienceEarth preview georeference, orientation, target and legend\n";

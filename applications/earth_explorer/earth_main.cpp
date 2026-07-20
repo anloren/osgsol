@@ -26,6 +26,7 @@
 #include "hk_elevation_filter.h"
 #include "input_gate.h"
 #include "earth_exit.h"
+#include "render_effects.h"
 #include "science_overlay.h"
 #include "science_image_pager.h"
 #if defined(__APPLE__)
@@ -56,6 +57,7 @@
 #include "geo_primitives.h"
 #if OSGSOL_BUILD_SCIENCE
 #include "science_plugin_runtime.h"
+#include "terrain_science_overlay.h"
 #endif
 #include <VerseCommon.h>
 #if defined(__APPLE__)
@@ -199,9 +201,6 @@ protected:
 };
 #endif
 
-extern std::vector<osg::Camera*> configureEarthRendering(
-        osgViewer::View& viewer, osg::Group* root, osg::Node* earth, osgVerse::EarthAtmosphereOcean& eData,
-        const std::string& mainFolder, unsigned int mask, int w, int h);
 extern osg::Node* configureCityData(osgViewer::View& viewer, osg::Node* earthRoot,
                                     osgVerse::EarthAtmosphereOcean& earthRenderingUtils,
                                     const std::string& mainFolder, unsigned int mask, bool waitingMode);
@@ -894,8 +893,14 @@ int main(int argc, char** argv)
     // Configure scene components
     osgVerse::EarthAtmosphereOcean earthRenderingUtils;
     osg::ref_ptr<osg::MatrixTransform> earthRoot = new osg::MatrixTransform;
+    terrainoverlay::TerrainScienceOverlay* scienceOverlay = nullptr;
+#if OSGSOL_BUILD_SCIENCE
+    terrainoverlay::TerrainScienceOverlay terrainScienceOverlay;
+    scienceOverlay = &terrainScienceOverlay;
+#endif
     std::vector<osg::Camera*> cameras = configureEarthRendering(
-        viewer, earthRoot.get(), earth.get(), earthRenderingUtils, mainFolder, EARTH_INTERSECTION_MASK, w, h);
+        viewer, earthRoot.get(), earth.get(), earthRenderingUtils,
+        scienceOverlay, mainFolder, EARTH_INTERSECTION_MASK, w, h);
     earthRoot->getOrCreateStateSet()->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
 
     osg::Camera* sceneCamera = cameras[0];
@@ -994,9 +999,11 @@ int main(int argc, char** argv)
     {
         OSG_WARN << scienceRuntime.error() << std::endl;
     }
-    else if (osg::Node* scienceNode = scienceRuntime.sceneNode())
+    else
     {
-        sceneCamera->addChild(scienceNode);
+        scienceRuntime.bindGeoRaster(&terrainScienceOverlay);
+        if (osg::Node* scienceNode = scienceRuntime.sceneNode())
+            sceneCamera->addChild(scienceNode);
     }
 #endif
     {
@@ -1028,9 +1035,14 @@ int main(int argc, char** argv)
             alphaearth.shape = earthmark::MarkerShape::Square;
             alphaearth.iconColor = osg::Vec4(0.25f, 0.82f, 1.0f, 1.0f);
             SciencePluginRuntime* scienceRuntimePtr = &scienceRuntime;
-            alphaearth.apply = [scienceRuntimePtr](const OverlayLayer& layer)
+            terrainoverlay::TerrainScienceOverlay* terrainOverlayPtr =
+                &terrainScienceOverlay;
+            alphaearth.apply = [scienceRuntimePtr, terrainOverlayPtr](
+                                   const OverlayLayer& layer)
             {
                 scienceRuntimePtr->setVisible(layer.enabled);
+                terrainOverlayPtr->setVisible(layer.enabled);
+                terrainOverlayPtr->setOpacity(layer.opacity);
             };
             layerMgr.add(alphaearth);
         }

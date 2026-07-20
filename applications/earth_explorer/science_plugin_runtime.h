@@ -5,6 +5,8 @@
 
 #include <string>
 
+namespace terrainoverlay { class TerrainScienceOverlay; }
+
 class SciencePluginRuntime
 {
 public:
@@ -20,6 +22,8 @@ public:
 
     osg::Node* sceneNode() const;
     void setVisible(bool visible) const;
+    void bindGeoRaster(
+        terrainoverlay::TerrainScienceOverlay* overlay) const;
     void registerAiTools(earthai::ToolRegistry* tools,
                          LayerManager* layers,
                          osgVerse::EarthManipulator* manipulator) const;
@@ -33,7 +37,7 @@ private:
     bool reject(void* handle, const std::string& error);
 
     void* _module;
-    const OsgSolSciencePluginApiV2* _api;
+    const OsgSolSciencePluginApiV3* _api;
     void* _session;
     std::string _error;
 };

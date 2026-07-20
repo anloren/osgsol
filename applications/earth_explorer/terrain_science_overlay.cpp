@@ -1,6 +1,7 @@
 #include "terrain_science_overlay.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -111,8 +112,8 @@ namespace terrainoverlay
 
         osg::ref_ptr<osg::Texture2D> transparentTexture;
         osg::ref_ptr<osg::Texture2D> frameTexture;
-        std::uint64_t currentGeneration = 0;
-        bool currentHasFrame = false;
+        std::atomic<std::uint64_t> currentGeneration{0};
+        std::atomic<bool> currentHasFrame{false};
         GeoRasterBounds currentBounds;
     };
 
@@ -284,20 +285,24 @@ namespace terrainoverlay
         if (pending.kind == Impl::PENDING_CLEAR)
         {
             _impl->frameTexture = nullptr;
-            _impl->currentHasFrame = false;
-            _impl->currentGeneration = pending.generation;
+            _impl->currentHasFrame.store(false, std::memory_order_release);
+            _impl->currentGeneration.store(
+                pending.generation, std::memory_order_release);
         }
         else if (pending.kind == Impl::PENDING_FRAME)
         {
             _impl->frameTexture = createFrameTexture(
                 pending.width, pending.height, pending.rgba.data(),
                 pending.rgba.size());
-            _impl->currentHasFrame = true;
-            _impl->currentGeneration = pending.generation;
+            _impl->currentHasFrame.store(true, std::memory_order_release);
+            _impl->currentGeneration.store(
+                pending.generation, std::memory_order_release);
             _impl->currentBounds = pending.bounds;
         }
 
-        osg::Texture2D* selected = supported && _impl->currentHasFrame
+        const bool currentHasFrame = _impl->currentHasFrame.load(
+            std::memory_order_acquire);
+        osg::Texture2D* selected = supported && currentHasFrame
             ? _impl->frameTexture.get() : _impl->transparentTexture.get();
         globeStateSet.setTextureAttributeAndModes(
             SCIENCE_TEXTURE_UNIT, selected, osg::StateAttribute::ON);
@@ -306,11 +311,14 @@ namespace terrainoverlay
                 SCIENCE_TEXTURE_UNIT);
         globeStateSet.getOrCreateUniform(
             "ScienceOverlayVisible", osg::Uniform::BOOL)->set(
-                supported && _impl->currentHasFrame && requestedVisible);
+                supported && currentHasFrame && requestedVisible);
         globeStateSet.getOrCreateUniform(
             "ScienceOverlayOpacity", osg::Uniform::FLOAT)->set(
                 requestedOpacity);
-        if (_impl->currentHasFrame)
+        globeStateSet.getOrCreateUniform(
+            "ScienceOverlayOutlineVisible", osg::Uniform::BOOL)->set(
+                supported && currentHasFrame && requestedVisible);
+        if (currentHasFrame)
             setBoundsUniforms(globeStateSet, _impl->currentBounds);
         else
             setBoundsUniforms(globeStateSet, GeoRasterBounds{0.0, 0.0, 1.0, 1.0});
@@ -318,11 +326,11 @@ namespace terrainoverlay
 
     std::uint64_t TerrainScienceOverlay::appliedGeneration() const
     {
-        return _impl->currentGeneration;
+        return _impl->currentGeneration.load(std::memory_order_acquire);
     }
 
     bool TerrainScienceOverlay::hasFrame() const
     {
-        return _impl->currentHasFrame;
+        return _impl->currentHasFrame.load(std::memory_order_acquire);
     }
 }

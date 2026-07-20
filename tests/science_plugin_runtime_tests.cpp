@@ -1,4 +1,5 @@
 #include "../applications/earth_explorer/science_plugin_runtime.h"
+#include "../applications/earth_explorer/terrain_science_overlay.h"
 
 #include <dlfcn.h>
 #include <iostream>
@@ -43,6 +44,8 @@ int main()
         CHECK(runtime.available());
         CHECK(runtime.error().empty());
         CHECK(runtime.sceneNode() == nullptr);
+        terrainoverlay::TerrainScienceOverlay overlay;
+        runtime.bindGeoRaster(&overlay);
         runtime.setVisible(true);
         runtime.registerAiTools(nullptr, nullptr, nullptr);
         const OsgSolScienceGuiBridgeV1 gui = {
@@ -64,6 +67,7 @@ int main()
         CHECK(counters[6] == 1);
         CHECK(counters[7] == 2);
         CHECK(counters[8] == 0);
+        CHECK(counters[9] == 1);
         const OsgSolScienceGuiBridgeV1* forwarded = fakeGuiBridge();
         CHECK(forwarded != nullptr);
         CHECK(forwarded->context == gui.context);
