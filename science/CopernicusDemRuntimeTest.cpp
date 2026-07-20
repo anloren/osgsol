@@ -1,8 +1,10 @@
 #include "CopernicusDemRuntime.h"
+#include "ScienceRemoteOpen.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -77,6 +79,7 @@ namespace
         std::atomic<bool> fail{false};
         std::atomic<bool> entered{false};
         std::atomic<bool> release{false};
+        std::atomic<bool> ignoreCancellation{false};
         std::atomic<int> calls{0};
 
         bool read(
@@ -93,7 +96,8 @@ namespace
                    !release.load(std::memory_order_acquire) &&
                    !cancelled())
                 std::this_thread::yield();
-            if (cancelled())
+            if (cancelled() &&
+                !ignoreCancellation.load(std::memory_order_acquire))
             {
                 error = "cancelled";
                 return false;
@@ -168,6 +172,15 @@ namespace
                 "DEM artifact omitted datum, DSM meaning, or bounded access");
     }
 
+    void testRasterOpenBudgetIsFinite()
+    {
+        const earthscience::remoteopen::OperationBudget budget =
+            earthscience::remoteopen::rasterBudget();
+        require(budget.connectSeconds > 0 && budget.totalSeconds > 0 &&
+                    budget.connectSeconds < budget.totalSeconds,
+                "DEM remote-open budget is not finite");
+    }
+
     void testCancellationAndStaleGenerationCannotPublish()
     {
         auto io = std::make_unique<FakeIo>();
@@ -209,6 +222,49 @@ namespace
                         "Copernicus DEM fixture transport failed" &&
                     !snapshot.artifact,
                 "DEM failure was not isolated as a typed terminal result");
+    }
+
+    void testLateSuccessCannotRepublishAndDestructionJoins()
+    {
+        auto io = std::make_unique<FakeIo>();
+        FakeIo* observed = io.get();
+        observed->block.store(true, std::memory_order_release);
+        observed->ignoreCancellation.store(true, std::memory_order_release);
+        std::unique_ptr<earthscience::CopernicusDemRuntime> runtime(
+            new earthscience::CopernicusDemRuntime(std::move(io)));
+        const std::uint64_t generation = runtime->submit(query());
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(2);
+        while (!observed->entered.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        require(observed->entered.load(std::memory_order_acquire),
+                "late-success DEM read did not start");
+        runtime->cancel(generation);
+        observed->release.store(true, std::memory_order_release);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const earthscience::ScienceProviderSnapshot cancelled =
+            runtime->snapshot();
+        require(cancelled.state == earthscience::ScienceJobState::Cancelled &&
+                    !cancelled.artifact,
+                "late DEM success republished after cancellation");
+
+        observed->release.store(false, std::memory_order_release);
+        observed->ignoreCancellation.store(false, std::memory_order_release);
+        observed->entered.store(false, std::memory_order_release);
+        runtime->submit(query(35.70));
+        const auto joinDeadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(2);
+        while (!observed->entered.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < joinDeadline)
+            std::this_thread::yield();
+        require(observed->entered.load(std::memory_order_acquire),
+                "destructor-join DEM read did not start");
+        const auto destructionStarted = std::chrono::steady_clock::now();
+        runtime.reset();
+        require(std::chrono::steady_clock::now() - destructionStarted <
+                    std::chrono::milliseconds(500),
+                "DEM runtime destruction did not cancel and join");
     }
 
     std::string fixturePath(const char* suffix)
@@ -322,11 +378,25 @@ namespace
 
 int main()
 {
-    testPublishesScientificallyBoundedArtifact();
-    testCancellationAndStaleGenerationCannotPublish();
-    testFailureIsTypedAndCarriesNoArtifact();
-    testReadsNorthUpNumericEvidenceAndNoData();
-    testComposesAdjacentDatasets();
-    std::cout << "[OK] Copernicus DEM runtime contract\n";
-    return 0;
+    try
+    {
+        testRasterOpenBudgetIsFinite();
+        testPublishesScientificallyBoundedArtifact();
+        testCancellationAndStaleGenerationCannotPublish();
+        testFailureIsTypedAndCarriesNoArtifact();
+        testLateSuccessCannotRepublishAndDestructionJoins();
+        testReadsNorthUpNumericEvidenceAndNoData();
+        testComposesAdjacentDatasets();
+        std::cout << "[OK] Copernicus DEM runtime contract\n";
+        return 0;
+    }
+    catch (const std::exception& exception)
+    {
+        std::cerr << "[FAIL] uncaught exception: " << exception.what() << '\n';
+    }
+    catch (...)
+    {
+        std::cerr << "[FAIL] uncaught non-standard exception\n";
+    }
+    return 1;
 }

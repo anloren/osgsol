@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <mutex>
@@ -611,6 +612,55 @@ namespace
                 "late cancelled work replaced the terminal snapshot");
     }
 
+    void testDestructionJoinsActiveLocalResolver()
+    {
+        LocalFixture fixture;
+        std::mutex mutex;
+        std::condition_variable condition;
+        bool entered = false;
+        bool release = false;
+        std::unique_ptr<earthscience::AlphaEarthEmbeddingRuntime> runtime(
+            new earthscience::AlphaEarthEmbeddingRuntime(
+                [&](double, double, int year,
+                    earthscience::AlphaEarthAsset& asset,
+                    std::string& error)
+                {
+                    std::unique_lock<std::mutex> lock(mutex);
+                    entered = true;
+                    condition.notify_all();
+                    condition.wait(lock, [&]() { return release; });
+                    asset = fixture.asset(year);
+                    error.clear();
+                    return true;
+                }));
+        earthscience::GeoTemporalQuery request = pointQuery();
+        request.time.explicitYears = {2017};
+        runtime->submit(request);
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            require(condition.wait_for(
+                        lock, std::chrono::seconds(2), [&]() { return entered; }),
+                    "AlphaEarth destructor-join resolver did not start");
+        }
+        std::thread releaser([&]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                release = true;
+            }
+            condition.notify_all();
+        });
+        const auto destructionStarted = std::chrono::steady_clock::now();
+        runtime.reset();
+        const auto elapsed = std::chrono::steady_clock::now() -
+            destructionStarted;
+        releaser.join();
+        require(elapsed >= std::chrono::milliseconds(20) &&
+                    elapsed < std::chrono::milliseconds(500),
+                "AlphaEarth destruction did not join its active worker");
+    }
+
     void testInjectedResolverRejectsRemoteAssetsBeforeGdal()
     {
         const std::vector<std::string> rejectedPaths = {
@@ -1085,20 +1135,33 @@ namespace
 
 int main()
 {
-    testMosaicDownsamplingUsesSourceOverview();
-    testMosaicWarpChecksCancellationDuringWork();
-    testCrossTilePreviewHasNoTransparentClippedEdge();
-    testCrossTileRegionalAnalysisBuildsOneCompleteGrid();
-    testRealRuntimeThroughputEnablesDurationBudget();
-    testRotatedSourcePublishesActualSampleGridAndFootprint();
-    testSingleTileRejectsPartialRequestedCoverage();
-    testGridUpsamplingRequiresExplicitPermission();
-    testInjectedResolverRejectsRemoteAssetsBeforeGdal();
-    testCompletePointAndRegionalReadsUseOneGrid();
-    testCancellationPublishesNoPartialReady();
-    testNoCoverageMetadataAndGdalErrorsStayDistinct();
-    testProductionResolverUsesImmutableIndexSchemaAndSourceCoopPrefix();
-    testBudgetRejectionPrecedesReadAndExplicitMeanAggregatesVectors();
-    std::cout << "AlphaEarth embedding runtime tests passed\n";
-    return 0;
+    try
+    {
+        testMosaicDownsamplingUsesSourceOverview();
+        testMosaicWarpChecksCancellationDuringWork();
+        testCrossTilePreviewHasNoTransparentClippedEdge();
+        testCrossTileRegionalAnalysisBuildsOneCompleteGrid();
+        testRealRuntimeThroughputEnablesDurationBudget();
+        testRotatedSourcePublishesActualSampleGridAndFootprint();
+        testSingleTileRejectsPartialRequestedCoverage();
+        testGridUpsamplingRequiresExplicitPermission();
+        testInjectedResolverRejectsRemoteAssetsBeforeGdal();
+        testCompletePointAndRegionalReadsUseOneGrid();
+        testCancellationPublishesNoPartialReady();
+        testDestructionJoinsActiveLocalResolver();
+        testNoCoverageMetadataAndGdalErrorsStayDistinct();
+        testProductionResolverUsesImmutableIndexSchemaAndSourceCoopPrefix();
+        testBudgetRejectionPrecedesReadAndExplicitMeanAggregatesVectors();
+        std::cout << "AlphaEarth embedding runtime tests passed\n";
+        return 0;
+    }
+    catch (const std::exception& exception)
+    {
+        std::cerr << "[FAIL] uncaught exception: " << exception.what() << '\n';
+    }
+    catch (...)
+    {
+        std::cerr << "[FAIL] uncaught non-standard exception\n";
+    }
+    return 1;
 }

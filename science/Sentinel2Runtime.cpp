@@ -1,4 +1,5 @@
 #include "Sentinel2Runtime.h"
+#include "ScienceRemoteOpen.h"
 
 #include <algorithm>
 #include <atomic>
@@ -35,26 +36,6 @@ namespace
     };
     using DatasetPtr = std::unique_ptr<GDALDataset, DatasetCloser>;
 
-    void configureGdal()
-    {
-        static std::once_flag registration;
-        std::call_once(registration, []()
-        {
-            GDALRegister_GTiff();
-            GDALRegister_VRT();
-            GDALRegister_MEM();
-            CPLSetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR");
-            CPLSetConfigOption(
-                "CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.tiff");
-            CPLSetConfigOption("GDAL_HTTP_VERSION", "2TLS");
-            CPLSetConfigOption("GDAL_HTTP_MULTIPLEX", "YES");
-            CPLSetConfigOption(
-                "GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES");
-            CPLSetConfigOption("GDAL_HTTP_CONNECTTIMEOUT", "8");
-            CPLSetConfigOption("GDAL_HTTP_TIMEOUT", "25");
-        });
-    }
-
     void sentinelError(std::string& error)
     {
         const std::string alpha = "AlphaEarth";
@@ -79,7 +60,7 @@ namespace
         ScienceRasterPayload& output, std::string& error)
     {
         output = ScienceRasterPayload();
-        configureGdal();
+        remoteopen::configureRasterIo();
         if (cancelled()) { error = "cancelled"; return false; }
         CPLErrorReset();
         DatasetPtr dataset(static_cast<GDALDataset*>(GDALOpenEx(
@@ -91,6 +72,7 @@ namespace
             if (error.empty()) error = "Sentinel-2 visual COG could not be opened";
             return false;
         }
+        if (cancelled()) { error = "cancelled"; return false; }
         if (dataset->GetRasterCount() != 3 ||
             dataset->GetRasterXSize() <= 0 || dataset->GetRasterYSize() <= 0)
         {
@@ -138,6 +120,7 @@ namespace
             GROUND_GRID_SIZE, GROUND_GRID_SIZE, error);
         sentinelError(error);
         if (!error.empty() || grid.points.empty()) return false;
+        if (cancelled()) { error = "cancelled"; return false; }
 
         std::vector<unsigned char> rgb(PREVIEW_SIZE * PREVIEW_SIZE * 3);
         GDALRasterIOExtraArg extra;
@@ -146,6 +129,7 @@ namespace
         extra.pfnProgress = cancelProgress;
         extra.pProgressData = const_cast<std::function<bool()>*>(&cancelled);
         int bandMap[] = {1, 2, 3};
+        if (cancelled()) { error = "cancelled"; return false; }
         if (dataset->RasterIO(
                 GF_Read, window.x, window.y, window.width, window.height,
                 rgb.data(), PREVIEW_SIZE, PREVIEW_SIZE, GDT_Byte,
@@ -211,6 +195,7 @@ namespace
                     "requested point and span";
             return false;
         }
+        if (cancelled()) { error = "cancelled"; return false; }
         output.bounds = {grid.points.front().longitude,
                          grid.points.front().latitude,
                          grid.points.front().longitude,
@@ -270,9 +255,8 @@ namespace
                 error = "Sentinel-2 STAC endpoint is not allowlisted";
                 return false;
             }
-            char** options = nullptr;
-            options = CSLSetNameValue(options, "CONNECTTIMEOUT", "8");
-            options = CSLSetNameValue(options, "TIMEOUT", "15");
+            char** options = remoteopen::appendBudget(
+                nullptr, remoteopen::metadataBudget());
             options = CSLSetNameValue(options, "MAX_RETRY", "0");
             options = CSLSetNameValue(
                 options, "HEADERS", "Accept: application/geo+json");
@@ -398,8 +382,11 @@ struct Sentinel2Runtime::Impl
                  std::shared_ptr<const ScienceArtifact> artifact = nullptr,
                  double elapsedSeconds = 0.0)
     {
+        if (next != ScienceJobState::Cancelled && cancelled(value)) return;
         std::lock_guard<std::mutex> lock(mutex);
-        if (value != generation.load(std::memory_order_acquire)) return;
+        if (value != generation.load(std::memory_order_acquire) ||
+            (next != ScienceJobState::Cancelled && cancelled(value)))
+            return;
         state.generation = value;
         state.state = next;
         state.progress.stage = stage;
@@ -461,6 +448,7 @@ struct Sentinel2Runtime::Impl
                     ScienceProgressStage::Failed, error);
             return;
         }
+        if (isCancelled()) { finishCancelled(request.generation); return; }
         publish(request.generation, ScienceJobState::Fetching,
                 ScienceProgressStage::Reading,
                 "Reading selected Sentinel-2 visual COG");
@@ -521,6 +509,7 @@ struct Sentinel2Runtime::Impl
         artifact->sourceReferences.push_back(std::move(reference));
         artifact->warnings.push_back(
             "Scene cloud cover is scene-wide, not a per-pixel cloud mask");
+        if (isCancelled()) { finishCancelled(request.generation); return; }
         const double elapsedSeconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - request.startedAt).count();
         publish(request.generation, ScienceJobState::Ready,

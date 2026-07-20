@@ -1,7 +1,9 @@
 #include "ScienceQueryService.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -817,6 +819,8 @@ namespace
         earthscience::ScienceSourceDescriptor otherDescriptor =
             makeDescriptor();
         otherDescriptor.id = "other-foundations";
+        otherDescriptor.health = earthscience::ScienceSourceHealth::Degraded;
+        otherDescriptor.healthMessage = "fixture source remains degraded";
         auto other = std::make_unique<ControlledProvider>(
             otherDescriptor, &otherEvents);
         ControlledProvider* otherPointer = other.get();
@@ -839,6 +843,28 @@ namespace
                     alphaReady.lastSuccessfulPreviewArtifact->artifactId ==
                         "alpha-preview",
                 "AlphaEarth preview fixture did not become last preview");
+
+        service.submit(makeQuery());
+        const std::uint64_t failedGeneration = alphaPointer->generation();
+        alphaPointer->publish(
+            failedGeneration, earthscience::ScienceJobState::Failed,
+            makeProgress(earthscience::ScienceProgressStage::Failed),
+            "controlled AlphaEarth failure");
+        const earthscience::ScienceJobSnapshot alphaFailed = service.snapshot();
+        const std::vector<earthscience::ScienceSourceDescriptor> catalog =
+            service.listSources();
+        const auto otherCatalog = std::find_if(
+            catalog.begin(), catalog.end(),
+            [](const earthscience::ScienceSourceDescriptor& source)
+            { return source.id == "other-foundations"; });
+        require(alphaFailed.state == earthscience::ScienceJobState::Failed &&
+                    alphaFailed.displayArtifact == alphaReady.displayArtifact &&
+                    otherCatalog != catalog.end() &&
+                    otherCatalog->health ==
+                        earthscience::ScienceSourceHealth::Degraded &&
+                    otherCatalog->healthMessage ==
+                        "fixture source remains degraded",
+                "one provider failure erased display state or changed another source health");
 
         earthscience::GeoTemporalQuery impostor = makeQuery();
         impostor.sourceId = "other-foundations";
@@ -946,18 +972,30 @@ namespace
 
 int main()
 {
-    testRejectsUnknownUnavailableAndUnsupportedQueries();
-    testReplacementRejectsStaleResultsAndOldCancellation();
-    testRetainsLastGoodAcrossFetchingFailureAndCancellation();
-    testRetainsPreviewAnalysisAndDisplayIndependently();
-    testEstimatesExactCostAndRequiresEvidenceForDuration();
-    testFloatRasterCostUsesNumericStorageWidth();
-    testPreviewThroughputDoesNotFabricateAnalysisDuration();
-    testThroughputEvidenceIsolatedByPhysicalWorkload();
-    testDispatchesBoundedIntervalRasterForCapableProvider();
-    testProviderPreviewCostsAndArtifactsRemainIsolated();
-    testRequiresConfirmationAndEnforcesEstimatedBudgets();
-    testDestructionCancelsBeforeProviderDestruction();
-    std::cout << "[OK] ScienceEarth single-active-job query service\n";
-    return 0;
+    try
+    {
+        testRejectsUnknownUnavailableAndUnsupportedQueries();
+        testReplacementRejectsStaleResultsAndOldCancellation();
+        testRetainsLastGoodAcrossFetchingFailureAndCancellation();
+        testRetainsPreviewAnalysisAndDisplayIndependently();
+        testEstimatesExactCostAndRequiresEvidenceForDuration();
+        testFloatRasterCostUsesNumericStorageWidth();
+        testPreviewThroughputDoesNotFabricateAnalysisDuration();
+        testThroughputEvidenceIsolatedByPhysicalWorkload();
+        testDispatchesBoundedIntervalRasterForCapableProvider();
+        testProviderPreviewCostsAndArtifactsRemainIsolated();
+        testRequiresConfirmationAndEnforcesEstimatedBudgets();
+        testDestructionCancelsBeforeProviderDestruction();
+        std::cout << "[OK] ScienceEarth single-active-job query service\n";
+        return 0;
+    }
+    catch (const std::exception& exception)
+    {
+        std::cerr << "[FAIL] uncaught exception: " << exception.what() << '\n';
+    }
+    catch (...)
+    {
+        std::cerr << "[FAIL] uncaught non-standard exception\n";
+    }
+    return 1;
 }

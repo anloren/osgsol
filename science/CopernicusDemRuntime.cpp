@@ -1,4 +1,5 @@
 #include "CopernicusDemRuntime.h"
+#include "ScienceRemoteOpen.h"
 
 #include <algorithm>
 #include <atomic>
@@ -46,26 +47,6 @@ namespace
     };
     using VrtOptionsPtr =
         std::unique_ptr<GDALBuildVRTOptions, VrtOptionsCloser>;
-
-    void configureGdal()
-    {
-        static std::once_flag registration;
-        std::call_once(registration, []()
-        {
-            GDALRegister_GTiff();
-            GDALRegister_VRT();
-            GDALRegister_MEM();
-            CPLSetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR");
-            CPLSetConfigOption(
-                "CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif,.tiff");
-            CPLSetConfigOption("GDAL_HTTP_VERSION", "2TLS");
-            CPLSetConfigOption("GDAL_HTTP_MULTIPLEX", "YES");
-            CPLSetConfigOption(
-                "GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES");
-            CPLSetConfigOption("GDAL_HTTP_CONNECTTIMEOUT", "8");
-            CPLSetConfigOption("GDAL_HTTP_TIMEOUT", "25");
-        });
-    }
 
     int cancelProgress(double, const char*, void* userData)
     {
@@ -248,7 +229,7 @@ namespace
             error = "No Copernicus DEM geocells cover the request";
             return false;
         }
-        configureGdal();
+        remoteopen::configureRasterIo();
         if (cancelled()) { error = "cancelled"; return false; }
 
         std::vector<DatasetPtr> sources;
@@ -257,6 +238,7 @@ namespace
         sourceHandles.reserve(datasetPaths.size());
         for (const std::string& path : datasetPaths)
         {
+            if (cancelled()) { error = "cancelled"; return false; }
             CPLErrorReset();
             DatasetPtr source(static_cast<GDALDataset*>(GDALOpenEx(
                 path.c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
@@ -268,6 +250,7 @@ namespace
                     error = "Copernicus DEM COG could not be opened";
                 return false;
             }
+            if (cancelled()) { error = "cancelled"; return false; }
             if (source->GetRasterCount() != 1 ||
                 source->GetRasterXSize() <= 0 ||
                 source->GetRasterYSize() <= 0)
@@ -293,6 +276,7 @@ namespace
             sourceHandles.push_back(source.get());
             sources.push_back(std::move(source));
         }
+        if (cancelled()) { error = "cancelled"; return false; }
 
         DatasetPtr mosaic;
         GDALDataset* dataset = sources.front().get();
@@ -328,6 +312,12 @@ namespace
             }
             dataset = mosaic.get();
         }
+        if (cancelled())
+        {
+            if (!vrtPath.empty()) VSIUnlink(vrtPath.c_str());
+            error = "cancelled";
+            return false;
+        }
 
         double transform[6] = {};
         const char* projection = dataset->GetProjectionRef();
@@ -353,6 +343,12 @@ namespace
             error = "Copernicus DEM source window exceeds the cell budget";
             return false;
         }
+        if (cancelled())
+        {
+            if (!vrtPath.empty()) VSIUnlink(vrtPath.c_str());
+            error = "cancelled";
+            return false;
+        }
 
         GDALRasterBand* band = dataset->GetRasterBand(1);
         GDALRasterBand* maskBand = band ? band->GetMaskBand() : nullptr;
@@ -372,6 +368,12 @@ namespace
         std::vector<float> nativeValues(static_cast<std::size_t>(nativeCount));
         std::vector<unsigned char> nativeMask(
             static_cast<std::size_t>(nativeCount), 255);
+        if (cancelled())
+        {
+            if (!vrtPath.empty()) VSIUnlink(vrtPath.c_str());
+            error = "cancelled";
+            return false;
+        }
         if (band->RasterIO(
                 GF_Read, window.x, window.y, window.width, window.height,
                 nativeValues.data(), window.width, window.height,
@@ -387,6 +389,12 @@ namespace
                 "Copernicus DEM numeric window read failed";
             return false;
         }
+        if (cancelled())
+        {
+            if (!vrtPath.empty()) VSIUnlink(vrtPath.c_str());
+            error = "cancelled";
+            return false;
+        }
 
         int hasNoData = FALSE;
         const double noData = band->GetNoDataValue(&hasNoData);
@@ -397,6 +405,12 @@ namespace
         long double sum = 0.0;
         for (std::size_t index = 0; index < nativeValues.size(); ++index)
         {
+            if ((index & 4095u) == 0u && cancelled())
+            {
+                if (!vrtPath.empty()) VSIUnlink(vrtPath.c_str());
+                error = "cancelled";
+                return false;
+            }
             const float value = nativeValues[index];
             if (!validSample(value, hasNoData, noData, nativeMask[index]))
             {
@@ -453,6 +467,12 @@ namespace
         std::vector<float> displayValues(PREVIEW_SIZE * PREVIEW_SIZE);
         std::vector<unsigned char> displayMask(
             PREVIEW_SIZE * PREVIEW_SIZE, 255);
+        if (cancelled())
+        {
+            if (!vrtPath.empty()) VSIUnlink(vrtPath.c_str());
+            error = "cancelled";
+            return false;
+        }
         if (band->RasterIO(
                 GF_Read, window.x, window.y, window.width, window.height,
                 displayValues.data(), PREVIEW_SIZE, PREVIEW_SIZE,
@@ -466,6 +486,12 @@ namespace
             if (!vrtPath.empty()) VSIUnlink(vrtPath.c_str());
             error = cancelled() ? "cancelled" :
                 "Copernicus DEM display window read failed";
+            return false;
+        }
+        if (cancelled())
+        {
+            if (!vrtPath.empty()) VSIUnlink(vrtPath.c_str());
+            error = "cancelled";
             return false;
         }
 
@@ -626,8 +652,11 @@ struct CopernicusDemRuntime::Impl
                  std::shared_ptr<const ScienceArtifact> artifact = nullptr,
                  double elapsedSeconds = 0.0)
     {
+        if (next != ScienceJobState::Cancelled && cancelled(value)) return;
         std::lock_guard<std::mutex> lock(mutex);
-        if (value != generation.load(std::memory_order_acquire)) return;
+        if (value != generation.load(std::memory_order_acquire) ||
+            (next != ScienceJobState::Cancelled && cancelled(value)))
+            return;
         state.generation = value;
         state.state = next;
         state.progress.stage = stage;
@@ -730,6 +759,7 @@ struct CopernicusDemRuntime::Impl
             {"full_object_fallback", "Full-object fallback", "none", ""},
         };
         artifact->sourceReferences.push_back(std::move(reference));
+        if (isCancelled()) { finishCancelled(request.generation); return; }
         const double elapsedSeconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - request.startedAt).count();
         publish(request.generation, ScienceJobState::Ready,

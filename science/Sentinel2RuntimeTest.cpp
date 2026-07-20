@@ -1,9 +1,11 @@
 #include "Sentinel2Runtime.h"
+#include "ScienceRemoteOpen.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -78,6 +80,7 @@ namespace
     {
     public:
         bool failFetch = false;
+        std::atomic<bool> ignoreCancellation{false};
         std::atomic<bool> blockFetch{false};
         std::atomic<bool> blockRead{false};
         std::atomic<bool> fetchStarted{false};
@@ -95,7 +98,8 @@ namespace
             fetchStarted.store(true, std::memory_order_release);
             while (blockFetch.load(std::memory_order_acquire) && !cancelled())
                 std::this_thread::yield();
-            if (cancelled())
+            if (cancelled() &&
+                !ignoreCancellation.load(std::memory_order_acquire))
             {
                 error = "cancelled";
                 return false;
@@ -127,7 +131,8 @@ namespace
             readStarted.store(true, std::memory_order_release);
             while (blockRead.load(std::memory_order_acquire) && !cancelled())
                 std::this_thread::yield();
-            if (cancelled())
+            if (cancelled() &&
+                !ignoreCancellation.load(std::memory_order_acquire))
             {
                 error = "cancelled";
                 return false;
@@ -211,6 +216,20 @@ namespace
                 "Sentinel runtime omitted scene provenance");
     }
 
+    void testRemoteOperationBudgetsStayDistinctAndBounded()
+    {
+        const earthscience::remoteopen::OperationBudget metadata =
+            earthscience::remoteopen::metadataBudget();
+        const earthscience::remoteopen::OperationBudget raster =
+            earthscience::remoteopen::rasterBudget();
+        require(metadata.connectSeconds == 8 && metadata.totalSeconds == 15,
+                "metadata network budget changed");
+        require(raster.connectSeconds == 8 && raster.totalSeconds == 25,
+                "raster network budget changed");
+        require(metadata.totalSeconds < raster.totalSeconds,
+                "metadata and raster operations lost distinct budgets");
+    }
+
     void testCancellationAndFailureDoNotPublishArtifacts()
     {
         auto fetchingIo = std::make_unique<FakeIo>();
@@ -245,11 +264,14 @@ namespace
             std::this_thread::yield();
         require(observed->readStarted.load(std::memory_order_acquire),
                 "blocking read did not start");
+        const auto cancellationStarted = std::chrono::steady_clock::now();
         runtime.cancel(generation);
         const earthscience::ScienceProviderSnapshot cancelled =
             waitForTerminal(runtime);
         require(cancelled.state == earthscience::ScienceJobState::Cancelled &&
-                    !cancelled.artifact,
+                    !cancelled.artifact &&
+                    std::chrono::steady_clock::now() - cancellationStarted <
+                        std::chrono::milliseconds(250),
                 "cancelled Sentinel work published an artifact");
 
         auto failingIo = std::make_unique<FakeIo>();
@@ -277,6 +299,47 @@ namespace
                         std::string::npos &&
                     !missing.artifact,
                 "no matching scene did not provide actionable filter guidance");
+    }
+
+    void testLateSuccessCannotRepublishAndDestructionJoins()
+    {
+        auto io = std::make_unique<FakeIo>();
+        FakeIo* observed = io.get();
+        observed->blockRead.store(true, std::memory_order_release);
+        observed->ignoreCancellation.store(true, std::memory_order_release);
+        std::unique_ptr<earthscience::Sentinel2Runtime> runtime(
+            new earthscience::Sentinel2Runtime(std::move(io)));
+        const std::uint64_t generation = runtime->submit(query());
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(2);
+        while (!observed->readStarted.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        require(observed->readStarted.load(std::memory_order_acquire),
+                "late-success Sentinel read did not start");
+        runtime->cancel(generation);
+        observed->blockRead.store(false, std::memory_order_release);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const earthscience::ScienceProviderSnapshot cancelled =
+            runtime->snapshot();
+        require(cancelled.state == earthscience::ScienceJobState::Cancelled &&
+                    !cancelled.artifact,
+                "late Sentinel success republished after cancellation");
+
+        observed->blockRead.store(true, std::memory_order_release);
+        observed->ignoreCancellation.store(false, std::memory_order_release);
+        observed->readStarted.store(false, std::memory_order_release);
+        runtime->submit(query(35.71));
+        while (!observed->readStarted.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        require(observed->readStarted.load(std::memory_order_acquire),
+                "destructor-join Sentinel read did not start");
+        const auto destructionStarted = std::chrono::steady_clock::now();
+        runtime.reset();
+        require(std::chrono::steady_clock::now() - destructionStarted <
+                    std::chrono::milliseconds(500),
+                "Sentinel runtime destruction did not cancel and join");
     }
 
     void testNewGenerationAndClearRejectStaleRead()
@@ -500,10 +563,24 @@ namespace
 
 int main()
 {
-    testReadyArtifactHasExactSceneEvidence();
-    testCancellationAndFailureDoNotPublishArtifacts();
-    testNewGenerationAndClearRejectStaleRead();
-    testLocalProjectedVisualDatasetKeepsRgbAndNorthUpGrid();
-    std::cout << "[OK] Sentinel-2 runtime state contract\n";
-    return 0;
+    try
+    {
+        testRemoteOperationBudgetsStayDistinctAndBounded();
+        testReadyArtifactHasExactSceneEvidence();
+        testCancellationAndFailureDoNotPublishArtifacts();
+        testLateSuccessCannotRepublishAndDestructionJoins();
+        testNewGenerationAndClearRejectStaleRead();
+        testLocalProjectedVisualDatasetKeepsRgbAndNorthUpGrid();
+        std::cout << "[OK] Sentinel-2 runtime state contract\n";
+        return 0;
+    }
+    catch (const std::exception& exception)
+    {
+        std::cerr << "[FAIL] uncaught exception: " << exception.what() << '\n';
+    }
+    catch (...)
+    {
+        std::cerr << "[FAIL] uncaught non-standard exception\n";
+    }
+    return 1;
 }

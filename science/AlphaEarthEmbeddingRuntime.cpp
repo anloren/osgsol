@@ -106,11 +106,12 @@ struct AlphaEarthEmbeddingRuntime::Impl
                 };
             std::shared_ptr<const ScienceArtifact> artifact;
             std::string error;
-            const bool succeeded = alphaearthdetail::readAlphaEarthArtifact(
-                request.query, resolver, assetSetResolver,
-                injectedLocalResolver,
-                request.generation, callbacks,
-                artifact, error);
+            const bool succeeded = !callbacks.cancelled() &&
+                alphaearthdetail::readAlphaEarthArtifact(
+                    request.query, resolver, assetSetResolver,
+                    injectedLocalResolver,
+                    request.generation, callbacks,
+                    artifact, error);
 
             std::lock_guard<std::mutex> lock(mutex);
             if (request.generation !=
