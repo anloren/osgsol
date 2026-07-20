@@ -231,6 +231,62 @@ int main(int, char**)
         std::cout << "AIChatCore same-turn tool ordering OK\n";
     }
 
+    // ---- Gemini 3.5 functionCall.id 必须原样配对到 functionResponse.id ----
+    {
+        struct FunctionIdProvider : public LLMProvider
+        {
+            int rounds = 0;
+            std::string secondRoundContents;
+
+            virtual LLMTurn chat(
+                const std::string& contentsJson, const std::string&)
+            {
+                if (rounds++ == 0)
+                {
+                    return parseGeminiResponse(
+                        "{\"candidates\":[{\"content\":{\"parts\":[{"
+                        "\"functionCall\":{\"name\":\"probe\",\"args\":{},"
+                        "\"id\":\"call-3-5-abc\"},"
+                        "\"thoughtSignature\":\"sig-3-5\"}],"
+                        "\"role\":\"model\"}}]}");
+                }
+                secondRoundContents = contentsJson;
+                LLMTurn turn;
+                turn.text = u8"工具结果已收到";
+                return turn;
+            }
+        } provider;
+
+        ToolRegistry registry;
+        Tool probe;
+        probe.name = "probe";
+        probe.description = "probe function id round-trip";
+        probe.parametersJson = "{\"type\":\"object\",\"properties\":{}}";
+        probe.execute = [](const picojson::value&) {
+            return parse("{\"ok\":true}");
+        };
+        registry.add(probe);
+
+        AIChatCore core(&provider, &registry);
+        core.submit(u8"调用 probe");
+        for (int i = 0; i < 500 && core.busy(); ++i)
+        { core.drainMainThread(); usleep(10000); }
+        core.drainMainThread();
+
+        picojson::value contents;
+        CHECK(picojson::parse(contents, provider.secondRoundContents).empty());
+        const picojson::array& turns = contents.get<picojson::array>();
+        CHECK(turns.size() == 3);
+        const picojson::value& functionCall =
+            turns[1].get("parts").get<picojson::array>()[0].get("functionCall");
+        const picojson::value& functionResponse =
+            turns[2].get("parts").get<picojson::array>()[0].get("functionResponse");
+        CHECK(functionCall.get("id").to_str() == "call-3-5-abc");
+        CHECK(functionResponse.contains("id"));
+        CHECK(functionResponse.get("id").to_str() == "call-3-5-abc");
+        std::cout << "Gemini function call id round-trip OK\n";
+    }
+
     // ---- submit while busy 被礼貌忽略 ----
     {
         // 用条件变量门控的 provider:chat() 阻塞到测试显式放行,

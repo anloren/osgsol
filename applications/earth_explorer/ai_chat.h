@@ -14,7 +14,13 @@ namespace earthai
     // thought_signature,否则 400 "Function call is missing a thought_signature"。
     // 该字段可能在 functionCall 里也可能与其平级——不做假设,整个 part 原文保留。
     // FakeProvider 路径不产生此字段(为空),序列化时走重建分支。
-    struct FunctionCall { std::string name; picojson::value args; std::string rawPartJson; };
+    struct FunctionCall
+    {
+        std::string name;
+        picojson::value args;
+        std::string id;              // Gemini 3.x:必须原样配对到 functionResponse.id
+        std::string rawPartJson;
+    };
     struct LLMTurn { std::string text; std::vector<FunctionCall> calls; std::string error; };
 
     class LLMProvider
@@ -45,6 +51,7 @@ namespace earthai
         enum Role { USER_TEXT, MODEL_TEXT, MODEL_CALL, TOOL_RESPONSE } role;
         std::string text;              // USER_TEXT / MODEL_TEXT 用
         std::string callName;          // MODEL_CALL / TOOL_RESPONSE 用
+        std::string callId;            // Gemini 3.x functionCall/functionResponse 配对用
         picojson::value callArgs;      // MODEL_CALL 用(functionCall.args)
         picojson::value toolResponse;  // TOOL_RESPONSE 用(functionResponse.response)
         std::string rawPartJson;       // MODEL_CALL 用:原样 part(含 thoughtSignature),

@@ -136,6 +136,7 @@ namespace earthai
                     picojson::object fc;
                     fc["name"] = picojson::value(h.callName);
                     fc["args"] = h.callArgs.is<picojson::null>() ? picojson::value(picojson::object()) : h.callArgs;
+                    if (!h.callId.empty()) fc["id"] = picojson::value(h.callId);
                     part["functionCall"] = picojson::value(fc);
                 }
                 break;
@@ -145,6 +146,7 @@ namespace earthai
                 entry["role"] = picojson::value("user");
                 picojson::object fr;
                 fr["name"] = picojson::value(h.callName);
+                if (!h.callId.empty()) fr["id"] = picojson::value(h.callId);
                 fr["response"] = h.toolResponse.is<picojson::null>() ? picojson::value(picojson::object()) : h.toolResponse;
                 part["functionResponse"] = picojson::value(fr);
                 break;
@@ -308,6 +310,7 @@ namespace earthai
                 {
                     HistoryItem hi; hi.role = HistoryItem::MODEL_CALL;
                     hi.callName = _pendingCalls[i].name; hi.callArgs = _pendingCalls[i].args;
+                    hi.callId = _pendingCalls[i].id;
                     hi.rawPartJson = _pendingCalls[i].rawPartJson;   // 原样 part 随历史保留
                     _history.push_back(hi);
                 }
@@ -347,7 +350,8 @@ namespace earthai
                     picojson::object errObj;
                     errObj["error"] = picojson::value("tool loop limit reached");
                     HistoryItem hi; hi.role = HistoryItem::TOOL_RESPONSE;
-                    hi.callName = callsToRun[i].name; hi.toolResponse = picojson::value(errObj);
+                    hi.callName = callsToRun[i].name; hi.callId = callsToRun[i].id;
+                    hi.toolResponse = picojson::value(errObj);
                     _history.push_back(hi);
                 }
                 // 不再硬报错中断对话——改为紧接着强制再走一轮"无工具"请求,让模型只能用
@@ -393,7 +397,7 @@ namespace earthai
             _transcript.push_back(e);
 
             HistoryItem hi; hi.role = HistoryItem::TOOL_RESPONSE;
-            hi.callName = fc.name; hi.toolResponse = result;
+            hi.callName = fc.name; hi.callId = fc.id; hi.toolResponse = result;
             _history.push_back(hi);
         }
 
@@ -481,6 +485,8 @@ namespace earthai
                 if (fcv.contains("name")) fc.name = fcv.get("name").to_str();
                 if (fc.name.empty()) continue; // 没有名字的 functionCall 没法执行,跳过
                 fc.args = fcv.contains("args") ? fcv.get("args") : picojson::value(picojson::object());
+                if (fcv.contains("id") && fcv.get("id").is<std::string>())
+                    fc.id = fcv.get("id").to_str();
                 // 整个 part 原样留存(含 thoughtSignature——它可能在 functionCall 里也可能
                 // 与其平级,不做假设),回发历史时原文带上,见 buildContentsJson MODEL_CALL 分支
                 fc.rawPartJson = part.serialize();
