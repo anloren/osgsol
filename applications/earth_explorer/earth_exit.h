@@ -1,6 +1,7 @@
 #ifndef OSGVERSE_EARTH_EXIT_H
 #define OSGVERSE_EARTH_EXIT_H
 
+#include <atomic>
 #include <limits>
 #if defined(__APPLE__)
 #include <osg/ApplicationUsage>
@@ -8,6 +9,28 @@
 
 namespace earthexit
 {
+
+// ImGui is rendered by an OSG graphics thread.  A button in that callback must
+// not end Viewer::run() directly because the main thread can otherwise start
+// destroying callback owners while the draw callback is still using them.
+// The render thread only publishes this one-way request; event traversal owns
+// the actual ViewerBase::setDone() call.
+class QuitRequest
+{
+public:
+    void request()
+    {
+        _requested.store(true, std::memory_order_release);
+    }
+
+    bool consume()
+    {
+        return _requested.exchange(false, std::memory_order_acq_rel);
+    }
+
+private:
+    std::atomic<bool> _requested{false};
+};
 
 inline bool parsePositiveFrameCount(const char* text, unsigned int& frames)
 {

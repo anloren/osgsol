@@ -16,6 +16,12 @@
 
 int main()
 {
+    earthexit::QuitRequest quitRequest;
+    CHECK(!quitRequest.consume());
+    quitRequest.request();
+    CHECK(quitRequest.consume());
+    CHECK(!quitRequest.consume());
+
     osgVerse::ImGuiInputQueue queue;
     std::vector<std::thread> producers;
     for (int producer = 0; producer < 4; ++producer)
@@ -79,20 +85,40 @@ int main()
     const size_t guardClassEnd = earthSource.find("\n};", guardDestructor);
     const size_t stopGuard = earthSource.find(
         "ViewerThreadStopGuard stopViewerThreads(viewer);");
-    const size_t viewerRun = earthSource.rfind("return viewer.run();");
+    const size_t viewerRun = earthSource.rfind("viewerResult = viewer.run();");
+    const size_t prefetchJoin = earthSource.rfind("prefetchWorker.stopAndJoin();");
+    const size_t viewerReturn = earthSource.rfind("return viewerResult;");
     CHECK(guardClass != std::string::npos);
     CHECK(guardDestructor != std::string::npos);
     CHECK(stopOperation != std::string::npos && stopOperation < guardClassEnd);
     CHECK(stopGuard != std::string::npos);
     CHECK(viewerRun != std::string::npos);
     CHECK(stopGuard < viewerRun);
-    CHECK(earthSource.find(
-        "ViewerThreadStopGuard stopViewerThreads(viewer);\n    return viewer.run();") !=
-        std::string::npos);
+    CHECK(prefetchJoin != std::string::npos && viewerRun < prefetchJoin);
+    CHECK(viewerReturn != std::string::npos && prefetchJoin < viewerReturn);
     CHECK(earthSource.find("#include \"earth_exit.h\"") != std::string::npos);
     CHECK(earthSource.find(
         "earthexit::parsePositiveFrameCount(autoQuitFramesEnv, autoQuitFrames)") !=
         std::string::npos);
+    CHECK(earthSource.find("class UiQuitDrainHandler") != std::string::npos);
+    CHECK(earthSource.find("_quitRequest->consume()") != std::string::npos);
+    CHECK(earthSource.find("std::thread(prefetchLowLODGlobe, prefetchZ).detach()") ==
+        std::string::npos);
+    CHECK(earthSource.find("class LowLodPrefetchWorker") != std::string::npos);
+
+    std::ifstream controlFile(std::string(OSGVERSE_SOURCE_DIR) +
+                              "/applications/earth_explorer/EarthControlUI.h");
+    std::ostringstream controlBuffer; controlBuffer << controlFile.rdbuf();
+    const std::string controlSource = controlBuffer.str();
+    CHECK(controlSource.find("_quitRequest->request();") != std::string::npos);
+    CHECK(controlSource.find("_viewer->setDone(true)") == std::string::npos);
+
+    std::ifstream tilesFile(std::string(OSGVERSE_SOURCE_DIR) +
+                            "/applications/earth_explorer/tiles3d_data.cpp");
+    std::ostringstream tilesBuffer; tilesBuffer << tilesFile.rdbuf();
+    const std::string tilesSource = tilesBuffer.str();
+    CHECK(tilesSource.find(".detach()") == std::string::npos);
+    CHECK(tilesSource.find("_worker.join()") != std::string::npos);
 
     std::ifstream normalExitFile(std::string(OSGVERSE_SOURCE_DIR) +
                                  "/tests/macos_normal_exit_tests.sh");

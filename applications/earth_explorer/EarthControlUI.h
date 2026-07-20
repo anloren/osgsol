@@ -27,6 +27,7 @@
 #include "overlay_lod_badge.h"
 #include "earth_config.h"
 #include "earth_control_layout.h"
+#include "earth_exit.h"
 #include <readerwriter/TileCallback.h>
 #if OSGSOL_BUILD_SCIENCE
 #include "science_plugin_runtime.h"
@@ -38,7 +39,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
 {
     osgVerse::EarthManipulator* _mani;
     osgVerse::EarthAtmosphereOcean* _earth;
-    osgViewer::Viewer* _viewer;                      // 用于退出程序
+    osgViewer::Viewer* _viewer;                      // 只读帧号,不得从渲染线程直接退出
+    earthexit::QuitRequest* _quitRequest = nullptr;  // 渲染线程只发布请求,事件线程执行退出
     LayerManager* _layers = nullptr;   // 由 main 注入
     FlightLayer* _flight = nullptr;    // 由 main 注入
     SatelliteLayer* _satellites = nullptr;  // 由 main 注入
@@ -134,7 +136,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         return changed;
     }
 
-    EarthControlUI(osgVerse::EarthManipulator* m, osgVerse::EarthAtmosphereOcean* e, osgViewer::Viewer* v)
+    EarthControlUI(osgVerse::EarthManipulator* m, osgVerse::EarthAtmosphereOcean* e,
+                   osgViewer::Viewer* v)
         : _mani(m), _earth(e), _viewer(v), _sunAz(0.0f), _sunEl(0.0f), _exposure(0.25f), _exposureAuto(true), _globalOpaque(1.0f), _ocean(true)
         , _gotoLat(35.36f), _gotoLon(138.73f), _gotoAltKm(150.0f), _bookmarkTime(0)   // 同 fly_to 默认高度(v0.15-vision)
         , _alwaysDay(true), _realTimeSun(false), _followClock(true), _year(2024), _month(6), _day(21), _utcHour(18.0f) {}
@@ -489,7 +492,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             // ---- 退出 ----
             ImGui::Separator();
             if (ImGui::Button(u8"退出程序 Quit", ImVec2(-1.0f, 0.0f)))
-                if (_viewer) _viewer->setDone(true);
+                if (_quitRequest) _quitRequest->request();
             ImGui::PopTextWrapPos();
         }
 #if OSGSOL_BUILD_SCIENCE

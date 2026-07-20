@@ -416,6 +416,30 @@ public:
     }
 };
 
+// The panel is drawn on an OSG graphics thread.  Drain its one-way QuitRequest
+// during event traversal so Viewer::run() cannot unwind while the panel is
+// still executing on another thread.
+class UiQuitDrainHandler : public osgGA::GUIEventHandler
+{
+public:
+    explicit UiQuitDrainHandler(earthexit::QuitRequest* quitRequest)
+        : _quitRequest(quitRequest) {}
+
+    bool handle(const osgGA::GUIEventAdapter& ea,
+                osgGA::GUIActionAdapter& action) override
+    {
+        if (ea.getEventType() != osgGA::GUIEventAdapter::FRAME ||
+            !_quitRequest || !_quitRequest->consume())
+            return false;
+        osgViewer::View* view = dynamic_cast<osgViewer::View*>(action.asView());
+        if (view && view->getViewerBase()) view->getViewerBase()->setDone(true);
+        return false;
+    }
+
+private:
+    earthexit::QuitRequest* _quitRequest;
+};
+
 class AutoQuitAfterFramesHandler : public osgGA::GUIEventHandler
 {
 public:
@@ -754,7 +778,7 @@ static std::string createCustomPath(int type, const std::string& prefix, int x, 
 // 启动磁盘预热:把 z0..maxZ 全球低 LOD 瓦片的 底图+标注+高程 三层预拉进磁盘缓存,用户首次
 // 平移/缩放到新区时粗瓦片立即出图。仅磁盘预热;4 worker 共享原子游标分摊;loadFileData 命中
 // 缓存即秒回 → 天然去重、重跑零浪费。瓦片数 = Σ 4^z = (4^(maxZ+1)-1)/3。
-static void prefetchLowLODGlobe(int maxZ)
+static void prefetchLowLODGlobe(int maxZ, const std::atomic<bool>& stop)
 {
     struct PT { int z, x, y; };
     std::vector<PT> tiles;
@@ -773,7 +797,7 @@ static void prefetchLowLODGlobe(int maxZ)
     for (int w = 0; w < kWorkers; ++w)
     {
         pool.push_back(std::thread([&]() {
-            for (;;)
+            while (!stop.load(std::memory_order_acquire))
             {
                 size_t i = cursor.fetch_add(1);
                 if (i >= tiles.size()) break;
@@ -783,13 +807,14 @@ static void prefetchLowLODGlobe(int maxZ)
                                        osgVerse::TileCallback::ELEVATION };
                 for (int k = 0; k < 3; ++k)
                 {
+                    if (stop.load(std::memory_order_acquire)) break;
                     std::string prefix =
                         (types[k] == osgVerse::TileCallback::ELEVATION) ? kTerrariumUrl : std::string();
                     std::string path = createCustomPath(types[k], prefix, t.x, t.y, t.z);
                     if (!path.empty())
                     { std::string mime, enc; osgVerse::loadFileData(path, mime, enc); }
                 }
-                warmed.fetch_add(1);
+                if (!stop.load(std::memory_order_acquire)) warmed.fetch_add(1);
             }
         }));
     }
@@ -797,6 +822,34 @@ static void prefetchLowLODGlobe(int maxZ)
     OSG_NOTICE << "[prefetch] Warmed " << warmed.load() << " low-LOD globe tiles (z0-"
                << maxZ << ", base+labels+elevation)\n";
 }
+
+class LowLodPrefetchWorker
+{
+public:
+    ~LowLodPrefetchWorker()
+    {
+        stopAndJoin();
+    }
+
+    void start(int maxZ)
+    {
+        if (maxZ <= 0 || _thread.joinable()) return;
+        _stop.store(false, std::memory_order_release);
+        _thread = std::thread([this, maxZ]() {
+            prefetchLowLODGlobe(maxZ, _stop);
+        });
+    }
+
+    void stopAndJoin()
+    {
+        _stop.store(true, std::memory_order_release);
+        if (_thread.joinable()) _thread.join();
+    }
+
+private:
+    std::atomic<bool> _stop{false};
+    std::thread _thread;
+};
 
 int main(int argc, char** argv)
 {
@@ -823,6 +876,7 @@ int main(int argc, char** argv)
     else
         hlog_disable();
 
+    earthexit::QuitRequest quitRequest;
     osgViewer::Viewer viewer;
     viewer.setImagePager(new earthscience::ScienceImagePager(8));
     osg::ArgumentParser arguments = osgVerse::globalInitialize(argc, argv, osgVerse::defaultInitParameters());
@@ -870,17 +924,20 @@ int main(int argc, char** argv)
     osg::ref_ptr<osg::Node> earth = osgDB::readNodeFile("0-0-0.verse_tms", earthOptions.get());
     if (!earth) { OSG_FATAL << "Main earth scene is missing!\n"; return 1; }
 
-    // 启动磁盘预热(后台 detach 线程,进程退出即回收)。EARTH_PREFETCH=最大 zoom(默认 4,0=关)。
+    // 启动磁盘预热。线程由 main 持有并在退出时取消、join，禁止跨进程析构继续访问 OSG。
+    // EARTH_PREFETCH=最大 zoom(默认 4,0=关)。
+    LowLodPrefetchWorker prefetchWorker;
     {
         const char* pfEnv = getenv("EARTH_PREFETCH");
         int prefetchZ = pfEnv ? atoi(pfEnv) : 4;
-        if (prefetchZ > 0) std::thread(prefetchLowLODGlobe, prefetchZ).detach();
+        prefetchWorker.start(prefetchZ);
     }
 
     // 全局键盘闸:必须是 viewer 上**第一个** addEventHandler(事件遍历按安装顺序),
     // 保证聊天框打字时 handled 标记先于一切键位处理器置位(原理见类注释)。
     viewer.addEventHandler(new GlobalKeyboardGate);
     viewer.addEventHandler(new CloseWindowQuitHandler);   // 关窗=退出(见类注释)
+    viewer.addEventHandler(new UiQuitDrainHandler(&quitRequest));
     const char* autoQuitFramesEnv = getenv("EARTH_AUTOQUIT_FRAMES");
     unsigned int autoQuitFrames = 0;
     if (earthexit::parsePositiveFrameCount(autoQuitFramesEnv, autoQuitFrames))
@@ -1454,7 +1511,9 @@ int main(int argc, char** argv)
     // ImGui 控制面板 — 挂到最终 HUD 相机（cameras[3]），确保在地球图像之上绘制
     osg::ref_ptr<osgVerse::ImGuiManager> imgui = new osgVerse::ImGuiManager;
     imgui->setChineseSimplifiedFont(MISC_DIR + std::string("LXGWFasmartGothic.otf"));
-    EarthControlUI* ctrlUI = new EarthControlUI(earthManipulator.get(), &earthRenderingUtils, &viewer);
+    EarthControlUI* ctrlUI = new EarthControlUI(
+        earthManipulator.get(), &earthRenderingUtils, &viewer);
+    ctrlUI->_quitRequest = &quitRequest;
     ctrlUI->_layers = &layerMgr;
     ctrlUI->_flight = flightLayer;
     ctrlUI->_satellites = satelliteLayer;
@@ -1637,6 +1696,11 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-    ViewerThreadStopGuard stopViewerThreads(viewer);
-    return viewer.run();
+    int viewerResult = 0;
+    {
+        ViewerThreadStopGuard stopViewerThreads(viewer);
+        viewerResult = viewer.run();
+    }
+    prefetchWorker.stopAndJoin();
+    return viewerResult;
 }

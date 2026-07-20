@@ -91,7 +91,7 @@ class Tiles3DLayerImpl : public Tiles3DLayer, public osg::NodeCallback
 public:
     Tiles3DLayerImpl(osg::Group* group, const std::string& url)
         : _group(group), _url(url), _enabled(false), _loadStarted(false), _loadDone(false),
-          _sse(8.0) {}
+          _stop(false), _sse(8.0) {}
 
     virtual void setEnabled(bool on)
     {
@@ -103,9 +103,8 @@ public:
         {
             _loadStarted = true;
             std::string url = _url;
-            osg::ref_ptr<Tiles3DLayerImpl> self(this);   // 保活到线程结束
-            std::thread([self, url]() {
-                self->_loadStartedAt = std::chrono::steady_clock::now();
+            _worker = std::thread([this, url]() {
+                _loadStartedAt = std::chrono::steady_clock::now();
                 OSG_INFO << "[Tiles3D] background load begins: " << url << std::endl;
                 osg::ref_ptr<osg::Node> tiles;
                 bool isHttp = (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0);
@@ -114,7 +113,7 @@ public:
                 // 越清晰,减轻"相邻瓦片细化深度不一"的拼布/斑驳感,代价是流量与内存)
                 const double sse = earthtiles3d::resolveScreenSpaceError(
                     getenv("EARTH_3DTILES_SSE"));
-                self->_sse = sse;
+                _sse = sse;
                 osg::ref_ptr<osgDB::Options> opt =
                     new osgDB::Options(isHttp ? "Extension=verse_tiles" : "");
                 opt->setPluginStringData("UsePixelsOnScreen", "1");
@@ -131,9 +130,12 @@ public:
                     tiles = osgDB::readNodeFile(url + ".verse_tiles", opt.get());
                 }
 
-                std::lock_guard<std::mutex> guard(self->_mutex);
-                self->_pending = tiles; self->_loadDone = true;
-            }).detach();
+                if (_stop.load(std::memory_order_acquire)) return;
+                std::lock_guard<std::mutex> guard(_mutex);
+                if (_stop.load(std::memory_order_acquire)) return;
+                _pending = tiles;
+                _loadDone.store(true, std::memory_order_release);
+            });
         }
     }
     virtual bool isEnabled() const { return _enabled; }
@@ -162,13 +164,19 @@ public:
     }
 
 protected:
-    virtual ~Tiles3DLayerImpl() {}
+    virtual ~Tiles3DLayerImpl()
+    {
+        _stop.store(true, std::memory_order_release);
+        if (_worker.joinable()) _worker.join();
+    }
     osg::observer_ptr<osg::Group> _group;   // group 持有本回调,防环引用
     std::string _url;
     std::mutex _mutex;
     osg::ref_ptr<osg::Node> _pending;
     bool _enabled, _loadStarted;
     std::atomic<bool> _loadDone;
+    std::atomic<bool> _stop;
+    std::thread _worker;
     std::chrono::steady_clock::time_point _loadStartedAt;
     double _sse;
 };
