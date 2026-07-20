@@ -43,7 +43,7 @@ preview = (ROOT / "applications/earth_explorer/science_preview_layer.cpp").read_
 self.assertNotIn("PREVIEW_ALTITUDE_METERS", preview)
 self.assertNotIn("osg::Depth::ALWAYS", preview)
 self.assertNotIn("createSciencePreviewArtifactNode", preview)
-shader = (ROOT / "assets/shaders/scattering_globe.frag.glsl").read_text()
+shader = (ROOT / "assets/shaders/scattering_globe_science.frag.glsl").read_text()
 self.assertIn("ScienceOverlaySampler", shader)
 self.assertIn("ScienceOverlayBounds", shader)
 ```
