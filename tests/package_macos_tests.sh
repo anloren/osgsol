@@ -35,6 +35,8 @@ if [ "${OSGSOL_PACKAGE_TEST_CONTRACT_ONLY:-0}" = "1" ]; then
     grep -Fq 'ScienceEarthReleaseDescriptorSha256' "$ROOT/packaging/package_macos.sh"
     grep -Fq 'ScienceEarthPhase' "$ROOT/packaging/package_macos.sh"
     grep -Fq 'package-audit.env' "$ROOT/packaging/package_macos.sh"
+    grep -Fq 'Science plugin still contains unsupported Gemini schema keyword: uniqueItems' \
+        "$ROOT/packaging/package_macos.sh"
     if grep -Fq 'VERSION="${OSGSOL_PACKAGE_VERSION:-0.3.0}"' \
             "$ROOT/packaging/package_macos.sh"; then
         echo "FAIL: stale package version default remains" >&2
@@ -115,13 +117,15 @@ make_install_fixture()
 {
     local root="$1"
     local directory file
-    mkdir -p "$root/bin" "$root/lib"
+    mkdir -p "$root/bin" "$root/lib/$PLUGVER"
     ln -s "$SDK/bin/osgVerse_EarthExplorer" "$root/bin/osgVerse_EarthExplorer"
     cp "$SDK/lib/libosgVersePipeline.a" "$root/lib/libosgVersePipeline.a"
     for file in "$SDK/lib/"*.dylib "$SDK/lib/"*.so; do
         [ -e "$file" ] || continue
         cp -a "$file" "$root/lib/"
     done
+    cp "$SDK/lib/$PLUGVER/osgdb_science.so" \
+        "$root/lib/$PLUGVER/osgdb_science.so"
     for directory in shaders skyboxes textures misc models; do
         mkdir -p "$root/$directory"
     done
@@ -341,14 +345,36 @@ expect_rejected_profile "Source commit is not a commit in this repository" \
 # Compile-time and runtime OSG profiles are separate inputs. A formal package must reject either
 # side when it is not GLCore before touching the known-good output.
 LEGACY_INSTALL="$TMP_ROOT/legacy-install"
-mkdir -p "$LEGACY_INSTALL/bin" "$LEGACY_INSTALL/lib"
+mkdir -p "$LEGACY_INSTALL/bin" "$LEGACY_INSTALL/lib/$PLUGVER"
 ln -s "$SDK/bin/osgVerse_EarthExplorer" "$LEGACY_INSTALL/bin/osgVerse_EarthExplorer"
+ln -s "$SDK/lib/$PLUGVER/osgdb_science.so" \
+    "$LEGACY_INSTALL/lib/$PLUGVER/osgdb_science.so"
 for directory in shaders skyboxes textures misc models; do
     ln -s "$SDK/$directory" "$LEGACY_INSTALL/$directory"
 done
 printf '%s\n' " compatibility" > "$LEGACY_INSTALL/lib/libosgVersePipeline.a"
 expect_rejected_profile "Install SDK was not built for GLCore" \
     env -u EARTH_AI_KEY OSGVERSE_SDK="$LEGACY_INSTALL" OSG_RUNTIME_SDK="$RUNTIME_SDK" \
+        OSGSOL_PACKAGE_OUTPUT="$APP" OSGSOL_PACKAGE_VERSION="$VERSION" \
+        OSGSOL_BUILD_CHANNEL="$CHANNEL" OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" \
+        OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \
+        OSGSOL_ALPHAEARTH_INDEX="$ALPHAEARTH_INDEX" \
+        bash "$ROOT/packaging/package_macos.sh"
+
+# A rebuilt main executable must never be combined with a stale ScienceEarth plugin.  The old
+# plugin embedded JSON Schema's unsupported uniqueItems keyword and made every Gemini request
+# fail with HTTP 400 even though the new prompt UI was visible.
+STALE_SCIENCE_INSTALL="$TMP_ROOT/stale-science-install"
+make_install_fixture "$STALE_SCIENCE_INSTALL"
+mkdir -p "$STALE_SCIENCE_INSTALL/lib/$PLUGVER"
+cp "$SDK/lib/$PLUGVER/osgdb_science.so" \
+    "$STALE_SCIENCE_INSTALL/lib/$PLUGVER/osgdb_science.so"
+printf '%s' 'uniqueItems' >> \
+    "$STALE_SCIENCE_INSTALL/lib/$PLUGVER/osgdb_science.so"
+expect_rejected_profile \
+    "Science plugin still contains unsupported Gemini schema keyword: uniqueItems" \
+    env -u EARTH_AI_KEY OSGVERSE_SDK="$STALE_SCIENCE_INSTALL" \
+        OSG_RUNTIME_SDK="$RUNTIME_SDK" \
         OSGSOL_PACKAGE_OUTPUT="$APP" OSGSOL_PACKAGE_VERSION="$VERSION" \
         OSGSOL_BUILD_CHANNEL="$CHANNEL" OSGSOL_SOURCE_COMMIT="$SOURCE_COMMIT" \
         OSGSOL_PACKAGE_EXECUTABLE="osgSol_Earth" \

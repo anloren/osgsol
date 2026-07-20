@@ -261,6 +261,17 @@ done
 if [ ! -d "$SDK/lib" ]; then
     fail 66 "Install SDK is incomplete: missing $SDK/lib"
 fi
+SCIENCE_PLUGIN="$SDK/lib/$PLUGVER/osgdb_science.so"
+if [ ! -f "$SCIENCE_PLUGIN" ]; then
+    fail 66 "Install SDK is incomplete: missing $SCIENCE_PLUGIN"
+fi
+# Gemini rejects JSON Schema's uniqueItems keyword in function declarations.  The source no
+# longer emits it, so finding the literal in the installed science plugin proves that packaging
+# was pointed at a stale plugin even when the main executable was rebuilt from the current tree.
+# Reject the mixed candidate before touching the known-good app.
+if /usr/bin/grep -a -Fq 'uniqueItems' "$SCIENCE_PLUGIN"; then
+    fail 66 "Science plugin still contains unsupported Gemini schema keyword: uniqueItems"
+fi
 if [ -z "$OSG_RUNTIME_SDK" ]; then
     fail 66 "OSG_RUNTIME_SDK must explicitly select the GLCore runtime used to build the app"
 fi
