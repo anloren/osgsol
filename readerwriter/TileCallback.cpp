@@ -1,6 +1,7 @@
 #include <osg/CullFace>
 #include <osg/Texture2D>
 #include <osg/MatrixTransform>
+#include <osg/Uniform>
 #include <osgDB/ReadFile>
 #include <osgDB/WriteFile>
 #include <osgDB/FileNameUtils>
@@ -227,7 +228,23 @@ osg::Geometry* TileCallback::createTileGeometry(osg::Matrix& outMatrix, TileGeom
         osg::Matrix localToWorld = Coordinate::convertLLAtoENU(center);
         outMatrix = localToWorld;
     }
-    return handler ? handler->create(this, outMatrix, tileMin, tileMax, width, height) : NULL;
+    osg::Geometry* geometry = handler
+        ? handler->create(this, outMatrix, tileMin, tileMax, width, height)
+        : NULL;
+    if (geometry)
+    {
+        osg::StateSet* state = geometry->getOrCreateStateSet();
+        state->getOrCreateUniform(
+            "TerrainMapBounds", osg::Uniform::FLOAT_VEC4)->set(osg::Vec4(
+                static_cast<float>(tileMin.x()),
+                static_cast<float>(tileMin.y()),
+                static_cast<float>(tileMax.x()),
+                static_cast<float>(tileMax.y())));
+        state->getOrCreateUniform(
+            "TerrainUsesWebMercator", osg::Uniform::BOOL)->set(
+                _useWebMercator);
+    }
+    return geometry;
 }
 
 osg::Geometry* TileCallback::createTileGeometry(osg::Matrix& outMatrix, osg::Texture* elevationTex,
@@ -357,6 +374,15 @@ osg::Geometry* TileCallback::createTileGeometry(osg::Matrix& outMatrix, osg::Tex
     geom->addPrimitiveSet(de.get());
     if (!_flatten && _skirtRatio > 0.0f)
         updateSkirtData(geom, osg::inDegrees(tileMax.y() - tileMin.y()), true);
+    osg::StateSet* state = geom->getOrCreateStateSet();
+    state->getOrCreateUniform(
+        "TerrainMapBounds", osg::Uniform::FLOAT_VEC4)->set(osg::Vec4(
+            static_cast<float>(tileMin.x()),
+            static_cast<float>(tileMin.y()),
+            static_cast<float>(tileMax.x()),
+            static_cast<float>(tileMax.y())));
+    state->getOrCreateUniform(
+        "TerrainUsesWebMercator", osg::Uniform::BOOL)->set(_useWebMercator);
     return geom;
 }
 

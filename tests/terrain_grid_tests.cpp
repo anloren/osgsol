@@ -5,21 +5,31 @@
 #include <iomanip>
 #include <iostream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 
 #include <osg/Geometry>
 #include <osg/Image>
 #include <osg/Math>
+#include <osg/StateSet>
 #include <osg/Texture2D>
+#include <osg/Uniform>
 #include <osgDB/Options>
 
 #include <readerwriter/TileCallback.h>
 
 #include "../applications/earth_explorer/hk_elevation_filter.h"
 
-#define CHECK(x) do { if (!(x)) { \
-    std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ \
-              << ": " #x << std::endl; std::abort(); } } while (0)
+static void checkOrThrow(bool condition, const char* expression,
+                         const char* file, int line)
+{
+    if (condition) return;
+    throw std::runtime_error(
+        std::string("CHECK failed at ") + file + ":" +
+        std::to_string(line) + ": " + expression);
+}
+
+#define CHECK(x) checkOrThrow((x), #x, __FILE__, __LINE__)
 
 struct TmsTile
 {
@@ -70,6 +80,7 @@ static osg::Geometry* makeTile(int z)
 {
     osg::ref_ptr<osgVerse::TileCallback> callback = new osgVerse::TileCallback(true);
     callback->setTileNumber(0, 0, z);
+    callback->setUseWebMercator(true);
     callback->setFlatten(false);
     callback->setSkirtRatio(0.05f);
     callback->setElevationScale(2.0f);
@@ -79,6 +90,25 @@ static osg::Geometry* makeTile(int z)
         matrix, elevation.get(),
         osg::Vec3d(0.30, 1.99, 0.0), osg::Vec3d(0.31, 2.00, 0.0),
         0.01, 0.01);
+}
+
+static void checkTerrainMapUniform(osg::Geometry* geometry,
+                                   const osg::Vec4& expectedBounds,
+                                   bool expectedWebMercator)
+{
+    CHECK(geometry && geometry->getStateSet());
+    osg::Uniform* boundsUniform =
+        geometry->getStateSet()->getUniform("TerrainMapBounds");
+    osg::Uniform* mercatorUniform =
+        geometry->getStateSet()->getUniform("TerrainUsesWebMercator");
+    CHECK(boundsUniform && mercatorUniform);
+    osg::Vec4 actualBounds;
+    bool actualWebMercator = false;
+    CHECK(boundsUniform->get(actualBounds));
+    CHECK(mercatorUniform->get(actualWebMercator));
+    for (int index = 0; index < 4; ++index)
+        CHECK(std::fabs(actualBounds[index] - expectedBounds[index]) < 1.0e-7f);
+    CHECK(actualWebMercator == expectedWebMercator);
 }
 
 static osg::Geometry* makeAncestorSubtile(osgVerse::TileCallback* callback, int z,
@@ -143,8 +173,39 @@ static double checkSiblingEdge(int z, osg::Texture2D* elevation,
     return maximumDifference;
 }
 
-int main(int, char**)
+static int runTests()
 {
+    const osg::Vec4 levelOneBounds[] = {
+        osg::Vec4(-180.0f, -90.0f, 0.0f, 0.0f),
+        osg::Vec4(0.0f, -90.0f, 180.0f, 0.0f),
+        osg::Vec4(-180.0f, 0.0f, 0.0f, 90.0f),
+        osg::Vec4(0.0f, 0.0f, 180.0f, 90.0f),
+    };
+    for (int y = 0; y < 2; ++y)
+        for (int x = 0; x < 2; ++x)
+        {
+            osg::ref_ptr<osgVerse::TileCallback> callback =
+                new osgVerse::TileCallback(true);
+            callback->setTotalExtent(
+                osg::Vec3d(-180.0, -90.0, 0.0),
+                osg::Vec3d(180.0, 90.0, 0.0));
+            callback->setTileNumber(x, y, 1);
+            callback->setBottomLeft(true);
+            callback->setUseWebMercator(true);
+            callback->setFlatten(false);
+            callback->setSkirtRatio(0.0f);
+            osg::Vec3d tileMin, tileMax;
+            double width = 0.0, height = 0.0;
+            callback->computeTileExtent(tileMin, tileMax, width, height);
+            osg::Matrix matrix;
+            osg::ref_ptr<osg::Texture2D> elevation = constantElevation(10.0f);
+            osg::ref_ptr<osg::Geometry> geometry =
+                callback->createTileGeometry(
+                    matrix, elevation.get(), tileMin, tileMax, width, height);
+            checkTerrainMapUniform(
+                geometry.get(), levelOneBounds[x + y * 2], true);
+        }
+
     const TmsTile coreTile = tmsTileForLonLat(114.17, 22.30, 15);
     float core = 40.0f;
     earthterrain::applyHongKongElevationFilter(
@@ -231,6 +292,10 @@ int main(int, char**)
 
     osg::ref_ptr<osg::Geometry> z11 = makeTile(11);
     osg::ref_ptr<osg::Geometry> z12 = makeTile(12);
+    checkTerrainMapUniform(
+        z11.get(), osg::Vec4(0.30f, 1.99f, 0.31f, 2.00f), true);
+    checkTerrainMapUniform(
+        z12.get(), osg::Vec4(0.30f, 1.99f, 0.31f, 2.00f), true);
     unsigned int rows = 0, columns = 0;
     CHECK(osgVerse::tileGeometryGridSize(z11.get(), rows, columns));
     CHECK(rows == 17u && columns == 17u);
@@ -273,4 +338,17 @@ int main(int, char**)
               << z16MaximumDifference << " m; z17 seam max "
               << z17MaximumDifference << " m\n";
     return 0;
+}
+
+int main(int, char**)
+{
+    try
+    {
+        return runTests();
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << error.what() << std::endl;
+        return 1;
+    }
 }
