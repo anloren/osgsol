@@ -30,24 +30,54 @@ size_t countOccurrences(const std::string& text, const std::string& needle)
 
 int main()
 {
-    // Retina 13/14-inch fullscreen: 2048x1152 backing pixels are exposed to
-    // ImGui as roughly 1024x576 logical points. The control panel must leave
-    // most of the globe visible and reserve the bottom strip for AI controls.
+    // Retina 13/14-inch fullscreen: the stable shell must keep the map visible
+    // between the module drawer and Insight Lens, with command/context regions
+    // below both panels.
+    const earthui::EarthUiShellLayout shell =
+        earthui::computeEarthUiShellLayout(1024.0f, 576.0f, true);
+    CHECK(nearlyEqual(shell.navigationWidth, 64.0f));
+    CHECK(nearlyEqual(shell.drawerWidth, 310.0f));
+    CHECK(nearlyEqual(shell.insightWidth, 330.0f));
+    CHECK(shell.drawerX + shell.drawerWidth <
+          1024.0f - shell.outerGap - shell.insightWidth);
+    CHECK(shell.drawerY + shell.drawerHeight <= shell.commandY + 0.01f);
+    CHECK(shell.insightTop + shell.insightHeight <= shell.commandY + 0.01f);
+    CHECK(shell.commandY + shell.commandHeight < shell.contextY);
+    CHECK(nearlyEqual(shell.contextY + shell.contextHeight +
+                      shell.statusHeight, 576.0f));
+
+    const earthui::EarthUiShellLayout shellClosed =
+        earthui::computeEarthUiShellLayout(1024.0f, 576.0f, false);
+    CHECK(nearlyEqual(shellClosed.drawerWidth, 0.0f));
+    CHECK(nearlyEqual(shellClosed.commandX, shell.commandX));
+    CHECK(nearlyEqual(shellClosed.contextY, shell.contextY));
+
+    CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Explore) ==
+          earthui::EarthUiContextKind::View);
+    CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Science) ==
+          earthui::EarthUiContextKind::DataSpecific);
+    CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Live) ==
+          earthui::EarthUiContextKind::LiveWindow);
+    CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Satellites) ==
+          earthui::EarthUiContextKind::Orbit);
+    CHECK(earthui::contextKindForModule(earthui::EarthUiModule::City3D) ==
+          earthui::EarthUiContextKind::Object);
+    CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Settings) ==
+          earthui::EarthUiContextKind::None);
+
     const earthui::EarthControlPanelLayout compact =
         earthui::computeEarthControlPanelLayout(1024.0f, 576.0f);
-    CHECK(nearlyEqual(compact.defaultWidth, 337.92f));
-    CHECK(compact.defaultWidth <= 1024.0f * 0.34f);
-    CHECK(compact.maxWidth <= 1024.0f * 0.34f);
-    CHECK(compact.defaultHeight <= 576.0f * 0.72f + 0.01f);
-    CHECK(compact.maxHeight <= 480.0f);
-    CHECK(compact.maxHeight <= 576.0f - 20.0f - 76.0f);
+    CHECK(nearlyEqual(compact.defaultWidth, shell.drawerWidth));
+    CHECK(nearlyEqual(compact.defaultHeight, shell.drawerHeight));
 
     const earthui::ScienceWorkspaceLayout scienceCompact =
         earthui::computeScienceWorkspaceLayout(1024.0f, 576.0f, true);
-    CHECK(scienceCompact.leftWidth <= 1024.0f * 0.34f);
+    CHECK(nearlyEqual(scienceCompact.leftWidth, shell.drawerWidth));
     CHECK(scienceCompact.resultWidth <= 1024.0f * 0.32f);
     CHECK(scienceCompact.centerMapWidth >= 1024.0f * 0.30f);
-    CHECK(scienceCompact.resultHeight <= 576.0f - 20.0f - 76.0f);
+    CHECK(nearlyEqual(scienceCompact.resultHeight, shell.insightHeight));
+    CHECK(nearlyEqual(scienceCompact.resultTop, shell.insightTop));
+    CHECK(nearlyEqual(scienceCompact.resultRight, shell.outerGap));
 
     const earthui::ScienceWorkspaceLayout scienceCollapsed =
         earthui::computeScienceWorkspaceLayout(1024.0f, 576.0f, false);
@@ -62,13 +92,11 @@ int main()
     CHECK(scienceFrameOrder[0] == "end-left");
     CHECK(scienceFrameOrder[1] == "draw-results");
 
-    // A large desktop should not make the panel grow with the viewport.
+    // Large and small desktops remain ordered without covering the command deck.
     const earthui::EarthControlPanelLayout large =
         earthui::computeEarthControlPanelLayout(1920.0f, 1080.0f);
-    CHECK(nearlyEqual(large.defaultWidth, 380.0f));
-    CHECK(nearlyEqual(large.maxWidth, 460.0f));
-    CHECK(nearlyEqual(large.defaultHeight, 720.0f));
-    CHECK(nearlyEqual(large.maxHeight, 760.0f));
+    CHECK(large.defaultWidth <= 372.0f);
+    CHECK(large.defaultHeight < 1080.0f);
 
     // Small windows still need usable, ordered constraints.
     const earthui::EarthControlPanelLayout small =
@@ -77,31 +105,27 @@ int main()
     CHECK(small.defaultWidth <= small.maxWidth);
     CHECK(small.minHeight <= small.defaultHeight);
     CHECK(small.defaultHeight <= small.maxHeight);
-    CHECK(small.maxWidth < 640.0f * 0.5f);
-    CHECK(small.maxHeight <= 360.0f - 20.0f - 76.0f);
+    const earthui::EarthUiShellLayout smallShell =
+        earthui::computeEarthUiShellLayout(640.0f, 360.0f, true);
+    CHECK(small.maxWidth <= 310.0f);
+    CHECK(nearlyEqual(small.maxHeight, smallShell.drawerHeight));
+    CHECK(smallShell.drawerY + smallShell.drawerHeight <=
+          smallShell.commandY + 0.01f);
 
-    // Keep the production window wired to this policy. In particular, do not
-    // reintroduce content-driven auto-resize or disable its scrollbar.
+    // Keep the production UI wired to the v2 shell and its stable regions.
     std::ifstream input(std::string(OSGVERSE_SOURCE_DIR) +
                         "/applications/earth_explorer/EarthControlUI.h");
     std::ostringstream sourceBuffer;
     sourceBuffer << input.rdbuf();
     const std::string source = sourceBuffer.str();
-    const size_t setupBegin = source.find("computeEarthControlPanelLayout");
-    const size_t setupEnd = source.find("// ---- 相机读数 ----", setupBegin);
     CHECK(input.good() || input.eof());
-    CHECK(setupBegin != std::string::npos);
-    CHECK(setupEnd != std::string::npos);
-    const std::string setup = source.substr(setupBegin, setupEnd - setupBegin);
-    CHECK(setup.find("SetNextWindowSizeConstraints") != std::string::npos);
-    CHECK(setup.find("ImGuiCond_FirstUseEver") != std::string::npos);
-    CHECK(setup.find("AlwaysAutoResize") == std::string::npos);
-    CHECK(setup.find("NoScrollbar") == std::string::npos);
-
-    CHECK(setup.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") !=
+    CHECK(source.find("applyEarthUiV2Theme") != std::string::npos);
+    CHECK(source.find("drawEarthUiTopBar") != std::string::npos);
+    CHECK(source.find("drawEarthUiModuleRail") != std::string::npos);
+    CHECK(source.find("beginEarthUiModuleDrawer") != std::string::npos);
+    CHECK(source.find("drawEarthUiContextTray") != std::string::npos);
+    CHECK(source.find("SetNextWindowPos(ImVec2(20.0f, 20.0f)") ==
           std::string::npos);
-    CHECK(setup.find("ImGuiStyleVar_ScrollbarSize") != std::string::npos);
-    CHECK(setup.find("ImGuiCol_ScrollbarGrab") != std::string::npos);
 
     // A constrained panel must not use ImGui's default "control then visible
     // label on the right" form. At compact widths that pattern clips the
@@ -120,8 +144,18 @@ int main()
     CHECK(countOccurrences(source, "panelInputFloat(") >= 4);
     CHECK(countOccurrences(source, "panelInputInt(") >= 4);
     CHECK(countOccurrences(source, "panelCheckbox(") >= 8);
-    CHECK(source.find("ImGui::PushTextWrapPos(0.0f)") != std::string::npos);
-    CHECK(source.find("ImGui::PopTextWrapPos()") != std::string::npos);
+    std::ifstream shellInput(std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/earth_ui_v2.cpp");
+    std::ostringstream shellBuffer;
+    shellBuffer << shellInput.rdbuf();
+    const std::string shellSource = shellBuffer.str();
+    CHECK(shellInput.good() || shellInput.eof());
+    CHECK(shellSource.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") !=
+          std::string::npos);
+    CHECK(shellSource.find("PushTextWrapPos") != std::string::npos);
+    CHECK(shellSource.find("PopTextWrapPos") != std::string::npos);
+    CHECK(shellSource.find("kVermilion") != std::string::npos);
+    CHECK(shellSource.find("kCyan") != std::string::npos);
 
     std::ifstream panelInput(std::string(OSGVERSE_SOURCE_DIR) +
         "/applications/earth_explorer/science_earth_panel.cpp");
@@ -130,7 +164,8 @@ int main()
     const std::string panel = panelBuffer.str();
     CHECK(panelInput.good() || panelInput.eof());
     CHECK(panel.find("ImGui::TextWrapped") != std::string::npos);
-    CHECK(panel.find("ImGui::PlotLines") != std::string::npos);
+    CHECK(panel.find("drawAnnualSeriesChart") != std::string::npos);
+    CHECK(panel.find("ImGui::PlotLines") == std::string::npos);
     CHECK(panel.find("AlwaysAutoResize") == std::string::npos);
     CHECK(panel.find("NoScrollbar") == std::string::npos);
     CHECK(panel.find("SliderInt") == std::string::npos);

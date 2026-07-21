@@ -2,6 +2,7 @@
 
 #include "LayerManager.h"
 #include "earth_control_layout.h"
+#include "earth_ui_chart.h"
 #include "science_preview_layer.h"
 #include "science_query_builder.h"
 
@@ -292,11 +293,11 @@ void pushScienceScrollbarStyle()
 {
     ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 14.0f);
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab,
-                          ImVec4(0.23f, 0.65f, 1.0f, 0.72f));
+                          ImVec4(0.22f, 0.77f, 0.88f, 0.72f));
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered,
-                          ImVec4(0.23f, 0.65f, 1.0f, 0.90f));
+                          ImVec4(0.22f, 0.77f, 0.88f, 0.90f));
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive,
-                          ImVec4(0.23f, 0.65f, 1.0f, 1.0f));
+                          ImVec4(0.83f, 0.19f, 0.14f, 1.0f));
 }
 
 void popScienceScrollbarStyle()
@@ -593,42 +594,12 @@ bool drawMetricSeries(const earthscience::ScienceArtifact& artifact)
         const earthscience::ScienceAnnualSeries& series =
             artifact.analysis.annualSeries->at(seriesIndex);
         if (!series.values || series.values->empty()) continue;
-        std::vector<float> plot;
-        plot.reserve(series.values->size());
-        float minimum = std::numeric_limits<float>::max();
-        float maximum = std::numeric_limits<float>::lowest();
-        for (std::size_t index = 0; index < series.values->size(); ++index)
-        {
-            const bool valid = !series.validity ||
-                index >= series.validity->size() ||
-                (*series.validity)[index] != 0;
-            const float value = valid
-                ? static_cast<float>((*series.values)[index])
-                : std::numeric_limits<float>::quiet_NaN();
-            plot.push_back(value);
-            if (valid && std::isfinite(value))
-            {
-                minimum = std::min(minimum, value);
-                maximum = std::max(maximum, value);
-            }
-        }
-        if (minimum > maximum) continue;
-        if (minimum == maximum)
-        {
-            minimum -= 0.01f;
-            maximum += 0.01f;
-        }
-        ImGui::TextWrapped("%s", sciencePanelMetricLabel(series.metric));
         const std::string id =
             "##science_metric_series_" + std::to_string(seriesIndex);
-        ImGui::PlotLines(id.c_str(), plot.data(),
-            static_cast<int>(plot.size()), 0,
-            earthscience::scienceMetricName(series.metric), minimum, maximum,
-            ImVec2(-1.0f, 82.0f));
-        if (series.years && !series.years->empty())
-            ImGui::TextWrapped("%d — %d", series.years->front(),
-                               series.years->back());
-        drewAny = true;
+        drewAny = earthui::drawAnnualSeriesChart(
+            id.c_str(), sciencePanelMetricLabel(series.metric),
+            series.years.get(), series.values.get(), series.validity.get(),
+            series.unit) || drewAny;
     }
     return drewAny;
 }
@@ -1689,8 +1660,9 @@ void ScienceEarthPanel::drawOperations(
     osgVerse::EarthManipulator* manipulator)
 {
     if (!service || !previewLayer || !manipulator) return;
-    const bool operationsExpanded =
-        ImGui::CollapsingHeader(u8"ScienceEarth 科学工具 / Science tools");
+    const bool operationsExpanded = ImGui::CollapsingHeader(
+        u8"ScienceEarth 研究工作台 / Research workspace",
+        ImGuiTreeNodeFlags_DefaultOpen);
 
     const std::vector<earthscience::ScienceSourceDescriptor> sources =
         service->listSources();
@@ -2291,11 +2263,11 @@ void ScienceEarthPanel::drawOperations(
                            u8"勾选上方确认项后可以运行。");
     if (blocked) ImGui::BeginDisabled();
     ImGui::PushStyleColor(ImGuiCol_Button,
-                          ImVec4(0.08f, 0.46f, 0.76f, 1.0f));
+                          ImVec4(0.52f, 0.10f, 0.07f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                          ImVec4(0.12f, 0.58f, 0.92f, 1.0f));
+                          ImVec4(0.70f, 0.14f, 0.10f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                          ImVec4(0.06f, 0.37f, 0.65f, 1.0f));
+                          ImVec4(0.83f, 0.19f, 0.14f, 1.0f));
     if (ImGui::Button(
             sciencePanelPrimaryActionLabel(activeMode, source.id),
                       ImVec2(-1.0f, 0.0f)))
@@ -2400,9 +2372,9 @@ void ScienceEarthPanel::drawResults(
         earthui::computeScienceWorkspaceLayout(
             io.DisplaySize.x, io.DisplaySize.y, _state.resultExpanded);
     const float height = _state.resultExpanded ? layout.resultHeight : 108.0f;
-    ImGui::SetNextWindowPos(
-        ImVec2(io.DisplaySize.x - 20.0f - layout.resultWidth, 20.0f),
-        ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(
+        io.DisplaySize.x - layout.resultRight - layout.resultWidth,
+        layout.resultTop), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(layout.resultWidth, height), ImGuiCond_Always);
     pushScienceScrollbarStyle();
     if (!ImGui::Begin("ScienceEarth Results / 科学结果", nullptr,
@@ -2426,7 +2398,11 @@ void ScienceEarthPanel::drawResults(
     }
 
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextWrapped(u8"ScienceEarth 结果 / Results");
+    ImGui::PushStyleColor(ImGuiCol_Text,
+                          ImVec4(0.22f, 0.77f, 0.88f, 1.0f));
+    ImGui::TextUnformatted(u8"洞察透镜 / Insight Lens");
+    ImGui::PopStyleColor();
+    ImGui::TextDisabled(u8"ScienceEarth · 结果、图表与证据");
     ImGui::SameLine();
     if (ImGui::SmallButton(u8"折叠 >##science_results"))
         _state.resultExpanded = false;

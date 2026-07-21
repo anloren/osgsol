@@ -1,6 +1,7 @@
 #include "ai_ui.h"
 #include "ai_media.h"
 #include "ai_prompts.h"
+#include "earth_control_layout.h"
 #if defined(__APPLE__)
 #include "ime_bridge.h"   // 中文 IME:上报输入框矩形给候选窗定位
 #endif
@@ -9,6 +10,7 @@
 #include <osg/Math>
 #include <osg/Notify>
 #include <algorithm>
+#include <cfloat>
 #include <cstring>
 
 AIChatUI::AIChatUI()
@@ -27,37 +29,29 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
                      earthui::CardStack& cardStack)
 {
     ImGuiIO& io = ImGui::GetIO();
-    float winWidth = (680.0f < io.DisplaySize.x * 0.55f) ? 680.0f : io.DisplaySize.x * 0.55f;
+    const earthui::EarthUiShellLayout shell =
+        earthui::computeEarthUiShellLayout(
+            io.DisplaySize.x, io.DisplaySize.y, true);
+    const float winWidth = shell.commandWidth;
 
-    // 底部居中悬浮，锚点在窗口底边中点——不与左上角操作面板 / 右上角信息卡重叠。
-    // 左侧操作面板（Earth Control）自适应宽度约 610px（含"透明度"滑块最长行），且默认展开时
-    // 高度可达全屏，与正下方居中的对话条在窄屏下会重叠；把居中点右移半个面板宽，
-    // 让对话条左边界不早于面板右边界 + 留白，宽屏（面板远窄于半屏）时右移量趋近 0 视觉上仍居中。
-    // 同时钳制右边界不超出屏幕（窄屏下右移可能把窗口推出可视区），必要时收窄宽度，
-    // 保证对话条左右都留在面板与屏幕边界之间、始终完整可见。
-    static const float kLeftPanelClearance = 630.0f;   // 面板右边界 + ~20px 留白
-    static const float kRightMargin = 16.0f;
-    float availRight = io.DisplaySize.x - kRightMargin;
-    if (winWidth > availRight - kLeftPanelClearance)
-        winWidth = (availRight - kLeftPanelClearance > 240.0f) ? availRight - kLeftPanelClearance : 240.0f;
-    float centerX = io.DisplaySize.x * 0.5f;
-    float minCenterX = kLeftPanelClearance + winWidth * 0.5f;
-    float maxCenterX = availRight - winWidth * 0.5f;
-    if (centerX < minCenterX) centerX = minCenterX;
-    if (centerX > maxCenterX) centerX = maxCenterX;
-    ImGui::SetNextWindowPos(ImVec2(centerX, io.DisplaySize.y - 16.0f),
-                            ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    // EarthUI v2 的 AI Command Deck 固定在地图下方中央；历史展开时向上生长，
+    // 不侵占模块抽屉、右侧 Insight Lens 或底部上下文控件。
+    ImGui::SetNextWindowPos(
+        ImVec2(shell.commandX, shell.contextY - shell.outerGap),
+        ImGuiCond_Always, ImVec2(0.0f, 1.0f));
     ImGui::SetNextWindowSize(ImVec2(winWidth, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(winWidth, 0.0f), ImVec2(winWidth, FLT_MAX));
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.045f, 0.055f, 0.075f, 0.94f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.32f, 0.56f, 0.82f, 0.28f));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.18f, 0.25f, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.30f, 0.43f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.43f, 0.66f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 3.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 7.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.027f, 0.035f, 0.039f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.32f, 0.24f, 0.22f, 0.92f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.052f, 0.063f, 0.068f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.220f, 0.058f, 0.047f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.827f, 0.192f, 0.137f, 1.0f));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
@@ -71,8 +65,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
     {
         bool busy = core && core->busy();
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.72f, 0.88f, 1.0f, 1.0f));
-        ImGui::TextUnformatted(u8"AI 地球助手");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.22f, 0.77f, 0.88f, 1.0f));
+        ImGui::TextUnformatted(u8"AI COMMAND / AI 地球助手");
         ImGui::PopStyleColor();
         ImGui::SameLine();
         ImGui::TextDisabled(busy ? u8"正在执行…" : u8"就绪");

@@ -6,6 +6,113 @@
 namespace earthui
 {
 
+enum class EarthUiModule
+{
+    Explore,
+    Layers,
+    Science,
+    Live,
+    Satellites,
+    City3D,
+    Tasks,
+    Settings,
+};
+
+enum class EarthUiContextKind
+{
+    View,
+    Layer,
+    DataSpecific,
+    LiveWindow,
+    Orbit,
+    Object,
+    Task,
+    None,
+};
+
+struct EarthUiShellLayout
+{
+    float topBarHeight;
+    float navigationWidth;
+    float outerGap;
+    float drawerX;
+    float drawerY;
+    float drawerWidth;
+    float drawerHeight;
+    float insightWidth;
+    float insightTop;
+    float insightHeight;
+    float commandX;
+    float commandY;
+    float commandWidth;
+    float commandHeight;
+    float contextX;
+    float contextY;
+    float contextWidth;
+    float contextHeight;
+    float statusHeight;
+};
+
+inline EarthUiContextKind contextKindForModule(EarthUiModule module)
+{
+    switch (module)
+    {
+    case EarthUiModule::Explore: return EarthUiContextKind::View;
+    case EarthUiModule::Layers: return EarthUiContextKind::Layer;
+    case EarthUiModule::Science: return EarthUiContextKind::DataSpecific;
+    case EarthUiModule::Live: return EarthUiContextKind::LiveWindow;
+    case EarthUiModule::Satellites: return EarthUiContextKind::Orbit;
+    case EarthUiModule::City3D: return EarthUiContextKind::Object;
+    case EarthUiModule::Tasks: return EarthUiContextKind::Task;
+    case EarthUiModule::Settings: return EarthUiContextKind::None;
+    }
+    return EarthUiContextKind::None;
+}
+
+inline EarthUiShellLayout computeEarthUiShellLayout(float viewportWidth,
+                                                      float viewportHeight,
+                                                      bool drawerOpen)
+{
+    const float width = std::max(viewportWidth, 1.0f);
+    const float height = std::max(viewportHeight, 1.0f);
+
+    EarthUiShellLayout layout;
+    layout.topBarHeight = std::clamp(height * 0.045f, 42.0f, 50.0f);
+    layout.navigationWidth = std::clamp(width * 0.048f, 64.0f, 76.0f);
+    layout.outerGap = std::clamp(width * 0.006f, 6.0f, 10.0f);
+    layout.statusHeight = std::clamp(height * 0.027f, 22.0f, 28.0f);
+    layout.contextHeight = std::clamp(height * 0.052f, 46.0f, 58.0f);
+    layout.commandHeight = std::clamp(height * 0.082f, 72.0f, 90.0f);
+
+    const float bottomStack = layout.statusHeight + layout.contextHeight +
+        layout.commandHeight + layout.outerGap * 3.0f;
+    layout.drawerX = layout.navigationWidth + layout.outerGap;
+    layout.drawerY = layout.topBarHeight + layout.outerGap;
+    layout.drawerWidth = drawerOpen
+        ? std::clamp(width * 0.245f, 310.0f, 372.0f) : 0.0f;
+    layout.drawerHeight = std::max(
+        1.0f, height - layout.drawerY - bottomStack);
+
+    layout.insightWidth = std::clamp(width * 0.245f, 330.0f, 390.0f);
+    layout.insightTop = layout.topBarHeight + layout.outerGap;
+    layout.insightHeight = std::max(
+        1.0f, height - layout.insightTop - bottomStack);
+
+    const float mapLeft = layout.navigationWidth + layout.outerGap * 2.0f;
+    const float mapRight = width - layout.insightWidth - layout.outerGap * 2.0f;
+    const float availableCommandWidth = std::max(320.0f, mapRight - mapLeft);
+    layout.commandWidth = std::min(900.0f, availableCommandWidth);
+    layout.commandX = mapLeft +
+        std::max(0.0f, (availableCommandWidth - layout.commandWidth) * 0.5f);
+    layout.commandY = height - layout.statusHeight - layout.contextHeight -
+        layout.commandHeight - layout.outerGap * 2.0f;
+
+    layout.contextX = layout.navigationWidth;
+    layout.contextY = height - layout.statusHeight - layout.contextHeight;
+    layout.contextWidth = std::max(1.0f, width - layout.navigationWidth);
+    return layout;
+}
+
 struct EarthControlPanelLayout
 {
     float defaultWidth;
@@ -22,6 +129,8 @@ struct ScienceWorkspaceLayout
     float resultWidth;
     float resultHeight;
     float centerMapWidth;
+    float resultTop;
+    float resultRight;
 };
 
 template<typename EndLeftPanel, typename DrawScienceResults>
@@ -38,24 +147,26 @@ inline EarthControlPanelLayout computeEarthControlPanelLayout(float viewportWidt
 {
     const float safeWidth = std::max(viewportWidth, 1.0f);
     const float safeHeight = std::max(viewportHeight, 1.0f);
-    const float availableWidth = std::max(safeWidth - 40.0f, 1.0f);
-    const float availableHeight = std::max(safeHeight - 20.0f - 76.0f, 1.0f);
+    const EarthUiShellLayout shell =
+        computeEarthUiShellLayout(safeWidth, safeHeight, true);
+    const float availableWidth = std::max(
+        safeWidth - shell.navigationWidth - shell.outerGap * 3.0f, 1.0f);
+    const float availableHeight = std::max(shell.drawerHeight, 1.0f);
 
     EarthControlPanelLayout layout;
     layout.minWidth = std::min(
         availableWidth, std::min(300.0f, std::max(220.0f, safeWidth * 0.28f)));
-    layout.maxWidth = std::min(
-        availableWidth,
-        std::max(layout.minWidth, std::min(460.0f, safeWidth * 0.34f)));
-    layout.defaultWidth = std::clamp(
-        std::min(380.0f, safeWidth * 0.33f), layout.minWidth, layout.maxWidth);
+    layout.maxWidth = std::min(availableWidth, std::max(
+        layout.minWidth, shell.drawerWidth));
+    layout.defaultWidth = std::clamp(shell.drawerWidth,
+        layout.minWidth, layout.maxWidth);
 
     layout.minHeight = std::min(
         availableHeight, std::min(320.0f, std::max(180.0f, safeHeight * 0.50f)));
-    layout.maxHeight = std::min(
-        availableHeight, std::max(layout.minHeight, std::min(760.0f, availableHeight)));
-    layout.defaultHeight = std::clamp(
-        std::min(720.0f, safeHeight * 0.72f), layout.minHeight, layout.maxHeight);
+    layout.maxHeight = std::min(availableHeight,
+        std::max(layout.minHeight, availableHeight));
+    layout.defaultHeight = std::clamp(availableHeight,
+        layout.minHeight, layout.maxHeight);
     return layout;
 }
 
@@ -64,16 +175,19 @@ inline ScienceWorkspaceLayout computeScienceWorkspaceLayout(
 {
     const float safeWidth = std::max(viewportWidth, 1.0f);
     const float safeHeight = std::max(viewportHeight, 1.0f);
+    const EarthUiShellLayout shell =
+        computeEarthUiShellLayout(safeWidth, safeHeight, true);
     const EarthControlPanelLayout control =
         computeEarthControlPanelLayout(safeWidth, safeHeight);
-    const float horizontalMargins = std::min(40.0f, safeWidth * 0.08f);
+    const float horizontalMargins = shell.navigationWidth +
+        shell.outerGap * 3.0f;
     const float mapMinimum = safeWidth * 0.30f;
 
     ScienceWorkspaceLayout layout;
     layout.leftWidth = control.defaultWidth;
     if (resultExpanded)
     {
-        const float desired = std::min(420.0f, safeWidth * 0.30f);
+        const float desired = shell.insightWidth;
         const float available = std::max(
             1.0f, safeWidth - horizontalMargins - layout.leftWidth - mapMinimum);
         layout.resultWidth = std::min(desired, available);
@@ -83,10 +197,11 @@ inline ScienceWorkspaceLayout computeScienceWorkspaceLayout(
 
     layout.resultWidth = std::min(layout.resultWidth, safeWidth * 0.32f);
     layout.resultHeight = std::min(
-        std::min(760.0f, safeHeight * 0.72f),
-        std::max(1.0f, safeHeight - 20.0f - 76.0f));
+        shell.insightHeight, std::max(1.0f, safeHeight - shell.insightTop));
     layout.centerMapWidth = std::max(
         0.0f, safeWidth - horizontalMargins - layout.leftWidth - layout.resultWidth);
+    layout.resultTop = shell.insightTop;
+    layout.resultRight = shell.outerGap;
     return layout;
 }
 

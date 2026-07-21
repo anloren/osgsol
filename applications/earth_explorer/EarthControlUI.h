@@ -27,6 +27,7 @@
 #include "overlay_lod_badge.h"
 #include "earth_config.h"
 #include "earth_control_layout.h"
+#include "earth_ui_v2.h"
 #include "earth_exit.h"
 #include <readerwriter/TileCallback.h>
 #if OSGSOL_BUILD_SCIENCE
@@ -63,6 +64,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
     char _layerFilter[64] = "";       // 图层目录搜索框内容(Task 4)
     EventTickerUI _ticker;            // T8:事件流卡 + 顶部状态带(默认关,见 event_ticker.h)
     earthui::CardStack _cardStack;   // v0.15-vision:统一右上角信息卡组件(见 ui_card.h)
+    earthui::EarthUiShellState _uiV2;
     bool _detailBadgeDismissed = false;      // 用户关掉角标
     std::string _detailBadgeLastLayer;       // 上次角标对应的激活层 id(变了则重置 dismissed)
     unsigned int _detailBadgeShownFrame = 0; // 角标本轮首次出现的帧号(Task 4:自消失计时起点)
@@ -214,28 +216,43 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         if (!hudHidden)
         {
         ImGuiIO& io = ImGui::GetIO();
-        const earthui::EarthControlPanelLayout panelLayout =
-            earthui::computeEarthControlPanelLayout(io.DisplaySize.x, io.DisplaySize.y);
-        ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(
-            ImVec2(panelLayout.defaultWidth, panelLayout.defaultHeight),
-            ImGuiCond_FirstUseEver);
-        // Every frame constraints also repair an oversized value already saved in imgui.ini.
-        // Standard ImGui scrolling remains enabled so expanded sections never grow over Earth.
-        ImGui::SetNextWindowSizeConstraints(
-            ImVec2(panelLayout.minWidth, panelLayout.minHeight),
-            ImVec2(panelLayout.maxWidth, panelLayout.maxHeight));
-        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 14.0f);
-        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab,
-                              ImVec4(0.23f, 0.65f, 1.0f, 0.72f));
-        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered,
-                              ImVec4(0.23f, 0.65f, 1.0f, 0.90f));
-        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive,
-                              ImVec4(0.23f, 0.65f, 1.0f, 1.0f));
-        if (ImGui::Begin("Earth Control / 地球控制台", nullptr,
-                         ImGuiWindowFlags_AlwaysVerticalScrollbar))
+        earthui::applyEarthUiV2Theme();
+        const earthui::EarthUiShellLayout shellLayout =
+            earthui::computeEarthUiShellLayout(
+                io.DisplaySize.x, io.DisplaySize.y, _uiV2.drawerOpen);
+        const osg::Vec3d currentLla = _mani->computeEyeLatLonHeight();
+        earthui::EarthUiTopBarData topBar;
+        topBar.latitudeDeg = osg::RadiansToDegrees(currentLla[0]);
+        topBar.longitudeDeg = osg::RadiansToDegrees(currentLla[1]);
+        topBar.altitudeKm = currentLla[2] / 1000.0;
+        topBar.aiBusy = _aiCore && _aiCore->busy();
+#if OSGSOL_BUILD_SCIENCE
+        topBar.scienceAvailable = _scienceRuntime && _scienceRuntime->available();
+#endif
+        if (earthui::drawEarthUiTopBar(shellLayout, _uiV2, topBar))
+            _mani->home(0.0);
+        earthui::drawEarthUiModuleRail(shellLayout, _uiV2);
+
+        const bool drawerVisible = earthui::beginEarthUiModuleDrawer(
+            shellLayout, _uiV2);
+        if (drawerVisible)
         {
-            ImGui::PushTextWrapPos(0.0f);
+            const bool showExplore =
+                _uiV2.activeModule == earthui::EarthUiModule::Explore;
+            const bool showLayerCatalog =
+                _uiV2.activeModule == earthui::EarthUiModule::Layers ||
+                _uiV2.activeModule == earthui::EarthUiModule::Live ||
+                _uiV2.activeModule == earthui::EarthUiModule::Satellites ||
+                _uiV2.activeModule == earthui::EarthUiModule::City3D;
+            const bool showScience =
+                _uiV2.activeModule == earthui::EarthUiModule::Science;
+            const bool showTasks =
+                _uiV2.activeModule == earthui::EarthUiModule::Tasks;
+            const bool showSettings =
+                _uiV2.activeModule == earthui::EarthUiModule::Settings;
+
+            if (showExplore)
+            {
             // ---- 相机读数 ----
             if (ImGui::CollapsingHeader(u8"相机 Camera", ImGuiTreeNodeFlags_DefaultOpen))
             {
@@ -300,8 +317,10 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                                      &_globalOpaque, 0.0f, 1.0f, "%.2f"))
                     _earth->commonUniforms["GlobalOpaque"]->set(_globalOpaque);
             }
+            }
             // ---- 图层 ----
-            if (_layers && ImGui::CollapsingHeader(u8"图层 Layers", ImGuiTreeNodeFlags_DefaultOpen))
+            if (showLayerCatalog && _layers &&
+                ImGui::CollapsingHeader(u8"图层目录", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 // 预设按钮行:一键切换场景图层组合(earth_main 注册,见 LayerManager::applyPreset)
                 const std::vector<Preset> presets = _layers->presetsSnapshot();
@@ -337,6 +356,9 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 }
                 for (size_t g = 0; g < groupNames.size(); ++g)
                 {
+                    if (!earthui::moduleAcceptsLayerGroup(
+                            _uiV2.activeModule, groupNames[g]))
+                        continue;
                     // 过滤:组名命中 → 整组可见;否则只留 displayName 命中的层,组内无匹配则整组隐藏
                     bool groupHit = !filter.empty() &&
                                     lowered(groupNames[g]).find(filter) != std::string::npos;
@@ -417,13 +439,14 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             // 地震详情等「信息呈现」UI 不在此操作面板内,统一放右上角独立面板(见 End() 之后)。
 
 #if OSGSOL_BUILD_SCIENCE
-            if (_scienceRuntime)
+            if (showScience && _scienceRuntime)
                 _scienceRuntime->drawOperations(
                     _layers, _mani, scienceGuiBridge());
 #endif
 
             // ---- 跳转 ----
-            if (ImGui::CollapsingHeader(u8"跳转 Go To", ImGuiTreeNodeFlags_DefaultOpen))
+            if (showExplore &&
+                ImGui::CollapsingHeader(u8"跳转 Go To", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 panelInputFloat(u8"纬度 Lat", "##goto_lat", &_gotoLat, "%.4f");
                 panelInputFloat(u8"经度 Lon", "##goto_lon", &_gotoLon, "%.4f");
@@ -437,7 +460,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             }
 
             // ---- 书签/巡游 ----
-            if (ImGui::CollapsingHeader(u8"书签 Bookmarks"))
+            if (showExplore && ImGui::CollapsingHeader(u8"书签 Bookmarks"))
             {
                 if (ImGui::Button(u8"记录当前视角 Save"))
                 {
@@ -459,7 +482,25 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             // 注:earthcfg::params() 返回 std::deque<Param>&(非 vector——Param 内含
             // std::atomic<double>,不可拷贝/移动，见 earth_config.h 注释);deque 同样
             // 支持 operator[]/size()，遍历逻辑与 vector 一致，仅类型名不同。
-            if (ImGui::CollapsingHeader(u8"设置 Settings"))
+            if (showTasks)
+            {
+                ImGui::SeparatorText(u8"任务与状态");
+                ImGui::TextWrapped(_aiCore && _aiCore->busy()
+                    ? u8"AI Agent 正在执行任务。可在底部对话栏查看过程。"
+                    : u8"当前没有正在执行的 AI 任务。");
+                if (ImGui::Button(_ticker.showTicker
+                        ? u8"关闭事件流" : u8"打开事件流"))
+                    _ticker.showTicker = !_ticker.showTicker;
+                ImGui::SameLine();
+                if (ImGui::Button(_ticker.showStatusBar
+                        ? u8"关闭状态带" : u8"打开状态带"))
+                    _ticker.showStatusBar = !_ticker.showStatusBar;
+                ImGui::TextDisabled(
+                    u8"任务模块统一呈现运行中、队列、失败和历史；不会把错误铺满地图。");
+            }
+
+            if (showSettings && ImGui::CollapsingHeader(
+                    u8"设置 Settings", ImGuiTreeNodeFlags_DefaultOpen))
             {
                 std::deque<earthcfg::Param>& ps = earthcfg::params();
                 std::string curGroup;
@@ -490,28 +531,33 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             }
 
             // ---- 退出 ----
-            ImGui::Separator();
-            if (ImGui::Button(u8"退出程序 Quit", ImVec2(-1.0f, 0.0f)))
-                if (_quitRequest) _quitRequest->request();
-            ImGui::PopTextWrapPos();
+            if (showSettings)
+            {
+                ImGui::Separator();
+                if (ImGui::Button(u8"正常退出程序", ImVec2(-1.0f, 0.0f)))
+                    if (_quitRequest) _quitRequest->request();
+            }
         }
 #if OSGSOL_BUILD_SCIENCE
-        if (_scienceRuntime && _scienceRuntime->available())
+        if (_uiV2.activeModule == earthui::EarthUiModule::Science &&
+            _scienceRuntime && _scienceRuntime->available())
         {
             earthui::finishLeftThenDrawScienceResults(
-                []() { ImGui::End(); },
+                [drawerVisible]() {
+                    if (drawerVisible) earthui::endEarthUiModuleDrawer();
+                },
                 [this]() {
                     _scienceRuntime->drawResults(
                         _layers, scienceGuiBridge());
                 });
         }
-        else
-            ImGui::End();
+        else if (drawerVisible)
+            earthui::endEarthUiModuleDrawer();
 #else
-        ImGui::End();
+        if (drawerVisible) earthui::endEarthUiModuleDrawer();
 #endif
-        ImGui::PopStyleColor(3);
-        ImGui::PopStyleVar();
+
+        earthui::drawEarthUiContextTray(shellLayout, _uiV2);
 
         // ===== 信息呈现面板:统一锚定右上角,与左上角操作面板分离;可关闭 =====
         // 约定(用户偏好):今后所有"呈现信息"的 UI 都放这里(右上角),不要混进上面的操作面板。
@@ -655,9 +701,12 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         // ===== 底部 AI 对话条:独立浮窗,底部居中锚定,不与左上角/右上角面板重叠 =====
         if (_aiUI) _aiUI->draw(_aiCore, _aiMedia, _mani, _cardStack);
 
-        // v0.15-vision:统一绘制本帧登记的全部信息卡(航班/要素详情/事件流/AI 图表等)。
-        // 必须在上面所有 registerCards/upsert 调用之后、本帧只调用一次。
-        _cardStack.draw();
+        // Science 模块由专属 Insight Lens 占用右侧轨道；其它模块统一绘制要素/事件/AI 卡。
+        // 两套信息系统绝不叠放，避免旧版右侧多窗口互相遮挡。
+        if (_uiV2.activeModule == earthui::EarthUiModule::Science)
+            _cardStack.clearFrame();
+        else
+            _cardStack.draw();
 
         // 超缩放"已达最大细节"角标:引擎在做 OVERLAY 超缩放拉伸时打帧戳,这里带去抖读取。
         if (_layers && _viewer && _viewer->getFrameStamp())

@@ -10,6 +10,7 @@
 #include <ui/ImGuiComponents.h>
 #include <readerwriter/EarthManipulator.h>
 #include "LayerManager.h"
+#include "earth_control_layout.h"
 #include "feed_layer.h"
 #include "ui_card.h"
 
@@ -119,12 +120,21 @@ struct EventTickerUI
         }
 
         ImGuiIO& io = ImGui::GetIO();
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, 0.0f),
-                                ImGuiCond_Always, ImVec2(0.5f, 0.0f));   // 顶部居中锚定
-        ImGui::SetNextWindowBgAlpha(0.55f);
+        const earthui::EarthUiShellLayout shell =
+            earthui::computeEarthUiShellLayout(
+                io.DisplaySize.x, io.DisplaySize.y, true);
+        ImGui::SetNextWindowPos(
+            ImVec2(shell.navigationWidth,
+                   io.DisplaySize.y - shell.statusHeight),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(
+            ImVec2(io.DisplaySize.x - shell.navigationWidth,
+                   shell.statusHeight), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.96f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 3.0f));
         if (ImGui::Begin("##earth_statusbar", NULL,
                          ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
-                         | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize
+                         | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar
                          | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing
                          | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs))
         {
@@ -132,6 +142,7 @@ struct EventTickerUI
                         clock, okN, enN, preset.c_str());
         }
         ImGui::End();
+        ImGui::PopStyleVar();
     }
 };
 

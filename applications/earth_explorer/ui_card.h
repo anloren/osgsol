@@ -2,12 +2,14 @@
 #define EARTH_UI_CARD_H
 
 #include <functional>
+#include <cfloat>
 #include <map>
 #include <string>
 #include <vector>
 #include <osg/Vec2>
 #include <osg/Vec4>
 #include <ui/ImGuiComponents.h>
+#include "earth_control_layout.h"
 #include "marker_style.h"
 
 // v0.15-vision Task 5:统一的右上角信息卡组件。取代 ai_cards.cpp / event_ticker.h /
@@ -94,13 +96,22 @@ namespace earthui
         // 本帧登记一张要显示的卡片(可多次调用,每次一张)。
         void upsert(const Card& card) { _frameCards.push_back(card); }
 
+        // 当前模块占用右侧洞察区时，丢弃本帧其它卡片，避免两个信息系统叠在一起。
+        void clearFrame() { _frameCards.clear(); }
+
         // 帧末调用一次:定位 + 绘制本帧全部登记过的卡片,然后清空供下一帧使用。
         void draw()
         {
-            static const float kRightMargin = 20.0f, kCardWidth = 340.0f, kCardGap = 12.0f;
-            static const float kTopY = 20.0f, kBottomReserve = 160.0f, kEstimateHeight = 200.0f;
-
             ImGuiIO& io = ImGui::GetIO();
+            const EarthUiShellLayout shell = computeEarthUiShellLayout(
+                io.DisplaySize.x, io.DisplaySize.y, true);
+            const float rightMargin = shell.outerGap;
+            const float cardWidth = shell.insightWidth;
+            const float cardGap = shell.outerGap;
+            const float topY = shell.insightTop;
+            const float bottomReserve = std::max(0.0f,
+                io.DisplaySize.y - shell.insightTop - shell.insightHeight);
+            const float estimateHeight = 190.0f;
             std::vector<float> heightHints; heightHints.reserve(_frameCards.size());
             for (size_t i = 0; i < _frameCards.size(); ++i)
             {
@@ -108,18 +119,21 @@ namespace earthui
                 heightHints.push_back(it != _lastHeight.end() ? it->second : 0.0f);
             }
             std::vector<osg::Vec2> pos = computeCardLayout(heightHints, io.DisplaySize.x, io.DisplaySize.y,
-                kRightMargin, kCardWidth, kCardGap, kTopY, kBottomReserve, kEstimateHeight);
+                rightMargin, cardWidth, cardGap, topY, bottomReserve, estimateHeight);
 
             for (size_t i = 0; i < _frameCards.size(); ++i)
             {
                 Card& c = _frameCards[i];
                 ImGui::SetNextWindowPos(ImVec2(pos[i].x(), pos[i].y()), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-                ImGui::SetNextWindowSize(ImVec2(kCardWidth, 0.0f), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(cardWidth, 0.0f), ImGuiCond_Always);
+                ImGui::SetNextWindowSizeConstraints(
+                    ImVec2(cardWidth, 0.0f), ImVec2(cardWidth, FLT_MAX));
 
                 bool open = true;
                 // ImGui 窗口身份只看 "###" 后的部分——用卡片稳定 id 拼后缀,不用下标
                 // (ai_cards.cpp 踩过的坑:下标随卡片增删变化,会被认成不同窗口导致闪烁)。
-                std::string winId = c.title + "###card_" + c.id;
+                std::string winId = std::string(u8"洞察透镜 · ") + c.title +
+                    "###card_" + c.id;
                 if (ImGui::Begin(winId.c_str(), c.closable ? &open : NULL,
                                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse))
                 {

@@ -1,6 +1,7 @@
 SET(EXE_NAME osgVerse_EarthExplorer)
 SET(EXECUTABLE_FILES
-    earth_main.cpp ui.cpp render_effects.cpp render_effects.h
+    earth_main.cpp ui.cpp earth_ui_v2.cpp earth_ui_v2.h earth_ui_chart.h
+    render_effects.cpp render_effects.h
     city_data.cpp ReaderWriterCSV.cpp precip_data.cpp flight_data.cpp flight_math.cpp
     tiles3d_data.cpp sat_math.cpp sat_data.cpp ais_math.cpp ais_data.cpp
     earth_config.cpp marker_style.cpp
