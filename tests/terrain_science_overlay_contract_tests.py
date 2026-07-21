@@ -54,6 +54,12 @@ class TerrainScienceOverlayContractTests(unittest.TestCase):
         self.assertIn("terrain_science_overlay.cpp", science_sources)
         self.assertIn("science_plugin_runtime.cpp", science_sources)
 
+    def test_earth_manipulator_exists_before_altitude_gated_3d_layer(self):
+        main = (EARTH / "earth_main.cpp").read_text(encoding="utf-8")
+        self.assertLess(
+            main.index("viewer.setCameraManipulator(earthManipulator.get())"),
+            main.index("configure3DTilesLayer("))
+
 
 if __name__ == "__main__":
     unittest.main()

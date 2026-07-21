@@ -755,6 +755,8 @@ int main(int, char**)
         {
             const std::string prompt = earthai::buildEarthAssistantSystemPrompt();
             CHECK(prompt.find("start_multisource_research") != std::string::npos);
+            CHECK(prompt.find("max_cloud_percent") != std::string::npos);
+            CHECK(prompt.find("100") != std::string::npos);
             CHECK(prompt.find("get_research_job") != std::string::npos);
             CHECK(prompt.find("show_science_artifact") != std::string::npos);
             CHECK(prompt.find(u8"终态") != std::string::npos);

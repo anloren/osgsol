@@ -1187,7 +1187,8 @@ namespace
                     return false;
                 }
             query = makeCopernicusDemPreviewQuery(
-                source, latitude, longitude, eyeLla[2] * 0.85);
+                source, latitude, longitude,
+                resolveAutomaticScienceSpanMeters(source, eyeLla[2]));
         }
         else if (source.id == "sentinel-2-l2a")
         {
@@ -1218,7 +1219,7 @@ namespace
                 error = "Sentinel-2 time_start must not be after time_end";
                 return false;
             }
-            double maximumCloudPercent = 20.0;
+            double maximumCloudPercent = 100.0;
             if (!optionalNumber(
                     args, "max_cloud_percent", maximumCloudPercent) ||
                 !std::isfinite(maximumCloudPercent) ||
@@ -1229,7 +1230,8 @@ namespace
             }
             query = makeSentinel2PreviewIntervalQuery(
                 source, latitude, longitude, timeStart, timeEnd,
-                maximumCloudPercent, eyeLla[2] * 0.85);
+                maximumCloudPercent,
+                resolveAutomaticScienceSpanMeters(source, eyeLla[2]));
         }
         else if (mode == "preview")
         {
@@ -1246,7 +1248,7 @@ namespace
             }
             query = makeSciencePointQuery(
                 source, *visualization, latitude, longitude, year,
-                eyeLla[2] * 0.85);
+                resolveAutomaticScienceSpanMeters(source, eyeLla[2]));
         }
         else if (mode == "point_series")
         {
@@ -1313,7 +1315,8 @@ namespace
             options.enableClustering = enableClustering;
             options.clusterCount = clusterCount;
             query = makeScienceRegionalAnalysisQuery(
-                source, latitude, longitude, eyeLla[2] * 0.85,
+                source, latitude, longitude,
+                resolveAutomaticScienceSpanMeters(source, eyeLla[2]),
                 baselineYear, comparisonYear, options);
         }
         error.clear();
@@ -1362,7 +1365,8 @@ void registerScienceResearchTools(
     start.name = "start_science_research";
     start.description = u8"异步提交一个独立的 AlphaEarth 预览/64D 研究、Sentinel-2 "
         u8"真彩场景，或 Copernicus DEM 静态 DSM 高程查询。Sentinel-2 必须提供 time_start/time_end，可用 "
-        u8"max_cloud_percent 限制场景级云量。lat/lon 省略时使用当前视野"
+        u8"max_cloud_percent 限制场景级云量；省略时为 100，仍从候选中选择云量最低的一景，"
+        u8"避免自然语言模板因零候选而失败。lat/lon 省略时使用当前视野"
         u8"中心。若需两个以上步骤或跨数据源，必须改用 start_multisource_research，"
         u8"不得并列调用多个本工具。本工具不会改变相机或图层可见性；只有"
         u8"返回的成功产物包含可显示 raster 时才可调用 show_science_artifact。";
@@ -1444,7 +1448,8 @@ void registerScienceResearchTools(
     multiSource.name = "start_multisource_research";
     multiSource.description = u8"按给定顺序串行执行多个科学数据源步骤。"
         u8"每一步的证据落盘后才会提交下一步；另一个研究请求只会排队，"
-        u8"不会取消当前步骤。本工具不移动相机或改变图层可见性。";
+        u8"不会取消当前步骤。Sentinel-2 未指定 max_cloud_percent 时使用 100，"
+        u8"并选择候选中云量最低的一景。本工具不移动相机或改变图层可见性。";
     multiSource.parametersJson =
         "{\"type\":\"object\",\"properties\":{"
         "\"question\":{\"type\":\"string\"},"

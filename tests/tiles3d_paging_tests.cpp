@@ -11,6 +11,7 @@
 
 #include <osg/NodeVisitor>
 #include <osg/PagedLOD>
+#include <osg/PolygonOffset>
 #include <osg/ProxyNode>
 #include <osgDB/FileUtils>
 #include <osgDB/ReadFile>
@@ -161,6 +162,24 @@ int main(int, char**)
     CHECK(serializedSse.find(',') == std::string::npos);
     CHECK(serializedSse.find('.') != std::string::npos);
     CHECK(earthtiles3d::resolveScreenSpaceError(serializedSse.c_str()) == preciseSse);
+
+    CHECK(!earthtiles3d::resolveContentVisibility(false, 97400.0));
+    CHECK(earthtiles3d::resolveContentVisibility(false, 29999.0));
+    CHECK(!earthtiles3d::resolveContentVisibility(false, 35000.0));
+    CHECK(earthtiles3d::resolveContentVisibility(true, 35000.0));
+    CHECK(!earthtiles3d::resolveContentVisibility(true, 40001.0));
+    CHECK(!earthtiles3d::resolveContentVisibility(
+        true, std::numeric_limits<double>::quiet_NaN()));
+
+    osg::ref_ptr<osg::StateSet> tilesState = new osg::StateSet;
+    earthtiles3d::applySurfaceConflictMitigation(tilesState.get());
+    const osg::PolygonOffset* offset = dynamic_cast<const osg::PolygonOffset*>(
+        tilesState->getAttribute(osg::StateAttribute::POLYGONOFFSET));
+    CHECK(offset != NULL);
+    CHECK(offset->getFactor() < 0.0f);
+    CHECK(offset->getUnits() < 0.0f);
+    CHECK((tilesState->getMode(GL_POLYGON_OFFSET_FILL) &
+           osg::StateAttribute::ON) != 0);
 
     CHECK(osgDB::Registry::instance()->loadLibrary(OSGVERSE_3DTILES_PLUGIN_PATH) !=
           osgDB::Registry::NOT_LOADED);

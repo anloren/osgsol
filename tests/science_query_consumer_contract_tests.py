@@ -91,6 +91,7 @@ class ScienceQueryConsumerContractTests(unittest.TestCase):
             self.assertIn(token, source, token)
 
         self.assertIn("source.visualizations", query_builder)
+        self.assertIn("自动分析范围", source)
         self.assertIn("visualization->id != expectedVisualizationId", source)
 
         for camera_writer in (

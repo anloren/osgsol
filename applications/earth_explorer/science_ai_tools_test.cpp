@@ -566,6 +566,17 @@ namespace
                     regional.analysis.gridSize == 128 &&
                     regional.analysis.metrics == options.metrics,
                 "regional builder lost ordered years or analysis options");
+
+        require(std::abs(resolveAutomaticScienceSpanMeters(source, 97400.0) -
+                         20000.0) < 1e-9,
+                "high camera altitude inflated an automatic science request");
+        require(std::abs(resolveAutomaticScienceSpanMeters(source, 5000.0) -
+                         4250.0) < 1e-9,
+                "low camera altitude lost its local visible-area scale");
+        require(std::abs(resolveAutomaticScienceSpanMeters(
+                             source, std::numeric_limits<double>::quiet_NaN()) -
+                         20000.0) < 1e-9,
+                "invalid camera altitude did not use the bounded default span");
     }
 
     const earthai::Tool& findTool(const earthai::ToolRegistry& registry,
@@ -867,6 +878,16 @@ namespace
                     !layer->isVisible() && layers.find("alphaearth") &&
                     !layers.find("alphaearth")->enabled,
                 "Sentinel research lost interval/cloud intent or changed visibility");
+        requireMatrixUnchanged(originalMatrix, *manipulator);
+
+        picojson::object sentinelWithoutCloud = sentinelArgs;
+        sentinelWithoutCloud.erase("max_cloud_percent");
+        require(tools.dispatch(
+                    "start_science_research",
+                    picojson::value(sentinelWithoutCloud), result) &&
+                    sentinelProviderPointer->lastQuery.sceneFilters.
+                        maximumCloudCoverPercent == 100.0,
+                "omitted Sentinel cloud filter could reject every candidate");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
         sentinelProviderPointer->publishReady("sentinel-artifact");

@@ -63,6 +63,8 @@ namespace earthai
                u8"并调用 get_research_job 轮询到 ready、partial、failed 或 cancelled 终态，"
                u8"到达终态后才能调用 build_research_brief。只有结果明确包含可显示的 raster "
                u8"产物时才能调用 show_science_artifact；表格、时间序列或纯分析结果不得强制显示。"
+               u8"Sentinel-2 作为背景且用户没有指定云量阈值时，省略 max_cloud_percent；"
+               u8"应用会使用 100 作为候选上限并选择其中云量最低的一景，仍须报告实际云量。"
                u8"AlphaEarth 的 64 维数据是潜在地理表征，不得把任一维解释为已命名的地物、"
                u8"温度、植被、高程或其他物理变量。跨数据源的综合叙述必须标注为“推断”；"
                u8"不得声称 Sentinel-2 影像或 DEM 造成了 AlphaEarth 检测到的变化，也不得宣称"

@@ -7,6 +7,7 @@
 #include <osgViewer/View>
 #include <pipeline/Pipeline.h>
 #include <pipeline/Utilities.h>
+#include <readerwriter/EarthManipulator.h>
 #include <iostream>
 #include <atomic>
 #include <chrono>
@@ -89,8 +90,12 @@ static const char* kDefaultTilesUrl =
 class Tiles3DLayerImpl : public Tiles3DLayer, public osg::NodeCallback
 {
 public:
-    Tiles3DLayerImpl(osg::Group* group, const std::string& url)
-        : _group(group), _url(url), _enabled(false), _loadStarted(false), _loadDone(false),
+    Tiles3DLayerImpl(osg::Group* group, osg::Group* contentGroup,
+                     osgVerse::EarthManipulator* manipulator,
+                     const std::string& url)
+        : _group(group), _contentGroup(contentGroup),
+          _manipulator(manipulator), _url(url), _enabled(false),
+          _contentVisible(false), _loadStarted(false), _loadDone(false),
           _stop(false), _sse(8.0) {}
 
     virtual void setEnabled(bool on)
@@ -99,6 +104,7 @@ public:
         OSG_INFO << "[Tiles3D] setEnabled(" << (on ? 1 : 0) << "), loadStarted=" << _loadStarted << std::endl;
         // NodeMask=0 时 update/cull 都不遍历 → 关闭即停:不发瓦片请求、不渲染。
         _group->setNodeMask(on ? ~0u : 0u);
+        updateContentVisibility();
         if (on && !_loadStarted)
         {
             _loadStarted = true;
@@ -142,13 +148,14 @@ public:
 
     virtual void operator()(osg::Node* node, osg::NodeVisitor* nv)
     {
+        updateContentVisibility();
         if (_loadDone.exchange(false))
         {
             osg::ref_ptr<osg::Node> tiles;
             { std::lock_guard<std::mutex> guard(_mutex); tiles = _pending; _pending = NULL; }
             if (tiles.valid())
             {
-                _group->addChild(tiles.get());
+                _contentGroup->addChild(tiles.get());
                 const long long attachedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - _loadStartedAt).count();
                 OSG_NOTICE << "[Tiles3D] root_attached_ms=" << attachedMs
@@ -163,6 +170,24 @@ public:
         traverse(node, nv);
     }
 
+    void updateContentVisibility()
+    {
+        double eyeAltitudeMeters = 0.0;
+        if (_manipulator.valid())
+            eyeAltitudeMeters =
+                _manipulator->computeEyeLatLonHeight()[2];
+        const bool visible = _enabled &&
+            earthtiles3d::resolveContentVisibility(
+                _contentVisible, eyeAltitudeMeters);
+        if (visible == _contentVisible) return;
+        _contentVisible = visible;
+        _contentGroup->setNodeMask(visible ? ~0u : 0u);
+        OSG_NOTICE << "[Tiles3D] content "
+                   << (visible ? "visible" : "hidden")
+                   << " at eye_altitude_m=" << eyeAltitudeMeters
+                   << std::endl;
+    }
+
 protected:
     virtual ~Tiles3DLayerImpl()
     {
@@ -170,10 +195,12 @@ protected:
         if (_worker.joinable()) _worker.join();
     }
     osg::observer_ptr<osg::Group> _group;   // group 持有本回调,防环引用
+    osg::observer_ptr<osg::Group> _contentGroup;
+    osg::observer_ptr<osgVerse::EarthManipulator> _manipulator;
     std::string _url;
     std::mutex _mutex;
     osg::ref_ptr<osg::Node> _pending;
-    bool _enabled, _loadStarted;
+    bool _enabled, _contentVisible, _loadStarted;
     std::atomic<bool> _loadDone;
     std::atomic<bool> _stop;
     std::thread _worker;
@@ -181,7 +208,7 @@ protected:
     double _sse;
 };
 
-osg::Node* configure3DTilesLayer(osgViewer::View& /*viewer*/,
+osg::Node* configure3DTilesLayer(osgViewer::View& viewer,
                                  osg::Node* /*earthRoot*/,
                                  const std::string& /*mainFolder*/,
                                  Tiles3DLayer** outLayer)
@@ -189,6 +216,10 @@ osg::Node* configure3DTilesLayer(osgViewer::View& /*viewer*/,
     osg::ref_ptr<osg::Group> group = new osg::Group;
     group->setName("Tiles3DLayer");
     group->setNodeMask(0);   // 默认关(懒加载,不联网)
+    osg::ref_ptr<osg::Group> contentGroup = new osg::Group;
+    contentGroup->setName("Tiles3DContent");
+    contentGroup->setNodeMask(0);
+    group->addChild(contentGroup.get());
 
     // EARTH_3DTILES=<url> 换数据源;=1 用默认源(香港 f2)。是否随启动开启由
     // earth_main 的图层注册处统一决定(与 EARTH_QUAKES/EARTH_FLIGHTS 同模式)。
@@ -198,8 +229,14 @@ osg::Node* configure3DTilesLayer(osgViewer::View& /*viewer*/,
 
     // 给整层挂自带的网格着色器,覆盖从 earthCamera 继承来的 globe 程序。
     applyTilesShader(group->getOrCreateStateSet());
+    earthtiles3d::applySurfaceConflictMitigation(
+        group->getOrCreateStateSet());
 
-    Tiles3DLayerImpl* impl = new Tiles3DLayerImpl(group.get(), url);
+    Tiles3DLayerImpl* impl = new Tiles3DLayerImpl(
+        group.get(), contentGroup.get(),
+        dynamic_cast<osgVerse::EarthManipulator*>(
+            viewer.getCameraManipulator()),
+        url);
     group->setUpdateCallback(impl);
     if (outLayer) *outLayer = impl;
     return group.release();

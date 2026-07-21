@@ -11,6 +11,24 @@
 
 #include <ScienceQueryTypes.h>
 
+inline double resolveAutomaticScienceSpanMeters(
+    const earthscience::ScienceSourceDescriptor& source,
+    double eyeAltitudeMeters)
+{
+    const double minimumSpan = source.capabilities.minimumSpanMeters > 0.0
+        ? source.capabilities.minimumSpanMeters : 2560.0;
+    const double maximumSpan =
+        source.capabilities.maximumSpanMeters >= minimumSpan
+            ? source.capabilities.maximumSpanMeters : 81920.0;
+    constexpr double DEFAULT_MAXIMUM_SPAN_METERS = 20000.0;
+    const double boundedMaximum = std::clamp(
+        DEFAULT_MAXIMUM_SPAN_METERS, minimumSpan, maximumSpan);
+    const double requested = std::isfinite(eyeAltitudeMeters) &&
+        eyeAltitudeMeters >= 0.0
+            ? eyeAltitudeMeters * 0.85 : boundedMaximum;
+    return std::clamp(requested, minimumSpan, boundedMaximum);
+}
+
 inline const earthscience::ScienceVisualizationDescriptor*
 findScienceVisualization(
     const earthscience::ScienceSourceDescriptor& source,

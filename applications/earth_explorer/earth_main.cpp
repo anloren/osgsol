@@ -979,6 +979,15 @@ int main(int argc, char** argv)
     ShipLayer* shipLayer = nullptr;
     sceneCamera->addChild(configureShipLayer(viewer, &shipLayer));   // P3:AIS 船舶(WS 流)
 
+    // 3D 实景层需要每帧读取眼点高度做低空可见性门控。先把操纵器完整绑定到
+    // viewer，再构建 3D 层，避免 configure3DTilesLayer 只拿到空指针。
+    osg::ref_ptr<osgVerse::EarthManipulator> earthManipulator =
+        new osgVerse::EarthManipulator;
+    earthManipulator->setIntersectionMask(EARTH_INTERSECTION_MASK);
+    earthManipulator->setWorldNode(earth.get());
+    earthManipulator->setThrowAllowed(manipulatorCanThrow);
+    viewer.setCameraManipulator(earthManipulator.get());
+
     Tiles3DLayer* tiles3dLayer = nullptr;
     sceneCamera->addChild(configure3DTilesLayer(viewer, earthRoot.get(), mainFolder, &tiles3dLayer));
 
@@ -989,12 +998,6 @@ int main(int argc, char** argv)
 #if !SIMPLE_VERSION
     root->addChild(configureUI(viewer, earthRoot.get(), mainFolder, w, h));
 #endif
-
-    // Configure the manipulator
-    osg::ref_ptr<osgVerse::EarthManipulator> earthManipulator = new osgVerse::EarthManipulator;
-    earthManipulator->setIntersectionMask(EARTH_INTERSECTION_MASK);
-    earthManipulator->setWorldNode(earth.get());
-    earthManipulator->setThrowAllowed(manipulatorCanThrow);
 
     //osg::Vec3d pos = osgVerse::Coordinate::convertLLAtoECEF(
     //    osg::Vec3d(osg::inDegrees(0.0), osg::inDegrees(120.0), 10000.0));
@@ -1032,7 +1035,6 @@ int main(int argc, char** argv)
     viewer.addEventHandler(new osgViewer::WindowSizeHandler);
     viewer.addEventHandler(new osgGA::StateSetManipulator(viewer.getCamera()->getOrCreateStateSet()));
     viewer.setRealizeOperation(new osgVerse::RealizeOperation);
-    viewer.setCameraManipulator(earthManipulator.get());
     viewer.setDatabasePager(pager);
     viewer.setSceneData(root.get());
     //viewer.setThreadingModel(osgViewer::Viewer::SingleThreaded);
@@ -1233,7 +1235,7 @@ int main(int argc, char** argv)
         // 懒加载:首次勾选才联网;官方使用条款要求署名 → subtitle 常显数据来源。
         OverlayLayer hk3d; hk3d.id = "hk3d"; hk3d.displayName = u8"香港实景三维 (LandsD)";
         hk3d.group = u8"三维城市 / 3D City"; hk3d.enabled = false; hk3d.hasOpacity = false;
-        hk3d.subtitle = u8"© 香港特区政府地政总署 data.map.gov.hk";
+        hk3d.subtitle = u8"30 km 以下显示细节，40 km 以上自动隐藏 · © 香港特区政府地政总署 data.map.gov.hk";
         Tiles3DLayer* tptr = tiles3dLayer;
         hk3d.apply = [tptr](const OverlayLayer& l) { if (tptr) tptr->setEnabled(l.enabled); };
         layerMgr.add(hk3d);

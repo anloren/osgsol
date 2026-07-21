@@ -9,6 +9,8 @@
 #include <sstream>
 #include <string>
 #include <osg/Node>
+#include <osg/PolygonOffset>
+#include <osg/StateSet>
 #include <osgViewer/View>
 
 namespace earthtiles3d
@@ -28,6 +30,30 @@ namespace earthtiles3d
         text.imbue(std::locale::classic());
         text << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
         return text.str();
+    }
+
+    inline bool resolveContentVisibility(bool currentlyVisible,
+                                         double eyeAltitudeMeters)
+    {
+        if (!std::isfinite(eyeAltitudeMeters) || eyeAltitudeMeters < 0.0)
+            return false;
+        constexpr double SHOW_BELOW_METERS = 30000.0;
+        constexpr double HIDE_ABOVE_METERS = 40000.0;
+        return currentlyVisible ? eyeAltitudeMeters <= HIDE_ABOVE_METERS
+                                : eyeAltitudeMeters < SHOW_BELOW_METERS;
+    }
+
+    inline void applySurfaceConflictMitigation(osg::StateSet* stateSet)
+    {
+        if (!stateSet) return;
+        osg::ref_ptr<osg::PolygonOffset> offset =
+            new osg::PolygonOffset(-1.0f, -1.0f);
+        stateSet->setAttributeAndModes(
+            offset.get(), osg::StateAttribute::ON |
+                          osg::StateAttribute::OVERRIDE);
+        stateSet->setMode(
+            GL_POLYGON_OFFSET_FILL,
+            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
     }
 }
 

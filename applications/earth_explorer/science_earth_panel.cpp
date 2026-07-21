@@ -1681,16 +1681,16 @@ void ScienceEarthPanel::drawOperations(
     const osg::Vec3d eye = manipulator->computeEyeLatLonHeight();
     const double latitude = osg::RadiansToDegrees(target[0]);
     const double longitude = osg::RadiansToDegrees(target[1]);
-    const double requestedSpanMeters = std::clamp(
-        eye[2] * 0.85, 2560.0, 81920.0);
     const earthscience::ScienceSourceDescriptor* selectedSource =
         resolveSciencePanelSource(sources, _state.sourceId);
     if (!selectedSource) return;
+    const double requestedSpanMeters = resolveAutomaticScienceSpanMeters(
+        *selectedSource, eye[2]);
     if (operationsExpanded)
     {
         ImGui::SeparatorText(u8"1  定位区域 / Locate area");
         ImGui::TextWrapped(
-            u8"屏幕中心 / Center: %.4f, %.4f · 当前视野约 %.1f km",
+            u8"屏幕中心 / Center: %.4f, %.4f · 自动分析范围 %.1f km",
             latitude, longitude, requestedSpanMeters / 1000.0);
         ImGui::SeparatorText(u8"2  选择数据源与时间 / Source and time");
         ImGui::TextWrapped(u8"数据源 / Source");
