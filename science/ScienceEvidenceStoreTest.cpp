@@ -126,6 +126,63 @@ namespace
         return value;
     }
 
+    earthscience::ScienceArtifact agroArtifact()
+    {
+        earthscience::ScienceArtifact value;
+        value.artifactId = "era5-land-surface-history-1";
+        value.generation = 1;
+        value.query.sourceId = "era5-land-surface-history";
+        value.query.geometry.kind = earthscience::ScienceGeometryKind::Point;
+        value.query.geometry.point = {35.68, 139.76};
+        value.query.time.mode = earthscience::ScienceTimeMode::ExplicitYears;
+        value.query.time.explicitYears = {2020, 2021};
+        value.query.variables = {
+            "temperature_2m_mean", "soil_moisture_0_to_100cm_mean"};
+        value.query.outputKind = earthscience::ScienceOutputKind::TimeSeries;
+        const auto years = std::make_shared<const std::vector<int>>(
+            std::initializer_list<int>{2020, 2021});
+        earthscience::ScienceVariableSeries temperature;
+        temperature.variableId = "temperature_2m_mean";
+        temperature.displayName = "Mean temperature";
+        temperature.unit = "°C";
+        temperature.aggregationMethod = "annual mean";
+        temperature.nativeResolutionMeters = 11100.0;
+        temperature.years = years;
+        temperature.values = std::make_shared<const std::vector<double>>(
+            std::initializer_list<double>{15.2, 15.8});
+        temperature.validity =
+            std::make_shared<const std::vector<unsigned char>>(
+                std::initializer_list<unsigned char>{1, 1});
+        value.variableSeries.push_back(temperature);
+        earthscience::ScienceSourceReference reference;
+        reference.sourceId = value.query.sourceId;
+        reference.providerVersion = "ecmwf-era5-land-openmeteo-v1";
+        reference.datasetId = "ECMWF ERA5-Land daily aggregation";
+        reference.originalUrl =
+            "https://archive-api.open-meteo.com/v1/archive?fixture";
+        reference.requestedCoverage = value.query.geometry;
+        reference.actualCoverage = {139.71, 35.63, 139.81, 35.73};
+        reference.variables = value.query.variables;
+        reference.units = {"°C", "m³/m³"};
+        reference.acquisitionTime = "2020-01-01/2021-12-31";
+        reference.attribution = "ECMWF / Open-Meteo";
+        reference.processingSteps = {"daily to annual mean"};
+        value.sourceReferences.push_back(reference);
+        value.processingVersion = "era5-agro-annual-v1";
+        value.createdAt = "2026-07-21T12:00:00Z";
+        return value;
+    }
+
+    earthscience::ScienceSourceDescriptor agroDescriptor()
+    {
+        earthscience::ScienceSourceDescriptor source;
+        source.id = "era5-land-surface-history";
+        source.name = "ERA5-Land Surface & Soil History";
+        source.providerVersion = "ecmwf-era5-land-openmeteo-v1";
+        source.attribution = "ECMWF / Open-Meteo";
+        return source;
+    }
+
     std::string readFile(const std::filesystem::path& path)
     {
         std::ifstream stream(path, std::ios::binary);
@@ -155,6 +212,22 @@ int main()
                 loaded.artifactId == record.artifactId &&
                 loaded.scalarSummaries.front().mean == 35.0,
             "evidence round-trip failed");
+
+    earthscience::ScienceEvidenceRecord agroRecord;
+    require(earthscience::makeScienceEvidence(
+                agroArtifact(), agroDescriptor(), agroRecord, error) &&
+                agroRecord.variableSeries.size() == 1 &&
+                agroRecord.variableSeries.front().points.size() == 2 &&
+                agroRecord.actualResolutionMeters == 11100.0,
+            "annual agro series was dropped during evidence conversion");
+    require(store.saveEvidence(agroRecord, error),
+            "annual agro evidence save failed");
+    earthscience::ScienceEvidenceRecord loadedAgro;
+    require(store.loadEvidence(agroRecord.evidenceId, loadedAgro, error) &&
+                loadedAgro.variableSeries.size() == 1 &&
+                loadedAgro.variableSeries.front().points[1].year == 2021 &&
+                loadedAgro.variableSeries.front().points[1].value == 15.8,
+            "annual agro evidence round-trip lost numeric values");
 
     const std::filesystem::path evidencePath = temporary.path() /
         "evidence" / (record.evidenceId + ".json");

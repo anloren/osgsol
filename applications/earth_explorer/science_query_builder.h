@@ -193,6 +193,35 @@ inline std::vector<int> makeScienceUiYearRange(
     return years;
 }
 
+inline earthscience::GeoTemporalQuery makeScienceVariablePointSeriesQuery(
+    const earthscience::ScienceSourceDescriptor& source,
+    double latitude, double longitude, int firstYear, int lastYear)
+{
+    earthscience::GeoTemporalQuery query;
+    query.sourceId = source.id;
+    query.geometry.kind = earthscience::ScienceGeometryKind::Point;
+    query.geometry.point.latitude = latitude;
+    query.geometry.point.longitude = longitude;
+    query.time.mode = earthscience::ScienceTimeMode::ExplicitYears;
+    query.time.explicitYears = makeScienceUiYearRange(
+        source, firstYear, lastYear);
+    for (const earthscience::ScienceVariableDescriptor& variable :
+         source.variables)
+        query.variables.push_back(variable.id);
+    query.targetResolutionMeters = source.nativeResolutionMeters;
+    query.aggregation = earthscience::ScienceAggregation::None;
+    query.outputKind = earthscience::ScienceOutputKind::TimeSeries;
+    query.purpose = "annual source-grid environmental profile";
+    query.priority = earthscience::SciencePriority::InteractiveResearch;
+    query.analysis.kind = earthscience::ScienceAnalysisKind::PointSeries;
+    if (!query.time.explicitYears.empty())
+    {
+        query.analysis.baselineYear = query.time.explicitYears.front();
+        query.analysis.comparisonYear = query.time.explicitYears.back();
+    }
+    return query;
+}
+
 inline earthscience::GeoTemporalQuery makeSciencePointSeriesQuery(
     const earthscience::ScienceSourceDescriptor& source,
     double latitude, double longitude, int firstYear, int lastYear)

@@ -134,6 +134,32 @@ namespace
         return source;
     }
 
+    earthscience::ScienceSourceDescriptor makeAgroDescriptor()
+    {
+        earthscience::ScienceSourceDescriptor source;
+        source.id = "era5-land-surface-history";
+        source.name = "ERA5-Land Surface & Soil History";
+        source.category = "historical agricultural weather";
+        source.providerVersion = "ecmwf-era5-land-openmeteo-v1";
+        source.firstYear = 1950;
+        source.lastYear = 2025;
+        source.nativeResolutionMeters = 11100.0;
+        source.componentCount = 3;
+        source.health = earthscience::ScienceSourceHealth::Ready;
+        source.variables = {
+            {"temperature_2m_mean", "Mean temperature", "°C",
+             "scalar reanalysis field", 1, 8},
+            {"relative_humidity_2m_mean", "Mean humidity", "%",
+             "scalar reanalysis field", 1, 8},
+            {"soil_moisture_0_to_100cm_mean", "Mean soil moisture", "m³/m³",
+             "scalar reanalysis field", 1, 8},
+        };
+        source.capabilities.pointQuery = true;
+        source.capabilities.explicitYears = true;
+        source.capabilities.timeSeriesOutput = true;
+        return source;
+    }
+
     earthscience::GeoTemporalQuery makeDemQuery()
     {
         earthscience::GeoTemporalQuery query;
@@ -168,6 +194,23 @@ namespace
         query.visualizationId = "natural-color-visual";
         query.sceneFilters.maximumCloudCoverPercent = 20.0;
         query.sceneFilters.maximumScenes = 10;
+        return query;
+    }
+
+    earthscience::GeoTemporalQuery makeAgroQuery()
+    {
+        earthscience::GeoTemporalQuery query;
+        query.sourceId = "era5-land-surface-history";
+        query.geometry.kind = earthscience::ScienceGeometryKind::Point;
+        query.geometry.point = {35.68, 139.76};
+        query.time.mode = earthscience::ScienceTimeMode::ExplicitYears;
+        query.time.explicitYears = {2020, 2021};
+        query.variables = {
+            "temperature_2m_mean", "relative_humidity_2m_mean",
+            "soil_moisture_0_to_100cm_mean"};
+        query.targetResolutionMeters = 11100.0;
+        query.outputKind = earthscience::ScienceOutputKind::TimeSeries;
+        query.analysis.kind = earthscience::ScienceAnalysisKind::PointSeries;
         return query;
     }
 
@@ -736,6 +779,38 @@ namespace
                 "Float32 DEM raster cost was counted as one byte per cell");
     }
 
+    void testScalarAnnualSeriesUsesDeclaredVariablesAndStorage()
+    {
+        ProviderEvents events;
+        auto registry =
+            std::make_unique<earthscience::ScienceSourceRegistry>();
+        auto ownedProvider = std::make_unique<ControlledProvider>(
+            makeAgroDescriptor(), &events);
+        ControlledProvider* provider = ownedProvider.get();
+        std::string error;
+        require(registry->add(std::move(ownedProvider), error),
+                "agricultural provider fixture registration failed");
+        earthscience::ScienceQueryService service(std::move(registry));
+
+        const earthscience::GeoTemporalQuery query = makeAgroQuery();
+        require(service.validateQuery(query, error) && error.empty(),
+                "declared scalar annual series was rejected as 64D data");
+        service.submit(query);
+        require(events.submits == 1 && provider->generation() == 1,
+                "valid scalar annual series did not dispatch");
+        const earthscience::ScienceQueryCost cost = service.estimate(query);
+        require(cost.resultCells == 6 &&
+                    cost.sourceBytesUpperBound == 17568u &&
+                    cost.residentBytesUpperBound < 4096u,
+                "scalar annual cost still used the 64D embedding model");
+
+        earthscience::GeoTemporalQuery unknown = query;
+        unknown.variables[2] = "imaginary_crop_index";
+        requireRejectedWithoutDispatch(
+            service, *provider, unknown,
+            "unknown science variable: imaginary_crop_index");
+    }
+
     void testPreviewThroughputDoesNotFabricateAnalysisDuration()
     {
         ServiceFixture fixture;
@@ -980,6 +1055,7 @@ int main()
         testRetainsPreviewAnalysisAndDisplayIndependently();
         testEstimatesExactCostAndRequiresEvidenceForDuration();
         testFloatRasterCostUsesNumericStorageWidth();
+        testScalarAnnualSeriesUsesDeclaredVariablesAndStorage();
         testPreviewThroughputDoesNotFabricateAnalysisDuration();
         testThroughputEvidenceIsolatedByPhysicalWorkload();
         testDispatchesBoundedIntervalRasterForCapableProvider();

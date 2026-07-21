@@ -1,6 +1,8 @@
 ADD_LIBRARY(osgSolScienceCore STATIC
     CopernicusDemSource.cpp
     CopernicusDemSource.h
+    Era5AgroSource.cpp
+    Era5AgroSource.h
     ScienceAnalysisEngine.cpp
     ScienceAnalysisEngine.h
     ScienceAnalysisExport.cpp
@@ -55,6 +57,8 @@ ADD_LIBRARY(osgSolSciencePreview STATIC
     CopernicusDemProvider.h
     CopernicusDemRuntime.cpp
     CopernicusDemRuntime.h
+    Era5AgroProvider.cpp
+    Era5AgroProvider.h
     Sentinel2Provider.cpp
     Sentinel2Provider.h
     Sentinel2Runtime.cpp
@@ -283,6 +287,28 @@ IF(BUILD_TESTING)
     ADD_TEST(NAME osgSol_Test_Sentinel2Stac
              COMMAND $<TARGET_FILE:osgSol_Test_Sentinel2Stac>)
     SET_TESTS_PROPERTIES(osgSol_Test_Sentinel2Stac PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_Era5AgroSource
+        Era5AgroSourceTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_Era5AgroSource PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_Era5AgroSource
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_Era5AgroSource
+             COMMAND $<TARGET_FILE:osgSol_Test_Era5AgroSource>)
+    SET_TESTS_PROPERTIES(osgSol_Test_Era5AgroSource PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_Era5AgroProvider
+        Era5AgroProviderTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_Era5AgroProvider PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_Era5AgroProvider
+        PRIVATE osgSolSciencePreview)
+    ADD_TEST(NAME osgSol_Test_Era5AgroProvider
+             COMMAND $<TARGET_FILE:osgSol_Test_Era5AgroProvider>)
+    SET_TESTS_PROPERTIES(osgSol_Test_Era5AgroProvider PROPERTIES
         LABELS "offline;scienceearth"
         TIMEOUT 10)
 

@@ -170,6 +170,46 @@ namespace
         return source;
     }
 
+    earthscience::ScienceSourceDescriptor makeAgroDescriptor()
+    {
+        earthscience::ScienceSourceDescriptor source;
+        source.id = "era5-land-surface-history";
+        source.name = "ERA5-Land Surface & Soil History";
+        source.category = "historical agricultural weather";
+        source.providerVersion = "ecmwf-era5-land-openmeteo-v1";
+        source.attribution =
+            "ECMWF Copernicus Climate Change Service / Open-Meteo";
+        source.firstYear = 1950;
+        source.lastYear = 2025;
+        source.nativeResolutionMeters = 11100.0;
+        source.componentCount = 3;
+        source.health = earthscience::ScienceSourceHealth::Ready;
+        source.healthMessage = "Ready on demand";
+        source.dataNature = "reanalysis";
+        source.temporalResolution = "daily to annual";
+        source.spatialSupport = "0.1 degree source output grid";
+        source.qualityStatement =
+            "No elevation downscaling or land-cell relocation";
+        source.variables = {
+            {"temperature_2m_mean", "Mean temperature", "°C",
+             "scalar reanalysis field", 1, 8, 11100.0,
+             "Daily mean near-surface air temperature",
+             "annual mean", "not a parcel observation"},
+            {"relative_humidity_2m_mean", "Mean humidity", "%",
+             "scalar reanalysis field", 1, 8, 11100.0,
+             "Daily mean near-surface relative humidity",
+             "annual mean", "not a parcel observation"},
+            {"soil_moisture_0_to_100cm_mean", "Mean soil moisture", "m³/m³",
+             "scalar reanalysis field", 1, 8, 11100.0,
+             "Upper metre volumetric soil-water content",
+             "annual mean", "not a parcel observation"},
+        };
+        source.capabilities.pointQuery = true;
+        source.capabilities.explicitYears = true;
+        source.capabilities.timeSeriesOutput = true;
+        return source;
+    }
+
     class ToolProvider : public earthscience::IScienceProvider
     {
     public:
@@ -298,6 +338,29 @@ namespace
             artifact->sourceReferences.push_back(reference);
             const std::vector<int> years = lastQuery.time.explicitYears.empty()
                 ? std::vector<int>{2025} : lastQuery.time.explicitYears;
+            if (lastQuery.sourceId == "era5-land-surface-history")
+            {
+                const auto sharedYears =
+                    std::make_shared<const std::vector<int>>(years);
+                for (std::size_t variable = 0;
+                     variable < _source.variables.size(); ++variable)
+                {
+                    earthscience::ScienceVariableSeries series;
+                    series.variableId = _source.variables[variable].id;
+                    series.displayName = _source.variables[variable].displayName;
+                    series.unit = _source.variables[variable].unit;
+                    series.aggregationMethod = "annual mean";
+                    series.nativeResolutionMeters = 11100.0;
+                    series.years = sharedYears;
+                    series.values =
+                        std::make_shared<const std::vector<double>>(
+                            years.size(), 10.0 + variable);
+                    series.validity =
+                        std::make_shared<const std::vector<unsigned char>>(
+                            years.size(), 1);
+                    artifact->variableSeries.push_back(std::move(series));
+                }
+            }
             if (!preview)
             {
                 artifact->embedding.years =
@@ -1780,6 +1843,75 @@ namespace
         require(tools.tools().empty(),
                 "missing science plugin registered phantom Agent tools");
     }
+
+    void testAgroClimateSourceIsAgentQueryableWithoutVisualization()
+    {
+        auto registry =
+            std::make_unique<earthscience::ScienceSourceRegistry>();
+        auto providerValue =
+            std::make_unique<ToolProvider>(makeAgroDescriptor());
+        ToolProvider* provider = providerValue.get();
+        std::string error;
+        require(registry->add(std::move(providerValue), error),
+                "agro Agent provider registration failed");
+        earthscience::ScienceQueryService service(std::move(registry));
+        osg::ref_ptr<SciencePreviewLayer> layer =
+            new SciencePreviewLayer(&service);
+        LayerManager layers;
+        OverlayLayer catalogLayer;
+        catalogLayer.id = "alphaearth";
+        catalogLayer.displayName = "ScienceEarth";
+        catalogLayer.group = "Science";
+        catalogLayer.apply = [](const OverlayLayer&) {};
+        layers.add(catalogLayer);
+        osg::ref_ptr<osgVerse::EarthManipulator> manipulator =
+            new osgVerse::EarthManipulator;
+        manipulator->setByEye(
+            osg::inDegrees(35.68), osg::inDegrees(139.76), 150000.0);
+
+        earthai::ToolRegistry tools;
+        registerScienceResearchTools(
+            &tools, &service, layer.get(), &layers, manipulator.get());
+        picojson::value result;
+        require(tools.dispatch("search_science_sources", emptyArgs(), result),
+                "agro source search did not dispatch");
+        const picojson::value& source =
+            result.get("sources").get<picojson::array>().front();
+        require(source.get("data_nature").get<std::string>() == "reanalysis" &&
+                    source.get("variables").get<picojson::array>().size() == 3 &&
+                    source.get("variables").get<picojson::array>().front().
+                        get("uncertainty").get<std::string>().find("parcel") !=
+                        std::string::npos,
+                "Agent source catalog omitted agro variable semantics");
+
+        picojson::object request;
+        request["source_id"] =
+            picojson::value("era5-land-surface-history");
+        request["mode"] = picojson::value("point_series");
+        request["lat"] = picojson::value(35.68);
+        request["lon"] = picojson::value(139.76);
+        request["first_year"] = picojson::value(2020.0);
+        request["last_year"] = picojson::value(2022.0);
+        require(tools.dispatch(
+                    "start_science_research", picojson::value(request), result) &&
+                    !result.contains("error") &&
+                    provider->lastQuery.variables ==
+                        std::vector<std::string>({
+                            "temperature_2m_mean",
+                            "relative_humidity_2m_mean",
+                            "soil_moisture_0_to_100cm_mean"}),
+                "Agent could not submit agro series without a visualization");
+
+        const std::uint64_t jobId = service.snapshot().jobId;
+        provider->publishReady("agro-profile");
+        picojson::object getArgs;
+        getArgs["job_id"] = picojson::value(static_cast<double>(jobId));
+        require(tools.dispatch(
+                    "get_research_job", picojson::value(getArgs), result) &&
+                    result.get("artifact").get("variable_series").
+                        get<picojson::array>().size() == 3,
+                "Agent result omitted annual agro variable values");
+    }
 }
 
 int main()
@@ -1788,6 +1920,7 @@ int main()
     {
         testAnalysisQueryBuildersKeepExactScientificIntent();
         testMissingSciencePluginRegistersNoPhantomTools();
+        testAgroClimateSourceIsAgentQueryableWithoutVisualization();
         testScienceToolsUseServiceAndPreserveCamera();
         testMultiSourceToolIsSerialAndPreservesWorldState();
         testPersistentResearchSurvivesRestartAndStaysCompact();

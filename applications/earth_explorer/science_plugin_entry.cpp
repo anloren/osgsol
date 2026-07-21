@@ -7,6 +7,7 @@
 
 #include <AlphaEarthProvider.h>
 #include <CopernicusDemProvider.h>
+#include <Era5AgroProvider.h>
 #include <ScienceQueryService.h>
 #include <ScienceSourceRegistry.h>
 #include <Sentinel2Provider.h>
@@ -53,6 +54,22 @@ namespace
                     std::unique_ptr<earthscience::IScienceProvider>(
                         new earthscience::CopernicusDemProvider), error))
                 OSG_WARN << "ScienceEarth Copernicus DEM registration failed: "
+                         << error << std::endl;
+            error.clear();
+            if (!registry->add(
+                    std::unique_ptr<earthscience::IScienceProvider>(
+                        new earthscience::Era5AgroProvider(
+                            earthscience::Era5AgroProduct::LandSurface)),
+                    error))
+                OSG_WARN << "ScienceEarth ERA5-Land registration failed: "
+                         << error << std::endl;
+            error.clear();
+            if (!registry->add(
+                    std::unique_ptr<earthscience::IScienceProvider>(
+                        new earthscience::Era5AgroProvider(
+                            earthscience::Era5AgroProduct::AgriculturalClimate)),
+                    error))
+                OSG_WARN << "ScienceEarth ERA5 registration failed: "
                          << error << std::endl;
 
             service.reset(new earthscience::ScienceQueryService(

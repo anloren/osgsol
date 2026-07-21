@@ -161,6 +161,10 @@ namespace earthscience
         std::string dataKind;
         int componentCount = 1;
         int bytesPerComponent = 1;
+        double nativeResolutionMeters = 0.0;
+        std::string scientificMeaning;
+        std::string aggregationMethod;
+        std::string uncertaintyStatement;
     };
 
     struct ScienceVisualizationDescriptor
@@ -210,6 +214,13 @@ namespace earthscience
         ScienceSourceCapabilities capabilities;
         ScienceSourceHealth health = ScienceSourceHealth::Unavailable;
         std::string healthMessage;
+        std::string dataNature;
+        std::string temporalResolution;
+        std::string spatialSupport;
+        std::string updateLatency;
+        std::string license;
+        std::string documentationUrl;
+        std::string qualityStatement;
         bool experimental = false;
     };
 
@@ -453,6 +464,18 @@ namespace earthscience
         std::uint64_t noDataCellCount = 0;
     };
 
+    struct ScienceVariableSeries
+    {
+        std::string variableId;
+        std::string displayName;
+        std::string unit;
+        std::string aggregationMethod;
+        double nativeResolutionMeters = 0.0;
+        std::shared_ptr<const std::vector<int>> years;
+        std::shared_ptr<const std::vector<double>> values;
+        std::shared_ptr<const std::vector<unsigned char>> validity;
+    };
+
     struct ScienceArtifact
     {
         std::string artifactId;
@@ -462,6 +485,7 @@ namespace earthscience
         ScienceRasterPayload raster;
         ScienceEmbeddingPayload embedding;
         ScienceAnalysisPayload analysis;
+        std::vector<ScienceVariableSeries> variableSeries;
         std::vector<ScienceScalarSummary> scalarSummaries;
         std::string visualizationId;
         std::vector<std::string> warnings;

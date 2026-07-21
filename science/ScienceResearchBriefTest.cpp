@@ -219,6 +219,47 @@ int main()
     require(brief.markdown.find("Temporal mismatch") != std::string::npos,
             "temporal mismatch was hidden");
 
+    earthscience::ScienceEvidenceRecord agro = evidence(
+        "evidence-agro", "era5-land-surface-history",
+        "2020-01-01/2021-12-31");
+    agro.sourceName = "ERA5-Land Surface & Soil History";
+    agro.providerVersion = "ecmwf-era5-land-openmeteo-v1";
+    agro.datasetId = "ECMWF ERA5-Land daily aggregation";
+    agro.originalUrl =
+        "https://archive-api.open-meteo.com/v1/archive?fixture";
+    agro.attribution = "ECMWF / Open-Meteo";
+    agro.variables = {"temperature_2m_mean"};
+    agro.units = {"°C"};
+    agro.actualResolutionMeters = 11100.0;
+    earthscience::ScienceEvidenceVariableSeries temperature;
+    temperature.variableId = "temperature_2m_mean";
+    temperature.displayName = "Mean temperature";
+    temperature.unit = "°C";
+    temperature.aggregationMethod = "annual mean";
+    temperature.nativeResolutionMeters = 11100.0;
+    temperature.points = {{2020, 15.2, true}, {2021, 15.8, true}};
+    agro.variableSeries.push_back(temperature);
+    agro.limitations = {
+        "Reanalysis source grid; not a station or parcel observation"};
+    earthscience::ScienceResearchRecord agroResearch;
+    agroResearch.researchId = "research-agro-1";
+    agroResearch.question = "What is the annual agricultural climate context?";
+    agroResearch.state = earthscience::ScienceResearchState::Ready;
+    agroResearch.steps.push_back({
+        1, agro.sourceId, earthscience::ScienceJobState::Ready,
+        agro.artifactId, agro.evidenceId, "Ready"});
+    agroResearch.createdAt = agroResearch.updatedAt =
+        "2026-07-21T12:00:00Z";
+    earthscience::ScienceResearchBrief agroBrief;
+    require(earthscience::buildScienceResearchBrief(
+                agroResearch, {agro}, agroBrief, error) &&
+                agroBrief.markdown.find("15.8 °C") != std::string::npos &&
+                agroBrief.markdown.find("reanalysis source-grid") !=
+                    std::string::npos &&
+                agroBrief.markdown.find("parcel observation") !=
+                    std::string::npos,
+            "research brief lost annual agro values or scientific boundary");
+
     earthscience::ScienceResearchBrief repeated;
     require(earthscience::buildScienceResearchBrief(
                 research(), three, repeated, error) &&

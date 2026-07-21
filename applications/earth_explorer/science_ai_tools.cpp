@@ -331,6 +331,21 @@ namespace
             return evidence;
         }
 
+        if (!artifact.variableSeries.empty())
+        {
+            evidence.basis = "variable-series";
+            evidence.actualResolutionMeters =
+                artifact.variableSeries.front().nativeResolutionMeters;
+            evidence.sourceResolutionMeters = evidence.actualResolutionMeters;
+            evidence.displayResolutionMeters = 0.0;
+            evidence.hasActualResolution =
+                evidence.actualResolutionMeters > 0.0;
+            if (!artifact.sourceReferences.empty())
+                evidence.bounds =
+                    artifact.sourceReferences.front().actualCoverage;
+            return evidence;
+        }
+
         if (analysisKind == earthscience::ScienceAnalysisKind::RegionalChange)
         {
             const earthscience::ScienceRegionalChangeSummary& regional =
@@ -494,6 +509,55 @@ namespace
         item["annual_series_truncated"] = picojson::value(
             artifact.analysis.annualSeries &&
             artifact.analysis.annualSeries->size() > annualSeries.size());
+
+        constexpr std::size_t MAX_VARIABLE_SERIES = 8;
+        constexpr std::size_t MAX_VARIABLE_POINTS = 9;
+        picojson::array variableSeries;
+        for (const earthscience::ScienceVariableSeries& series :
+             artifact.variableSeries)
+        {
+            if (variableSeries.size() >= MAX_VARIABLE_SERIES) break;
+            picojson::object entry;
+            entry["variable_id"] = picojson::value(series.variableId);
+            entry["name"] = picojson::value(series.displayName);
+            entry["unit"] = picojson::value(series.unit);
+            entry["aggregation"] = picojson::value(
+                series.aggregationMethod);
+            entry["native_resolution_m"] = picojson::value(
+                series.nativeResolutionMeters);
+            picojson::array points;
+            if (series.years && series.values)
+            {
+                const std::size_t available = std::min(
+                    series.years->size(), series.values->size());
+                const std::size_t count = std::min(
+                    available, MAX_VARIABLE_POINTS);
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    const bool valid =
+                        (!series.validity ||
+                         index >= series.validity->size() ||
+                         series.validity->at(index) != 0) &&
+                        std::isfinite(series.values->at(index));
+                    picojson::object point;
+                    point["year"] = picojson::value(
+                        static_cast<double>(series.years->at(index)));
+                    point["valid"] = picojson::value(valid);
+                    if (valid)
+                        point["value"] = picojson::value(
+                            series.values->at(index));
+                    points.push_back(picojson::value(point));
+                }
+                entry["truncated"] = picojson::value(
+                    available > points.size());
+            }
+            else entry["truncated"] = picojson::value(false);
+            entry["points"] = picojson::value(points);
+            variableSeries.push_back(picojson::value(entry));
+        }
+        item["variable_series"] = picojson::value(variableSeries);
+        item["variable_series_truncated"] = picojson::value(
+            artifact.variableSeries.size() > variableSeries.size());
 
         constexpr std::size_t MAX_SCALAR_SUMMARIES = 16;
         picojson::array scalarSummaries;
@@ -775,6 +839,11 @@ namespace
             limitations.push_back(
                 "Copernicus DEM values are static surface heights in the "
                 "recorded EGM2008 vertical datum, not temporal change.");
+        else if (artifact.query.sourceId == "era5-land-surface-history" ||
+                 artifact.query.sourceId == "era5-agricultural-climate")
+            limitations.push_back(
+                "ERA5 values represent a reanalysis source output grid and "
+                "are not station, sensor, farm, or parcel observations.");
         item["interpretations"] = picojson::value(
             boundedStringsJson(interpretations, MAX_NARRATIVE_ENTRIES));
         item["interpretations_truncated"] = picojson::value(
@@ -903,6 +972,38 @@ namespace
         item["components"] = picojson::value(
             static_cast<double>(source.componentCount));
         item["experimental"] = picojson::value(source.experimental);
+        item["data_nature"] = picojson::value(source.dataNature);
+        item["temporal_resolution"] = picojson::value(
+            source.temporalResolution);
+        item["spatial_support"] = picojson::value(source.spatialSupport);
+        item["update_latency"] = picojson::value(source.updateLatency);
+        item["license"] = picojson::value(source.license);
+        item["documentation_url"] = picojson::value(
+            source.documentationUrl);
+        item["quality_statement"] = picojson::value(
+            source.qualityStatement);
+
+        picojson::array variables;
+        for (const earthscience::ScienceVariableDescriptor& variable :
+             source.variables)
+        {
+            picojson::object entry;
+            entry["id"] = picojson::value(variable.id);
+            entry["name"] = picojson::value(variable.displayName);
+            entry["unit"] = picojson::value(variable.unit);
+            entry["data_kind"] = picojson::value(variable.dataKind);
+            entry["components"] = picojson::value(
+                static_cast<double>(variable.componentCount));
+            entry["native_resolution_m"] = picojson::value(
+                variable.nativeResolutionMeters);
+            entry["meaning"] = picojson::value(variable.scientificMeaning);
+            entry["aggregation"] = picojson::value(
+                variable.aggregationMethod);
+            entry["uncertainty"] = picojson::value(
+                variable.uncertaintyStatement);
+            variables.push_back(picojson::value(entry));
+        }
+        item["variables"] = picojson::value(variables);
 
         picojson::array timeModes;
         if (source.capabilities.explicitYears)
@@ -1123,6 +1224,15 @@ namespace
         }
         const earthscience::ScienceSourceDescriptor& source = *sourceIterator;
 
+        std::string mode = !source.capabilities.rasterLayerOutput &&
+                source.capabilities.timeSeriesOutput
+            ? "point_series" : "preview";
+        if (!optionalString(args, "mode", mode))
+        {
+            error = "mode must be a string";
+            return false;
+        }
+
         std::string visualizationId = source.visualizations.empty()
             ? std::string() : source.visualizations.front().id;
         if (!optionalString(args, "visualization_id", visualizationId))
@@ -1131,18 +1241,15 @@ namespace
             return false;
         }
         const earthscience::ScienceVisualizationDescriptor* visualization =
-            findScienceVisualization(source, visualizationId);
-        if (!visualization || visualization->id != visualizationId)
+            nullptr;
+        if (mode == "preview")
         {
-            error = "unknown science visualization: " + visualizationId;
-            return false;
-        }
-
-        std::string mode = "preview";
-        if (!optionalString(args, "mode", mode))
-        {
-            error = "mode must be a string";
-            return false;
+            visualization = findScienceVisualization(source, visualizationId);
+            if (!visualization || visualization->id != visualizationId)
+            {
+                error = "unknown science visualization: " + visualizationId;
+                return false;
+            }
         }
         if (mode != "preview" && mode != "point_series" &&
             mode != "regional_embedding")
@@ -1168,7 +1275,47 @@ namespace
             return false;
         }
 
-        if (source.id == "copernicus-dem-glo-30")
+        const bool agroSource =
+            source.id == "era5-land-surface-history" ||
+            source.id == "era5-agricultural-climate";
+        if (agroSource)
+        {
+            if (mode != "point_series")
+            {
+                error = "ERA5 agricultural sources support point_series mode "
+                        "only; they do not emit a map raster";
+                return false;
+            }
+            for (const char* incompatible : {
+                     "year", "baseline_year", "comparison_year",
+                     "time_start", "time_end", "max_cloud_percent",
+                     "grid_size", "enable_pca", "cluster_count"})
+                if (args.contains(incompatible))
+                {
+                    error = "ERA5 agricultural point_series accepts only "
+                            "first_year and last_year time fields";
+                    return false;
+                }
+            int firstYear = std::max(source.firstYear, source.lastYear - 8);
+            int lastYear = source.lastYear;
+            if (!optionalInteger(args, "first_year", firstYear) ||
+                !optionalInteger(args, "last_year", lastYear))
+            {
+                error = "first_year and last_year must be integers";
+                return false;
+            }
+            if (!validYear(source, firstYear) ||
+                !validYear(source, lastYear) || firstYear > lastYear ||
+                lastYear - firstYear > 8)
+            {
+                error = "ERA5 agricultural years must be one to nine ordered "
+                        "complete years inside the source range";
+                return false;
+            }
+            query = makeScienceVariablePointSeriesQuery(
+                source, latitude, longitude, firstYear, lastYear);
+        }
+        else if (source.id == "copernicus-dem-glo-30")
         {
             if (mode != "preview")
             {
@@ -1267,8 +1414,16 @@ namespace
                         "range";
                 return false;
             }
-            query = makeSciencePointSeriesQuery(
-                source, latitude, longitude, firstYear, lastYear);
+            if (lastYear - firstYear > 8)
+            {
+                error = "point-series requests support at most nine years";
+                return false;
+            }
+            query = hasEmbedding64(source)
+                ? makeSciencePointSeriesQuery(
+                    source, latitude, longitude, firstYear, lastYear)
+                : makeScienceVariablePointSeriesQuery(
+                    source, latitude, longitude, firstYear, lastYear);
         }
         else
         {
@@ -1364,7 +1519,9 @@ void registerScienceResearchTools(
     earthai::Tool start;
     start.name = "start_science_research";
     start.description = u8"异步提交一个独立的 AlphaEarth 预览/64D 研究、Sentinel-2 "
-        u8"真彩场景，或 Copernicus DEM 静态 DSM 高程查询。Sentinel-2 必须提供 time_start/time_end，可用 "
+        u8"真彩场景、Copernicus DEM 静态 DSM 高程查询，或 ERA5/ERA5-Land "
+        u8"年度农业气候剖面。ERA5 使用 point_series 和 1–9 个完整年份，不要求"
+        u8" visualization_id。Sentinel-2 必须提供 time_start/time_end，可用 "
         u8"max_cloud_percent 限制场景级云量；省略时为 100，仍从候选中选择云量最低的一景，"
         u8"避免自然语言模板因零候选而失败。lat/lon 省略时使用当前视野"
         u8"中心。若需两个以上步骤或跨数据源，必须改用 start_multisource_research，"

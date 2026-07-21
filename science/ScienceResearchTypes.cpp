@@ -96,6 +96,42 @@ namespace
             }
         return true;
     }
+
+    bool validVariableSeries(
+        const ScienceEvidenceVariableSeries& series, std::string& error)
+    {
+        if (!validString(series.variableId, true, "series variable", error) ||
+            !validString(series.displayName, false, "series name", error) ||
+            !validString(series.unit, false, "series unit", error) ||
+            !validString(series.aggregationMethod, false,
+                         "series aggregation", error))
+            return false;
+        if (!finiteNonNegative(series.nativeResolutionMeters))
+        {
+            error = "series resolution must be finite and non-negative";
+            return false;
+        }
+        if (series.points.empty() || series.points.size() > 9)
+        {
+            error = "variable series must contain one to nine annual points";
+            return false;
+        }
+        std::set<int> years;
+        for (const ScienceEvidenceVariablePoint& point : series.points)
+        {
+            if (!years.insert(point.year).second)
+            {
+                error = "variable series years must be unique";
+                return false;
+            }
+            if (point.valid && !std::isfinite(point.value))
+            {
+                error = "valid variable series values must be finite";
+                return false;
+            }
+        }
+        return true;
+    }
 }
 
 const char* scienceResearchStateName(ScienceResearchState state)
@@ -173,6 +209,7 @@ bool validateScienceEvidence(
              !validStrings(record.limitations, "limitations", error))
         return false;
     else if (record.scalarSummaries.size() > MAX_LIST_ITEMS ||
+             record.variableSeries.size() > MAX_LIST_ITEMS ||
              record.primaryMetrics.size() > MAX_LIST_ITEMS)
         error = "numeric evidence exceeds the list limit";
     else if (!finiteNonNegative(record.sourceResolutionMeters) ||
@@ -183,6 +220,9 @@ bool validateScienceEvidence(
     {
         for (const ScienceScalarSummary& summary : record.scalarSummaries)
             if (!validScalar(summary, error)) return false;
+        for (const ScienceEvidenceVariableSeries& series :
+             record.variableSeries)
+            if (!validVariableSeries(series, error)) return false;
         for (const ScienceEvidenceMetric& metric : record.primaryMetrics)
             if (!std::isfinite(metric.value) ||
                 !validString(metric.unit, false, "metric unit", error))

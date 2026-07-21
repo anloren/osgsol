@@ -44,6 +44,8 @@ enum class ScienceHelpTopic
     CopernicusDemMeaning,
     CopernicusDemColors,
     CopernicusDemLimits,
+    Era5Meaning,
+    Era5Limits,
     Pca,
     Clusters,
     EmbeddingMetrics,
@@ -217,6 +219,9 @@ std::vector<SciencePanelMode> sciencePanelModesForSource(
 SciencePanelMode activeSciencePanelMode(
     const earthscience::ScienceSourceDescriptor& source,
     SciencePanelMode requested);
+bool sciencePanelRequiresContextPreview(
+    const earthscience::ScienceSourceDescriptor& source,
+    SciencePanelMode mode);
 const char* sciencePanelPrimaryActionLabel(SciencePanelMode mode);
 const char* sciencePanelPrimaryActionLabel(
     SciencePanelMode mode, const std::string& sourceId);

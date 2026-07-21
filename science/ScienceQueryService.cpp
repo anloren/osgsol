@@ -59,11 +59,34 @@ namespace
         return query.outputKind == ScienceOutputKind::RasterLayer;
     }
 
+    bool isEmbeddingQuery(const GeoTemporalQuery& query)
+    {
+        return query.variables == std::vector<std::string>({"embedding64"});
+    }
+
+    bool isScalarTimeSeriesQuery(const GeoTemporalQuery& query)
+    {
+        return query.outputKind == ScienceOutputKind::TimeSeries &&
+            !isEmbeddingQuery(query);
+    }
+
     std::string throughputKey(const GeoTemporalQuery& query)
     {
         if (isRasterPreviewQuery(query))
             return query.sourceId + "#preview#" + query.visualizationId +
                 "#time=" + timeModeName(query.time.mode);
+
+        if (isScalarTimeSeriesQuery(query))
+        {
+            std::ostringstream key;
+            key << query.sourceId << "#scalar-series#time="
+                << timeModeName(query.time.mode)
+                << "#years=" << query.time.explicitYears.size()
+                << "#variables=";
+            for (const std::string& variable : query.variables)
+                key << variable << ',';
+            return key.str();
+        }
 
         std::ostringstream key;
         key << query.sourceId
@@ -167,6 +190,37 @@ namespace
         }
         return result == 0 ? 3 : result;
     }
+
+    std::uint64_t variableBytesPerCell(
+        const GeoTemporalQuery& query,
+        const ScienceSourceDescriptor* source)
+    {
+        if (!source) return query.variables.size() * sizeof(double);
+        std::uint64_t result = 0;
+        for (const std::string& variableId : query.variables)
+        {
+            const auto variable = std::find_if(
+                source->variables.begin(), source->variables.end(),
+                [&variableId](const ScienceVariableDescriptor& candidate)
+                { return candidate.id == variableId; });
+            if (variable == source->variables.end())
+                return query.variables.size() * sizeof(double);
+            result = checkedAdd(result, checkedMultiply(
+                static_cast<std::uint64_t>(
+                    std::max(1, variable->componentCount)),
+                static_cast<std::uint64_t>(
+                    std::max(1, variable->bytesPerComponent))));
+        }
+        return result;
+    }
+
+    std::uint64_t explicitYearSpan(const GeoTemporalQuery& query)
+    {
+        if (query.time.explicitYears.empty()) return 0;
+        const auto years = std::minmax_element(
+            query.time.explicitYears.begin(), query.time.explicitYears.end());
+        return static_cast<std::uint64_t>(*years.second - *years.first + 1);
+    }
 }
 
 ScienceQueryService::ScienceQueryService(
@@ -248,6 +302,23 @@ ScienceQueryCost ScienceQueryService::estimateUnlocked(
             checkedMultiply(
                 checkedMultiply(sourceCells, bytesPerCell), 2),
             checkedMultiply(PREVIEW_CELLS, 4));
+    }
+    else if (isScalarTimeSeriesQuery(query))
+    {
+        const std::uint64_t yearCount = query.time.explicitYears.size();
+        const std::uint64_t variableCount = query.variables.size();
+        const std::uint64_t returnedCells = checkedMultiply(
+            yearCount, variableCount);
+        const std::uint64_t dailyCells = checkedMultiply(
+            checkedMultiply(sourceCells, explicitYearSpan(query)), 366u);
+        cost.resultCells = returnedCells;
+        cost.sourceBytesUpperBound = checkedMultiply(
+            dailyCells, variableBytesPerCell(
+                query, hasSource ? &source : nullptr));
+        cost.residentBytesUpperBound = checkedAdd(
+            checkedMultiply(returnedCells,
+                sizeof(double) + sizeof(unsigned char)),
+            checkedMultiply(yearCount, sizeof(int)));
     }
     else
     {
@@ -727,7 +798,33 @@ bool ScienceQueryService::validate(
                 std::string(scienceOutputKindName(query.outputKind));
             return false;
         }
-        if (query.variables != std::vector<std::string>({"embedding64"}))
+        if (query.variables.empty())
+        {
+            error = "science query requires at least one variable";
+            return false;
+        }
+        std::vector<std::string> uniqueVariables = query.variables;
+        std::sort(uniqueVariables.begin(), uniqueVariables.end());
+        if (std::adjacent_find(
+                uniqueVariables.begin(), uniqueVariables.end()) !=
+            uniqueVariables.end())
+        {
+            error = "science variables must be unique";
+            return false;
+        }
+        for (const std::string& variableId : query.variables)
+        {
+            const auto variable = std::find_if(
+                source.variables.begin(), source.variables.end(),
+                [&variableId](const ScienceVariableDescriptor& candidate)
+                { return candidate.id == variableId; });
+            if (variable == source.variables.end())
+            {
+                error = "unknown science variable: " + variableId;
+                return false;
+            }
+        }
+        if (!isScalarTimeSeriesQuery(query) && !isEmbeddingQuery(query))
         {
             error = "science 64D query requires embedding64";
             return false;

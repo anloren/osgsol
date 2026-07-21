@@ -178,6 +178,25 @@ int main()
     demVisualization.channelVariables = {"surface_elevation"};
     demSource.visualizations.push_back(demVisualization);
 
+    earthscience::ScienceSourceDescriptor agroSource;
+    agroSource.id = "era5-land-surface-history";
+    agroSource.name = "ERA5-Land Surface & Soil History";
+    agroSource.firstYear = 1950;
+    agroSource.lastYear = 2025;
+    agroSource.nativeResolutionMeters = 11100.0;
+    agroSource.dataNature = "reanalysis";
+    agroSource.variables = {
+        {"temperature_2m_mean", "Mean temperature", "°C",
+         "scalar reanalysis field", 1, 8},
+        {"relative_humidity_2m_mean", "Mean humidity", "%",
+         "scalar reanalysis field", 1, 8},
+        {"soil_moisture_0_to_100cm_mean", "Mean soil moisture", "m³/m³",
+         "scalar reanalysis field", 1, 8},
+    };
+    agroSource.capabilities.pointQuery = true;
+    agroSource.capabilities.explicitYears = true;
+    agroSource.capabilities.timeSeriesOutput = true;
+
     const std::vector<earthscience::ScienceSourceDescriptor> reorderedSources =
         {sentinelSource, alphaSource};
     CHECK(resolveSciencePanelSource(
@@ -208,6 +227,39 @@ int main()
     CHECK(std::string(sciencePanelPrimaryActionLabel(
               SciencePanelMode::Preview, demSource.id)) ==
           u8"加载当前视野的地表高程");
+    CHECK(sciencePanelModesForSource(agroSource) ==
+          std::vector<SciencePanelMode>({SciencePanelMode::PointSeries}));
+    CHECK(activeSciencePanelMode(
+              agroSource, SciencePanelMode::Preview) ==
+          SciencePanelMode::PointSeries);
+    CHECK(std::string(sciencePanelModeLabel(
+              SciencePanelMode::PointSeries, agroSource.id)) ==
+          u8"固定位置：年度农业气候");
+    const std::string agroDescription = sciencePanelModeDescription(
+        SciencePanelMode::PointSeries, agroSource.id);
+    CHECK(agroDescription.find(u8"再分析") != std::string::npos);
+    CHECK(agroDescription.find(u8"地块") != std::string::npos);
+    CHECK(std::string(sciencePanelPrimaryActionLabel(
+              SciencePanelMode::PointSeries, agroSource.id)) ==
+          u8"生成年度农业气候剖面");
+    CHECK(!sciencePanelRequiresContextPreview(
+        agroSource, SciencePanelMode::PointSeries));
+    CHECK(sciencePanelRequiresContextPreview(
+        alphaSource, SciencePanelMode::PointSeries));
+
+    const earthscience::GeoTemporalQuery agroProfile =
+        makeScienceVariablePointSeriesQuery(
+            agroSource, 35.68, 139.76, 2020, 2025);
+    CHECK(agroProfile.sourceId == agroSource.id);
+    CHECK(agroProfile.time.explicitYears ==
+          std::vector<int>({2020, 2021, 2022, 2023, 2024, 2025}));
+    CHECK(agroProfile.variables == std::vector<std::string>({
+        "temperature_2m_mean", "relative_humidity_2m_mean",
+        "soil_moisture_0_to_100cm_mean"}));
+    CHECK(agroProfile.outputKind ==
+          earthscience::ScienceOutputKind::TimeSeries);
+    CHECK(agroProfile.analysis.kind ==
+          earthscience::ScienceAnalysisKind::PointSeries);
 
     const earthscience::GeoTemporalQuery demPreview =
         makeCopernicusDemPreviewQuery(
@@ -585,6 +637,8 @@ int main()
         ScienceHelpTopic::CopernicusDemMeaning,
         ScienceHelpTopic::CopernicusDemColors,
         ScienceHelpTopic::CopernicusDemLimits,
+        ScienceHelpTopic::Era5Meaning,
+        ScienceHelpTopic::Era5Limits,
         ScienceHelpTopic::Pca,
         ScienceHelpTopic::Clusters,
         ScienceHelpTopic::EmbeddingMetrics,
@@ -636,6 +690,12 @@ int main()
     CHECK(std::string(scienceHelpTopicBody(
               ScienceHelpTopic::CopernicusDemLimits)).find(
                   u8"不是裸地") != std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::Era5Meaning)).find(
+                  u8"再分析") != std::string::npos);
+    CHECK(std::string(scienceHelpTopicBody(
+              ScienceHelpTopic::Era5Limits)).find(
+                  u8"地块") != std::string::npos);
 
     earthscience::ScienceArtifact demArtifact;
     demArtifact.artifactId = "dem-artifact";
@@ -955,6 +1015,20 @@ int main()
     CHECK(pointEvidenceText.find("11.1000") != std::string::npos);
     CHECK(pointEvidenceText.find("15.5000") != std::string::npos);
     CHECK(pointEvidenceText.find("12.5 m") != std::string::npos);
+
+    earthscience::ScienceArtifact agroEvidence;
+    agroEvidence.query = agroProfile;
+    earthscience::ScienceVariableSeries agroSeries;
+    agroSeries.variableId = "temperature_2m_mean";
+    agroSeries.nativeResolutionMeters = 11100.0;
+    agroEvidence.variableSeries.push_back(agroSeries);
+    earthscience::ScienceSourceReference agroReference;
+    agroReference.actualCoverage = {139.70, 35.60, 139.80, 35.70};
+    agroEvidence.sourceReferences.push_back(agroReference);
+    const std::string agroEvidenceText = joined(
+        describeScienceArtifactEvidence(agroEvidence));
+    CHECK(agroEvidenceText.find("139.7000") != std::string::npos);
+    CHECK(agroEvidenceText.find("11100.0 m") != std::string::npos);
 
     std::shared_ptr<earthscience::ScienceArtifact> regionalEvidence =
         std::make_shared<earthscience::ScienceArtifact>();

@@ -40,6 +40,12 @@ bool containsAny(const std::string& value,
     return false;
 }
 
+bool isEra5AgroSource(const std::string& sourceId)
+{
+    return sourceId == "era5-land-surface-history" ||
+        sourceId == "era5-agricultural-climate";
+}
+
 const char* stageLabel(earthscience::ScienceProgressStage stage)
 {
     using Stage = earthscience::ScienceProgressStage;
@@ -117,6 +123,9 @@ earthscience::GeoTemporalQuery buildSciencePanelDraft(
     if (source.id == "copernicus-dem-glo-30")
         return makeCopernicusDemPreviewQuery(
             source, latitude, longitude, requestedSpanMeters);
+    if (isEra5AgroSource(source.id))
+        return makeScienceVariablePointSeriesQuery(
+            source, latitude, longitude, state.firstYear, state.lastYear);
     if (state.mode == SciencePanelMode::Preview && visualization)
         return makeSciencePointQuery(
             source, *visualization, latitude, longitude,
@@ -425,6 +434,9 @@ const char* modeLabelForSource(
     if (sourceId == "copernicus-dem-glo-30" &&
         mode == SciencePanelMode::Preview)
         return u8"查看当前视野的地表高程";
+    if (isEra5AgroSource(sourceId) &&
+        mode == SciencePanelMode::PointSeries)
+        return u8"固定位置：年度农业气候";
     return simpleModeLabel(mode);
 }
 
@@ -435,6 +447,9 @@ const char* modeDescriptionForSource(
         return u8"在当前视野查找所选时间窗口内云量较低的 Sentinel-2 真彩场景。";
     if (sourceId == "copernicus-dem-glo-30")
         return u8"加载当前视野的 DSM 地表高程；数值包含建筑与树冠，并非裸土地形。";
+    if (isEra5AgroSource(sourceId))
+        return u8"固定屏幕中心，按完整年份汇总数据源网格的再分析数据；"
+               u8"它用于区域气候背景，不是气象站或地块级实测。";
     switch (mode)
     {
     case SciencePanelMode::Preview:
@@ -457,6 +472,13 @@ std::string selectionSummaryForState(
             << u8" 天 · 当前视野 · 尚未开始";
     else if (sourceId == "copernicus-dem-glo-30")
         out << u8"已选择：2021 公共版高程 · 当前视野 · 尚未开始";
+    else if (isEra5AgroSource(sourceId))
+    {
+        const int first = std::min(state.firstYear, state.lastYear);
+        const int last = std::max(state.firstYear, state.lastYear);
+        out << u8"已选择：当前位置 · " << first << "–" << last
+            << u8" · 年度农业气候剖面 · 尚未开始";
+    }
     else if (mode == SciencePanelMode::Preview)
         out << u8"已选择：" << state.lastYear
             << u8" 年 · 当前视野 · 尚未开始";
@@ -475,6 +497,31 @@ std::string selectionSummaryForState(
 
 void drawPrimaryMetrics(const earthscience::ScienceArtifact& artifact)
 {
+    if (!artifact.variableSeries.empty())
+    {
+        int shown = 0;
+        for (const earthscience::ScienceVariableSeries& series :
+             artifact.variableSeries)
+        {
+            if (shown == 3 || !series.years || !series.values ||
+                series.years->size() != series.values->size())
+                continue;
+            for (std::size_t offset = 0; offset < series.values->size(); ++offset)
+            {
+                const std::size_t index = series.values->size() - 1 - offset;
+                const bool valid = !series.validity ||
+                    (series.validity->size() == series.values->size() &&
+                     series.validity->at(index) != 0);
+                if (!valid || !std::isfinite(series.values->at(index))) continue;
+                ImGui::TextWrapped("%s · %d: %.3f %s",
+                    series.displayName.c_str(), series.years->at(index),
+                    series.values->at(index), series.unit.c_str());
+                ++shown;
+                break;
+            }
+        }
+        return;
+    }
     if (artifact.query.sourceId == "sentinel-2-l2a")
     {
         if (!artifact.sourceReferences.empty())
@@ -583,6 +630,27 @@ void drawPrimaryMetrics(const earthscience::ScienceArtifact& artifact)
 
 bool drawMetricSeries(const earthscience::ScienceArtifact& artifact)
 {
+    if (!artifact.variableSeries.empty())
+    {
+        bool drewAny = false;
+        ImGui::TextWrapped(
+            u8"再分析数据源网格的年度汇总 / Annual source-grid summaries");
+        for (std::size_t seriesIndex = 0;
+             seriesIndex < artifact.variableSeries.size(); ++seriesIndex)
+        {
+            const earthscience::ScienceVariableSeries& series =
+                artifact.variableSeries[seriesIndex];
+            if (!series.years || !series.values || series.values->empty())
+                continue;
+            const std::string id =
+                "##science_variable_series_" + std::to_string(seriesIndex);
+            drewAny = earthui::drawAnnualSeriesChart(
+                id.c_str(), series.displayName.c_str(), series.years.get(),
+                series.values.get(), series.validity.get(), series.unit) ||
+                drewAny;
+        }
+        return drewAny;
+    }
     if (!artifact.analysis.annualSeries ||
         artifact.analysis.annualSeries->empty()) return false;
     bool drewAny = false;
@@ -980,7 +1048,9 @@ SciencePanelWorkflowStrip describeScienceWorkflowStrip(
     strip.time = time.str().empty() ? u8"未选择 / not selected" : time.str();
 
     std::ostringstream method;
-    if (draft.analysis.kind == earthscience::ScienceAnalysisKind::None)
+    if (isEra5AgroSource(draft.sourceId))
+        method << u8"数据源网格日值 → 年均值/年总量";
+    else if (draft.analysis.kind == earthscience::ScienceAnalysisKind::None)
     {
         if (draft.visualizationId == "natural-color-visual")
             method << u8"自然色影像 / Natural color";
@@ -1045,7 +1115,9 @@ SciencePanelDisplayPresentation describeScienceDisplayState(
     {
         view.kind = SciencePanelDisplayKind::AnalysisReadyWithoutRaster;
         view.severity = SciencePanelSeverity::Success;
-        view.title = u8"分析结果已就绪；没有地图栅格 / Analysis ready without raster";
+        view.title = artifact->variableSeries.empty()
+            ? u8"分析结果已就绪；没有地图栅格 / Analysis ready without raster"
+            : u8"年度气候序列已就绪 / Annual climate series ready";
         view.detail = std::string(u8"结果 / Artifact: ") + artifact->artifactId;
         return view;
     }
@@ -1150,6 +1222,14 @@ SciencePanelMode activeSciencePanelMode(
         : (modes.empty() ? SciencePanelMode::Preview : modes.front());
 }
 
+bool sciencePanelRequiresContextPreview(
+    const earthscience::ScienceSourceDescriptor& source,
+    SciencePanelMode mode)
+{
+    return source.id == "alphaearth-foundations" &&
+        mode != SciencePanelMode::Preview;
+}
+
 const char* sciencePanelPrimaryActionLabel(SciencePanelMode mode)
 {
     switch (mode)
@@ -1172,6 +1252,9 @@ const char* sciencePanelPrimaryActionLabel(
     if (sourceId == "copernicus-dem-glo-30" &&
         mode == SciencePanelMode::Preview)
         return u8"加载当前视野的地表高程";
+    if (isEra5AgroSource(sourceId) &&
+        mode == SciencePanelMode::PointSeries)
+        return u8"生成年度农业气候剖面";
     return sciencePanelPrimaryActionLabel(mode);
 }
 
@@ -1191,6 +1274,8 @@ ScienceArtifactUiPresentation describeScienceArtifactUi(
         scope << u8"Sentinel-2 · 真彩场景";
     else if (artifact.query.sourceId == "copernicus-dem-glo-30")
         scope << u8"Copernicus DEM · DSM 地表高程";
+    else if (isEra5AgroSource(artifact.query.sourceId))
+        scope << u8"ERA5 · 年度农业气候剖面";
     else if (artifactMatchesMode(artifact, SciencePanelMode::Preview))
         scope << u8"AlphaEarth · 伪彩预览";
     else if (artifactMatchesMode(artifact, SciencePanelMode::PointSeries))
@@ -1254,6 +1339,10 @@ const char* scienceHelpTopicTitle(ScienceHelpTopic topic)
         return u8"高程颜色表示什么？";
     case ScienceHelpTopic::CopernicusDemLimits:
         return u8"Copernicus DEM 科学边界";
+    case ScienceHelpTopic::Era5Meaning:
+        return u8"ERA5 农业气候数据是什么？";
+    case ScienceHelpTopic::Era5Limits:
+        return u8"ERA5 农业气候科学边界";
     case ScienceHelpTopic::Pca: return u8"PCA 与右侧结果";
     case ScienceHelpTopic::Clusters: return u8"无标签聚类是什么？";
     case ScienceHelpTopic::EmbeddingMetrics: return u8"变化方法有什么区别？";
@@ -1298,6 +1387,14 @@ const char* scienceHelpTopicBody(ScienceHelpTopic topic)
     case ScienceHelpTopic::CopernicusDemLimits:
         return u8"这是静态 DSM，不是裸地 DTM，也不是逐年变化产品。"
                u8"当前切片不推断地物类型、建成年份或变化原因。";
+    case ScienceHelpTopic::Era5Meaning:
+        return u8"ERA5 与 ERA5-Land 是把观测和数值模型结合起来的再分析数据。"
+               u8"这里关闭额外的高程降尺度和陆地网格迁移，并从数据源输出网格"
+               u8"的日值计算完整日历年的均值或总量。";
+    case ScienceHelpTopic::Era5Limits:
+        return u8"这些值代表约 0.1° 或 0.25° 的模型网格，不是气象站、"
+               u8"农田传感器或地块级实测，不能直接解释为某一块田的微气候、"
+               u8"产量、病虫害或灌溉需求。";
     case ScienceHelpTopic::Pca:
         return u8"PCA 只适用于区域年度变化。勾选后重新运行，右侧才会显示"
                u8"本次结果内的局部数学方向；它不代表具体地物。";
@@ -1523,9 +1620,25 @@ std::vector<std::string> describeScienceArtifactEvidence(
     else if (artifact.query.outputKind ==
              earthscience::ScienceOutputKind::TimeSeries)
     {
-        payloadBounds = artifact.embedding.bounds;
-        hasPayloadBounds = hasGeographicExtent(payloadBounds);
-        actualResolutionMeters = artifact.embedding.actualResolutionMeters;
+        if (!artifact.variableSeries.empty())
+        {
+            actualResolutionMeters =
+                artifact.variableSeries.front().nativeResolutionMeters;
+            for (const earthscience::ScienceSourceReference& reference :
+                 artifact.sourceReferences)
+            {
+                if (!hasGeographicExtent(reference.actualCoverage)) continue;
+                payloadBounds = reference.actualCoverage;
+                hasPayloadBounds = true;
+                break;
+            }
+        }
+        else
+        {
+            payloadBounds = artifact.embedding.bounds;
+            hasPayloadBounds = hasGeographicExtent(payloadBounds);
+            actualResolutionMeters = artifact.embedding.actualResolutionMeters;
+        }
     }
     else if (artifact.query.outputKind == earthscience::ScienceOutputKind::Analysis)
     {
@@ -1843,7 +1956,9 @@ void ScienceEarthPanel::drawOperations(
             ? ScienceHelpTopic::Sentinel2Meaning
             : source.id == "copernicus-dem-glo-30"
                 ? ScienceHelpTopic::CopernicusDemMeaning
-                : ScienceHelpTopic::DataMeaning);
+                : isEra5AgroSource(source.id)
+                    ? ScienceHelpTopic::Era5Meaning
+                    : ScienceHelpTopic::DataMeaning);
     if (ImGui::CollapsingHeader(u8"技术信息与来源 / Technical details"))
     {
         ImGui::TextWrapped(u8"原始分辨率：%.1f m",
@@ -1851,8 +1966,21 @@ void ScienceEarthPanel::drawOperations(
         ImGui::TextWrapped(source.id == "sentinel-2-l2a"
                 ? u8"显示通道：%d"
                 : source.id == "copernicus-dem-glo-30"
-                    ? u8"数值波段：%d" : u8"潜在分量：%d",
+                    ? u8"数值波段：%d"
+                    : isEra5AgroSource(source.id)
+                        ? u8"年度变量：%d" : u8"潜在分量：%d",
             source.componentCount);
+        if (!source.dataNature.empty())
+            ImGui::TextWrapped(u8"数据性质：%s", source.dataNature.c_str());
+        if (!source.temporalResolution.empty())
+            ImGui::TextWrapped(u8"时间尺度：%s",
+                               source.temporalResolution.c_str());
+        if (!source.spatialSupport.empty())
+            ImGui::TextWrapped(u8"空间支持：%s",
+                               source.spatialSupport.c_str());
+        if (!source.qualityStatement.empty())
+            ImGui::TextWrapped(u8"质量说明：%s",
+                               source.qualityStatement.c_str());
         ImGui::TextWrapped(u8"提供方版本：%s",
                            source.providerVersion.c_str());
         ImGui::TextWrapped(u8"署名：%s", source.attribution.c_str());
@@ -1977,12 +2105,27 @@ void ScienceEarthPanel::drawOperations(
                          source.firstYear, source.lastYear);
     else if (capabilities.showsYearRange)
     {
-        drawDiscreteYear("series_start", u8"从 / From",
-                         &_state.firstYear, source.firstYear, source.lastYear);
-        drawDiscreteYear("series_end", u8"到 / To",
-                         &_state.lastYear, source.firstYear, source.lastYear);
+        const bool firstChanged = drawDiscreteYear(
+            "series_start", u8"从 / From", &_state.firstYear,
+            source.firstYear, source.lastYear);
+        const bool lastChanged = drawDiscreteYear(
+            "series_end", u8"到 / To", &_state.lastYear,
+            source.firstYear, source.lastYear);
         if (_state.firstYear > _state.lastYear)
             std::swap(_state.firstYear, _state.lastYear);
+        if (isEra5AgroSource(source.id) &&
+            _state.lastYear - _state.firstYear > 8)
+        {
+            if (firstChanged && !lastChanged)
+                _state.lastYear = std::min(
+                    source.lastYear, _state.firstYear + 8);
+            else
+                _state.firstYear = std::max(
+                    source.firstYear, _state.lastYear - 8);
+        }
+        if (isEra5AgroSource(source.id))
+            drawDisabledWrapped(
+                u8"每次 1–9 个完整年份；年均值与年总量按变量定义计算。");
     }
     else if (capabilities.showsYearPair)
     {
@@ -2281,6 +2424,8 @@ void ScienceEarthPanel::drawOperations(
             if (layers) layers->setEnabled("alphaearth", true);
             submittedJobId = service->submit(query);
         }
+        else if (!sciencePanelRequiresContextPreview(source, activeMode))
+            submittedJobId = service->submit(query);
         else if (visualization)
         {
             const earthscience::GeoTemporalQuery contextQuery =
@@ -2311,8 +2456,9 @@ void ScienceEarthPanel::drawOperations(
             if (activeMode != SciencePanelMode::Preview)
             {
                 _workflowFailed = false;
-                _workflowMessage =
-                    u8"定位伪彩已显示；第 2/2 步正在执行 64 维分析。";
+                _workflowMessage = isEra5AgroSource(source.id)
+                    ? u8"已提交；正在读取日值并生成年度气候序列。"
+                    : u8"定位伪彩已显示；第 2/2 步正在执行 64 维分析。";
             }
             const earthscience::ScienceJobSnapshot submittedSnapshot =
                 service->snapshot();
@@ -2488,7 +2634,9 @@ void ScienceEarthPanel::drawResults(
                 ? ScienceHelpTopic::Sentinel2NaturalColor
                 : artifact->query.sourceId == "copernicus-dem-glo-30"
                     ? ScienceHelpTopic::CopernicusDemColors
-                    : ScienceHelpTopic::PreviewColors,
+                    : isEra5AgroSource(artifact->query.sourceId)
+                        ? ScienceHelpTopic::Era5Meaning
+                        : ScienceHelpTopic::PreviewColors,
                        false);
 
         drawLabeledHelpButton(
@@ -2497,7 +2645,9 @@ void ScienceEarthPanel::drawResults(
                 ? ScienceHelpTopic::Sentinel2Limits
                 : artifact->query.sourceId == "copernicus-dem-glo-30"
                     ? ScienceHelpTopic::CopernicusDemLimits
-                    : ScienceHelpTopic::ScientificLimits);
+                    : isEra5AgroSource(artifact->query.sourceId)
+                        ? ScienceHelpTopic::Era5Limits
+                        : ScienceHelpTopic::ScientificLimits);
 
         drawTechnicalDetails(*artifact);
         if (artifact->raster.width > 0)

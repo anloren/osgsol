@@ -108,6 +108,29 @@ namespace
         return value;
     }
 
+    picojson::object variableSeriesJson(
+        const ScienceEvidenceVariableSeries& series)
+    {
+        picojson::object value;
+        value["variable_id"] = picojson::value(series.variableId);
+        value["name"] = picojson::value(series.displayName);
+        value["unit"] = picojson::value(series.unit);
+        value["aggregation"] = picojson::value(series.aggregationMethod);
+        value["native_resolution_m"] =
+            picojson::value(series.nativeResolutionMeters);
+        picojson::array points;
+        for (const ScienceEvidenceVariablePoint& point : series.points)
+        {
+            picojson::object item;
+            item["year"] = picojson::value(static_cast<double>(point.year));
+            item["valid"] = picojson::value(point.valid);
+            if (point.valid) item["value"] = picojson::value(point.value);
+            points.emplace_back(item);
+        }
+        value["points"] = picojson::value(points);
+        return value;
+    }
+
     picojson::value evidenceJson(const ScienceEvidenceRecord& record)
     {
         picojson::object value;
@@ -134,6 +157,10 @@ namespace
         for (const auto& summary : record.scalarSummaries)
             scalars.emplace_back(scalarJson(summary));
         value["scalar_summaries"] = picojson::value(scalars);
+        picojson::array variableSeries;
+        for (const auto& series : record.variableSeries)
+            variableSeries.emplace_back(variableSeriesJson(series));
+        value["variable_series"] = picojson::value(variableSeries);
         picojson::array metrics;
         for (const auto& metric : record.primaryMetrics)
         {
@@ -325,7 +352,17 @@ namespace
         const picojson::value* requested = nullptr;
         const picojson::value* actual = nullptr;
         const picojson::value* scalars = nullptr;
+        const picojson::value* variableSeries = nullptr;
         const picojson::value* metrics = nullptr;
+        if (value.is<picojson::object>() && value.contains("variable_series"))
+        {
+            variableSeries = &value.get("variable_series");
+            if (!variableSeries->is<picojson::array>())
+            {
+                error = "JSON array expected: variable_series";
+                return false;
+            }
+        }
         if (!stringField(value, "schema_version", record.schemaVersion, error) ||
             !stringField(value, "evidence_id", record.evidenceId, error) ||
             !stringField(value, "artifact_id", record.artifactId, error) ||
@@ -384,6 +421,46 @@ namespace
                 !uint64Field(item, "no_data_cells", summary.noDataCellCount, error))
                 return false;
             record.scalarSummaries.push_back(std::move(summary));
+        }
+        if (variableSeries)
+        {
+            for (const picojson::value& item :
+                 variableSeries->get<picojson::array>())
+            {
+                ScienceEvidenceVariableSeries series;
+                const picojson::value* points = nullptr;
+                if (!stringField(
+                        item, "variable_id", series.variableId, error) ||
+                    !stringField(item, "name", series.displayName, error) ||
+                    !stringField(item, "unit", series.unit, error) ||
+                    !stringField(
+                        item, "aggregation", series.aggregationMethod, error) ||
+                    !numberField(item, "native_resolution_m",
+                                 series.nativeResolutionMeters, error) ||
+                    !objectField(item, "points", points, error) ||
+                    !points->is<picojson::array>())
+                    return false;
+                for (const picojson::value& pointValue :
+                     points->get<picojson::array>())
+                {
+                    ScienceEvidenceVariablePoint point;
+                    double year = 0.0;
+                    if (!numberField(pointValue, "year", year, error) ||
+                        !std::isfinite(year) || std::floor(year) != year ||
+                        year < static_cast<double>(
+                            std::numeric_limits<int>::min()) ||
+                        year > static_cast<double>(
+                            std::numeric_limits<int>::max()) ||
+                        !boolField(pointValue, "valid", point.valid, error))
+                        return false;
+                    point.year = static_cast<int>(year);
+                    if (point.valid &&
+                        !numberField(pointValue, "value", point.value, error))
+                        return false;
+                    series.points.push_back(point);
+                }
+                record.variableSeries.push_back(std::move(series));
+            }
         }
         for (const picojson::value& item : metrics->get<picojson::array>())
         {
@@ -609,6 +686,33 @@ bool makeScienceEvidence(
         ? artifact.query.time.publicationTime : reference.publicationTime;
     output.forecastReferenceTime = reference.forecastReferenceTime;
     output.scalarSummaries = artifact.scalarSummaries;
+    for (const ScienceVariableSeries& sourceSeries : artifact.variableSeries)
+    {
+        if (!sourceSeries.years || !sourceSeries.values ||
+            !sourceSeries.validity ||
+            sourceSeries.years->size() != sourceSeries.values->size() ||
+            sourceSeries.years->size() != sourceSeries.validity->size())
+        {
+            error = "science artifact variable series shape is invalid";
+            return false;
+        }
+        ScienceEvidenceVariableSeries series;
+        series.variableId = sourceSeries.variableId;
+        series.displayName = sourceSeries.displayName;
+        series.unit = sourceSeries.unit;
+        series.aggregationMethod = sourceSeries.aggregationMethod;
+        series.nativeResolutionMeters = sourceSeries.nativeResolutionMeters;
+        for (std::size_t index = 0;
+             index < sourceSeries.years->size(); ++index)
+        {
+            const bool valid =
+                sourceSeries.validity->at(index) != 0 &&
+                std::isfinite(sourceSeries.values->at(index));
+            series.points.push_back({sourceSeries.years->at(index),
+                valid ? sourceSeries.values->at(index) : 0.0, valid});
+        }
+        output.variableSeries.push_back(std::move(series));
+    }
     if (artifact.analysis.metrics)
         for (const ScienceMetricResult& metric : *artifact.analysis.metrics)
         {
@@ -629,9 +733,25 @@ bool makeScienceEvidence(
     }
     else if (artifact.query.outputKind == ScienceOutputKind::TimeSeries)
     {
-        output.actualResolutionMeters = artifact.embedding.actualResolutionMeters;
-        output.validCellCount = artifact.embedding.validCellCount;
-        output.noDataCellCount = artifact.embedding.noDataCellCount;
+        if (!output.variableSeries.empty())
+        {
+            output.actualResolutionMeters =
+                output.variableSeries.front().nativeResolutionMeters;
+            output.validCellCount = 0;
+            output.noDataCellCount = 0;
+            for (const ScienceEvidenceVariableSeries& series :
+                 output.variableSeries)
+                for (const ScienceEvidenceVariablePoint& point : series.points)
+                    point.valid ? ++output.validCellCount
+                                : ++output.noDataCellCount;
+        }
+        else
+        {
+            output.actualResolutionMeters =
+                artifact.embedding.actualResolutionMeters;
+            output.validCellCount = artifact.embedding.validCellCount;
+            output.noDataCellCount = artifact.embedding.noDataCellCount;
+        }
     }
     else if (artifact.query.outputKind == ScienceOutputKind::Analysis)
     {

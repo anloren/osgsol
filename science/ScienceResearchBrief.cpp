@@ -151,6 +151,37 @@ namespace
         return statement;
     }
 
+    ScienceBriefStatement agroObservation(
+        const ScienceEvidenceRecord& evidence)
+    {
+        ScienceBriefStatement statement;
+        statement.label = "Observation";
+        statement.evidenceIds = {evidence.evidenceId};
+        std::ostringstream text;
+        text << evidence.sourceName
+             << " supplies a reanalysis source-grid annual profile";
+        bool wroteValue = false;
+        for (const ScienceEvidenceVariableSeries& series :
+             evidence.variableSeries)
+        {
+            const ScienceEvidenceVariablePoint* latest = nullptr;
+            for (const ScienceEvidenceVariablePoint& point : series.points)
+                if (point.valid && (!latest || point.year > latest->year))
+                    latest = &point;
+            if (!latest) continue;
+            text << (wroteValue ? "; " : ": ")
+                 << latest->year << ' ' << series.displayName << ' '
+                 << compactNumber(latest->value);
+            if (!series.unit.empty()) text << ' ' << series.unit;
+            wroteValue = true;
+        }
+        if (!wroteValue) text << "; no valid annual values were retained";
+        text << ". It is regional climate context, not a station, farm, or "
+             << "parcel observation.";
+        statement.text = text.str();
+        return statement;
+    }
+
     ScienceBriefStatement genericObservation(
         const ScienceEvidenceRecord& evidence)
     {
@@ -296,6 +327,9 @@ bool buildScienceResearchBrief(
             brief.observations.push_back(sentinelObservation(*evidence));
         else if (evidence->sourceId == "copernicus-dem-glo-30")
             brief.observations.push_back(demObservation(*evidence));
+        else if (evidence->sourceId == "era5-land-surface-history" ||
+                 evidence->sourceId == "era5-agricultural-climate")
+            brief.observations.push_back(agroObservation(*evidence));
         else
             brief.observations.push_back(genericObservation(*evidence));
 
@@ -324,9 +358,8 @@ bool buildScienceResearchBrief(
             brief.inferences.push_back({
                 "Inference",
                 "The cited sources cover a common ground area and may be "
-                "compared as complementary latent, visible-image, and static "
-                "surface-elevation evidence; spatial agreement alone does "
-                "not establish cause.",
+                "compared as complementary scientific evidence; spatial "
+                "agreement alone does not establish cause.",
                 allIds});
         }
         else

@@ -331,6 +331,22 @@ std::uint64_t estimatedArtifactBytes(const ScienceArtifact& artifact)
     addVectorBytes(total, analysis.clusters.concentrations);
     addStringVectorBytes(total, analysis.interpretation);
     addStringVectorBytes(total, analysis.limitations);
+    addVectorBytes(total, artifact.variableSeries);
+    for (const ScienceVariableSeries& series : artifact.variableSeries)
+    {
+        addStringBytes(total, series.variableId);
+        addStringBytes(total, series.displayName);
+        addStringBytes(total, series.unit);
+        addStringBytes(total, series.aggregationMethod);
+        addVectorBytes(total, series.years);
+        addVectorBytes(total, series.values);
+        addVectorBytes(total, series.validity);
+        if (!series.years || !series.values || !series.validity ||
+            series.years->size() != series.values->size() ||
+            series.years->size() != series.validity->size())
+            throw std::invalid_argument(
+                "science variable series shape is inconsistent");
+    }
     addVectorBytes(total, artifact.scalarSummaries);
     for (const ScienceScalarSummary& summary : artifact.scalarSummaries)
     {

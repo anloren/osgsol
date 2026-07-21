@@ -36,6 +36,23 @@ namespace earthscience
         std::string unit;
     };
 
+    struct ScienceEvidenceVariablePoint
+    {
+        int year = 0;
+        double value = 0.0;
+        bool valid = false;
+    };
+
+    struct ScienceEvidenceVariableSeries
+    {
+        std::string variableId;
+        std::string displayName;
+        std::string unit;
+        std::string aggregationMethod;
+        double nativeResolutionMeters = 0.0;
+        std::vector<ScienceEvidenceVariablePoint> points;
+    };
+
     struct ScienceEvidenceRecord
     {
         std::string schemaVersion = SCIENCE_EVIDENCE_SCHEMA_V1;
@@ -55,6 +72,7 @@ namespace earthscience
         std::string publicationTime;
         std::string forecastReferenceTime;
         std::vector<ScienceScalarSummary> scalarSummaries;
+        std::vector<ScienceEvidenceVariableSeries> variableSeries;
         std::vector<ScienceEvidenceMetric> primaryMetrics;
         std::uint64_t validCellCount = 0;
         std::uint64_t noDataCellCount = 0;
