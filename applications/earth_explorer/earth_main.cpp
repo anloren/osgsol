@@ -59,6 +59,12 @@
 #include "science_plugin_runtime.h"
 #include "terrain_science_overlay.h"
 #endif
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+#include "product_ui/rml_ui_runtime.h"
+#if defined(__APPLE__)
+#include "product_ui/rml_macos_ime.h"
+#endif
+#endif
 #include <VerseCommon.h>
 #if defined(__APPLE__)
 #   include <OpenGL/OpenGL.h>   // EARTH_OFFSCREEN(测试基建)用:CGL 无头上下文,见下方 HeadlessCGLContext
@@ -619,18 +625,36 @@ protected:
 class ImeFrameHandler : public osgGA::GUIEventHandler
 {
 public:
-    ImeFrameHandler(osgViewer::Viewer* v) : _viewer(v) {}
+    ImeFrameHandler(osgViewer::Viewer* v
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+                    , RmlUiRuntime* productUi
+#endif
+                    ) : _viewer(v)
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+                    , _productUi(productUi)
+#endif
+                    {}
     virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa)
     {
         if (ea.getEventType() != osgGA::GUIEventAdapter::FRAME) return false;
         if (ImGui::GetCurrentContext() == NULL) return false;
         if (!earthime::ensureInstalled(_viewer)) return false;
-        earthime::updateFocus(ImGui::GetIO().WantTextInput);
+        earthime::updateFocus(
+            ImGui::GetIO().WantTextInput,
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+            _productUi != NULL && _productUi->wantsTextInput()
+#else
+            false
+#endif
+        );
         return false;
     }
 
 protected:
     osgViewer::Viewer* _viewer;
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+    RmlUiRuntime* _productUi;
+#endif
 };
 #endif
 
@@ -878,6 +902,10 @@ int main(int argc, char** argv)
 
     earthexit::QuitRequest quitRequest;
     osgViewer::Viewer viewer;
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+    RmlUiRuntime productUiRuntime;
+    bool productUiRequested = false;
+#endif
     viewer.setImagePager(new earthscience::ScienceImagePager(8));
     osg::ArgumentParser arguments = osgVerse::globalInitialize(argc, argv, osgVerse::defaultInitParameters());
     osg::setNotifyHandler(new osgVerse::ConsoleHandler(false));
@@ -1529,16 +1557,6 @@ int main(int argc, char** argv)
     imgui->initialize(ctrlUI, false);
     imgui->addToView(&viewer, cameras[3]);  // cameras[3] = finalCamera (HUD, renders to screen)
 
-#if defined(__APPLE__)
-    // 中文 IME 直打(见 ImeFrameHandler/ime_bridge.mm)。EARTH_IME=0 可整体关闭
-    // (真机出问题时的一键回退,行为退回"仅 Cmd+V 粘贴中文"的旧状态)。
-    {
-        const char* imeEnv = getenv("EARTH_IME");
-        bool imeOn = !(imeEnv && *imeEnv && atoi(imeEnv) == 0);
-        if (imeOn) { viewer.addEventHandler(new ImeFrameHandler(&viewer)); }
-    }
-#endif
-
     int screenNo = 0; arguments.read("--screen", screenNo);
     // EARTH_OFFSCREEN=1:离屏渲染(不打扰用户的不可见上下文)。自动化测试/子代理跑 E2E 用,
     // 避免测试窗弹到前台打断用户(真机反馈)。macOS 用纯 CGL 无头 GL 4.1 Core 上下文
@@ -1592,6 +1610,54 @@ int main(int argc, char** argv)
         osg::DisplaySettings::instance()->setNumMultiSamples(4);
         viewer.setUpViewOnSingleScreen(screenNo);
     }
+
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+    // The first integration remains legacy-by-default. OSGSOL_PRODUCT_UI=rml
+    // opts into the product runtime without changing existing packaging or UI.
+    {
+        const char* selectorEnv = getenv("OSGSOL_PRODUCT_UI");
+        const std::string selector = selectorEnv && *selectorEnv
+            ? selectorEnv : OSGSOL_PRODUCT_UI_DEFAULT;
+        productUiRequested = selector == "rml";
+        if (selector != "legacy" && selector != "rml")
+            OSG_WARN << "[RmlUi] unknown OSGSOL_PRODUCT_UI='" << selector
+                     << "'; using legacy" << std::endl;
+        if (productUiRequested)
+        {
+            std::string attachError;
+            if (!productUiRuntime.attach(
+                    viewer, *cameras[3],
+                    MISC_DIR + std::string("LXGWFasmartGothic.otf"),
+                    96.0f, attachError))
+            {
+                productUiRequested = false;
+                OSG_WARN << "[RmlUi] product UI attach failed; using legacy: "
+                         << attachError << std::endl;
+            }
+#if defined(__APPLE__)
+            else rmlmacime::connect(&productUiRuntime);
+#endif
+        }
+    }
+#endif
+
+#if defined(__APPLE__)
+    // 中文 IME 直打(见 ImeFrameHandler/ime_bridge.mm)。同一个 NSTextInputClient
+    // 根据当前文本焦点路由到 legacy ImGui 或 RmlUi，避免两个 overlay 争抢焦点。
+    {
+        const char* imeEnv = getenv("EARTH_IME");
+        bool imeOn = !(imeEnv && *imeEnv && atoi(imeEnv) == 0);
+        if (imeOn)
+        {
+            viewer.addEventHandler(new ImeFrameHandler(
+                &viewer
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+                , productUiRequested ? &productUiRuntime : NULL
+#endif
+            ));
+        }
+    }
+#endif
 
     if (gotoLat < 1.0e8)  // --goto 指定了起始视点
         earthManipulator->setByEye(osg::inDegrees(gotoLat), osg::inDegrees(gotoLon), gotoAltKm * 1000.0);
@@ -1696,6 +1762,20 @@ int main(int argc, char** argv)
                 OSG_WARN << "[Earth] offscreen capture failed to write /tmp/earth_capture_0.png" << std::endl;
             }
         }
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+        if (productUiRequested)
+        {
+            osg::GraphicsContext* gc = viewer.getCamera()->getGraphicsContext();
+            if (gc && gc->makeCurrent())
+            {
+                productUiRuntime.shutdown();
+                gc->releaseContext();
+            }
+#if defined(__APPLE__)
+            rmlmacime::disconnect();
+#endif
+        }
+#endif
         return 0;
     }
     int viewerResult = 0;
@@ -1703,6 +1783,20 @@ int main(int argc, char** argv)
         ViewerThreadStopGuard stopViewerThreads(viewer);
         viewerResult = viewer.run();
     }
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+    if (productUiRequested)
+    {
+        osg::GraphicsContext* gc = viewer.getCamera()->getGraphicsContext();
+        if (gc && gc->makeCurrent())
+        {
+            productUiRuntime.shutdown();
+            gc->releaseContext();
+        }
+#if defined(__APPLE__)
+        rmlmacime::disconnect();
+#endif
+    }
+#endif
     prefetchWorker.stopAndJoin();
     return viewerResult;
 }

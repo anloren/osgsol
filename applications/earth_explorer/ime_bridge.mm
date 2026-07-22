@@ -27,6 +27,35 @@ namespace
     NSView* s_glView = nil;           // OSG 的 GLView(contentView)
     EarthIMEView* s_overlay = nil;    // 隐藏的 NSTextInputClient overlay
     int s_installState = 0;           // 0=未试(可重试) / 1=已装 / -1=永久放弃
+    earthime::ProductTextTarget s_productTarget;
+    bool s_productActive = false;
+
+    void commitTextToFocusedUi(const char* utf8)
+    {
+        if (s_productActive && s_productTarget.commitText)
+            s_productTarget.commitText(s_productTarget.userData, utf8);
+        else if (ImGui::GetCurrentContext() != NULL)
+            ImGui::GetIO().AddInputCharactersUTF8(utf8);
+    }
+
+    void markTextForFocusedUi(const char* utf8)
+    {
+        if (s_productActive && s_productTarget.setMarkedText)
+            s_productTarget.setMarkedText(s_productTarget.userData, utf8);
+    }
+
+    void cancelFocusedComposition()
+    {
+        if (s_productActive && s_productTarget.cancelComposition)
+            s_productTarget.cancelComposition(s_productTarget.userData);
+    }
+
+    bool productKeyTap(int key)
+    {
+        if (key <= 0 || !s_productActive || !s_productTarget.keyTap) return false;
+        s_productTarget.keyTap(s_productTarget.userData, key);
+        return true;
+    }
 
     // 打一组"按下+抬起":ImGui 1.87+ 输入走事件队列,同键一帧两次转换会被
     // trickle 自动拆到相邻两帧,down/up 同时入队是官方支持的注入方式。
@@ -85,6 +114,7 @@ namespace
 - (void)discardComposition
 {
     if (_marked) { [_marked release]; _marked = nil; }
+    cancelFocusedComposition();
     [[self inputContext] discardMarkedText];
 }
 
@@ -98,6 +128,20 @@ namespace
         NSString* s = [theEvent charactersIgnoringModifiers];
         if (s != nil && [s length] > 0)
         {
+            const unichar c = [s characterAtIndex:0];
+            if (s_productActive)
+            {
+                if (c == 'v' || c == 'V')
+                {
+                    NSString* paste = [[NSPasteboard generalPasteboard]
+                        stringForType:NSPasteboardTypeString];
+                    if (paste != nil) commitTextToFocusedUi([paste UTF8String]);
+                    return;
+                }
+                if (c == 'a' || c == 'A') { productKeyTap(12); return; }
+                if (c == 'c' || c == 'C') { productKeyTap(13); return; }
+                if (c == 'x' || c == 'X') { productKeyTap(14); return; }
+            }
             imguiKeyTapWithMods(charToImGuiKey([s characterAtIndex:0]),
                                 true, (mods & NSEventModifierFlagShift) != 0,
                                 (mods & NSEventModifierFlagControl) != 0,
@@ -125,10 +169,7 @@ namespace
     NSString* s = [string isKindOfClass:[NSAttributedString class]]
                 ? [(NSAttributedString*)string string] : (NSString*)string;
     if (_marked) { [_marked release]; _marked = nil; }   // 上屏 = 组字结束
-    if (s != nil && [s length] > 0 && ImGui::GetCurrentContext() != NULL)
-    {
-        ImGui::GetIO().AddInputCharactersUTF8([s UTF8String]);
-    }
+    if (s != nil && [s length] > 0) commitTextToFocusedUi([s UTF8String]);
 }
 
 - (void)setMarkedText:(id)string selectedRange:(NSRange)selectedRange
@@ -139,6 +180,7 @@ namespace
                 ? [(NSAttributedString*)string string] : (NSString*)string;
     [_marked release];
     _marked = (s != nil && [s length] > 0) ? [s copy] : nil;
+    markTextForFocusedUi(_marked != nil ? [_marked UTF8String] : "");
     // 组字过程不向 ImGui 注入任何东西:预编辑串只显示在 IME 候选窗里,
     // 绝不会漏成热键或半截字符(overlay 聚焦期间 OSG 收不到 keyDown)。
 }
@@ -148,10 +190,7 @@ namespace
     // IME 要求把组字串原样上屏(如按数字键直接选候选后的收尾、或点击别处)
     if (_marked != nil)
     {
-        if (ImGui::GetCurrentContext() != NULL)
-        {
-            ImGui::GetIO().AddInputCharactersUTF8([_marked UTF8String]);
-        }
+        commitTextToFocusedUi([_marked UTF8String]);
         [_marked release]; _marked = nil;
     }
 }
@@ -220,6 +259,20 @@ namespace
 // 优先消费,不会走到这里——正确语义)。不调 super,避免未映射命令触发系统蜂鸣。
 - (void)doCommandBySelector:(SEL)selector
 {
+    int productKey = 0;
+    if (selector == @selector(insertNewline:)) productKey = 1;
+    else if (selector == @selector(insertTab:)) productKey = 2;
+    else if (selector == @selector(deleteBackward:)) productKey = 3;
+    else if (selector == @selector(deleteForward:)) productKey = 4;
+    else if (selector == @selector(moveLeft:)) productKey = 5;
+    else if (selector == @selector(moveRight:)) productKey = 6;
+    else if (selector == @selector(moveUp:)) productKey = 7;
+    else if (selector == @selector(moveDown:)) productKey = 8;
+    else if (selector == @selector(moveToBeginningOfLine:)) productKey = 9;
+    else if (selector == @selector(moveToEndOfLine:)) productKey = 10;
+    else if (selector == @selector(cancelOperation:)) productKey = 11;
+    if (productKeyTap(productKey)) return;
+
     if (selector == @selector(insertNewline:)) { imguiKeyTap(ImGuiKey_Enter); }
     else if (selector == @selector(insertTab:)) { imguiKeyTap(ImGuiKey_Tab); }
     else if (selector == @selector(deleteBackward:)) { imguiKeyTap(ImGuiKey_Backspace); }
@@ -284,7 +337,19 @@ bool ensureInstalled(osgViewer::Viewer* viewer)
 
 void updateFocus(bool wantTextInput)
 {
+    updateFocus(wantTextInput, false);
+}
+
+void updateFocus(bool wantImGuiTextInput, bool wantProductTextInput)
+{
     if (s_installState != 1 || s_win == nil || s_overlay == nil) return;
+    const bool nextProductActive = wantProductTextInput &&
+                                   s_productTarget.userData != nullptr;
+    if (s_productActive != nextProductActive &&
+        [s_win firstResponder] == (NSResponder*)s_overlay)
+        [s_overlay discardComposition];
+    s_productActive = nextProductActive;
+    const bool wantTextInput = wantProductTextInput || wantImGuiTextInput;
     NSResponder* fr = [s_win firstResponder];
     if (wantTextInput)
     {
@@ -295,6 +360,17 @@ void updateFocus(bool wantTextInput)
         [s_overlay discardComposition];   // 丢弃未上屏的组字,防半截字符残留
         [s_win makeFirstResponder:s_glView];
     }
+}
+
+void setProductTextTarget(const ProductTextTarget& target)
+{
+    s_productTarget = target;
+}
+
+void clearProductTextTarget()
+{
+    s_productTarget = ProductTextTarget();
+    s_productActive = false;
 }
 
 void setInputRect(float x, float y, float w, float h)

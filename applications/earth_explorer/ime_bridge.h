@@ -18,12 +18,27 @@ namespace osgViewer { class Viewer; }
 //   - 失焦时切回 GLView,一切行为与从前完全一致。
 namespace earthime
 {
+    struct ProductTextTarget
+    {
+        void* userData = nullptr;
+        void (*commitText)(void*, const char*) = nullptr;
+        void (*setMarkedText)(void*, const char*) = nullptr;
+        void (*cancelComposition)(void*) = nullptr;
+        void (*keyTap)(void*, int) = nullptr;
+    };
+
     // 尝试安装(幂等,失败一次即放弃):找 viewer 的 GraphicsWindowCocoa 挂 overlay。
     // 未 realize 时返回 false 且下帧重试;offscreen(无 Cocoa 窗口)永久禁用。
     bool ensureInstalled(osgViewer::Viewer* viewer);
 
     // 每帧(主线程 FRAME 事件)驱动键盘焦点,wantTextInput 取 ImGui::GetIO().WantTextInput。
     void updateFocus(bool wantTextInput);
+
+    // Product-UI overload. Only one NSTextInputClient overlay is installed in
+    // the Cocoa window; it routes composition to the focused UI backend.
+    void updateFocus(bool wantImGuiTextInput, bool wantProductTextInput);
+    void setProductTextTarget(const ProductTextTarget& target);
+    void clearProductTextTarget();
 
     // ai_ui 每帧上报激活输入框的矩形(ImGui 坐标、左上原点;OSG Cocoa 窗口非
     // best-resolution,与 view"点"1:1,换算见 .mm 的 firstRectForCharacterRange),

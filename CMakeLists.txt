@@ -10,6 +10,17 @@ IF(BUILD_TESTING)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         LABELS "offline;scienceearth"
         TIMEOUT 30)
+    FIND_PACKAGE(Python3 COMPONENTS Interpreter QUIET)
+    IF(Python3_Interpreter_FOUND)
+        ADD_TEST(NAME osgSol_Test_RmlUiDependency
+                 COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+                         ${Python3_EXECUTABLE} -m unittest
+                         tests.rmlui_dependency_tests -v)
+        SET_TESTS_PROPERTIES(osgSol_Test_RmlUiDependency PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            LABELS "offline;scienceearth;ui"
+            TIMEOUT 30)
+    ENDIF()
 ENDIF()
 
 SET(VERSE_VERSION "0.8.5")
@@ -762,6 +773,14 @@ IF(OSG_INCLUDE_DIR AND OSG_LIB_DIR)
             SET(THIRDPARTY_LIBRARIES ${THIRDPARTY_LIBRARIES} ${TIFF_LIBRARY_RELEASE})
         ENDIF()
     ENDIF(VERSE_BUILD_3RDPARTIES)
+
+    IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+        IF(NOT VERSE_BUILD_3RDPARTIES)
+            MESSAGE(FATAL_ERROR
+                "OSGSOL_BUILD_RMLUI_PRODUCT_UI currently requires VERSE_BUILD_3RDPARTIES=ON")
+        ENDIF()
+        ADD_SUBDIRECTORY(helpers/toolchain_builder/rmlui)
+    ENDIF()
 
     # Actually add sub-directories
     ADD_SUBDIRECTORY(3rdparty)

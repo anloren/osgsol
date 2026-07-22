@@ -22,6 +22,16 @@ IF(OSGSOL_BUILD_SCIENCE)
          terrain_science_overlay_math.cpp terrain_science_overlay_math.h)
 ENDIF()
 
+IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+    LIST(APPEND EXECUTABLE_FILES
+         product_ui/rml_input_bridge.cpp product_ui/rml_input_bridge.h
+         product_ui/rml_osg_renderer.cpp product_ui/rml_osg_renderer.h
+         product_ui/rml_ui_runtime.cpp product_ui/rml_ui_runtime.h
+         "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Renderer_GL3.cpp"
+         "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Renderer_GL3.h"
+         "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Include_GL3.h")
+ENDIF()
+
 IF(APPLE)
     # 中文 IME 直打桥(Objective-C++,给 OSG Cocoa 窗口挂 NSTextInputClient overlay,
     # 设计说明见 ime_bridge.h)。不能在子目录 ENABLE_LANGUAGE(OBJCXX)(CMake 语言
@@ -30,6 +40,12 @@ IF(APPLE)
     SET_SOURCE_FILES_PROPERTIES(ime_bridge.mm PROPERTIES
                                 LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
     SET(EXECUTABLE_FILES ${EXECUTABLE_FILES} ime_bridge.mm)
+    IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+        SET_SOURCE_FILES_PROPERTIES(product_ui/rml_macos_ime.mm PROPERTIES
+                                    LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
+        LIST(APPEND EXECUTABLE_FILES
+             product_ui/rml_macos_ime.mm product_ui/rml_macos_ime.h)
+    ENDIF()
 ENDIF(APPLE)
 
 # 静态战略数据集(P1 T7):vendored JSON 随构建拷到 <install>/models/Earth/strategic/,
@@ -51,6 +67,19 @@ IF(OSGSOL_BUILD_SCIENCE)
     TARGET_COMPILE_DEFINITIONS(${EXE_NAME} PRIVATE OSGSOL_BUILD_SCIENCE=1)
 ELSE()
     TARGET_COMPILE_DEFINITIONS(${EXE_NAME} PRIVATE OSGSOL_BUILD_SCIENCE=0)
+ENDIF()
+IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+    TARGET_COMPILE_FEATURES(${EXE_NAME} PRIVATE cxx_std_17)
+    TARGET_INCLUDE_DIRECTORIES(${EXE_NAME} PRIVATE
+        "${OSGSOL_RMLUI_SOURCE_DIR}/Backends")
+    TARGET_LINK_LIBRARIES(${EXE_NAME} RmlUi::RmlUi ${CMAKE_DL_LIBS})
+    TARGET_COMPILE_DEFINITIONS(${EXE_NAME} PRIVATE
+        OSGSOL_BUILD_RMLUI_PRODUCT_UI=1
+        OSGSOL_PRODUCT_UI_DEFAULT="${OSGSOL_PRODUCT_UI}")
+ELSE()
+    TARGET_COMPILE_DEFINITIONS(${EXE_NAME} PRIVATE
+        OSGSOL_BUILD_RMLUI_PRODUCT_UI=0
+        OSGSOL_PRODUCT_UI_DEFAULT="legacy")
 ENDIF()
 LINK_OSG_LIBRARY(${EXE_NAME} OpenThreads osg osgDB osgUtil osgGA osgText osgSim osgTerrain osgViewer)
 TARGET_COMPILE_OPTIONS(${EXE_NAME} PUBLIC -D_SCL_SECURE_NO_WARNINGS)
@@ -75,6 +104,20 @@ IF(APPLE AND OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
 ENDIF()
 
 IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
+    IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+        ADD_EXECUTABLE(osgSol_Test_RmlInputBridge
+            "${CMAKE_SOURCE_DIR}/tests/rml_input_bridge_tests.cpp"
+            product_ui/rml_input_bridge.cpp)
+        TARGET_COMPILE_FEATURES(osgSol_Test_RmlInputBridge PRIVATE cxx_std_17)
+        TARGET_INCLUDE_DIRECTORIES(osgSol_Test_RmlInputBridge PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}")
+        ADD_TEST(NAME osgSol_Test_RmlInputBridge
+                 COMMAND $<TARGET_FILE:osgSol_Test_RmlInputBridge>)
+        SET_TESTS_PROPERTIES(osgSol_Test_RmlInputBridge PROPERTIES
+            LABELS "offline;scienceearth;ui"
+            TIMEOUT 30)
+    ENDIF()
+
     ADD_EXECUTABLE(osgSol_Test_ScienceTargetOverlay
         "${CMAKE_SOURCE_DIR}/tests/science_target_overlay_tests.cpp"
         science_ui/science_target_overlay.cpp)
