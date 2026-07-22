@@ -115,6 +115,8 @@ ADD_LIBRARY(osgdb_science MODULE
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_ai_tools.cpp"
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_ai_tools.h"
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_query_builder.h"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_workbench_model.cpp"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_workbench_model.h"
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_earth_panel.cpp"
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_earth_panel.h")
 TARGET_COMPILE_FEATURES(osgdb_science PRIVATE cxx_std_17)
