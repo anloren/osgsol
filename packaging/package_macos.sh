@@ -378,6 +378,14 @@ ln -s "../lib/$PLUGVER" "$BUILD_APP/Contents/bin/$PLUGVER"
 for directory in shaders skyboxes textures misc models; do
     cp -a "$SDK/$directory" "$BUILD_APP/Contents/$directory"
 done
+for workbench_asset in \
+    ui/scienceearth/workbench.rml \
+    ui/scienceearth/report.rml \
+    ui/scienceearth/scienceearth.rcss \
+    ui/scienceearth/tokens.rcss; do
+    [ -f "$BUILD_APP/Contents/misc/$workbench_asset" ] || \
+        fail 66 "Missing installed ScienceEarth workbench asset: $workbench_asset"
+done
 mkdir -p "$BUILD_APP/Contents/misc/science/alphaearth"
 cp "$ALPHAEARTH_INDEX" \
     "$BUILD_APP/Contents/misc/science/alphaearth/alphaearth.sqlite"

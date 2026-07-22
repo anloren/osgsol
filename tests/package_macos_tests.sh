@@ -129,6 +129,12 @@ make_install_fixture()
     for directory in shaders skyboxes textures misc models; do
         mkdir -p "$root/$directory"
     done
+    mkdir -p "$root/misc/ui/scienceearth"
+    cp "$SDK/misc/ui/scienceearth/workbench.rml" \
+       "$SDK/misc/ui/scienceearth/report.rml" \
+       "$SDK/misc/ui/scienceearth/scienceearth.rcss" \
+       "$SDK/misc/ui/scienceearth/tokens.rcss" \
+       "$root/misc/ui/scienceearth/"
 }
 
 collect_osg_uuid_records()
@@ -632,6 +638,16 @@ grep -Fqx "OSGSOL_RELEASE_DESCRIPTOR_SHA256=$RELEASE_DESCRIPTOR_SHA256" \
     "$PACKAGE_AUDIT"
 SCIENCE_DATA_MANIFEST="$APP/Contents/misc/science/data-manifest.json"
 test -f "$SCIENCE_DATA_MANIFEST"
+for workbench_asset in \
+    ui/scienceearth/workbench.rml \
+    ui/scienceearth/report.rml \
+    ui/scienceearth/scienceearth.rcss \
+    ui/scienceearth/tokens.rcss; do
+    test -f "$APP/Contents/misc/$workbench_asset" || {
+        echo "FAIL: packaged ScienceEarth workbench asset is missing: $workbench_asset" >&2
+        exit 1
+    }
+done
 PYTHONDONTWRITEBYTECODE=1 python3 \
     "$ROOT/packaging/scienceearth/data_manifest.py" --validate "$APP" >/dev/null
 SCIENCE_DATA_MANIFEST_SHA256="$(shasum -a 256 \
