@@ -129,6 +129,15 @@ select, input { width: 100%; padding: 6px 8px; }
 .analysis-range-key { margin-top: 16px; color: #49d5d0; }
 .context-caption { margin-top: 7px; color: #93a09e; font-size: 12px; }
 .report-summary, .science-chart, .chart-statistics { margin-top: 14px; padding: 14px; background: #12181b; border-radius: 8px; }
+.overview-facts { display: flex; margin-top: 12px; }
+.overview-facts div { flex: 1; margin-right: 8px; padding: 11px; background: #12181b; border-radius: 7px; }
+.overview-facts span { display: block; color: #93a09e; font-size: 11px; }
+.overview-facts strong { display: block; margin-top: 5px; font-weight: 500; }
+.evidence-card { margin-top: 12px; padding: 14px; background: #12181b; border: 1px #263036; border-radius: 8px; }
+.evidence-card h3 { margin: 0 0 8px 0; color: #a7efe9; font-size: 13px; font-weight: 500; }
+.evidence-card p { margin-top: 5px; line-height: 1.4; }
+.evidence-list { margin: 5px 0 0 18px; padding: 0; color: #bdc8c6; }
+.source-url { color: #49d5d0; }
 .chart-toolbar { display: flex; align-items: center; }
 .chart-toolbar select { margin-left: 12px; }
 .science-chart { display: block; height: 300px; cursor: crosshair; }

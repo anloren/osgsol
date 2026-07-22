@@ -42,6 +42,11 @@
                 <p id="context-caption" class="context-caption"></p>
                 <button id="report-focus-target">回到实时地图中的分析区域</button>
                 <div id="overview-summary" class="report-summary">正在整理结果摘要…</div>
+                <div class="overview-facts">
+                    <div><span>时间范围</span><strong id="overview-time-range">未提供</strong></div>
+                    <div><span>空间含义</span><strong id="overview-spatial-support">未提供</strong></div>
+                    <div><span>结果完整度</span><strong id="overview-completeness">未提供</strong></div>
+                </div>
             </section>
             <section id="trends" class="report-section">
                 <div class="chart-toolbar">
@@ -57,17 +62,42 @@
             </section>
             <section id="spatial-range" class="report-section">
                 <h2>请求范围与数据实际范围</h2>
-                <p id="requested-spatial-fact"></p>
-                <p id="actual-spatial-fact"></p>
+                <article class="evidence-card">
+                    <h3>请求的分析目标</h3>
+                    <p id="requested-spatial-fact"></p>
+                </article>
+                <article class="evidence-card">
+                    <h3>数据实际覆盖</h3>
+                    <p id="actual-spatial-fact"></p>
+                    <p id="source-resolution" class="muted"></p>
+                </article>
                 <p class="muted">两者分开呈现，不把单个数据网格解释为区域平均。</p>
             </section>
             <section id="methods-evidence" class="report-section">
                 <h2>方法、来源与限制</h2>
-                <div id="method-facts"></div>
-                <div id="source-links"></div>
-                <div id="limitations"></div>
-                <p>结果编号 <span id="report-artifact-id"></span></p>
-                <button id="copy-artifact-id">复制结果编号</button>
+                <article class="evidence-card">
+                    <h3>处理与统计</h3>
+                    <div id="method-facts"></div>
+                    <p>实测执行时间：<span id="execution-timing">未提供</span></p>
+                </article>
+                <article class="evidence-card">
+                    <h3>数据来源</h3>
+                    <div id="source-links"></div>
+                </article>
+                <article class="evidence-card">
+                    <h3>限制与警告</h3>
+                    <div id="limitations"></div>
+                    <div id="report-warnings"></div>
+                </article>
+                <article class="evidence-card artifact-facts">
+                    <h3>可复核结果</h3>
+                    <p>结果编号 <span id="report-artifact-id"></span></p>
+                    <p>处理版本 <span id="report-processing-version">未提供</span></p>
+                    <p>生成时间 <span id="report-created-at">未提供</span></p>
+                    <p>导出能力 <span id="export-capabilities">未提供</span></p>
+                    <button id="copy-artifact-id">复制结果编号</button>
+                    <span id="copy-artifact-status" class="muted"></span>
+                </article>
             </section>
         </main>
 

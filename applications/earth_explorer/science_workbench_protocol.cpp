@@ -81,6 +81,17 @@ picojson::value number(double value)
     return picojson::value(std::isfinite(value) ? value : 0.0);
 }
 
+picojson::value availableNumber(double value, bool available)
+{
+    return available && std::isfinite(value)
+        ? picojson::value(value) : picojson::value();
+}
+
+picojson::value availableString(const std::string& value)
+{
+    return value.empty() ? picojson::value() : picojson::value(value);
+}
+
 picojson::object pointObject(const earthscience::ScienceWgs84Point& point)
 {
     picojson::object output;
@@ -154,6 +165,10 @@ picojson::object sourceObject(
     output["temporalResolution"] = picojson::value(source.temporalResolution);
     output["license"] = picojson::value(source.license);
     output["documentationUrl"] = picojson::value(source.documentationUrl);
+    output["attribution"] = picojson::value(source.attribution);
+    output["qualityStatement"] = picojson::value(source.qualityStatement);
+    output["dataNature"] = picojson::value(source.dataNature);
+    output["updateLatency"] = picojson::value(source.updateLatency);
     output["health"] = picojson::value(
         earthscience::scienceSourceHealthName(source.health));
     output["healthMessage"] = picojson::value(source.healthMessage);
@@ -171,6 +186,12 @@ picojson::object sourceObject(
         source.capabilities.timeSeriesOutput);
     capabilities["analysis"] = picojson::value(
         source.capabilities.analysisOutput);
+    capabilities["export"] = picojson::value(
+        source.capabilities.exportOutput);
+    capabilities["raster"] = picojson::value(
+        source.capabilities.rasterLayerOutput);
+    capabilities["table"] = picojson::value(
+        source.capabilities.tableOutput);
     output["capabilities"] = picojson::value(capabilities);
 
     picojson::array variables;
@@ -261,7 +282,138 @@ picojson::object referenceObject(
     output["units"] = picojson::value(stringArray(reference.units));
     output["processingSteps"] = picojson::value(
         stringArray(reference.processingSteps));
+    output["acquisitionTime"] = availableString(reference.acquisitionTime);
+    output["publicationTime"] = availableString(reference.publicationTime);
+    output["forecastReferenceTime"] = availableString(
+        reference.forecastReferenceTime);
     output["attribution"] = picojson::value(reference.attribution);
+    return output;
+}
+
+bool validCoverage(const earthscience::ScienceWgs84Bounds& bounds)
+{
+    return std::isfinite(bounds.west) && std::isfinite(bounds.south) &&
+        std::isfinite(bounds.east) && std::isfinite(bounds.north) &&
+        bounds.west < bounds.east && bounds.south < bounds.north &&
+        bounds.west >= -180.0 && bounds.east <= 180.0 &&
+        bounds.south >= -90.0 && bounds.north <= 90.0;
+}
+
+picojson::object reportEvidenceObject(
+    const ScienceWorkbenchViewModel& model,
+    const std::vector<earthscience::ScienceSourceDescriptor>& sources,
+    const std::shared_ptr<const earthscience::ScienceArtifact>& artifact)
+{
+    picojson::object output;
+    output["availability"] = picojson::value(
+        artifact ? "ready" : "unavailable");
+    output["requestedGeometry"] = artifact
+        ? picojson::value(geometryObject(artifact->query.geometry))
+        : picojson::value();
+
+    const earthscience::ScienceSourceReference* firstReference =
+        artifact && !artifact->sourceReferences.empty()
+            ? &artifact->sourceReferences.front() : nullptr;
+    output["actualCoverage"] = firstReference &&
+        validCoverage(firstReference->actualCoverage)
+            ? picojson::value(boundsObject(firstReference->actualCoverage))
+            : picojson::value();
+
+    const earthscience::ScienceSourceDescriptor* source = nullptr;
+    const std::string sourceId = artifact
+        ? artifact->query.sourceId : model.draft.sourceId;
+    for (const earthscience::ScienceSourceDescriptor& candidate : sources)
+        if (candidate.id == sourceId) { source = &candidate; break; }
+    output["sourceNativeResolutionMeters"] = availableNumber(
+        source ? source->nativeResolutionMeters : 0.0,
+        source && source->nativeResolutionMeters > 0.0);
+    output["spatialSupport"] = source
+        ? availableString(source->spatialSupport) : picojson::value();
+    output["sourceLicense"] = source
+        ? availableString(source->license) : picojson::value();
+    output["sourceDocumentationUrl"] = source
+        ? availableString(source->documentationUrl) : picojson::value();
+    output["sourceAttribution"] = source
+        ? availableString(source->attribution) : picojson::value();
+    output["sourceQualityStatement"] = source
+        ? availableString(source->qualityStatement) : picojson::value();
+
+    picojson::array aggregations;
+    picojson::array completeness;
+    if (artifact)
+    {
+        std::vector<std::string> seenAggregations;
+        for (const earthscience::ScienceVariableSeries& series :
+             artifact->variableSeries)
+        {
+            if (!series.aggregationMethod.empty() &&
+                std::find(seenAggregations.begin(), seenAggregations.end(),
+                          series.aggregationMethod) == seenAggregations.end())
+            {
+                seenAggregations.push_back(series.aggregationMethod);
+                aggregations.push_back(picojson::value(
+                    series.aggregationMethod));
+            }
+            picojson::object item;
+            item["metricId"] = picojson::value(series.variableId);
+            std::size_t total = 0, valid = 0;
+            if (series.years && series.values)
+            {
+                total = std::min(series.years->size(), series.values->size());
+                for (std::size_t index = 0; index < total; ++index)
+                {
+                    const bool pointValid = std::isfinite(
+                        (*series.values)[index]) &&
+                        (!series.validity || index >= series.validity->size() ||
+                         (*series.validity)[index] != 0);
+                    if (pointValid) ++valid;
+                }
+            }
+            item["validPoints"] = number(static_cast<double>(valid));
+            item["totalPoints"] = number(static_cast<double>(total));
+            item["fraction"] = availableNumber(
+                total ? static_cast<double>(valid) /
+                    static_cast<double>(total) : 0.0, total > 0);
+            completeness.push_back(picojson::value(item));
+        }
+    }
+    output["aggregationMethods"] = picojson::value(aggregations);
+    output["seriesCompleteness"] = picojson::value(completeness);
+
+    picojson::array limitations;
+    const bool limitationsProvided = artifact &&
+        static_cast<bool>(artifact->analysis.limitations);
+    if (limitationsProvided)
+        limitations = stringArray(*artifact->analysis.limitations);
+    output["limitations"] = picojson::value(limitations);
+    output["limitationsAvailability"] = picojson::value(
+        limitationsProvided ? "provided" : "unavailable");
+    output["warnings"] = picojson::value(
+        artifact ? stringArray(artifact->warnings) : picojson::array());
+
+    picojson::array citations;
+    if (artifact)
+        for (const earthscience::ScienceSourceReference& reference :
+             artifact->sourceReferences)
+            citations.push_back(picojson::value(referenceObject(reference)));
+    output["citations"] = picojson::value(citations);
+    output["citationAvailability"] = picojson::value(
+        citations.empty() ? "unavailable" : "provided");
+    output["executionTimingSeconds"] = availableNumber(
+        model.progress.elapsedSeconds, model.progress.elapsedSeconds > 0.0);
+
+    if (source)
+    {
+        picojson::object exports;
+        exports["artifactExport"] = picojson::value(
+            source->capabilities.exportOutput);
+        exports["rasterOutput"] = picojson::value(
+            source->capabilities.rasterLayerOutput);
+        exports["tableOutput"] = picojson::value(
+            source->capabilities.tableOutput);
+        output["exportCapabilities"] = picojson::value(exports);
+    }
+    else output["exportCapabilities"] = picojson::value();
     return output;
 }
 
@@ -432,6 +584,8 @@ std::string serializeScienceWorkbenchSnapshot(
     root["activeArtifact"] = activeArtifact
         ? picojson::value(artifactObject(*activeArtifact))
         : picojson::value();
+    root["reportEvidence"] = picojson::value(reportEvidenceObject(
+        model, sources, activeArtifact));
     return picojson::value(root).serialize();
 }
 

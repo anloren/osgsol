@@ -58,6 +58,40 @@ struct ArtifactView
     std::vector<SeriesView> series;
 };
 
+struct CitationView
+{
+    std::string sourceId;
+    std::string providerVersion;
+    std::string datasetId;
+    std::string originalUrl;
+    std::string attribution;
+    std::string publicationTime;
+    std::vector<std::string> processingSteps;
+};
+
+struct EvidenceView
+{
+    std::string availability;
+    bool hasSourceResolution = false;
+    double sourceResolutionMeters = 0.0;
+    std::string spatialSupport;
+    std::string sourceLicense;
+    std::string sourceDocumentationUrl;
+    std::string sourceAttribution;
+    std::string sourceQualityStatement;
+    std::string limitationsAvailability;
+    std::vector<std::string> aggregationMethods;
+    std::vector<std::string> limitations;
+    std::vector<std::string> warnings;
+    std::vector<CitationView> citations;
+    bool hasExecutionTiming = false;
+    double executionTimingSeconds = 0.0;
+    bool hasExportCapabilities = false;
+    bool artifactExport = false;
+    bool rasterOutput = false;
+    bool tableOutput = false;
+};
+
 struct SnapshotView
 {
     std::uint64_t revision = 0;
@@ -87,6 +121,7 @@ struct SnapshotView
     std::string progressStage;
     std::vector<SourceView> sources;
     ArtifactView artifact;
+    EvidenceView evidence;
 };
 
 const picojson::value* field(const picojson::object& object, const char* key)
@@ -114,6 +149,17 @@ bool boolField(const picojson::object& object, const char* key,
 {
     const picojson::value* value = field(object, key);
     return value && value->is<bool>() ? value->get<bool>() : fallback;
+}
+
+std::vector<std::string> stringArrayField(
+    const picojson::object& object, const char* key)
+{
+    std::vector<std::string> output;
+    const picojson::value* value = field(object, key);
+    if (!value || !value->is<picojson::array>()) return output;
+    for (const picojson::value& item : value->get<picojson::array>())
+        if (item.is<std::string>()) output.push_back(item.get<std::string>());
+    return output;
 }
 
 bool geometryField(const picojson::object& object, const char* key,
@@ -314,6 +360,77 @@ bool parseSnapshot(const std::string& json, SnapshotView& output,
             }
         }
     }
+
+    if (const picojson::value* evidenceValue = field(root, "reportEvidence");
+        evidenceValue && evidenceValue->is<picojson::object>())
+    {
+        const picojson::object& evidence =
+            evidenceValue->get<picojson::object>();
+        output.evidence.availability = stringField(evidence, "availability");
+        if (const picojson::value* resolution =
+                field(evidence, "sourceNativeResolutionMeters");
+            resolution && resolution->is<double>() &&
+            std::isfinite(resolution->get<double>()))
+        {
+            output.evidence.hasSourceResolution = true;
+            output.evidence.sourceResolutionMeters = resolution->get<double>();
+        }
+        output.evidence.spatialSupport = stringField(evidence, "spatialSupport");
+        output.evidence.sourceLicense = stringField(evidence, "sourceLicense");
+        output.evidence.sourceDocumentationUrl = stringField(
+            evidence, "sourceDocumentationUrl");
+        output.evidence.sourceAttribution = stringField(
+            evidence, "sourceAttribution");
+        output.evidence.sourceQualityStatement = stringField(
+            evidence, "sourceQualityStatement");
+        output.evidence.limitationsAvailability = stringField(
+            evidence, "limitationsAvailability");
+        output.evidence.aggregationMethods = stringArrayField(
+            evidence, "aggregationMethods");
+        output.evidence.limitations = stringArrayField(evidence, "limitations");
+        output.evidence.warnings = stringArrayField(evidence, "warnings");
+        if (const picojson::value* timing =
+                field(evidence, "executionTimingSeconds");
+            timing && timing->is<double>() &&
+            std::isfinite(timing->get<double>()))
+        {
+            output.evidence.hasExecutionTiming = true;
+            output.evidence.executionTimingSeconds = timing->get<double>();
+        }
+        if (const picojson::value* exportValue =
+                field(evidence, "exportCapabilities");
+            exportValue && exportValue->is<picojson::object>())
+        {
+            const picojson::object& exports =
+                exportValue->get<picojson::object>();
+            output.evidence.hasExportCapabilities = true;
+            output.evidence.artifactExport = boolField(
+                exports, "artifactExport");
+            output.evidence.rasterOutput = boolField(exports, "rasterOutput");
+            output.evidence.tableOutput = boolField(exports, "tableOutput");
+        }
+        if (const picojson::value* citationsValue = field(evidence, "citations");
+            citationsValue && citationsValue->is<picojson::array>())
+        {
+            for (const picojson::value& citationValue :
+                 citationsValue->get<picojson::array>())
+            {
+                if (!citationValue.is<picojson::object>()) continue;
+                const picojson::object& item =
+                    citationValue.get<picojson::object>();
+                CitationView citation;
+                citation.sourceId = stringField(item, "sourceId");
+                citation.providerVersion = stringField(item, "providerVersion");
+                citation.datasetId = stringField(item, "datasetId");
+                citation.originalUrl = stringField(item, "originalUrl");
+                citation.attribution = stringField(item, "attribution");
+                citation.publicationTime = stringField(item, "publicationTime");
+                citation.processingSteps = stringArrayField(
+                    item, "processingSteps");
+                output.evidence.citations.push_back(std::move(citation));
+            }
+        }
+    }
     error.clear();
     return true;
 }
@@ -397,6 +514,61 @@ std::string jsonString(const std::string& value)
     return picojson::value(value).serialize();
 }
 
+std::string joined(const std::vector<std::string>& values,
+                   const std::string& separator)
+{
+    std::string output;
+    for (const std::string& value : values)
+    {
+        if (value.empty()) continue;
+        if (!output.empty()) output += separator;
+        output += value;
+    }
+    return output;
+}
+
+std::string listMarkup(const std::vector<std::string>& values,
+                       const std::string& unavailable)
+{
+    if (values.empty()) return "<p class=\"muted\">" +
+        escapedRml(unavailable) + "</p>";
+    std::string output = "<ul class=\"evidence-list\">";
+    for (const std::string& value : values)
+        output += "<li>" + escapedRml(value) + "</li>";
+    return output + "</ul>";
+}
+
+std::string geometryDescription(const ScienceOverlayGeometry& geometry)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(4);
+    if (geometry.kind == ScienceOverlayGeometryKind::Point)
+    {
+        stream << "点位 " << geometry.point.latitude << "°, "
+               << geometry.point.longitude << "°";
+    }
+    else
+    {
+        stream << "边界 W " << geometry.bounds.west << "° · S "
+               << geometry.bounds.south << "° · E " << geometry.bounds.east
+               << "° · N " << geometry.bounds.north << "°";
+    }
+    return stream.str();
+}
+
+std::string formatResolution(double meters)
+{
+    std::ostringstream stream;
+    if (meters >= 1000.0)
+        stream << std::fixed << std::setprecision(
+            std::fmod(meters, 1000.0) == 0.0 ? 0 : 1)
+               << meters / 1000.0 << " km";
+    else
+        stream << std::fixed << std::setprecision(meters >= 10.0 ? 0 : 1)
+               << meters << " m";
+    return stream.str();
+}
+
 bool overlayRectangle(const std::vector<osg::Vec2f>& points,
                       float& left, float& top, float& width, float& height)
 {
@@ -447,6 +619,11 @@ public:
     {
         if (Rml::Element* item = reportElement(id))
             item->SetInnerRML(escapedRml(value));
+    }
+
+    void setReportMarkup(const char* id, const std::string& value)
+    {
+        if (Rml::Element* item = reportElement(id)) item->SetInnerRML(value);
     }
 
     void setReportDisplay(const char* id, bool visible,
@@ -560,6 +737,7 @@ public:
         setReportText("report-title", selected ? selected->name : "科学分析结果");
         setReportText("report-artifact-id", active->artifactId);
         updateReportChart(view, active->artifactId);
+        updateReportEvidence(view, selected);
         const char* sections[] = {
             "overview", "trends", "spatial-range", "methods-evidence"};
         for (const char* section : sections)
@@ -570,6 +748,127 @@ public:
             if (Rml::Element* tab = reportElement(tabId.c_str()))
                 tab->SetClass("selected", selectedSection);
         }
+    }
+
+    void updateReportEvidence(const SnapshotView& view,
+                              const SourceView* selectedSource)
+    {
+        const std::string sourceName = selectedSource
+            ? selectedSource->name : view.artifact.sourceId;
+        setReportText("overview-time-range", view.firstYear > 0
+            ? std::to_string(view.firstYear) + "–" +
+                std::to_string(view.lastYear) : "未提供");
+        setReportText("overview-spatial-support",
+            view.evidence.spatialSupport.empty()
+                ? "未提供" : view.evidence.spatialSupport);
+
+        std::size_t totalPoints = 0, validPoints = 0;
+        for (const SeriesView& series : view.artifact.series)
+        {
+            totalPoints += series.validity.size();
+            validPoints += static_cast<std::size_t>(std::count(
+                series.validity.begin(), series.validity.end(),
+                static_cast<unsigned char>(1)));
+        }
+        setReportText("overview-completeness", totalPoints > 0
+            ? std::to_string(validPoints) + "/" +
+                std::to_string(totalPoints) + " 个年度值"
+            : "未提供");
+        std::ostringstream summary;
+        summary << (sourceName.empty() ? "科学数据" : sourceName) << " · "
+                << view.artifact.series.size() << " 项年度指标。"
+                << "请求范围与数据实际覆盖分别记录，可在其他标签中复核。";
+        setReportText("overview-summary", summary.str());
+
+        const bool pointRequest =
+            view.requested.kind == ScienceOverlayGeometryKind::Point;
+        setReportText("requested-spatial-fact",
+            geometryDescription(view.requested) +
+            (pointRequest
+                ? "。这是一个采样目标，不表示周边区域平均。"
+                : "。这是本次固定的区域请求。"));
+        setReportText("actual-spatial-fact", view.hasActual
+            ? geometryDescription(view.actual) +
+                "。它来自结果中的 actualCoverage，不等同于请求范围。"
+            : "数据源没有提供可验证的实际覆盖范围。");
+        setReportText("source-resolution",
+            view.evidence.hasSourceResolution
+                ? "数据源声明的原生分辨率：" +
+                    formatResolution(view.evidence.sourceResolutionMeters)
+                : "数据源没有提供可验证的原生分辨率。");
+
+        std::vector<std::string> methodFacts;
+        if (!view.evidence.aggregationMethods.empty())
+            methodFacts.push_back("聚合方法：" + joined(
+                view.evidence.aggregationMethods, "；"));
+        methodFacts.push_back(
+            "缺测规则：缺测年份保留为空缺，趋势线不跨越空缺连接。 ");
+        for (const CitationView& citation : view.evidence.citations)
+            if (!citation.processingSteps.empty())
+                methodFacts.push_back("处理步骤：" + joined(
+                    citation.processingSteps, " → "));
+        setReportMarkup("method-facts", listMarkup(
+            methodFacts, "未提供可验证的处理方法。"));
+        setReportText("execution-timing",
+            view.evidence.hasExecutionTiming
+                ? formatScienceChartValue(
+                    view.evidence.executionTimingSeconds, "秒")
+                : "未提供（不会用估算值替代）");
+
+        std::string citations;
+        for (const CitationView& citation : view.evidence.citations)
+        {
+            citations += "<div class=\"citation\"><p><strong>" +
+                escapedRml(citation.datasetId.empty()
+                    ? citation.sourceId : citation.datasetId) + "</strong>";
+            if (!citation.providerVersion.empty())
+                citations += " · " + escapedRml(citation.providerVersion);
+            citations += "</p>";
+            if (!citation.attribution.empty())
+                citations += "<p>" + escapedRml(citation.attribution) + "</p>";
+            if (!citation.publicationTime.empty())
+                citations += "<p>发布时间：" +
+                    escapedRml(citation.publicationTime) + "</p>";
+            if (!citation.originalUrl.empty())
+                citations += "<p class=\"source-url\">" +
+                    escapedRml(citation.originalUrl) + "</p>";
+            citations += "</div>";
+        }
+        if (citations.empty() && !view.evidence.sourceDocumentationUrl.empty())
+            citations = "<p class=\"source-url\">" +
+                escapedRml(view.evidence.sourceDocumentationUrl) + "</p>";
+        if (citations.empty())
+            citations = "<p class=\"muted\">结果未提供来源引用。</p>";
+        if (!view.evidence.sourceLicense.empty())
+            citations += "<p>许可：" +
+                escapedRml(view.evidence.sourceLicense) + "</p>";
+        if (!view.evidence.sourceQualityStatement.empty())
+            citations += "<p>质量说明：" +
+                escapedRml(view.evidence.sourceQualityStatement) + "</p>";
+        setReportMarkup("source-links", citations);
+
+        setReportMarkup("limitations", listMarkup(
+            view.evidence.limitations,
+            view.evidence.limitationsAvailability == "provided"
+                ? "数据源声明没有额外限制。"
+                : "结果未提供限制说明；这不等于没有限制。"));
+        setReportMarkup("report-warnings", listMarkup(
+            view.evidence.warnings, "本次结果没有返回警告。"));
+        setReportText("report-processing-version",
+            view.artifact.processingVersion.empty()
+                ? "未提供" : view.artifact.processingVersion);
+        setReportText("report-created-at", view.artifact.createdAt.empty()
+            ? "未提供" : view.artifact.createdAt);
+        if (view.evidence.hasExportCapabilities)
+        {
+            std::vector<std::string> exports;
+            if (view.evidence.artifactExport) exports.push_back("结果文件");
+            if (view.evidence.rasterOutput) exports.push_back("栅格");
+            if (view.evidence.tableOutput) exports.push_back("表格");
+            setReportText("export-capabilities", exports.empty()
+                ? "数据源明确未声明可用导出格式" : joined(exports, "、"));
+        }
+        else setReportText("export-capabilities", "未提供");
     }
 
     void updateReportChart(const SnapshotView& view,
@@ -839,7 +1138,8 @@ bool ScienceWorkbenchPresenter::onRmlContextReady(
         "report-minimize", "report-close", "report-overflow",
         "report-delete", "report-delete-cancel", "tab-overview",
         "tab-trends", "tab-spatial-range", "tab-methods-evidence",
-        "report-focus-target", "shelf-0", "shelf-1", "shelf-2"};
+        "report-focus-target", "copy-artifact-id",
+        "shelf-0", "shelf-1", "shelf-2"};
     for (const char* id : reportClickIds)
         _impl->attachReport(*this, id, "click");
     _impl->attachReport(*this, "report-metric-select", "change");
@@ -1149,6 +1449,15 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
     }
     else if (id == "report-focus-target")
         _impl->enqueue("focus-target", schema + "\"focus-target\"}");
+    else if (id == "copy-artifact-id")
+    {
+        const ScienceReportWindowState* active = _impl->reportModel.active();
+        if (active)
+        {
+            Rml::GetSystemInterface()->SetClipboardText(active->artifactId);
+            _impl->setReportText("copy-artifact-status", "已复制");
+        }
+    }
     else if (id.rfind("shelf-", 0) == 0)
     {
         const std::string artifactId = target->GetAttribute<Rml::String>(

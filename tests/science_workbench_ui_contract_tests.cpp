@@ -93,6 +93,17 @@ int main()
     expect(style.find(".science-chart { display: block; height: 300px;") !=
                std::string::npos,
            "scientific chart needs a stable readable plot height");
+    const std::vector<std::string> reportIds = {
+        "overview", "trends", "spatial-range", "methods-evidence",
+        "context-caption", "report-focus-target", "requested-spatial-fact",
+        "actual-spatial-fact", "source-links", "limitations",
+        "report-artifact-id", "copy-artifact-id", "execution-timing",
+        "export-capabilities"};
+    for (const std::string& id : reportIds)
+        expect(report.find("id=\"" + id + "\"") != std::string::npos,
+               "report evidence element ID is missing");
+    expect(count(report, "id=\"report-focus-target\"") == 1,
+           "report must expose one explicit map focus action");
 
     std::cout << "Science workbench UI contract tests passed" << std::endl;
     return 0;
