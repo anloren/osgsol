@@ -39,7 +39,7 @@ void testLifecycleAndBounds()
     model.resize("a", ScienceReportResizeEdge::Right, {-10000.0f, 0.0f});
     model.resize("a", ScienceReportResizeEdge::Bottom, {0.0f, -10000.0f});
     state = model.find("a");
-    expect(state->size.x() >= 560.0f && state->size.y() >= 400.0f,
+    expect(state->size.x() >= 720.0f && state->size.y() >= 520.0f,
            "right and bottom resize must respect minimum size");
 
     expect(model.minimize("a"), "visible report must minimize");

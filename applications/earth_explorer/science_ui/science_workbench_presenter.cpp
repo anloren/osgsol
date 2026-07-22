@@ -1,6 +1,7 @@
 #include "science_workbench_presenter.h"
 
 #include "../science_plugin_runtime.h"
+#include "../earth_control_layout.h"
 #include "rml_science_chart.h"
 #include "science_chart_model.h"
 #include "science_report_window.h"
@@ -12,6 +13,7 @@
 #include <picojson.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -1069,6 +1071,53 @@ public:
         }
     }
 
+    void updateViewportLayout(Rml::Context& context)
+    {
+        const Rml::Vector2i dimensions = context.GetDimensions();
+        if (dimensions == lastContextDimensions) return;
+        lastContextDimensions = dimensions;
+        const earthui::EarthUiShellLayout shell =
+            earthui::computeEarthUiShellLayout(
+                static_cast<float>(dimensions.x),
+                static_cast<float>(dimensions.y), true);
+        const earthui::ScienceWorkbenchLayout workbench =
+            earthui::computeScienceWorkbenchLayout(
+                static_cast<float>(dimensions.x),
+                static_cast<float>(dimensions.y));
+        if (document)
+        {
+            document->SetProperty("left", std::to_string(shell.drawerX) + "px");
+            document->SetProperty("top", std::to_string(shell.drawerY) + "px");
+            document->SetProperty("width",
+                std::to_string(workbench.composerWidth) + "px");
+            document->SetProperty("height",
+                std::to_string(shell.drawerHeight) + "px");
+        }
+        reportModel.setViewport(
+            static_cast<float>(dimensions.x),
+            static_cast<float>(dimensions.y),
+            shell.drawerX + workbench.composerWidth + shell.outerGap,
+            shell.topBarHeight, shell.statusHeight + shell.contextHeight +
+                shell.commandHeight + shell.outerGap * 3.0f);
+        if (Rml::Element* report = reportElement("science-report"))
+        {
+            const float leftInset = shell.drawerX +
+                workbench.composerWidth + shell.outerGap;
+            const float bottomInset = shell.statusHeight +
+                shell.contextHeight + shell.commandHeight +
+                shell.outerGap * 3.0f;
+            const float availableWidth = std::max(
+                1.0f, static_cast<float>(dimensions.x) - leftInset - 24.0f);
+            const float availableHeight = std::max(
+                1.0f, static_cast<float>(dimensions.y) -
+                shell.topBarHeight - bottomInset - 24.0f);
+            report->SetProperty("min-width",
+                std::to_string(std::min(720.0f, availableWidth)) + "px");
+            report->SetProperty("min-height",
+                std::to_string(std::min(520.0f, availableHeight)) + "px");
+        }
+    }
+
     SciencePluginRuntime& runtime;
     std::string documentPath;
     Rml::ElementDocument* document = nullptr;
@@ -1087,6 +1136,9 @@ public:
     std::string actionError;
     ScienceReportWindowModel reportModel;
     MapContextCapture* contextCapture = nullptr;
+    std::atomic<bool> desiredVisible{false};
+    bool renderedVisible = false;
+    Rml::Vector2i lastContextDimensions{-1, -1};
 };
 
 ScienceWorkbenchPresenter::ScienceWorkbenchPresenter(
@@ -1125,7 +1177,8 @@ bool ScienceWorkbenchPresenter::onRmlContextReady(
     const char* changeIds[] = {
         "source-select", "method-select", "first-year", "last-year"};
     for (const char* id : changeIds) _impl->attach(*this, id, "change");
-    _impl->document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+    if (_impl->desiredVisible.load())
+        _impl->document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
     const std::string reportPath = _impl->documentPath.substr(
         0, _impl->documentPath.find_last_of("/\\") + 1) + "report.rml";
     _impl->reportDocument = context.LoadDocument(reportPath);
@@ -1143,17 +1196,38 @@ bool ScienceWorkbenchPresenter::onRmlContextReady(
     for (const char* id : reportClickIds)
         _impl->attachReport(*this, id, "click");
     _impl->attachReport(*this, "report-metric-select", "change");
-    const Rml::Vector2i dimensions = context.GetDimensions();
-    _impl->reportModel.setViewport(
-        static_cast<float>(dimensions.x), static_cast<float>(dimensions.y));
-    _impl->reportDocument->Show(
-        Rml::ModalFlag::None, Rml::FocusFlag::None);
+    _impl->updateViewportLayout(context);
+    if (_impl->desiredVisible.load())
+        _impl->reportDocument->Show(
+            Rml::ModalFlag::None, Rml::FocusFlag::None);
+    _impl->renderedVisible = _impl->desiredVisible.load();
     error.clear();
     return true;
 }
 
-void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context&)
+void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
 {
+    _impl->updateViewportLayout(context);
+    const bool visible = _impl->desiredVisible.load();
+    if (visible != _impl->renderedVisible)
+    {
+        if (visible)
+        {
+            if (_impl->document)
+                _impl->document->Show(
+                    Rml::ModalFlag::None, Rml::FocusFlag::None);
+            if (_impl->reportDocument)
+                _impl->reportDocument->Show(
+                    Rml::ModalFlag::None, Rml::FocusFlag::None);
+        }
+        else
+        {
+            if (_impl->document) _impl->document->Hide();
+            if (_impl->reportDocument) _impl->reportDocument->Hide();
+        }
+        _impl->renderedVisible = visible;
+    }
+    if (!visible) return;
     _impl->updateLiveTargetOverlay();
     {
         std::lock_guard<std::mutex> guard(_impl->errorMutex);
@@ -1494,4 +1568,9 @@ void ScienceWorkbenchPresenter::publishActionError(const std::string& error)
 {
     std::lock_guard<std::mutex> guard(_impl->errorMutex);
     _impl->actionError = error;
+}
+
+void ScienceWorkbenchPresenter::setVisible(bool visible)
+{
+    _impl->desiredVisible.store(visible);
 }

@@ -34,6 +34,8 @@ IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
         LIST(APPEND EXECUTABLE_FILES
              science_ui/science_chart_model.cpp
              science_ui/science_chart_model.h
+             science_ui/science_product_ui_selector.cpp
+             science_ui/science_product_ui_selector.h
              science_ui/rml_science_chart.cpp
              science_ui/rml_science_chart.h
              science_ui/map_context_capture.cpp
@@ -130,6 +132,37 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
         TIMEOUT 30)
 
     IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+        ADD_EXECUTABLE(osgSol_Test_ScienceEarthOffline
+            "${CMAKE_SOURCE_DIR}/tests/science_earth_offline_tests.cpp"
+            science_ui/science_product_ui_selector.cpp)
+        TARGET_COMPILE_FEATURES(osgSol_Test_ScienceEarthOffline PRIVATE
+            cxx_std_17)
+        TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceEarthOffline PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}")
+        ADD_TEST(NAME osgSol_Test_ScienceEarthOffline
+                 COMMAND $<TARGET_FILE:osgSol_Test_ScienceEarthOffline>)
+        SET_TESTS_PROPERTIES(osgSol_Test_ScienceEarthOffline PROPERTIES
+            LABELS "offline;scienceearth;ui"
+            TIMEOUT 30)
+
+        ADD_EXECUTABLE(osgSol_Test_RmlDocumentSmoke
+            "${CMAKE_SOURCE_DIR}/tests/rml_document_smoke_tests.cpp"
+            science_ui/rml_science_chart.cpp
+            science_ui/science_chart_model.cpp)
+        TARGET_COMPILE_FEATURES(osgSol_Test_RmlDocumentSmoke PRIVATE
+            cxx_std_17)
+        TARGET_COMPILE_DEFINITIONS(osgSol_Test_RmlDocumentSmoke PRIVATE
+            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+        TARGET_INCLUDE_DIRECTORIES(osgSol_Test_RmlDocumentSmoke PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}")
+        TARGET_LINK_LIBRARIES(osgSol_Test_RmlDocumentSmoke PRIVATE
+            RmlUi::RmlUi png zlib)
+        ADD_TEST(NAME osgSol_Test_RmlDocumentSmoke
+                 COMMAND $<TARGET_FILE:osgSol_Test_RmlDocumentSmoke>)
+        SET_TESTS_PROPERTIES(osgSol_Test_RmlDocumentSmoke PROPERTIES
+            LABELS "offline;scienceearth;ui"
+            TIMEOUT 30)
+
         ADD_EXECUTABLE(osgSol_Test_ScienceChartModel
             "${CMAKE_SOURCE_DIR}/tests/science_chart_model_tests.cpp"
             science_ui/science_chart_model.cpp)

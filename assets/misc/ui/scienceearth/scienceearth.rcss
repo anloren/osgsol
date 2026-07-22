@@ -1,6 +1,9 @@
-body {
+#science-workbench {
+    position: absolute;
+    left: 76px;
+    top: 56px;
     width: 360px;
-    height: 100%;
+    height: 720px;
     margin: 0;
     color: #e4e8e7;
     background: #0a0c0f;
@@ -104,12 +107,12 @@ select, input { width: 100%; padding: 6px 8px; }
 .progress-footer progress { width: 100%; height: 5px; }
 .operation-error { padding: 0; }
 
-.report-layer { width: 100%; height: 100%; background: transparent; pointer-events: none; }
+.report-layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; margin: 0; color: #e4e8e7; background: transparent; font-family: LXGW Fasmart Gothic; font-size: 15px; pointer-events: none; }
 .live-target-overlay { display: none; position: absolute; pointer-events: none; z-index: 1; }
 .live-target-requested { border: 2px #49d5d0; }
 .live-target-actual { border: 2px #e1bd62; }
 .live-target-label { display: none; position: absolute; max-width: 260px; margin: 10px; padding: 5px 8px; color: #e4e8e7; background: #0a0c0fcc; border-left: 3px #49d5d0; border-radius: 5px; pointer-events: none; z-index: 2; }
-.science-report { display: none; position: absolute; width: 900px; height: 680px; min-width: 560px; min-height: 400px; max-width: 1200px; max-height: 900px; color: #e4e8e7; background: #0a0c0f; border: 1px #354249; border-radius: 12px; overflow: hidden; pointer-events: auto; z-index: 10; }
+.science-report { display: none; position: absolute; width: 900px; height: 680px; min-width: 720px; min-height: 520px; max-width: 1200px; max-height: 900px; color: #e4e8e7; background: #0a0c0f; border: 1px #354249; border-radius: 12px; overflow: hidden; pointer-events: auto; z-index: 10; }
 .report-titlebar { height: 64px; display: flex; align-items: center; justify-content: space-between; background: #11171a; border-bottom: 1px #2c363b; }
 .report-move-handle { display: block; flex: 1; height: 64px; padding: 11px 16px; cursor: move; }
 .report-subtitle { margin-top: 3px; color: #93a09e; font-size: 12px; }

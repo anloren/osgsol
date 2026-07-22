@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <functional>
 #include <memory>
 #include <osg/Vec3d>
 #include <osgViewer/Viewer>
@@ -51,6 +52,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
     earthai::MediaManager* _aiMedia = nullptr;   // 由 main 注入；为空则📷按钮禁用(见 draw())
 #if OSGSOL_BUILD_SCIENCE
     SciencePluginRuntime* _scienceRuntime = nullptr;
+    std::function<bool()> _scienceProductUiReady;
+    std::function<void(bool)> _setScienceProductUiVisible;
 #endif
     float _sunAz, _sunEl;     // 太阳方位角/高度角（度）
     float _exposure;          // HDR 曝光
@@ -233,8 +236,18 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             _mani->home(0.0);
         earthui::drawEarthUiModuleRail(shellLayout, _uiV2);
 
-        const bool drawerVisible = earthui::beginEarthUiModuleDrawer(
-            shellLayout, _uiV2);
+#if OSGSOL_BUILD_SCIENCE
+        const bool productScienceSelected =
+            _uiV2.activeModule == earthui::EarthUiModule::Science &&
+            _scienceProductUiReady && _scienceProductUiReady();
+        if (_setScienceProductUiVisible)
+            _setScienceProductUiVisible(productScienceSelected);
+#else
+        const bool productScienceSelected = false;
+#endif
+
+        const bool drawerVisible = !productScienceSelected &&
+            earthui::beginEarthUiModuleDrawer(shellLayout, _uiV2);
         if (drawerVisible)
         {
             const bool showExplore =
@@ -439,7 +452,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             // 地震详情等「信息呈现」UI 不在此操作面板内,统一放右上角独立面板(见 End() 之后)。
 
 #if OSGSOL_BUILD_SCIENCE
-            if (showScience && _scienceRuntime)
+            if (showScience && !productScienceSelected && _scienceRuntime)
                 _scienceRuntime->drawOperations(
                     _layers, _mani, scienceGuiBridge());
 #endif
@@ -540,7 +553,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         }
 #if OSGSOL_BUILD_SCIENCE
         if (_uiV2.activeModule == earthui::EarthUiModule::Science &&
-            _scienceRuntime && _scienceRuntime->available())
+            !productScienceSelected && _scienceRuntime &&
+            _scienceRuntime->available())
         {
             earthui::finishLeftThenDrawScienceResults(
                 [drawerVisible]() {

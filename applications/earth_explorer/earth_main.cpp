@@ -66,6 +66,7 @@
 #include "product_ui/rml_ui_runtime.h"
 #if OSGSOL_BUILD_SCIENCE
 #include "science_ui/science_workbench_presenter.h"
+#include "science_ui/science_product_ui_selector.h"
 #endif
 #if defined(__APPLE__)
 #include "product_ui/rml_macos_ime.h"
@@ -1075,6 +1076,12 @@ int main(int argc, char** argv)
 #if OSGSOL_BUILD_RMLUI_PRODUCT_UI
     RmlUiRuntime productUiRuntime;
     bool productUiRequested = false;
+#if OSGSOL_BUILD_SCIENCE
+    const char* productUiSelectorEnvironment = getenv("OSGSOL_PRODUCT_UI");
+    const std::string productUiSelector = normalizeScienceProductUiSelector(
+        productUiSelectorEnvironment ? productUiSelectorEnvironment : "",
+        OSGSOL_PRODUCT_UI_DEFAULT);
+#endif
 #endif
     viewer.setImagePager(new earthscience::ScienceImagePager(8));
     osg::ArgumentParser arguments = osgVerse::globalInitialize(argc, argv, osgVerse::defaultInitParameters());
@@ -1271,7 +1278,8 @@ int main(int argc, char** argv)
         new ScienceContextCaptureCallback(&mapContextCapture, sceneCamera);
     contextCaptureCallback->setup(cameras[3], 1);
     std::unique_ptr<ScienceWorkbenchPresenter> scienceWorkbenchPresenter;
-    if (scienceRuntime.supportsWorkbenchUi())
+    if (productUiSelector == "rml" &&
+        scienceRuntime.supportsWorkbenchUi())
     {
         scienceWorkbenchPresenter.reset(new ScienceWorkbenchPresenter(
             scienceRuntime,
@@ -1743,6 +1751,18 @@ int main(int argc, char** argv)
     ctrlUI->_aiMedia = aiMedia;
 #if OSGSOL_BUILD_SCIENCE
     ctrlUI->_scienceRuntime = &scienceRuntime;
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+    if (scienceWorkbenchPresenter)
+    {
+        ctrlUI->_scienceProductUiReady = [&productUiRuntime]() {
+            return productUiRuntime.ready() && !productUiRuntime.failed();
+        };
+        ScienceWorkbenchPresenter* presenter = scienceWorkbenchPresenter.get();
+        ctrlUI->_setScienceProductUiVisible = [presenter](bool visible) {
+            presenter->setVisible(visible);
+        };
+    }
+#endif
 #endif
     imgui->initialize(ctrlUI, false);
     imgui->addToView(&viewer, cameras[3]);  // cameras[3] = finalCamera (HUD, renders to screen)
@@ -1802,16 +1822,24 @@ int main(int argc, char** argv)
     }
 
 #if OSGSOL_BUILD_RMLUI_PRODUCT_UI
-    // The first integration remains legacy-by-default. OSGSOL_PRODUCT_UI=rml
-    // opts into the product runtime without changing existing packaging or UI.
+    // Product workbench is guarded by the science ABI and remains invisible
+    // until its Rml documents have loaded. Any failure leaves legacy ImGui live.
     {
-        const char* selectorEnv = getenv("OSGSOL_PRODUCT_UI");
-        const std::string selector = selectorEnv && *selectorEnv
-            ? selectorEnv : OSGSOL_PRODUCT_UI_DEFAULT;
-        productUiRequested = selector == "rml";
-        if (selector != "legacy" && selector != "rml")
-            OSG_WARN << "[RmlUi] unknown OSGSOL_PRODUCT_UI='" << selector
+        #if OSGSOL_BUILD_SCIENCE
+        const std::string rawSelector = productUiSelectorEnvironment
+            ? productUiSelectorEnvironment : "";
+        if (!rawSelector.empty() && rawSelector != "legacy" &&
+            rawSelector != "rml")
+            OSG_WARN << "[RmlUi] unknown OSGSOL_PRODUCT_UI='" << rawSelector
                      << "'; using legacy" << std::endl;
+        const ScienceProductUiDecision decision = decideScienceProductUi(
+            productUiSelector, true, scienceRuntime.available(),
+            scienceRuntime.supportsWorkbenchUi(), false, false);
+        productUiRequested = decision.attemptRmlInitialization &&
+            static_cast<bool>(scienceWorkbenchPresenter);
+        #else
+        productUiRequested = false;
+        #endif
         if (productUiRequested)
         {
             std::string attachError;

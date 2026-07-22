@@ -40,6 +40,7 @@ public:
     bool takeQueuedAction(ScienceWorkbenchQueuedAction& action);
     bool latestTarget(ScienceTargetOverlayInput& target) const;
     void publishActionError(const std::string& error);
+    void setVisible(bool visible);
 
 private:
     class Impl;

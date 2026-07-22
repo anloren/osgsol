@@ -37,6 +37,8 @@ public:
     void shutdown();
     Rml::Context* context() const;
     void setFrameClient(RmlUiFrameClient* client);
+    bool ready() const { return _ready.load(); }
+    bool failed() const { return _failed.load(); }
 
     bool wantsPointer() const { return _wantsPointer.load(); }
     bool wantsKeyboard() const { return _wantsKeyboard.load(); }
@@ -61,4 +63,6 @@ private:
     std::atomic<bool> _wantsPointer{false};
     std::atomic<bool> _wantsKeyboard{false};
     std::atomic<bool> _wantsText{false};
+    std::atomic<bool> _ready{false};
+    std::atomic<bool> _failed{false};
 };

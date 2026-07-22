@@ -191,7 +191,8 @@ public:
     void operator()(osg::RenderInfo& renderInfo) const override
     {
         osg::State* state = renderInfo.getState();
-        if (!_runtime.context() && state && state->getGraphicsContext())
+        if (!_runtime.context() && !_runtime.failed() && state &&
+            state->getGraphicsContext())
         {
             std::string error;
             if (!_runtime.initialize(*state->getGraphicsContext(), _logicalDpi,
@@ -218,18 +219,27 @@ bool RmlUiRuntime::initialize(osg::GraphicsContext& graphics, float logicalDpi,
                               std::string& error)
 {
     if (_impl->initialized) return true;
+    if (_failed.load())
+    {
+        error = "RmlUi initialization previously failed; legacy UI remains active";
+        return false;
+    }
     const osg::GraphicsContext::Traits* traits = graphics.getTraits();
     _impl->width = traits ? std::max(1, traits->width) : 1;
     _impl->height = traits ? std::max(1, traits->height) : 1;
     _impl->logicalDpi = logicalDpi > 0.0f ? logicalDpi : 96.0f;
     if (!_impl->renderer.initialize(_impl->width, _impl->height, error))
+    {
+        _failed.store(true);
         return false;
+    }
 
     Rml::SetRenderInterface(_impl->renderer.interface());
     if (!Rml::Initialise())
     {
         error = "RmlUi core initialization failed";
         _impl->renderer.shutdown();
+        _failed.store(true);
         return false;
     }
     _impl->context = Rml::CreateContext(
@@ -239,6 +249,7 @@ bool RmlUiRuntime::initialize(osg::GraphicsContext& graphics, float logicalDpi,
         error = "RmlUi context creation failed";
         Rml::Shutdown();
         _impl->renderer.shutdown();
+        _failed.store(true);
         return false;
     }
     _impl->context->SetDensityIndependentPixelRatio(_impl->logicalDpi / 96.0f);
@@ -247,6 +258,7 @@ bool RmlUiRuntime::initialize(osg::GraphicsContext& graphics, float logicalDpi,
     {
         error = "RmlUi could not load the bundled fallback font";
         shutdown();
+        _failed.store(true);
         return false;
     }
     _impl->initialized = true;
@@ -255,10 +267,12 @@ bool RmlUiRuntime::initialize(osg::GraphicsContext& graphics, float logicalDpi,
         if (!_impl->frameClient->onRmlContextReady(*_impl->context, error))
         {
             shutdown();
+            _failed.store(true);
             return false;
         }
         _impl->frameClientReady = true;
     }
+    _ready.store(!_impl->frameClient || _impl->frameClientReady);
     return true;
 }
 
@@ -270,6 +284,7 @@ bool RmlUiRuntime::attach(osgViewer::Viewer& viewer, osg::Camera& camera,
     if (logicalDpi <= 0.0f)
     {
         error = "logical DPI must be positive";
+        _failed.store(true);
         return false;
     }
     _impl->fontPath = fallbackFont;
@@ -279,6 +294,7 @@ bool RmlUiRuntime::attach(osgViewer::Viewer& viewer, osg::Camera& camera,
         new RmlRuntimeDrawCallback(*this, logicalDpi);
     callback->setup(&camera, 2); // POST_DRAW: after the composed world, before swap.
     _impl->attached = true;
+    _ready.store(false);
     return true;
 }
 
@@ -399,6 +415,7 @@ void RmlUiRuntime::shutdown()
     _impl->renderer.shutdown();
     _impl->initialized = false;
     _impl->frameClientReady = false;
+    _ready.store(false);
     _wantsPointer.store(false);
     _wantsKeyboard.store(false);
     _wantsText.store(false);
@@ -410,14 +427,22 @@ void RmlUiRuntime::setFrameClient(RmlUiFrameClient* client)
 {
     _impl->frameClient = client;
     _impl->frameClientReady = false;
+    _ready.store(false);
     if (_impl->context && client)
     {
         std::string error;
         if (client->onRmlContextReady(*_impl->context, error))
+        {
             _impl->frameClientReady = true;
+            _ready.store(true);
+        }
         else if (!error.empty())
+        {
+            _failed.store(true);
+            _ready.store(false);
             OSG_WARN << "[RmlUi] frame client initialization failed: "
                      << error << std::endl;
+        }
     }
 }
 
