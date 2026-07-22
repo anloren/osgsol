@@ -61,6 +61,9 @@
 #endif
 #if OSGSOL_BUILD_RMLUI_PRODUCT_UI
 #include "product_ui/rml_ui_runtime.h"
+#if OSGSOL_BUILD_SCIENCE
+#include "science_ui/science_workbench_presenter.h"
+#endif
 #if defined(__APPLE__)
 #include "product_ui/rml_macos_ime.h"
 #endif
@@ -76,6 +79,7 @@
 #include <thread>
 #include <atomic>
 #include <vector>
+#include <memory>
 
 #ifdef OSG_LIBRARY_STATIC
 USE_OSG_PLUGINS()
@@ -875,6 +879,142 @@ private:
     std::thread _thread;
 };
 
+#if OSGSOL_BUILD_SCIENCE && OSGSOL_BUILD_RMLUI_PRODUCT_UI
+namespace
+{
+std::string sciencePointTargetAction(double latitude, double longitude)
+{
+    picojson::object point;
+    point["latitude"] = picojson::value(latitude);
+    point["longitude"] = picojson::value(longitude);
+    picojson::object geometry;
+    geometry["kind"] = picojson::value("point");
+    geometry["point"] = picojson::value(point);
+    geometry["requestedSpanMeters"] = picojson::value(0.0);
+    picojson::object action;
+    action["schema"] = picojson::value("science-workbench-action-v1");
+    action["action"] = picojson::value("update-target");
+    action["geometry"] = picojson::value(geometry);
+    return picojson::value(action).serialize();
+}
+
+std::string scienceBoundsTargetAction(
+    double latitude, double longitude, double distance,
+    osg::Camera* camera)
+{
+    double fovy = 30.0, aspect = 16.0 / 9.0, nearPlane = 1.0,
+           farPlane = 1.0e8;
+    if (camera)
+        camera->getProjectionMatrixAsPerspective(
+            fovy, aspect, nearPlane, farPlane);
+    constexpr double EARTH_RADIUS_METERS = 6371000.0;
+    const double verticalSpan = 2.0 * std::tan(
+        osg::DegreesToRadians(fovy * 0.5)) * std::max(distance, 100.0);
+    const double latitudeHalf = std::min(70.0,
+        osg::RadiansToDegrees(verticalSpan * 0.5 / EARTH_RADIUS_METERS));
+    const double longitudeScale = std::max(
+        0.1, std::cos(osg::DegreesToRadians(latitude)));
+    const double longitudeHalf = std::min(170.0,
+        latitudeHalf * std::max(0.25, aspect) / longitudeScale);
+    const double west = std::max(-179.999, longitude - longitudeHalf);
+    const double east = std::min(179.999, longitude + longitudeHalf);
+    const double south = std::max(-89.999, latitude - latitudeHalf);
+    const double north = std::min(89.999, latitude + latitudeHalf);
+    picojson::object bounds;
+    bounds["west"] = picojson::value(west);
+    bounds["south"] = picojson::value(south);
+    bounds["east"] = picojson::value(east);
+    bounds["north"] = picojson::value(north);
+    picojson::object geometry;
+    geometry["kind"] = picojson::value("bounds");
+    geometry["bounds"] = picojson::value(bounds);
+    geometry["requestedSpanMeters"] = picojson::value(
+        verticalSpan * std::max(1.0, aspect));
+    picojson::object action;
+    action["schema"] = picojson::value("science-workbench-action-v1");
+    action["action"] = picojson::value("update-target");
+    action["geometry"] = picojson::value(geometry);
+    return picojson::value(action).serialize();
+}
+
+ScienceOverlayGeoPoint scienceGeometryCenter(
+    const ScienceOverlayGeometry& geometry)
+{
+    if (geometry.kind == ScienceOverlayGeometryKind::Point)
+        return geometry.point;
+    return {(geometry.bounds.south + geometry.bounds.north) * 0.5,
+            (geometry.bounds.west + geometry.bounds.east) * 0.5};
+}
+
+class ScienceWorkbenchActionHandler : public osgGA::GUIEventHandler
+{
+public:
+    ScienceWorkbenchActionHandler(ScienceWorkbenchPresenter* presenter,
+                                  SciencePluginRuntime* runtime,
+                                  osgVerse::EarthManipulator* manipulator)
+        : _presenter(presenter), _runtime(runtime),
+          _manipulator(manipulator) {}
+
+    bool handle(const osgGA::GUIEventAdapter& event,
+                osgGA::GUIActionAdapter& actionAdapter) override
+    {
+        if (event.getEventType() != osgGA::GUIEventAdapter::FRAME ||
+            !_presenter || !_runtime || !_manipulator)
+            return false;
+        osgViewer::View* view = static_cast<osgViewer::View*>(&actionAdapter);
+        ScienceWorkbenchQueuedAction action;
+        int drained = 0;
+        while (drained++ < 32 && _presenter->takeQueuedAction(action))
+        {
+            std::string json = action.json;
+            if (action.name == "lock-map-center" ||
+                action.name == "lock-current-view")
+            {
+                const osg::Vec3d target =
+                    _manipulator->computeViewPointLatLonHeight();
+                const double latitude = osg::RadiansToDegrees(target[0]);
+                const double longitude = osg::RadiansToDegrees(target[1]);
+                json = action.name == "lock-current-view"
+                    ? scienceBoundsTargetAction(
+                        latitude, longitude, _manipulator->getDistance(),
+                        view ? view->getCamera() : nullptr)
+                    : sciencePointTargetAction(latitude, longitude);
+            }
+            std::string error;
+            if (!_runtime->dispatchWorkbenchAction(json, error))
+            {
+                _presenter->publishActionError(
+                    "无法执行本次操作：" + error);
+                continue;
+            }
+            _presenter->publishActionError("");
+            if (action.name == "focus-target")
+            {
+                ScienceTargetOverlayInput target;
+                if (_presenter->latestTarget(target))
+                {
+                    const ScienceOverlayGeoPoint center =
+                        scienceGeometryCenter(target.actualVisible
+                            ? target.actual : target.requested);
+                    const osg::Vec3d destination =
+                        osgVerse::Coordinate::convertLLAtoECEF(osg::Vec3d(
+                            osg::DegreesToRadians(center.latitude),
+                            osg::DegreesToRadians(center.longitude), 0.0));
+                    _manipulator->moveTo(destination, 0.0, 45.0);
+                }
+            }
+        }
+        return false;
+    }
+
+private:
+    ScienceWorkbenchPresenter* _presenter;
+    SciencePluginRuntime* _runtime;
+    osgVerse::EarthManipulator* _manipulator;
+};
+}
+#endif
+
 int main(int argc, char** argv)
 {
 #if defined(__APPLE__)
@@ -1091,6 +1231,19 @@ int main(int argc, char** argv)
         scienceRuntime.bindGeoRaster(&terrainScienceOverlay);
         if (osg::Node* scienceNode = scienceRuntime.sceneNode())
             sceneCamera->addChild(scienceNode);
+    }
+#endif
+#if OSGSOL_BUILD_SCIENCE && OSGSOL_BUILD_RMLUI_PRODUCT_UI
+    std::unique_ptr<ScienceWorkbenchPresenter> scienceWorkbenchPresenter;
+    if (scienceRuntime.supportsWorkbenchUi())
+    {
+        scienceWorkbenchPresenter.reset(new ScienceWorkbenchPresenter(
+            scienceRuntime,
+            MISC_DIR + std::string("ui/scienceearth/workbench.rml")));
+        productUiRuntime.setFrameClient(scienceWorkbenchPresenter.get());
+        viewer.addEventHandler(new ScienceWorkbenchActionHandler(
+            scienceWorkbenchPresenter.get(), &scienceRuntime,
+            earthManipulator.get()));
     }
 #endif
     {
@@ -1769,6 +1922,7 @@ int main(int argc, char** argv)
             if (gc && gc->makeCurrent())
             {
                 productUiRuntime.shutdown();
+                productUiRuntime.setFrameClient(nullptr);
                 gc->releaseContext();
             }
 #if defined(__APPLE__)
@@ -1790,6 +1944,7 @@ int main(int argc, char** argv)
         if (gc && gc->makeCurrent())
         {
             productUiRuntime.shutdown();
+            productUiRuntime.setFrameClient(nullptr);
             gc->releaseContext();
         }
 #if defined(__APPLE__)

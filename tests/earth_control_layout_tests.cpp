@@ -70,19 +70,25 @@ int main()
     CHECK(nearlyEqual(compact.defaultWidth, shell.drawerWidth));
     CHECK(nearlyEqual(compact.defaultHeight, shell.drawerHeight));
 
-    const earthui::ScienceWorkspaceLayout scienceCompact =
-        earthui::computeScienceWorkspaceLayout(1024.0f, 576.0f, true);
-    CHECK(nearlyEqual(scienceCompact.leftWidth, shell.drawerWidth));
-    CHECK(scienceCompact.resultWidth <= 1024.0f * 0.32f);
-    CHECK(scienceCompact.centerMapWidth >= 1024.0f * 0.30f);
-    CHECK(nearlyEqual(scienceCompact.resultHeight, shell.insightHeight));
-    CHECK(nearlyEqual(scienceCompact.resultTop, shell.insightTop));
-    CHECK(nearlyEqual(scienceCompact.resultRight, shell.outerGap));
+    const earthui::ScienceWorkbenchLayout scienceCompact =
+        earthui::computeScienceWorkbenchLayout(1024.0f, 576.0f);
+    CHECK(scienceCompact.composerWidth >= 340.0f);
+    CHECK(scienceCompact.composerWidth <= 380.0f);
+    CHECK(scienceCompact.mapWidth >= 480.0f);
+    CHECK(scienceCompact.compact);
+    CHECK(scienceCompact.reportWidth <= 680.0f);
+    CHECK(scienceCompact.reportHeight <= 500.0f);
+    CHECK(scienceCompact.reportX >= 16.0f);
+    CHECK(scienceCompact.reportY >= shell.topBarHeight);
+    CHECK(scienceCompact.reportY + scienceCompact.reportHeight <=
+          scienceCompact.aiComposerY - 16.0f);
 
-    const earthui::ScienceWorkspaceLayout scienceCollapsed =
-        earthui::computeScienceWorkspaceLayout(1024.0f, 576.0f, false);
-    CHECK(scienceCollapsed.resultWidth <= 44.0f);
-    CHECK(scienceCollapsed.centerMapWidth > scienceCompact.centerMapWidth);
+    const earthui::ScienceWorkbenchLayout scienceLarge =
+        earthui::computeScienceWorkbenchLayout(2048.0f, 1152.0f);
+    CHECK(!scienceLarge.compact);
+    CHECK(nearlyEqual(scienceLarge.reportWidth, 900.0f));
+    CHECK(nearlyEqual(scienceLarge.reportHeight, 680.0f));
+    CHECK(scienceLarge.mapWidth >= 480.0f);
 
     std::vector<std::string> scienceFrameOrder;
     earthui::finishLeftThenDrawScienceResults(
@@ -208,22 +214,6 @@ int main()
     CHECK(collapsedOperationsReturn != std::string::npos);
     CHECK(draftRefresh < collapsedOperationsReturn);
 
-    const size_t step1 = panel.find(u8"1  定位区域 / Locate area");
-    const size_t step2 = panel.find(
-        u8"2  选择数据源与时间 / Source and time");
-    const size_t step3 = panel.find(
-        u8"3  选择分析方法 / Choose method");
-    const size_t step4 = panel.find(
-        u8"4  复核资源 / Review exact cost");
-    const size_t step5 = panel.find(
-        u8"5  开始或取消 / Start or cancel");
-    const size_t step6 = panel.find(
-        u8"6  查看地图、结果与证据 / View results");
-    CHECK(step1 != std::string::npos && step2 != std::string::npos &&
-          step3 != std::string::npos && step4 != std::string::npos &&
-          step5 != std::string::npos && step6 != std::string::npos);
-    CHECK(step1 < step2 && step2 < step3 && step3 < step4 &&
-          step4 < step5 && step5 < step6);
     CHECK(panel.find(u8"当前状态 / Current state") != std::string::npos);
     CHECK(panel.find(u8"取消当前请求 / Cancel request") !=
           std::string::npos);

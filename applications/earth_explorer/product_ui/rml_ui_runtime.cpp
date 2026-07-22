@@ -147,6 +147,8 @@ public:
     int height = 1;
     bool initialized = false;
     bool attached = false;
+    bool frameClientReady = false;
+    RmlUiFrameClient* frameClient = nullptr;
     std::string deferredError;
 };
 
@@ -248,6 +250,15 @@ bool RmlUiRuntime::initialize(osg::GraphicsContext& graphics, float logicalDpi,
         return false;
     }
     _impl->initialized = true;
+    if (_impl->frameClient)
+    {
+        if (!_impl->frameClient->onRmlContextReady(*_impl->context, error))
+        {
+            shutdown();
+            return false;
+        }
+        _impl->frameClientReady = true;
+    }
     return true;
 }
 
@@ -362,6 +373,8 @@ void RmlUiRuntime::update(double)
             break;
         }
     }
+    if (_impl->frameClient && _impl->frameClientReady)
+        _impl->frameClient->onRmlFrame(*_impl->context);
     _impl->context->Update();
     const bool text = isTextElement(_impl->context->GetFocusElement());
     _wantsText.store(text);
@@ -385,12 +398,28 @@ void RmlUiRuntime::shutdown()
     if (_impl->initialized) Rml::Shutdown();
     _impl->renderer.shutdown();
     _impl->initialized = false;
+    _impl->frameClientReady = false;
     _wantsPointer.store(false);
     _wantsKeyboard.store(false);
     _wantsText.store(false);
 }
 
 Rml::Context* RmlUiRuntime::context() const { return _impl->context; }
+
+void RmlUiRuntime::setFrameClient(RmlUiFrameClient* client)
+{
+    _impl->frameClient = client;
+    _impl->frameClientReady = false;
+    if (_impl->context && client)
+    {
+        std::string error;
+        if (client->onRmlContextReady(*_impl->context, error))
+            _impl->frameClientReady = true;
+        else if (!error.empty())
+            OSG_WARN << "[RmlUi] frame client initialization failed: "
+                     << error << std::endl;
+    }
+}
 
 void RmlUiRuntime::enqueueCommittedText(const std::string& utf8)
 {

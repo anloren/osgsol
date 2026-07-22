@@ -11,6 +11,15 @@ namespace osgGA { class GUIEventAdapter; }
 namespace osgViewer { class Viewer; }
 namespace Rml { class Context; }
 
+class RmlUiFrameClient
+{
+public:
+    virtual ~RmlUiFrameClient() = default;
+    virtual bool onRmlContextReady(Rml::Context& context,
+                                   std::string& error) = 0;
+    virtual void onRmlFrame(Rml::Context& context) = 0;
+};
+
 class RmlUiRuntime : private RmlInputSink
 {
 public:
@@ -27,6 +36,7 @@ public:
     void render();
     void shutdown();
     Rml::Context* context() const;
+    void setFrameClient(RmlUiFrameClient* client);
 
     bool wantsPointer() const { return _wantsPointer.load(); }
     bool wantsKeyboard() const { return _wantsKeyboard.load(); }

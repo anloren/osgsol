@@ -1,0 +1,11 @@
+/*
+ * Carbon Spectrum tokens. RmlUi 6.2 deliberately implements a compact CSS
+ * subset and does not expand browser CSS custom properties. Keep the tokens
+ * named here for design/audit tooling; runtime rules use their literal values.
+ * science-surface #0a0c0f; science-surface-raised #12171b;
+ * science-surface-card #171d21; science-border #2c363b;
+ * science-text #e4e8e7; science-muted #93a09e;
+ * --science-run #28c9c3; --science-run-hover #51ddd6;
+ * science-target #49d5d0; science-coverage #e1bd62;
+ * --science-failure #ef6a62; --science-focus #a7efe9.
+ */

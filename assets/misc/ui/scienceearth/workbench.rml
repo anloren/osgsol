@@ -1,0 +1,97 @@
+<rml>
+<head>
+    <title>科学分析</title>
+    <link type="text/rcss" href="tokens.rcss"/>
+    <link type="text/rcss" href="scienceearth.rcss"/>
+</head>
+<body id="science-workbench">
+    <header class="composer-titlebar">
+        <div>
+            <h1>科学分析</h1>
+            <p id="workbench-state" class="state-label">准备研究</p>
+        </div>
+        <button id="science-help" class="icon-control"
+                aria-label="查看科学分析帮助">?</button>
+    </header>
+
+    <main id="composer-scroll" class="composer-scroll">
+        <p id="science-help-copy" class="help-copy">先选择数据，再锁定地图上的位置或范围，检查年份与成本，最后开始分析。结果会在独立报告中打开。</p>
+        <section id="analysis-template" class="workflow-card">
+            <label for="source-select">分析方案</label>
+            <select id="source-select" name="source"></select>
+            <h2 id="analysis-name">农业气象年度分析</h2>
+            <p id="analysis-summary" class="supporting-copy">比较所选位置各年度的温度、降水、蒸散、辐射和湿度。</p>
+        </section>
+
+        <section id="target-card" class="workflow-card target-card">
+            <div class="section-heading">
+                <h2>分析位置</h2>
+                <span id="target-status" class="status-chip">未锁定</span>
+            </div>
+            <p id="target-title" class="target-title">尚未锁定分析位置</p>
+            <p id="target-coordinates" class="coordinate-readout">在地图上定位后锁定范围</p>
+            <p id="target-support" class="muted"></p>
+            <p id="target-lock-note" class="lock-note">镜头移动不会改变已锁定范围</p>
+            <div class="action-row">
+                <button id="lock-map-center" data-action="lock-map-center">锁定地图中心</button>
+                <button id="lock-current-view" data-action="lock-current-view">使用当前视野</button>
+            </div>
+            <div class="action-row locked-actions">
+                <button id="update-target" data-action="update-target">更新为地图中心</button>
+                <button id="focus-target" data-action="focus-target">回到分析区域</button>
+            </div>
+        </section>
+
+        <section id="time-range" class="workflow-card grouped-control">
+            <div class="section-heading">
+                <h2>时间范围</h2>
+                <span id="provider-years" class="muted">1940–2025</span>
+            </div>
+            <div class="year-fields">
+                <label for="first-year">开始年份</label>
+                <input id="first-year" type="text" inputmode="numeric" value="2017"/>
+                <span class="range-connector"></span>
+                <label for="last-year">结束年份</label>
+                <input id="last-year" type="text" inputmode="numeric" value="2025"/>
+            </div>
+            <div id="year-range-strip" class="range-strip"><span></span></div>
+            <p id="time-error" class="field-error"></p>
+        </section>
+
+        <section id="method-options" class="workflow-card">
+            <div class="section-heading">
+                <h2>分析方法</h2>
+                <button class="icon-control" aria-label="查看分析方法说明">?</button>
+            </div>
+            <select id="method-select" name="method">
+                <option value="annual-summary">年度统计与趋势</option>
+                <option value="change-map">前后变化比较</option>
+                <option value="direction-change">高维方向变化</option>
+            </select>
+            <p id="method-summary" class="muted">分别呈现不同单位的指标，不混合坐标轴。</p>
+        </section>
+
+        <section id="cost-disclosure" class="workflow-card disclosure">
+            <button id="cost-toggle" class="disclosure-toggle">查看提交前检查</button>
+            <div id="cost-body" class="cost-body">
+            <dl class="cost-grid">
+                <dt>预计读取</dt><dd id="source-bytes">未提供</dd>
+                <dt>结果单元</dt><dd id="result-cells">未提供</dd>
+                <dt>预计时长</dt><dd id="estimated-duration">未提供</dd>
+            </dl>
+            </div>
+        </section>
+
+        <p id="workbench-error" class="operation-error"></p>
+    </main>
+
+    <footer id="run-footer" class="run-footer">
+        <div id="progress-footer" class="progress-footer">
+            <span id="progress-label">请先锁定分析位置</span>
+            <progress id="run-progress" value="0" max="100"></progress>
+            <button id="cancel-action" data-action="cancel">取消</button>
+        </div>
+        <button id="run-action" class="primary-action" data-action="run" disabled>开始分析</button>
+    </footer>
+</body>
+</rml>

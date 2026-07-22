@@ -206,6 +206,10 @@ namespace
             error = "workbench-analysis-not-supported-for-source";
             return false;
         }
+        // The product workbench always exposes the exact cost immediately
+        // above its sticky Run action. Clicking Run is the explicit consent
+        // for that disclosed request; there is no hidden second checkbox.
+        query.analysis.confirmedLargeRequest = true;
         if (!runtime.service->validateQuery(query, error)) return false;
         const earthscience::ScienceQueryCost cost =
             runtime.service->estimate(query);

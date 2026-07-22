@@ -30,6 +30,11 @@ IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
          "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Renderer_GL3.cpp"
          "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Renderer_GL3.h"
          "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Include_GL3.h")
+    IF(OSGSOL_BUILD_SCIENCE)
+        LIST(APPEND EXECUTABLE_FILES
+             science_ui/science_workbench_presenter.cpp
+             science_ui/science_workbench_presenter.h)
+    ENDIF()
 ENDIF()
 
 IF(APPLE)
@@ -104,6 +109,18 @@ IF(APPLE AND OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
 ENDIF()
 
 IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_ScienceWorkbenchUiContract
+        "${CMAKE_SOURCE_DIR}/tests/science_workbench_ui_contract_tests.cpp")
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceWorkbenchUiContract PRIVATE
+        cxx_std_17)
+    TARGET_COMPILE_DEFINITIONS(osgSol_Test_ScienceWorkbenchUiContract PRIVATE
+        OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    ADD_TEST(NAME osgSol_Test_ScienceWorkbenchUiContract
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceWorkbenchUiContract>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceWorkbenchUiContract PROPERTIES
+        LABELS "offline;scienceearth;ui"
+        TIMEOUT 30)
+
     IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
         ADD_EXECUTABLE(osgSol_Test_RmlInputBridge
             "${CMAKE_SOURCE_DIR}/tests/rml_input_bridge_tests.cpp"

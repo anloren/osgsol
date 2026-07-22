@@ -133,6 +133,18 @@ struct ScienceWorkspaceLayout
     float resultRight;
 };
 
+struct ScienceWorkbenchLayout
+{
+    float composerWidth;
+    float mapWidth;
+    float reportX;
+    float reportY;
+    float reportWidth;
+    float reportHeight;
+    float aiComposerY;
+    bool compact;
+};
+
 template<typename EndLeftPanel, typename DrawScienceResults>
 inline void finishLeftThenDrawScienceResults(
     EndLeftPanel endLeftPanel,
@@ -202,6 +214,36 @@ inline ScienceWorkspaceLayout computeScienceWorkspaceLayout(
         0.0f, safeWidth - horizontalMargins - layout.leftWidth - layout.resultWidth);
     layout.resultTop = shell.insightTop;
     layout.resultRight = shell.outerGap;
+    return layout;
+}
+
+inline ScienceWorkbenchLayout computeScienceWorkbenchLayout(
+    float viewportWidth, float viewportHeight)
+{
+    const float width = std::max(viewportWidth, 1.0f);
+    const float height = std::max(viewportHeight, 1.0f);
+    const EarthUiShellLayout shell =
+        computeEarthUiShellLayout(width, height, true);
+
+    ScienceWorkbenchLayout layout;
+    layout.compact = width <= 1100.0f || height <= 640.0f;
+    layout.composerWidth = std::clamp(width * 0.18f, 340.0f, 380.0f);
+    const float mapLeft = shell.navigationWidth + shell.outerGap * 2.0f +
+        layout.composerWidth;
+    layout.mapWidth = std::max(480.0f, width - mapLeft - shell.outerGap);
+    layout.aiComposerY = shell.commandY;
+
+    const float margin = layout.compact ? 16.0f : 32.0f;
+    const float desiredWidth = layout.compact ? 680.0f : 900.0f;
+    const float desiredHeight = layout.compact ? 500.0f : 680.0f;
+    layout.reportWidth = std::min(desiredWidth, width - margin * 2.0f);
+    const float reportTopMinimum = shell.topBarHeight + margin;
+    const float availableReportHeight = std::max(
+        1.0f, layout.aiComposerY - margin - reportTopMinimum);
+    layout.reportHeight = std::min(desiredHeight, availableReportHeight);
+    layout.reportX = std::max(margin, (width - layout.reportWidth) * 0.5f);
+    layout.reportY = std::max(reportTopMinimum,
+        (layout.aiComposerY - layout.reportHeight) * 0.5f);
     return layout;
 }
 
