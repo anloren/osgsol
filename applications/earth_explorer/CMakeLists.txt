@@ -16,6 +16,8 @@ IF(OSGSOL_BUILD_SCIENCE)
     LIST(APPEND EXECUTABLE_FILES
          science_plugin_runtime.cpp science_plugin_runtime.h
          science_plugin_api.h
+         science_ui/science_target_overlay.cpp
+         science_ui/science_target_overlay.h
          terrain_science_overlay.cpp terrain_science_overlay.h
          terrain_science_overlay_math.cpp terrain_science_overlay_math.h)
 ENDIF()
@@ -73,6 +75,19 @@ IF(APPLE AND OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
 ENDIF()
 
 IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
+    ADD_EXECUTABLE(osgSol_Test_ScienceTargetOverlay
+        "${CMAKE_SOURCE_DIR}/tests/science_target_overlay_tests.cpp"
+        science_ui/science_target_overlay.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceTargetOverlay PRIVATE cxx_std_17)
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceTargetOverlay PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    LINK_OSG_LIBRARY(osgSol_Test_ScienceTargetOverlay OpenThreads osg)
+    ADD_TEST(NAME osgSol_Test_ScienceTargetOverlay
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceTargetOverlay>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceTargetOverlay PROPERTIES
+        LABELS "offline;scienceearth;ui"
+        TIMEOUT 30)
+
     ADD_EXECUTABLE(osgSol_Test_ScienceWorkbenchProtocol
         "${CMAKE_SOURCE_DIR}/tests/science_workbench_protocol_tests.cpp"
         science_workbench_protocol.cpp
