@@ -133,6 +133,23 @@ int main()
     CHECK(source.find("SetNextWindowPos(ImVec2(20.0f, 20.0f)") ==
           std::string::npos);
 
+    // RmlUi must own the outer post-draw callback so it can initialize on the
+    // first rendered frame and then invoke the legacy ImGui shell as its
+    // chained callback. ImGui's renderer does not forward callbacks attached
+    // after it, which otherwise leaves the product workbench permanently in
+    // the legacy fallback without an initialization error.
+    std::ifstream mainInput(std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/earth_main.cpp");
+    std::ostringstream mainBuffer;
+    mainBuffer << mainInput.rdbuf();
+    const std::string mainSource = mainBuffer.str();
+    CHECK(mainInput.good() || mainInput.eof());
+    const size_t rmlAttach = mainSource.find("productUiRuntime.attach(");
+    const size_t imguiAttach = mainSource.find("imgui->addToView(");
+    CHECK(rmlAttach != std::string::npos);
+    CHECK(imguiAttach != std::string::npos);
+    CHECK(rmlAttach < imguiAttach);
+
     // A constrained panel must not use ImGui's default "control then visible
     // label on the right" form. At compact widths that pattern clips the
     // label. Production fields use a wrapped label row followed by a
@@ -162,6 +179,15 @@ int main()
     CHECK(shellSource.find("PopTextWrapPos") != std::string::npos);
     CHECK(shellSource.find("kVermilion") != std::string::npos);
     CHECK(shellSource.find("kCyan") != std::string::npos);
+    // Compact/Retina top bars keep actions on the first row at an explicit
+    // vertical position and clip telemetry before the reserved action area.
+    CHECK(shellSource.find("ImGui::PushClipRect") != std::string::npos);
+    CHECK(shellSource.find(
+        "ImGui::SetCursorPos(ImVec2(actionX, actionY))") !=
+        std::string::npos);
+    CHECK(shellSource.find(
+        "if (ImGui::GetCursorPosX() < cursorRight)") ==
+        std::string::npos);
 
     std::ifstream panelInput(std::string(OSGVERSE_SOURCE_DIR) +
         "/applications/earth_explorer/science_earth_panel.cpp");

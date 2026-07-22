@@ -268,6 +268,17 @@ bool drawEarthUiTopBar(const EarthUiShellLayout& layout,
             ImVec2(min.x + 3.0f, min.y + layout.topBarHeight),
             ImGui::ColorConvertFloat4ToU32(kVermilion));
 
+        const float actionsWidth = data.scienceAvailable ? 304.0f : 420.0f;
+        const float actionX = std::max(
+            ImGui::GetStyle().WindowPadding.x,
+            ImGui::GetWindowWidth() - actionsWidth);
+        const float actionY = std::max(
+            0.0f, (layout.topBarHeight - ImGui::GetFrameHeight()) * 0.5f);
+        const float leftClipRight = std::max(
+            min.x + ImGui::GetStyle().WindowPadding.x,
+            min.x + actionX - 12.0f);
+        ImGui::PushClipRect(
+            min, ImVec2(leftClipRight, min.y + layout.topBarHeight), true);
         ImGui::PushStyleColor(ImGuiCol_Text, kTextStrong);
         ImGui::TextUnformatted("osgSol Earth / ScienceEarth");
         ImGui::PopStyleColor();
@@ -275,14 +286,15 @@ bool drawEarthUiTopBar(const EarthUiShellLayout& layout,
         ImGui::TextDisabled("/");
         ImGui::SameLine();
         ImGui::TextUnformatted(moduleLabel(state.activeModule));
-        ImGui::SameLine(0.0f, 18.0f);
-        ImGui::TextDisabled(u8"%.4f°, %.4f° · %.1f km",
-            data.latitudeDeg, data.longitudeDeg, data.altitudeKm);
+        if (actionX >= 720.0f)
+        {
+            ImGui::SameLine(0.0f, 18.0f);
+            ImGui::TextDisabled(u8"%.4f°, %.4f° · %.1f km",
+                data.latitudeDeg, data.longitudeDeg, data.altitudeKm);
+        }
+        ImGui::PopClipRect();
 
-        const float actionsWidth = 304.0f;
-        const float cursorRight = ImGui::GetWindowWidth() - actionsWidth;
-        if (ImGui::GetCursorPosX() < cursorRight)
-            ImGui::SetCursorPosX(cursorRight);
+        ImGui::SetCursorPos(ImVec2(actionX, actionY));
         if (ImGui::Button(u8"回到全球")) requestHome = true;
         ImGui::SameLine();
         if (ImGui::Button(state.drawerOpen ? u8"收起面板" : u8"打开面板"))

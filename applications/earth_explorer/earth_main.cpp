@@ -1764,6 +1764,46 @@ int main(int argc, char** argv)
     }
 #endif
 #endif
+
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+    // Install RmlUi before ImGui so Rml owns the outer POST_DRAW callback and
+    // can forward to the legacy shell. ImGuiRenderCallback does not forward a
+    // callback attached after it; the reverse order therefore left RmlUi
+    // permanently uninitialized and silently kept the legacy Science panel.
+    {
+        #if OSGSOL_BUILD_SCIENCE
+        const std::string rawSelector = productUiSelectorEnvironment
+            ? productUiSelectorEnvironment : "";
+        if (!rawSelector.empty() && rawSelector != "legacy" &&
+            rawSelector != "rml")
+            OSG_WARN << "[RmlUi] unknown OSGSOL_PRODUCT_UI='" << rawSelector
+                     << "'; using legacy" << std::endl;
+        const ScienceProductUiDecision decision = decideScienceProductUi(
+            productUiSelector, true, scienceRuntime.available(),
+            scienceRuntime.supportsWorkbenchUi(), false, false);
+        productUiRequested = decision.attemptRmlInitialization &&
+            static_cast<bool>(scienceWorkbenchPresenter);
+        #else
+        productUiRequested = false;
+        #endif
+        if (productUiRequested)
+        {
+            std::string attachError;
+            if (!productUiRuntime.attach(
+                    viewer, *cameras[3],
+                    MISC_DIR + std::string("LXGWFasmartGothic.otf"),
+                    96.0f, attachError))
+            {
+                productUiRequested = false;
+                OSG_WARN << "[RmlUi] product UI attach failed; using legacy: "
+                         << attachError << std::endl;
+            }
+#if defined(__APPLE__)
+            else rmlmacime::connect(&productUiRuntime);
+#endif
+        }
+    }
+#endif
     imgui->initialize(ctrlUI, false);
     imgui->addToView(&viewer, cameras[3]);  // cameras[3] = finalCamera (HUD, renders to screen)
 
@@ -1820,44 +1860,6 @@ int main(int argc, char** argv)
         osg::DisplaySettings::instance()->setNumMultiSamples(4);
         viewer.setUpViewOnSingleScreen(screenNo);
     }
-
-#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
-    // Product workbench is guarded by the science ABI and remains invisible
-    // until its Rml documents have loaded. Any failure leaves legacy ImGui live.
-    {
-        #if OSGSOL_BUILD_SCIENCE
-        const std::string rawSelector = productUiSelectorEnvironment
-            ? productUiSelectorEnvironment : "";
-        if (!rawSelector.empty() && rawSelector != "legacy" &&
-            rawSelector != "rml")
-            OSG_WARN << "[RmlUi] unknown OSGSOL_PRODUCT_UI='" << rawSelector
-                     << "'; using legacy" << std::endl;
-        const ScienceProductUiDecision decision = decideScienceProductUi(
-            productUiSelector, true, scienceRuntime.available(),
-            scienceRuntime.supportsWorkbenchUi(), false, false);
-        productUiRequested = decision.attemptRmlInitialization &&
-            static_cast<bool>(scienceWorkbenchPresenter);
-        #else
-        productUiRequested = false;
-        #endif
-        if (productUiRequested)
-        {
-            std::string attachError;
-            if (!productUiRuntime.attach(
-                    viewer, *cameras[3],
-                    MISC_DIR + std::string("LXGWFasmartGothic.otf"),
-                    96.0f, attachError))
-            {
-                productUiRequested = false;
-                OSG_WARN << "[RmlUi] product UI attach failed; using legacy: "
-                         << attachError << std::endl;
-            }
-#if defined(__APPLE__)
-            else rmlmacime::connect(&productUiRuntime);
-#endif
-        }
-    }
-#endif
 
 #if defined(__APPLE__)
     // 中文 IME 直打(见 ImeFrameHandler/ime_bridge.mm)。同一个 NSTextInputClient
