@@ -4,6 +4,9 @@
 #include "science_ai_tools.h"
 #include "science_earth_panel.h"
 #include "science_preview_layer.h"
+#include "science_query_builder.h"
+#include "science_workbench_model.h"
+#include "science_workbench_protocol.h"
 
 #include <AlphaEarthProvider.h>
 #include <CopernicusDemProvider.h>
@@ -17,8 +20,11 @@
 
 #include <cstdio>
 #include <exception>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -75,6 +81,21 @@ namespace
             service.reset(new earthscience::ScienceQueryService(
                 std::move(registry)));
             layer = new SciencePreviewLayer(service.get());
+
+            std::string workbenchError;
+            ScienceWorkbenchAction source;
+            source.kind = ScienceWorkbenchActionKind::SelectSource;
+            source.sourceId = "era5-agricultural-climate";
+            workbench.dispatch(source, workbenchError);
+            ScienceWorkbenchAction analysis;
+            analysis.kind = ScienceWorkbenchActionKind::SelectAnalysis;
+            analysis.analysisId = "annual-agricultural-climate";
+            workbench.dispatch(analysis, workbenchError);
+            ScienceWorkbenchAction years;
+            years.kind = ScienceWorkbenchActionKind::SetYearRange;
+            years.firstYear = 2017;
+            years.lastYear = 2025;
+            workbench.dispatch(years, workbenchError);
         }
 
         // Declaration order is deliberate: destruction runs panel, layer,
@@ -82,11 +103,121 @@ namespace
         std::unique_ptr<earthscience::ScienceQueryService> service;
         osg::ref_ptr<SciencePreviewLayer> layer;
         ScienceEarthPanel panel;
+        ScienceWorkbenchModel workbench;
+        std::uint64_t workbenchJobId = 0;
+        std::uint64_t lastSyncedJobId =
+            std::numeric_limits<std::uint64_t>::max();
+        earthscience::ScienceJobState lastSyncedState =
+            earthscience::ScienceJobState::Unavailable;
+        earthscience::ScienceProgressStage lastSyncedStage =
+            earthscience::ScienceProgressStage::Idle;
+        std::uint64_t lastSyncedCompleted =
+            std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t lastSyncedTotal =
+            std::numeric_limits<std::uint64_t>::max();
+        std::string lastSyncedMessage;
+        std::string lastSyncedArtifactId;
     };
 
     SciencePluginSession* session(void* value)
     {
         return static_cast<SciencePluginSession*>(value);
+    }
+
+    const earthscience::ScienceSourceDescriptor* findSource(
+        const std::vector<earthscience::ScienceSourceDescriptor>& sources,
+        const std::string& sourceId)
+    {
+        for (const earthscience::ScienceSourceDescriptor& source : sources)
+            if (source.id == sourceId) return &source;
+        return nullptr;
+    }
+
+    void syncWorkbench(SciencePluginSession& runtime)
+    {
+        const earthscience::ScienceJobSnapshot snapshot =
+            runtime.service->snapshot();
+        const std::string artifactId = snapshot.displayArtifact
+            ? snapshot.displayArtifact->artifactId : std::string();
+        const bool changed = snapshot.jobId != runtime.lastSyncedJobId ||
+            snapshot.state != runtime.lastSyncedState ||
+            snapshot.progress.stage != runtime.lastSyncedStage ||
+            snapshot.progress.completedUnits != runtime.lastSyncedCompleted ||
+            snapshot.progress.totalUnits != runtime.lastSyncedTotal ||
+            snapshot.message != runtime.lastSyncedMessage ||
+            artifactId != runtime.lastSyncedArtifactId;
+        if (!changed) return;
+        runtime.workbench.applyJobSnapshot(snapshot);
+        runtime.lastSyncedJobId = snapshot.jobId;
+        runtime.lastSyncedState = snapshot.state;
+        runtime.lastSyncedStage = snapshot.progress.stage;
+        runtime.lastSyncedCompleted = snapshot.progress.completedUnits;
+        runtime.lastSyncedTotal = snapshot.progress.totalUnits;
+        runtime.lastSyncedMessage = snapshot.message;
+        runtime.lastSyncedArtifactId = artifactId;
+    }
+
+    bool prepareWorkbenchQuery(SciencePluginSession& runtime,
+                               std::string& error)
+    {
+        const ScienceWorkbenchViewModel& view =
+            runtime.workbench.viewModel();
+        const std::vector<earthscience::ScienceSourceDescriptor> sources =
+            runtime.service->listSources();
+        const earthscience::ScienceSourceDescriptor* source =
+            findSource(sources, view.draft.sourceId);
+        if (!source)
+        {
+            error = "workbench-source-not-found";
+            return false;
+        }
+        if (!view.target.locked ||
+            view.target.requested.kind !=
+                earthscience::ScienceGeometryKind::Point)
+        {
+            error = "workbench-point-target-required";
+            return false;
+        }
+        if (view.draft.time.explicitYears.empty())
+        {
+            error = "workbench-time-required";
+            return false;
+        }
+        const int firstYear = view.draft.time.explicitYears.front();
+        const int lastYear = view.draft.time.explicitYears.back();
+        earthscience::GeoTemporalQuery query;
+        if (source->id == "era5-land-surface-history" ||
+            source->id == "era5-agricultural-climate")
+        {
+            query = makeScienceVariablePointSeriesQuery(
+                *source, view.target.requested.point.latitude,
+                view.target.requested.point.longitude,
+                firstYear, lastYear);
+        }
+        else if (source->id == "alphaearth-foundations")
+        {
+            query = makeSciencePointSeriesQuery(
+                *source, view.target.requested.point.latitude,
+                view.target.requested.point.longitude,
+                firstYear, lastYear);
+        }
+        else
+        {
+            error = "workbench-analysis-not-supported-for-source";
+            return false;
+        }
+        if (!runtime.service->validateQuery(query, error)) return false;
+        const earthscience::ScienceQueryCost cost =
+            runtime.service->estimate(query);
+        runtime.workbench.configureDraft(query);
+        runtime.workbench.applyCost(cost);
+        if (cost.requiresConfirmation &&
+            !query.analysis.confirmedLargeRequest)
+        {
+            error = "workbench-cost-confirmation-required";
+            return false;
+        }
+        return true;
     }
 
     void* createSession(const char* indexPath, char* error,
@@ -176,23 +307,112 @@ namespace
                                    runtime->layer.get(), layers);
     }
 
-    const OsgSolSciencePluginApiV3 pluginApi = {
-        OSGSOL_SCIENCE_PLUGIN_ABI_V3,
-        sizeof(OsgSolSciencePluginApiV3),
-        createSession,
-        destroySession,
-        sceneNode,
-        setVisible,
-        bindGeoRaster,
-        registerAiTools,
-        bindGui,
-        drawOperations,
-        drawResults,
+    bool copyWorkbenchSnapshot(void* value,
+                               OsgSolScienceUiBufferV1* output)
+    {
+        SciencePluginSession* runtime = session(value);
+        if (!runtime || !output) return false;
+        syncWorkbench(*runtime);
+        const ScienceWorkbenchViewModel& view =
+            runtime->workbench.viewModel();
+        output->revision = view.revision;
+        const std::string snapshot = serializeScienceWorkbenchSnapshot(
+            view, runtime->service->listSources(),
+            runtime->workbench.artifact(view.activeArtifactId));
+        return copyScienceWorkbenchSnapshot(snapshot, output);
+    }
+
+    bool dispatchWorkbenchAction(void* value, const char* actionUtf8,
+                                 std::size_t actionSize, char* error,
+                                 std::size_t errorSize)
+    {
+        SciencePluginSession* runtime = session(value);
+        if (!runtime)
+        {
+            copyError(error, errorSize, "workbench-session-unavailable");
+            return false;
+        }
+        syncWorkbench(*runtime);
+        ScienceWorkbenchAction action;
+        std::string detail;
+        if (!parseScienceWorkbenchAction(
+                actionUtf8, actionSize, action, detail))
+        {
+            copyError(error, errorSize, detail);
+            return false;
+        }
+        if (action.kind == ScienceWorkbenchActionKind::Run)
+        {
+            if (!prepareWorkbenchQuery(*runtime, detail) ||
+                !runtime->workbench.dispatch(action, detail))
+            {
+                copyError(error, errorSize, detail);
+                return false;
+            }
+            std::optional<earthscience::GeoTemporalQuery> query =
+                runtime->workbench.takePendingSubmission();
+            if (!query)
+            {
+                copyError(error, errorSize,
+                          "workbench-submission-unavailable");
+                return false;
+            }
+            runtime->workbenchJobId = runtime->service->submit(*query);
+            if (runtime->workbenchJobId == 0)
+            {
+                copyError(error, errorSize, "workbench-submit-failed");
+                return false;
+            }
+            syncWorkbench(*runtime);
+            return true;
+        }
+        if (action.kind == ScienceWorkbenchActionKind::Cancel)
+        {
+            if (!runtime->workbench.dispatch(action, detail))
+            {
+                copyError(error, errorSize, detail);
+                return false;
+            }
+            if (runtime->workbenchJobId != 0)
+                runtime->service->cancel(runtime->workbenchJobId);
+            syncWorkbench(*runtime);
+            return true;
+        }
+        if (action.kind == ScienceWorkbenchActionKind::OpenReport &&
+            !runtime->service->showArtifact(action.artifactId))
+        {
+            copyError(error, errorSize, "workbench-artifact-not-found");
+            return false;
+        }
+        if (!runtime->workbench.dispatch(action, detail))
+        {
+            copyError(error, errorSize, detail);
+            return false;
+        }
+        return true;
+    }
+
+    const OsgSolSciencePluginApiV4 pluginApi = {
+        {
+            OSGSOL_SCIENCE_PLUGIN_ABI_V4,
+            sizeof(OsgSolSciencePluginApiV4),
+            createSession,
+            destroySession,
+            sceneNode,
+            setVisible,
+            bindGeoRaster,
+            registerAiTools,
+            bindGui,
+            drawOperations,
+            drawResults,
+        },
+        copyWorkbenchSnapshot,
+        dispatchWorkbenchAction,
     };
 }
 
 extern "C" __attribute__((visibility("default")))
 const OsgSolSciencePluginApiV3* osgsol_science_g0_probe_anchor()
 {
-    return &pluginApi;
+    return &pluginApi.v3;
 }

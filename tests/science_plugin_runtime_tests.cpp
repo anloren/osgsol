@@ -117,6 +117,47 @@ int main()
         CHECK(!runtime.load(OSGSOL_TEST_SCIENCE_PLUGIN, "fail"));
         CHECK(runtime.error() == "fake create failure");
     }
+    {
+        SciencePluginRuntime runtime;
+        CHECK(runtime.load(OSGSOL_TEST_SCIENCE_PLUGIN_V4, "index"));
+        CHECK(runtime.supportsWorkbenchUi());
+        std::string snapshot, error;
+        CHECK(runtime.copyWorkbenchSnapshot(snapshot, error));
+        CHECK(error.empty());
+        CHECK(snapshot ==
+              "{\"revision\":7,\"schema\":\"science-workbench-ui-v1\"}");
+        const std::string run =
+            R"({"schema":"science-workbench-action-v1","action":"run"})";
+        CHECK(runtime.dispatchWorkbenchAction(run, error));
+        CHECK(error.empty());
+        CHECK(!runtime.dispatchWorkbenchAction("{}", error));
+        CHECK(error == "fake action rejected");
+    }
+    {
+        SciencePluginRuntime runtime;
+        CHECK(runtime.load(OSGSOL_TEST_SCIENCE_PLUGIN, "index"));
+        CHECK(!runtime.supportsWorkbenchUi());
+        std::string snapshot, error;
+        CHECK(!runtime.copyWorkbenchSnapshot(snapshot, error));
+        CHECK(error == "ScienceEarth workbench UI is unavailable");
+    }
+    {
+        SciencePluginRuntime runtime;
+        CHECK(runtime.load(OSGSOL_TEST_SCIENCE_PLUGIN_REAL, "index.sqlite"));
+        CHECK(runtime.supportsWorkbenchUi());
+        std::string snapshot, error;
+        CHECK(runtime.copyWorkbenchSnapshot(snapshot, error));
+        CHECK(snapshot.find("science-workbench-ui-v1") != std::string::npos);
+        CHECK(snapshot.find("era5-agricultural-climate") != std::string::npos);
+
+        const std::string target =
+            R"({"schema":"science-workbench-action-v1","action":"update-target","geometry":{"kind":"point","point":{"latitude":24.3658,"longitude":104.1796}}})";
+        CHECK(runtime.dispatchWorkbenchAction(target, error));
+        CHECK(runtime.copyWorkbenchSnapshot(snapshot, error));
+        CHECK(snapshot.find("\"phase\":\"ready-to-run\"") !=
+              std::string::npos);
+        CHECK(snapshot.find("\"locked\":true") != std::string::npos);
+    }
 
     std::cout << "[OK] ScienceEarth plugin runtime contract\n";
     return 0;

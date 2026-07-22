@@ -113,6 +113,29 @@ void testRunRequiresValidFrozenDraftAndEmitsOnce()
            "submitted query must use selected year range");
 }
 
+void testProviderDraftConfigurationPreservesLockedGeometry()
+{
+    ScienceWorkbenchModel model;
+    makeRunnable(model);
+    earthscience::GeoTemporalQuery configured;
+    configured.sourceId = "era5-agricultural-climate";
+    configured.geometry = point(0.0, 0.0);
+    configured.time.mode = earthscience::ScienceTimeMode::ExplicitYears;
+    configured.time.explicitYears = {2017, 2018, 2019};
+    configured.variables = {"temperature_2m_mean"};
+    configured.outputKind = earthscience::ScienceOutputKind::TimeSeries;
+    configured.analysis.kind = earthscience::ScienceAnalysisKind::PointSeries;
+
+    model.configureDraft(configured);
+
+    expect(model.viewModel().draft.variables.size() == 1,
+           "provider configuration must update variables");
+    expect(model.viewModel().draft.geometry.point.latitude == 24.3658,
+           "provider configuration must preserve locked latitude");
+    expect(model.viewModel().draft.geometry.point.longitude == 104.1796,
+           "provider configuration must preserve locked longitude");
+}
+
 std::shared_ptr<const earthscience::ScienceArtifact> artifact(
     const std::string& id, double west, double south,
     double east, double north)
@@ -188,6 +211,7 @@ int main()
 {
     testTargetLockIsImmutableAcrossCameraMotion();
     testRunRequiresValidFrozenDraftAndEmitsOnce();
+    testProviderDraftConfigurationPreservesLockedGeometry();
     testReportLifecycleDoesNotDeleteOnCloseOrMinimize();
     testFailureRetainsPreviousReadyArtifact();
     std::cout << "ScienceWorkbenchModel tests passed" << std::endl;

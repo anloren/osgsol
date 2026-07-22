@@ -272,6 +272,8 @@ IF(BUILD_TESTING)
     IF(APPLE)
         ADD_LIBRARY(osgSol_Test_SciencePluginFake MODULE
             science_plugin_fake.cpp)
+        ADD_LIBRARY(osgSol_Test_SciencePluginFakeV4 MODULE
+            science_plugin_fake_v4.cpp)
         ADD_LIBRARY(osgSol_Test_SciencePluginFakeBadAbi MODULE
             science_plugin_fake_bad_abi.cpp)
         ADD_LIBRARY(osgSol_Test_SciencePluginFakeMissingAnchor MODULE
@@ -280,6 +282,7 @@ IF(BUILD_TESTING)
             science_plugin_fake_null_function.cpp)
         FOREACH(_science_fake_target
                 osgSol_Test_SciencePluginFake
+                osgSol_Test_SciencePluginFakeV4
                 osgSol_Test_SciencePluginFakeBadAbi
                 osgSol_Test_SciencePluginFakeMissingAnchor
                 osgSol_Test_SciencePluginFakeNullFunction)
@@ -299,11 +302,15 @@ IF(BUILD_TESTING)
             "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
         TARGET_COMPILE_DEFINITIONS(osgSol_Test_SciencePluginRuntime PRIVATE
             OSGSOL_TEST_SCIENCE_PLUGIN="$<TARGET_FILE:osgSol_Test_SciencePluginFake>"
+            OSGSOL_TEST_SCIENCE_PLUGIN_V4="$<TARGET_FILE:osgSol_Test_SciencePluginFakeV4>"
+            OSGSOL_TEST_SCIENCE_PLUGIN_REAL="$<TARGET_FILE:osgdb_science>"
             OSGSOL_TEST_SCIENCE_PLUGIN_BAD_ABI="$<TARGET_FILE:osgSol_Test_SciencePluginFakeBadAbi>"
             OSGSOL_TEST_SCIENCE_PLUGIN_MISSING_ANCHOR="$<TARGET_FILE:osgSol_Test_SciencePluginFakeMissingAnchor>"
             OSGSOL_TEST_SCIENCE_PLUGIN_NULL_FUNCTION="$<TARGET_FILE:osgSol_Test_SciencePluginFakeNullFunction>")
         ADD_DEPENDENCIES(osgSol_Test_SciencePluginRuntime
             osgSol_Test_SciencePluginFake
+            osgSol_Test_SciencePluginFakeV4
+            osgdb_science
             osgSol_Test_SciencePluginFakeBadAbi
             osgSol_Test_SciencePluginFakeMissingAnchor
             osgSol_Test_SciencePluginFakeNullFunction)

@@ -10,6 +10,9 @@ namespace osg { class Node; }
 namespace osgVerse { class EarthManipulator; }
 
 static const std::uint32_t OSGSOL_SCIENCE_PLUGIN_ABI_V3 = 3u;
+static const std::uint32_t OSGSOL_SCIENCE_PLUGIN_ABI_V4 = 4u;
+static const std::size_t OSGSOL_SCIENCE_UI_SNAPSHOT_MAX_BYTES = 512u * 1024u;
+static const std::size_t OSGSOL_SCIENCE_UI_ACTION_MAX_BYTES = 64u * 1024u;
 
 typedef void* (*OsgSolScienceAllocateFunction)(std::size_t size,
                                                void* userData);
@@ -72,6 +75,28 @@ struct OsgSolSciencePluginApiV3
                            LayerManager* layers,
                            osgVerse::EarthManipulator* manipulator);
     void (*drawResults)(void* session, LayerManager* layers);
+};
+
+struct OsgSolScienceUiBufferV1
+{
+    std::uint32_t structSize;
+    std::uint64_t revision;
+    char* utf8;
+    std::size_t capacity;
+    std::size_t bytesWritten;
+    std::size_t bytesRequired;
+};
+
+struct OsgSolSciencePluginApiV4
+{
+    OsgSolSciencePluginApiV3 v3;
+    bool (*copyWorkbenchSnapshot)(void* session,
+                                  OsgSolScienceUiBufferV1* output);
+    bool (*dispatchWorkbenchAction)(void* session,
+                                    const char* actionUtf8,
+                                    std::size_t actionSize,
+                                    char* error,
+                                    std::size_t errorSize);
 };
 
 typedef const OsgSolSciencePluginApiV3* (*OsgSolScienceAnchor)();

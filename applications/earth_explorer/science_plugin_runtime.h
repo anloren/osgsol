@@ -18,6 +18,7 @@ public:
 
     bool load(const std::string& pluginPath, const std::string& indexPath);
     bool available() const { return _session != nullptr; }
+    bool supportsWorkbenchUi() const;
     const std::string& error() const { return _error; }
 
     osg::Node* sceneNode() const;
@@ -32,6 +33,10 @@ public:
                         const OsgSolScienceGuiBridgeV1& gui) const;
     void drawResults(LayerManager* layers,
                      const OsgSolScienceGuiBridgeV1& gui) const;
+    bool copyWorkbenchSnapshot(std::string& snapshot,
+                               std::string& error) const;
+    bool dispatchWorkbenchAction(const std::string& action,
+                                 std::string& error) const;
 
 private:
     bool reject(void* handle, const std::string& error);

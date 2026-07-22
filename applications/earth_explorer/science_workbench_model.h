@@ -95,6 +95,7 @@ public:
     bool dispatch(const ScienceWorkbenchAction& action, std::string& error);
     const ScienceWorkbenchViewModel& viewModel() const { return _view; }
     std::optional<earthscience::GeoTemporalQuery> takePendingSubmission();
+    void configureDraft(const earthscience::GeoTemporalQuery& draft);
     void applyCost(const earthscience::ScienceQueryCost& cost);
     void applyProgress(const earthscience::ScienceProgress& progress);
     void applyJobSnapshot(const earthscience::ScienceJobSnapshot& snapshot);

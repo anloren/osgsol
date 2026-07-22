@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <limits>
 #include <sstream>
+#include <vector>
 
 namespace
 {
@@ -122,7 +123,9 @@ bool SciencePluginRuntime::load(const std::string& pluginPath,
         return reject(handle, "ScienceEarth plugin anchor is missing");
 
     const OsgSolSciencePluginApiV3* api = anchor();
-    if (!api || api->abiVersion != OSGSOL_SCIENCE_PLUGIN_ABI_V3 ||
+    if (!api ||
+        (api->abiVersion != OSGSOL_SCIENCE_PLUGIN_ABI_V3 &&
+         api->abiVersion != OSGSOL_SCIENCE_PLUGIN_ABI_V4) ||
         api->structSize < sizeof(OsgSolSciencePluginApiV3))
         return reject(handle, "ScienceEarth plugin ABI is incompatible");
     if (!api->create || !api->destroy || !api->sceneNode ||
@@ -130,6 +133,17 @@ bool SciencePluginRuntime::load(const std::string& pluginPath,
         !api->registerAiTools || !api->bindGui ||
         !api->drawOperations || !api->drawResults)
         return reject(handle, "ScienceEarth plugin function table is incomplete");
+    if (api->abiVersion == OSGSOL_SCIENCE_PLUGIN_ABI_V4)
+    {
+        if (api->structSize < sizeof(OsgSolSciencePluginApiV4))
+            return reject(handle, "ScienceEarth plugin ABI v4 is truncated");
+        const OsgSolSciencePluginApiV4* apiV4 =
+            reinterpret_cast<const OsgSolSciencePluginApiV4*>(api);
+        if (!apiV4->copyWorkbenchSnapshot ||
+            !apiV4->dispatchWorkbenchAction)
+            return reject(handle,
+                          "ScienceEarth plugin ABI v4 function table is incomplete");
+    }
 
     std::array<char, 1024> error = {};
     void* session = api->create(indexPath.c_str(), error.data(), error.size());
@@ -145,6 +159,16 @@ bool SciencePluginRuntime::load(const std::string& pluginPath,
     _session = session;
     _error.clear();
     return true;
+}
+
+bool SciencePluginRuntime::supportsWorkbenchUi() const
+{
+    if (!available() || _api->abiVersion != OSGSOL_SCIENCE_PLUGIN_ABI_V4 ||
+        _api->structSize < sizeof(OsgSolSciencePluginApiV4))
+        return false;
+    const OsgSolSciencePluginApiV4* api =
+        reinterpret_cast<const OsgSolSciencePluginApiV4*>(_api);
+    return api->copyWorkbenchSnapshot && api->dispatchWorkbenchAction;
 }
 
 osg::Node* SciencePluginRuntime::sceneNode() const
@@ -195,4 +219,72 @@ void SciencePluginRuntime::drawResults(
         return;
     _api->bindGui(_session, &gui);
     _api->drawResults(_session, layers);
+}
+
+bool SciencePluginRuntime::copyWorkbenchSnapshot(
+    std::string& snapshot, std::string& error) const
+{
+    snapshot.clear();
+    error.clear();
+    if (!supportsWorkbenchUi())
+    {
+        error = "ScienceEarth workbench UI is unavailable";
+        return false;
+    }
+    const OsgSolSciencePluginApiV4* api =
+        reinterpret_cast<const OsgSolSciencePluginApiV4*>(_api);
+    OsgSolScienceUiBufferV1 probe = {};
+    probe.structSize = sizeof(probe);
+    api->copyWorkbenchSnapshot(_session, &probe);
+    if (probe.bytesRequired == 0 ||
+        probe.bytesRequired > OSGSOL_SCIENCE_UI_SNAPSHOT_MAX_BYTES + 1)
+    {
+        error = "ScienceEarth workbench snapshot size is invalid";
+        return false;
+    }
+    std::vector<char> buffer(probe.bytesRequired, '\0');
+    OsgSolScienceUiBufferV1 output = {};
+    output.structSize = sizeof(output);
+    output.utf8 = buffer.data();
+    output.capacity = buffer.size();
+    if (!api->copyWorkbenchSnapshot(_session, &output))
+    {
+        error = "ScienceEarth workbench snapshot copy failed";
+        return false;
+    }
+    if (output.bytesWritten + 1 != output.bytesRequired ||
+        output.bytesRequired != probe.bytesRequired ||
+        output.bytesWritten >= buffer.size() ||
+        buffer[output.bytesWritten] != '\0')
+    {
+        error = "ScienceEarth workbench snapshot contract is invalid";
+        return false;
+    }
+    snapshot.assign(buffer.data(), output.bytesWritten);
+    return true;
+}
+
+bool SciencePluginRuntime::dispatchWorkbenchAction(
+    const std::string& action, std::string& error) const
+{
+    error.clear();
+    if (!supportsWorkbenchUi())
+    {
+        error = "ScienceEarth workbench UI is unavailable";
+        return false;
+    }
+    if (action.size() > OSGSOL_SCIENCE_UI_ACTION_MAX_BYTES)
+    {
+        error = "ScienceEarth workbench action is too large";
+        return false;
+    }
+    const OsgSolSciencePluginApiV4* api =
+        reinterpret_cast<const OsgSolSciencePluginApiV4*>(_api);
+    std::array<char, 1024> detail = {};
+    const bool accepted = api->dispatchWorkbenchAction(
+        _session, action.data(), action.size(), detail.data(), detail.size());
+    if (!accepted)
+        error = detail[0] ? detail.data() :
+            "ScienceEarth workbench action failed";
+    return accepted;
 }

@@ -242,6 +242,17 @@ ScienceWorkbenchModel::takePendingSubmission()
     return result;
 }
 
+void ScienceWorkbenchModel::configureDraft(
+    const earthscience::GeoTemporalQuery& draft)
+{
+    const earthscience::ScienceGeometry lockedGeometry =
+        _view.target.requested;
+    _view.draft = draft;
+    if (_view.target.locked) _view.draft.geometry = lockedGeometry;
+    refreshDraftPhase();
+    changed();
+}
+
 void ScienceWorkbenchModel::applyCost(
     const earthscience::ScienceQueryCost& cost)
 {
