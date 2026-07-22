@@ -1,0 +1,68 @@
+# ScienceEarth scientific workbench manual acceptance
+
+Date: 2026-07-22
+
+Candidate: `dist/osgSol Earth.app`
+
+Automated implementation never launches or foregrounds this application. The
+checks below must be performed by the user on the exact candidate before it can
+replace the Desktop application or be tagged as accepted.
+
+## Candidate identity
+
+- Product: osgSol Earth
+- Channel: science-workbench-candidate
+- Source commit: recorded in `Contents/Info.plist` and
+  `Contents/Resources/package-audit.env`
+- Automated gates: package contract, bundle closure, provenance, data manifest,
+  signature, Rml document parsing, and non-network regression suite
+
+## Visual and interaction matrix
+
+- [ ] Launch opens one application instance and preserves the existing Earth,
+  module rail, top bar, AI command area, camera controls, and normal imagery.
+- [ ] Opening `科学` shows one 340–380 px composer beside the permanent module
+  rail. It does not cover the rail, top bar, map command area, or bottom AI area.
+- [ ] The composer scroll bar is visible when content overflows, and the mouse
+  wheel can scroll both down and back up after reaching either edge.
+- [ ] Select `ERA5 agricultural climate`, lock the map center, and verify the
+  exact coordinates and the message `镜头移动不会改变已锁定范围`.
+- [ ] Moving the camera after locking does not silently change the target.
+  `回到分析区域` is the only control in this flow that moves the camera.
+- [ ] Set a valid year range and run once. The CTA remains in place, changes to
+  progress/cancel, and does not freeze map navigation or Quit.
+- [ ] The live map shows the requested target in cyan and provider-returned
+  coverage in warm yellow. These are screen-space marks only: terrain height,
+  terrain mesh, Hong Kong 3D Tiles, and ground imagery do not flicker, deform,
+  sink, or acquire new patches.
+- [ ] A ready result opens one centered report that can move, resize, minimize,
+  reopen, close without deletion, and explicitly delete only after confirmation.
+- [ ] The Overview map snapshot matches the analyzed place and independently
+  marks requested and actual coverage. `回到实时地图中的分析区域` is explicit.
+- [ ] Time Trends shows one main chart. Metric changes replace that chart; units
+  are not mixed; missing years break the line; values use normal formatting;
+  `ET₀`, `MJ/m²`, and Chinese text render correctly.
+- [ ] Clicking a chart year pins that year and shows its value or `数据缺测`.
+- [ ] Spatial Range clearly distinguishes the requested point/area from actual
+  provider coverage and never describes a grid-cell point series as a regional
+  average.
+- [ ] Methods & Evidence shows only recorded facts: aggregation, missing-data
+  rule, processing steps, source/version/link/license, limitations, warnings,
+  artifact ID, timing, and export capabilities. Missing facts say `未提供`.
+- [ ] Switching away from the Science module hides the composer/report overlay;
+  returning restores the scientific workflow without losing the result.
+- [ ] Existing AlphaEarth, Sentinel-2, terrain, 3D city, satellite, AI research,
+  photo/video visible-view capture, and natural-language tools remain usable.
+
+## Normal Quit gate
+
+- [ ] Before launching, note the newest matching crash report timestamp in
+  `~/Library/Logs/DiagnosticReports`.
+- [ ] Quit this exact candidate using the in-app normal Quit control.
+- [ ] The app exits once, does not hang, and macOS does not show an unexpected
+  quit/error dialog.
+- [ ] No new matching `.ips` report appears after the recorded timestamp.
+
+Acceptance remains pending until all unchecked items above are confirmed on the
+exact candidate. Do not copy the candidate over `/Users/USER/Desktop/osgSol
+Earth.app`, tag it, or publish it before that confirmation.
