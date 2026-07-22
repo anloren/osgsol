@@ -37,6 +37,7 @@ std::size_t count(const std::string& text, const std::string& needle)
 int main()
 {
     const std::string rml = read("assets/misc/ui/scienceearth/workbench.rml");
+    const std::string report = read("assets/misc/ui/scienceearth/report.rml");
     const std::string tokens = read("assets/misc/ui/scienceearth/tokens.rcss");
     const std::string style = read("assets/misc/ui/scienceearth/scienceearth.rcss");
 
@@ -82,6 +83,16 @@ int main()
     expect(style.find("overflow-y: auto") != std::string::npos &&
                style.find("scrollbar") != std::string::npos,
            "independent composer scrolling must remain visible");
+    expect(report.find("<science-chart id=\"science-chart\"") !=
+               std::string::npos &&
+               report.find("id=\"report-metric-select\"") !=
+               std::string::npos &&
+               report.find("id=\"chart-selected-year\"") !=
+               std::string::npos,
+           "report needs one interactive metric chart with year selection");
+    expect(style.find(".science-chart { display: block; height: 300px;") !=
+               std::string::npos,
+           "scientific chart needs a stable readable plot height");
 
     std::cout << "Science workbench UI contract tests passed" << std::endl;
     return 0;

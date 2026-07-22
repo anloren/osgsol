@@ -32,6 +32,10 @@ IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
          "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Include_GL3.h")
     IF(OSGSOL_BUILD_SCIENCE)
         LIST(APPEND EXECUTABLE_FILES
+             science_ui/science_chart_model.cpp
+             science_ui/science_chart_model.h
+             science_ui/rml_science_chart.cpp
+             science_ui/rml_science_chart.h
              science_ui/map_context_capture.cpp
              science_ui/map_context_capture.h
              science_ui/science_report_window.cpp
@@ -126,6 +130,19 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
         TIMEOUT 30)
 
     IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+        ADD_EXECUTABLE(osgSol_Test_ScienceChartModel
+            "${CMAKE_SOURCE_DIR}/tests/science_chart_model_tests.cpp"
+            science_ui/science_chart_model.cpp)
+        TARGET_COMPILE_FEATURES(osgSol_Test_ScienceChartModel PRIVATE
+            cxx_std_17)
+        TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceChartModel PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}")
+        ADD_TEST(NAME osgSol_Test_ScienceChartModel
+                 COMMAND $<TARGET_FILE:osgSol_Test_ScienceChartModel>)
+        SET_TESTS_PROPERTIES(osgSol_Test_ScienceChartModel PROPERTIES
+            LABELS "offline;scienceearth;ui"
+            TIMEOUT 30)
+
         ADD_EXECUTABLE(osgSol_Test_MapContextCapture
             "${CMAKE_SOURCE_DIR}/tests/map_context_capture_tests.cpp"
             science_ui/map_context_capture.cpp

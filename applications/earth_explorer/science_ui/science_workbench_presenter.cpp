@@ -1,6 +1,8 @@
 #include "science_workbench_presenter.h"
 
 #include "../science_plugin_runtime.h"
+#include "rml_science_chart.h"
+#include "science_chart_model.h"
 #include "science_report_window.h"
 #include "map_context_capture.h"
 
@@ -34,6 +36,28 @@ struct SourceView
     bool supportsBounds = false;
 };
 
+struct SeriesView
+{
+    std::string id;
+    std::string name;
+    std::string unit;
+    std::string aggregation;
+    double nativeResolutionMeters = 0.0;
+    std::vector<int> years;
+    std::vector<double> values;
+    std::vector<unsigned char> validity;
+};
+
+struct ArtifactView
+{
+    bool available = false;
+    std::string artifactId;
+    std::string sourceId;
+    std::string processingVersion;
+    std::string createdAt;
+    std::vector<SeriesView> series;
+};
+
 struct SnapshotView
 {
     std::uint64_t revision = 0;
@@ -43,6 +67,8 @@ struct SnapshotView
     std::string errorCode;
     std::string errorMessage;
     std::string activeArtifactId;
+    std::string selectedMetricId;
+    int selectedYear = 0;
     int firstYear = 0;
     int lastYear = 0;
     bool locked = false;
@@ -60,6 +86,7 @@ struct SnapshotView
     double totalUnits = 0.0;
     std::string progressStage;
     std::vector<SourceView> sources;
+    ArtifactView artifact;
 };
 
 const picojson::value* field(const picojson::object& object, const char* key)
@@ -152,6 +179,8 @@ bool parseSnapshot(const std::string& json, SnapshotView& output,
     output.errorCode = stringField(root, "errorCode");
     output.errorMessage = stringField(root, "errorMessage");
     output.activeArtifactId = stringField(root, "activeArtifactId");
+    output.selectedMetricId = stringField(root, "selectedMetricId");
+    output.selectedYear = static_cast<int>(numberField(root, "selectedYear"));
 
     if (const picojson::value* draftValue = field(root, "draft");
         draftValue && draftValue->is<picojson::object>())
@@ -233,6 +262,56 @@ bool parseSnapshot(const std::string& json, SnapshotView& output,
                 item.supportsBounds = boolField(
                     capabilitiesValue->get<picojson::object>(), "bounds");
             if (!item.id.empty()) output.sources.push_back(std::move(item));
+        }
+    }
+
+    if (const picojson::value* artifactValue = field(root, "activeArtifact");
+        artifactValue && artifactValue->is<picojson::object>())
+    {
+        const picojson::object& artifact =
+            artifactValue->get<picojson::object>();
+        output.artifact.available = true;
+        output.artifact.artifactId = stringField(artifact, "artifactId");
+        output.artifact.sourceId = stringField(artifact, "sourceId");
+        output.artifact.processingVersion = stringField(
+            artifact, "processingVersion");
+        output.artifact.createdAt = stringField(artifact, "createdAt");
+        if (const picojson::value* seriesValue = field(artifact, "series");
+            seriesValue && seriesValue->is<picojson::array>())
+        {
+            for (const picojson::value& itemValue :
+                 seriesValue->get<picojson::array>())
+            {
+                if (!itemValue.is<picojson::object>()) continue;
+                const picojson::object& item =
+                    itemValue.get<picojson::object>();
+                SeriesView series;
+                series.id = stringField(item, "id");
+                series.name = stringField(item, "name");
+                series.unit = stringField(item, "unit");
+                series.aggregation = stringField(item, "aggregation");
+                series.nativeResolutionMeters = numberField(
+                    item, "nativeResolutionMeters");
+                if (const picojson::value* pointsValue = field(item, "points");
+                    pointsValue && pointsValue->is<picojson::array>())
+                {
+                    for (const picojson::value& pointValue :
+                         pointsValue->get<picojson::array>())
+                    {
+                        if (!pointValue.is<picojson::object>()) continue;
+                        const picojson::object& point =
+                            pointValue.get<picojson::object>();
+                        const bool valid = boolField(point, "valid");
+                        series.years.push_back(static_cast<int>(
+                            numberField(point, "year")));
+                        series.values.push_back(valid
+                            ? numberField(point, "value") : 0.0);
+                        series.validity.push_back(valid ? 1 : 0);
+                    }
+                }
+                if (!series.id.empty())
+                    output.artifact.series.push_back(std::move(series));
+            }
         }
     }
     error.clear();
@@ -406,6 +485,16 @@ public:
         return "";
     }
 
+    std::string reportValue(const char* id) const
+    {
+        Rml::Element* item = reportElement(id);
+        if (!item) return "";
+        if (Rml::ElementFormControl* control =
+            rmlui_dynamic_cast<Rml::ElementFormControl*>(item))
+            return control->GetValue();
+        return "";
+    }
+
     void enqueue(std::string name, std::string json)
     {
         std::lock_guard<std::mutex> guard(queueMutex);
@@ -470,6 +559,7 @@ public:
             if (source.id == view.sourceId) { selected = &source; break; }
         setReportText("report-title", selected ? selected->name : "科学分析结果");
         setReportText("report-artifact-id", active->artifactId);
+        updateReportChart(view, active->artifactId);
         const char* sections[] = {
             "overview", "trends", "spatial-range", "methods-evidence"};
         for (const char* section : sections)
@@ -480,6 +570,122 @@ public:
             if (Rml::Element* tab = reportElement(tabId.c_str()))
                 tab->SetClass("selected", selectedSection);
         }
+    }
+
+    void updateReportChart(const SnapshotView& view,
+                           const std::string& artifactId)
+    {
+        if (!view.artifact.available ||
+            view.artifact.artifactId != artifactId)
+        {
+            setReportText("chart-statistics",
+                "这个结果没有可绘制的年度指标序列。");
+            return;
+        }
+        Rml::ElementFormControlSelect* select =
+            rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(
+                reportElement("report-metric-select"));
+        if (!select) return;
+
+        std::string fingerprint = view.artifact.artifactId;
+        for (const SeriesView& series : view.artifact.series)
+            fingerprint += "\n" + series.id + "\n" + series.name +
+                "\n" + series.unit;
+        if (fingerprint != renderedArtifactFingerprint)
+        {
+            select->RemoveAll();
+            for (const SeriesView& series : view.artifact.series)
+            {
+                const std::string label = normalizeScienceMetricTitle(
+                    series.id, series.name) +
+                    (series.unit.empty() ? "" : " · " + series.unit);
+                select->Add(escapedRml(label), series.id);
+            }
+            renderedArtifactFingerprint = fingerprint;
+        }
+
+        std::string metricId = activeMetricId(view, artifactId);
+        if (metricId.empty() && !view.artifact.series.empty())
+            metricId = view.artifact.series.front().id;
+        if (metricId.empty())
+        {
+            setReportText("chart-statistics",
+                "这个结果没有可绘制的年度指标序列。");
+            return;
+        }
+        select->SetValue(metricId);
+        reportModel.selectMetric(artifactId, metricId);
+
+        const SeriesView* selected = nullptr;
+        for (const SeriesView& series : view.artifact.series)
+            if (series.id == metricId) { selected = &series; break; }
+        if (!selected) return;
+        const ScienceChartModel chart = makeScienceChartModel(
+            selected->id, selected->name, selected->unit, selected->years,
+            selected->values, selected->validity);
+        int selectedYear = activeYear(view, artifactId);
+        if (RmlScienceChart* chartElement =
+            rmlui_dynamic_cast<RmlScienceChart*>(reportElement("science-chart")))
+            chartElement->setModel(chart, selectedYear);
+
+        if (!chart.points.empty())
+        {
+            setReportText("chart-domain",
+                std::to_string(chart.points.front().year) + "–" +
+                std::to_string(chart.points.back().year) + " · " +
+                chart.title);
+        }
+        std::ostringstream statistics;
+        statistics << "均值 "
+                   << formatScienceChartValue(chart.summary.mean, chart.unit)
+                   << " · 首末变化 "
+                   << formatScienceChartValue(
+                          chart.summary.firstToLastChange, chart.unit)
+                   << " · 线性趋势 "
+                   << formatScienceChartValue(
+                          chart.summary.linearTrendPerYear,
+                          chart.unit.empty() ? "/年" : chart.unit + "/年")
+                   << " · 有效年份 " << chart.summary.validCount << "/"
+                   << chart.points.size();
+        setReportText("chart-statistics", statistics.str());
+        updateSelectedYearReadout(chart, selectedYear);
+    }
+
+    std::string activeMetricId(const SnapshotView& view,
+                               const std::string& artifactId) const
+    {
+        const ScienceReportWindowState* report = reportModel.find(artifactId);
+        if (report && !report->selectedMetric.empty())
+            return report->selectedMetric;
+        return view.selectedMetricId;
+    }
+
+    int activeYear(const SnapshotView& view,
+                   const std::string& artifactId) const
+    {
+        const ScienceReportWindowState* report = reportModel.find(artifactId);
+        if (report && report->selectedYear > 0) return report->selectedYear;
+        return view.selectedYear;
+    }
+
+    void updateSelectedYearReadout(const ScienceChartModel& chart, int year)
+    {
+        if (year <= 0)
+        {
+            setReportText("chart-selected-year",
+                "点击图中年份可固定对比时点");
+            return;
+        }
+        for (const ScienceChartPoint& point : chart.points)
+        {
+            if (point.year != year) continue;
+            setReportText("chart-selected-year", std::to_string(year) +
+                " · " + (point.missing ? "数据缺测" :
+                    formatScienceChartValue(point.value, chart.unit)));
+            return;
+        }
+        setReportText("chart-selected-year",
+            std::to_string(year) + " · 不在当前序列中");
     }
 
     void updateContextSnapshot(const std::string& artifactId)
@@ -570,6 +776,7 @@ public:
     Rml::ElementDocument* reportDocument = nullptr;
     std::uint64_t renderedRevision = std::numeric_limits<std::uint64_t>::max();
     std::string renderedSourceFingerprint;
+    std::string renderedArtifactFingerprint;
     bool costOpen = false;
     bool helpOpen = false;
     SnapshotView state;
@@ -603,6 +810,7 @@ bool ScienceWorkbenchPresenter::onRmlContextReady(
         error = "ScienceEarth plugin does not expose workbench ABI v4";
         return false;
     }
+    registerRmlScienceChartElement();
     _impl->document = context.LoadDocument(_impl->documentPath);
     if (!_impl->document)
     {
@@ -634,6 +842,7 @@ bool ScienceWorkbenchPresenter::onRmlContextReady(
         "report-focus-target", "shelf-0", "shelf-1", "shelf-2"};
     for (const char* id : reportClickIds)
         _impl->attachReport(*this, id, "click");
+    _impl->attachReport(*this, "report-metric-select", "change");
     const Rml::Vector2i dimensions = context.GetDimensions();
     _impl->reportModel.setViewport(
         static_cast<float>(dimensions.x), static_cast<float>(dimensions.y));
@@ -664,7 +873,23 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context&)
         return;
     }
     if (const ScienceReportWindowState* active = _impl->reportModel.active())
+    {
         _impl->updateContextSnapshot(active->artifactId);
+        if (RmlScienceChart* chart = rmlui_dynamic_cast<RmlScienceChart*>(
+                _impl->reportElement("science-chart")))
+        {
+            int selectedYear = 0;
+            if (chart->consumeSelectedYear(selectedYear) &&
+                _impl->reportModel.selectYear(active->artifactId, selectedYear))
+            {
+                _impl->enqueue("select-year",
+                    "{\"schema\":\"science-workbench-action-v1\","
+                    "\"action\":\"select-year\",\"year\":" +
+                    std::to_string(selectedYear) + "}");
+                _impl->updateReportShell(view);
+            }
+        }
+    }
     if (view.revision == _impl->renderedRevision) return;
     _impl->state = view;
     _impl->renderedRevision = view.revision;
@@ -817,6 +1042,19 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
         const std::string method = _impl->value("method-select");
         _impl->enqueue("set-method", schema + "\"set-method\",\"methodId\":" +
             jsonString(method) + "}");
+    }
+    else if (id == "report-metric-select")
+    {
+        const ScienceReportWindowState* active = _impl->reportModel.active();
+        const std::string metric = _impl->reportValue("report-metric-select");
+        if (active && !metric.empty() &&
+            _impl->reportModel.selectMetric(active->artifactId, metric))
+        {
+            _impl->enqueue("select-metric", schema +
+                "\"select-metric\",\"metricId\":" +
+                jsonString(metric) + "}");
+            _impl->updateReportShell(_impl->state);
+        }
     }
     else if (id == "first-year" || id == "last-year")
     {

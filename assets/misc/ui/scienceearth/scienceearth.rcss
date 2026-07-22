@@ -131,6 +131,8 @@ select, input { width: 100%; padding: 6px 8px; }
 .report-summary, .science-chart, .chart-statistics { margin-top: 14px; padding: 14px; background: #12181b; border-radius: 8px; }
 .chart-toolbar { display: flex; align-items: center; }
 .chart-toolbar select { margin-left: 12px; }
+.science-chart { display: block; height: 300px; cursor: crosshair; }
+.chart-readout { display: flex; justify-content: space-between; margin-top: 7px; color: #93a09e; font-size: 12px; }
 .delete-confirmation { display: none; position: absolute; right: 16px; top: 58px; width: 280px; padding: 16px; background: #231315; border: 1px #874641; border-radius: 8px; z-index: 5; }
 .delete-confirmation p { margin: 10px 0; color: #d9b4b0; }
 .destructive-action { color: #fff; background: #a93e38; border-color: #ef6a62; }

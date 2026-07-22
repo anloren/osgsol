@@ -48,7 +48,11 @@
                     <label for="report-metric-select">指标</label>
                     <select id="report-metric-select"></select>
                 </div>
-                <div id="science-chart" class="science-chart">选择指标后显示一张带单位的时间趋势图。</div>
+                <science-chart id="science-chart" class="science-chart"></science-chart>
+                <div class="chart-readout">
+                    <span id="chart-domain"></span>
+                    <span id="chart-selected-year">点击图中年份可固定对比时点</span>
+                </div>
                 <div id="chart-statistics" class="chart-statistics"></div>
             </section>
             <section id="spatial-range" class="report-section">
