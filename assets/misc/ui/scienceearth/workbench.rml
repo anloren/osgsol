@@ -1,7 +1,6 @@
 <rml>
 <head>
     <title>科学分析</title>
-    <link type="text/rcss" href="tokens.rcss"/>
     <link type="text/rcss" href="scienceearth.rcss"/>
 </head>
 <body id="science-workbench">
@@ -48,11 +47,15 @@
                 <span id="provider-years" class="muted">1940–2025</span>
             </div>
             <div class="year-fields">
-                <label for="first-year">开始年份</label>
-                <input id="first-year" type="text" inputmode="numeric" value="2017"/>
+                <div class="year-field">
+                    <label for="first-year">开始年份</label>
+                    <input id="first-year" type="text" inputmode="numeric" value="2017"/>
+                </div>
                 <span class="range-connector"></span>
-                <label for="last-year">结束年份</label>
-                <input id="last-year" type="text" inputmode="numeric" value="2025"/>
+                <div class="year-field">
+                    <label for="last-year">结束年份</label>
+                    <input id="last-year" type="text" inputmode="numeric" value="2025"/>
+                </div>
             </div>
             <div id="year-range-strip" class="range-strip"><span></span></div>
             <p id="time-error" class="field-error"></p>
@@ -91,7 +94,7 @@
             <progress id="run-progress" value="0" max="100"></progress>
             <button id="cancel-action" data-action="cancel">取消</button>
         </div>
-        <button id="run-action" class="primary-action" data-action="run" disabled>开始分析</button>
+        <button id="run-action" class="primary-action disabled" data-action="run" disabled>开始分析</button>
     </footer>
 </body>
 </rml>

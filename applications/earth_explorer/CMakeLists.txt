@@ -23,12 +23,52 @@ IF(OSGSOL_BUILD_SCIENCE)
 ENDIF()
 
 IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+    # RmlUi's stock GL3 backend always composites its final layer into FBO 0.
+    # osgVerse renders cameras into whichever framebuffer is active, so FBO 0
+    # can be the wrong target (and is invalid for our no-window CGL verifier).
+    # Generate a narrowly patched backend which remembers the draw framebuffer
+    # active at BeginFrame and composites back into that same target.
+    SET(OSGSOL_RMLUI_GL3_PATCH_DIR
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/rmlui_gl3")
+    FILE(MAKE_DIRECTORY "${OSGSOL_RMLUI_GL3_PATCH_DIR}")
+    FILE(READ "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Renderer_GL3.h"
+         OSGSOL_RMLUI_GL3_HEADER)
+    STRING(REPLACE
+        "int viewport_width = 0;"
+        "unsigned int target_framebuffer = 0;\n\n\tint viewport_width = 0;"
+        OSGSOL_RMLUI_GL3_HEADER_PATCHED "${OSGSOL_RMLUI_GL3_HEADER}")
+    IF(OSGSOL_RMLUI_GL3_HEADER_PATCHED STREQUAL OSGSOL_RMLUI_GL3_HEADER)
+        MESSAGE(FATAL_ERROR "RmlUi GL3 header patch anchor was not found")
+    ENDIF()
+    FILE(WRITE "${OSGSOL_RMLUI_GL3_PATCH_DIR}/RmlUi_Renderer_GL3.h"
+         "${OSGSOL_RMLUI_GL3_HEADER_PATCHED}")
+    FILE(READ "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Renderer_GL3.cpp"
+         OSGSOL_RMLUI_GL3_SOURCE)
+    STRING(REPLACE
+        "void RenderInterface_GL3::BeginFrame()\n{\n\tRMLUI_ASSERT(viewport_width >= 1 && viewport_height >= 1);"
+        "void RenderInterface_GL3::BeginFrame()\n{\n\tRMLUI_ASSERT(viewport_width >= 1 && viewport_height >= 1);\n\n\tGLint active_framebuffer = 0;\n\tglGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &active_framebuffer);\n\ttarget_framebuffer = static_cast<GLuint>(active_framebuffer);"
+        OSGSOL_RMLUI_GL3_SOURCE_PATCHED "${OSGSOL_RMLUI_GL3_SOURCE}")
+    IF(OSGSOL_RMLUI_GL3_SOURCE_PATCHED STREQUAL OSGSOL_RMLUI_GL3_SOURCE)
+        MESSAGE(FATAL_ERROR "RmlUi GL3 BeginFrame patch anchor was not found")
+    ENDIF()
+    STRING(REPLACE
+        "// Draw to backbuffer\n\tglBindFramebuffer(GL_FRAMEBUFFER, 0);"
+        "// Draw to the framebuffer active when BeginFrame was called.\n\tglBindFramebuffer(GL_FRAMEBUFFER, target_framebuffer);"
+        OSGSOL_RMLUI_GL3_SOURCE_PATCHED_2
+        "${OSGSOL_RMLUI_GL3_SOURCE_PATCHED}")
+    IF(OSGSOL_RMLUI_GL3_SOURCE_PATCHED_2 STREQUAL
+       OSGSOL_RMLUI_GL3_SOURCE_PATCHED)
+        MESSAGE(FATAL_ERROR "RmlUi GL3 EndFrame patch anchor was not found")
+    ENDIF()
+    FILE(WRITE "${OSGSOL_RMLUI_GL3_PATCH_DIR}/RmlUi_Renderer_GL3.cpp"
+         "${OSGSOL_RMLUI_GL3_SOURCE_PATCHED_2}")
+
     LIST(APPEND EXECUTABLE_FILES
          product_ui/rml_input_bridge.cpp product_ui/rml_input_bridge.h
          product_ui/rml_osg_renderer.cpp product_ui/rml_osg_renderer.h
          product_ui/rml_ui_runtime.cpp product_ui/rml_ui_runtime.h
-         "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Renderer_GL3.cpp"
-         "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Renderer_GL3.h"
+         "${OSGSOL_RMLUI_GL3_PATCH_DIR}/RmlUi_Renderer_GL3.cpp"
+         "${OSGSOL_RMLUI_GL3_PATCH_DIR}/RmlUi_Renderer_GL3.h"
          "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Include_GL3.h")
     IF(OSGSOL_BUILD_SCIENCE)
         LIST(APPEND EXECUTABLE_FILES
@@ -86,6 +126,7 @@ ENDIF()
 IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
     TARGET_COMPILE_FEATURES(${EXE_NAME} PRIVATE cxx_std_17)
     TARGET_INCLUDE_DIRECTORIES(${EXE_NAME} PRIVATE
+        "${OSGSOL_RMLUI_GL3_PATCH_DIR}"
         "${OSGSOL_RMLUI_SOURCE_DIR}/Backends")
     TARGET_LINK_LIBRARIES(${EXE_NAME} RmlUi::RmlUi ${CMAKE_DL_LIBS})
     TARGET_COMPILE_DEFINITIONS(${EXE_NAME} PRIVATE
@@ -162,6 +203,33 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
         SET_TESTS_PROPERTIES(osgSol_Test_RmlDocumentSmoke PROPERTIES
             LABELS "offline;scienceearth;ui"
             TIMEOUT 30)
+
+        IF(APPLE)
+            ADD_EXECUTABLE(osgSol_Test_RmlGlRuntimeSmoke
+                "${CMAKE_SOURCE_DIR}/tests/rml_gl_runtime_smoke_tests.cpp"
+                product_ui/rml_input_bridge.cpp
+                product_ui/rml_osg_renderer.cpp
+                product_ui/rml_ui_runtime.cpp
+                "${OSGSOL_RMLUI_GL3_PATCH_DIR}/RmlUi_Renderer_GL3.cpp")
+            TARGET_COMPILE_FEATURES(osgSol_Test_RmlGlRuntimeSmoke PRIVATE
+                cxx_std_17)
+            TARGET_COMPILE_DEFINITIONS(osgSol_Test_RmlGlRuntimeSmoke PRIVATE
+                OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+            TARGET_INCLUDE_DIRECTORIES(osgSol_Test_RmlGlRuntimeSmoke PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}"
+                "${OSGSOL_RMLUI_GL3_PATCH_DIR}"
+                "${OSGSOL_RMLUI_SOURCE_DIR}/Backends")
+            TARGET_LINK_LIBRARIES(osgSol_Test_RmlGlRuntimeSmoke
+                osgVersePipeline RmlUi::RmlUi ${CMAKE_DL_LIBS}
+                "-framework OpenGL")
+            LINK_OSG_LIBRARY(osgSol_Test_RmlGlRuntimeSmoke
+                OpenThreads osg osgGA osgViewer)
+            ADD_TEST(NAME osgSol_Test_RmlGlRuntimeSmoke
+                     COMMAND $<TARGET_FILE:osgSol_Test_RmlGlRuntimeSmoke>)
+            SET_TESTS_PROPERTIES(osgSol_Test_RmlGlRuntimeSmoke PROPERTIES
+                LABELS "offline;scienceearth;ui;gl"
+                TIMEOUT 30)
+        ENDIF()
 
         ADD_EXECUTABLE(osgSol_Test_ScienceChartModel
             "${CMAKE_SOURCE_DIR}/tests/science_chart_model_tests.cpp"

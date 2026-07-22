@@ -273,6 +273,9 @@ bool RmlUiRuntime::initialize(osg::GraphicsContext& graphics, float logicalDpi,
         _impl->frameClientReady = true;
     }
     _ready.store(!_impl->frameClient || _impl->frameClientReady);
+    OSG_NOTICE << "[RmlUi] product UI ready at " << _impl->width << "x"
+               << _impl->height << "; frame_client="
+               << (_impl->frameClientReady ? "ready" : "none") << std::endl;
     return true;
 }
 

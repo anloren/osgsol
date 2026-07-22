@@ -1,7 +1,6 @@
 <rml>
 <head>
     <title>科学分析报告</title>
-    <link type="text/rcss" href="tokens.rcss"/>
     <link type="text/rcss" href="scienceearth.rcss"/>
 </head>
 <body id="report-layer" class="report-layer">

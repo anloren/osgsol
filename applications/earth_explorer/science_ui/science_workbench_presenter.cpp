@@ -649,9 +649,16 @@ public:
     void setDisabled(const char* id, bool disabled)
     {
         if (Rml::Element* item = element(id))
+        {
             if (Rml::ElementFormControl* control =
                 rmlui_dynamic_cast<Rml::ElementFormControl*>(item))
                 control->SetDisabled(disabled);
+            else if (disabled)
+                item->SetAttribute("disabled", "");
+            else
+                item->RemoveAttribute("disabled");
+            item->SetClass("disabled", disabled);
+        }
     }
 
     std::string value(const char* id) const
@@ -1402,6 +1409,8 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
 {
     Rml::Element* target = event.GetTargetElement();
     if (!target) return;
+    if (target->IsClassSet("disabled") || target->HasAttribute("disabled"))
+        return;
     const std::string id = target->GetId();
     const std::string schema =
         "{\"schema\":\"science-workbench-action-v1\",\"action\":";

@@ -49,8 +49,8 @@ int main()
         expect(rml.find("id=\"" + id + "\"") != std::string::npos,
                "required connected-workflow element ID is missing");
 
-    expect(count(rml, "class=\"primary-action\"") == 1,
-           "composer must expose one stable primary CTA");
+    expect(count(rml, "class=\"primary-action disabled\"") == 1,
+           "composer must expose one stable, visibly disabled initial CTA");
     expect(rml.find("data-action=\"lock-map-center\"") != std::string::npos,
            "target card must lock the map center");
     expect(rml.find("data-action=\"update-target\"") != std::string::npos,
