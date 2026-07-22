@@ -1,0 +1,81 @@
+<rml>
+<head>
+    <title>科学分析报告</title>
+    <link type="text/rcss" href="tokens.rcss"/>
+    <link type="text/rcss" href="scienceearth.rcss"/>
+</head>
+<body id="report-layer" class="report-layer">
+    <div id="science-report" class="science-report">
+        <header class="report-titlebar">
+            <handle move_target="#science-report" class="report-move-handle">
+                <div>
+                    <h1 id="report-title">科学分析结果</h1>
+                    <p class="report-subtitle">位置与时间已固定，可独立查看地图</p>
+                </div>
+            </handle>
+            <div class="report-window-actions">
+                <button id="report-minimize" aria-label="最小化科学报告">最小化</button>
+                <button id="report-overflow" aria-label="科学报告更多操作">更多</button>
+                <button id="report-close" aria-label="关闭科学报告但保留结果">关闭</button>
+            </div>
+        </header>
+
+        <nav class="report-tabs">
+            <button id="tab-overview" class="selected">概览</button>
+            <button id="tab-trends">时间趋势</button>
+            <button id="tab-spatial-range">空间范围</button>
+            <button id="tab-methods-evidence">方法与证据</button>
+        </nav>
+
+        <main class="report-content">
+            <section id="overview" class="report-section">
+                <div id="context-thumbnail" class="context-thumbnail">
+                    <p>分析范围地图快照将在结果生成时固定在这里。</p>
+                    <div class="analysis-range-key">分析范围</div>
+                </div>
+                <button id="report-focus-target">回到实时地图中的分析区域</button>
+                <div id="overview-summary" class="report-summary">正在整理结果摘要…</div>
+            </section>
+            <section id="trends" class="report-section">
+                <div class="chart-toolbar">
+                    <label for="report-metric-select">指标</label>
+                    <select id="report-metric-select"></select>
+                </div>
+                <div id="science-chart" class="science-chart">选择指标后显示一张带单位的时间趋势图。</div>
+                <div id="chart-statistics" class="chart-statistics"></div>
+            </section>
+            <section id="spatial-range" class="report-section">
+                <h2>请求范围与数据实际范围</h2>
+                <p id="requested-spatial-fact"></p>
+                <p id="actual-spatial-fact"></p>
+                <p class="muted">两者分开呈现，不把单个数据网格解释为区域平均。</p>
+            </section>
+            <section id="methods-evidence" class="report-section">
+                <h2>方法、来源与限制</h2>
+                <div id="method-facts"></div>
+                <div id="source-links"></div>
+                <div id="limitations"></div>
+                <p>结果编号 <span id="report-artifact-id"></span></p>
+                <button id="copy-artifact-id">复制结果编号</button>
+            </section>
+        </main>
+
+        <aside id="delete-confirmation" class="delete-confirmation">
+            <h2>永久删除这个结果？</h2>
+            <p>关闭和最小化不会删除；只有这里会永久移除。</p>
+            <button id="report-delete-cancel">取消</button>
+            <button id="report-delete" class="destructive-action">永久删除</button>
+        </aside>
+
+        <handle size_target="#science-report" class="resize-handle resize-right"></handle>
+        <handle size_target="#science-report" class="resize-handle resize-bottom"></handle>
+        <handle size_target="#science-report" class="resize-handle resize-corner"></handle>
+    </div>
+
+    <div id="report-shelf" class="report-shelf">
+        <button id="shelf-0"></button>
+        <button id="shelf-1"></button>
+        <button id="shelf-2"></button>
+    </div>
+</body>
+</rml>

@@ -103,3 +103,31 @@ select, input { width: 100%; padding: 6px 8px; }
 .progress-footer { display: none; margin-bottom: 8px; }
 .progress-footer progress { width: 100%; height: 5px; }
 .operation-error { padding: 0; }
+
+.report-layer { width: 100%; height: 100%; background: transparent; pointer-events: none; }
+.science-report { display: none; position: absolute; width: 900px; height: 680px; min-width: 560px; min-height: 400px; max-width: 1200px; max-height: 900px; color: #e4e8e7; background: #0a0c0f; border: 1px #354249; border-radius: 12px; overflow: hidden; pointer-events: auto; }
+.report-titlebar { height: 64px; display: flex; align-items: center; justify-content: space-between; background: #11171a; border-bottom: 1px #2c363b; }
+.report-move-handle { display: block; flex: 1; height: 64px; padding: 11px 16px; cursor: move; }
+.report-subtitle { margin-top: 3px; color: #93a09e; font-size: 12px; }
+.report-window-actions { display: flex; padding-right: 10px; }
+.report-window-actions button { margin-left: 6px; }
+.report-tabs { height: 48px; display: flex; padding: 7px 12px; background: #0d1114; border-bottom: 1px #263036; }
+.report-tabs button { margin-right: 7px; color: #aab5b3; background: transparent; border-color: transparent; }
+.report-tabs button.selected { color: #e4e8e7; border-bottom: 2px #28c9c3; }
+.report-content { position: absolute; top: 112px; left: 0; right: 0; bottom: 0; padding: 18px; overflow-y: auto; scrollbar-margin: 3px; }
+.report-section { display: none; }
+#overview { display: block; }
+.context-thumbnail { height: 250px; padding: 16px; background: #101619; border: 1px #2c363b; border-radius: 9px; }
+.analysis-range-key { margin-top: 16px; color: #49d5d0; }
+.report-summary, .science-chart, .chart-statistics { margin-top: 14px; padding: 14px; background: #12181b; border-radius: 8px; }
+.chart-toolbar { display: flex; align-items: center; }
+.chart-toolbar select { margin-left: 12px; }
+.delete-confirmation { display: none; position: absolute; right: 16px; top: 58px; width: 280px; padding: 16px; background: #231315; border: 1px #874641; border-radius: 8px; z-index: 5; }
+.delete-confirmation p { margin: 10px 0; color: #d9b4b0; }
+.destructive-action { color: #fff; background: #a93e38; border-color: #ef6a62; }
+.resize-handle { position: absolute; display: block; }
+.resize-right { width: 8px; top: 64px; right: 0; bottom: 12px; cursor: resize; }
+.resize-bottom { height: 8px; left: 0; right: 12px; bottom: 0; cursor: resize; }
+.resize-corner { width: 18px; height: 18px; right: 0; bottom: 0; cursor: resize; }
+.report-shelf { display: none; position: absolute; left: 50%; bottom: 124px; padding: 7px; background: #0d1114; border: 1px #2c363b; border-radius: 9px; pointer-events: auto; }
+.report-shelf button { margin: 0 4px; }

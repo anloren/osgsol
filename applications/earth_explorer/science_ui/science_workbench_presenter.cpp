@@ -1,6 +1,7 @@
 #include "science_workbench_presenter.h"
 
 #include "../science_plugin_runtime.h"
+#include "science_report_window.h"
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
@@ -40,6 +41,7 @@ struct SnapshotView
     std::string methodId;
     std::string errorCode;
     std::string errorMessage;
+    std::string activeArtifactId;
     int firstYear = 0;
     int lastYear = 0;
     bool locked = false;
@@ -148,6 +150,7 @@ bool parseSnapshot(const std::string& json, SnapshotView& output,
     output.methodId = stringField(root, "selectedMethodId");
     output.errorCode = stringField(root, "errorCode");
     output.errorMessage = stringField(root, "errorMessage");
+    output.activeArtifactId = stringField(root, "activeArtifactId");
 
     if (const picojson::value* draftValue = field(root, "draft");
         draftValue && draftValue->is<picojson::object>())
@@ -332,6 +335,24 @@ public:
         return document ? document->GetElementById(id) : nullptr;
     }
 
+    Rml::Element* reportElement(const char* id) const
+    {
+        return reportDocument ? reportDocument->GetElementById(id) : nullptr;
+    }
+
+    void setReportText(const char* id, const std::string& value)
+    {
+        if (Rml::Element* item = reportElement(id))
+            item->SetInnerRML(escapedRml(value));
+    }
+
+    void setReportDisplay(const char* id, bool visible,
+                          const char* display = "block")
+    {
+        if (Rml::Element* item = reportElement(id))
+            item->SetProperty("display", visible ? display : "none");
+    }
+
     void setText(const char* id, const std::string& value)
     {
         if (Rml::Element* item = element(id)) item->SetInnerRML(escapedRml(value));
@@ -374,9 +395,64 @@ public:
         if (Rml::Element* item = element(id)) item->AddEventListener(event, &owner);
     }
 
+    void attachReport(ScienceWorkbenchPresenter& owner, const char* id,
+                      const char* event)
+    {
+        if (Rml::Element* item = reportElement(id))
+            item->AddEventListener(event, &owner);
+    }
+
+    void updateReportShell(const SnapshotView& view)
+    {
+        if (!reportDocument) return;
+        if (!view.activeArtifactId.empty())
+            reportModel.openReady(view.activeArtifactId);
+        const ScienceReportWindowState* active = reportModel.active();
+        setReportDisplay("science-report", active && active->visible);
+        setReportDisplay("report-shelf", !reportModel.shelf().empty(), "flex");
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            const std::string id = "shelf-" + std::to_string(index);
+            const bool present = index < reportModel.shelf().size();
+            setReportDisplay(id.c_str(), present, "inline-block");
+            if (present)
+            {
+                setReportText(id.c_str(), "科学结果 " +
+                    reportModel.shelf()[index].substr(0, 8));
+                if (Rml::Element* item = reportElement(id.c_str()))
+                    item->SetAttribute("data-artifact",
+                        reportModel.shelf()[index]);
+            }
+        }
+        if (!active || !active->visible) return;
+        if (Rml::Element* window = reportElement("science-report"))
+        {
+            window->SetProperty("left", std::to_string(active->position.x()) + "px");
+            window->SetProperty("top", std::to_string(active->position.y()) + "px");
+            window->SetProperty("width", std::to_string(active->size.x()) + "px");
+            window->SetProperty("height", std::to_string(active->size.y()) + "px");
+        }
+        const SourceView* selected = nullptr;
+        for (const SourceView& source : view.sources)
+            if (source.id == view.sourceId) { selected = &source; break; }
+        setReportText("report-title", selected ? selected->name : "科学分析结果");
+        setReportText("report-artifact-id", active->artifactId);
+        const char* sections[] = {
+            "overview", "trends", "spatial-range", "methods-evidence"};
+        for (const char* section : sections)
+        {
+            const bool selectedSection = active->activeSection == section;
+            setReportDisplay(section, selectedSection);
+            const std::string tabId = std::string("tab-") + section;
+            if (Rml::Element* tab = reportElement(tabId.c_str()))
+                tab->SetClass("selected", selectedSection);
+        }
+    }
+
     SciencePluginRuntime& runtime;
     std::string documentPath;
     Rml::ElementDocument* document = nullptr;
+    Rml::ElementDocument* reportDocument = nullptr;
     std::uint64_t renderedRevision = std::numeric_limits<std::uint64_t>::max();
     std::string renderedSourceFingerprint;
     bool costOpen = false;
@@ -388,6 +464,7 @@ public:
     std::deque<ScienceWorkbenchQueuedAction> queue;
     mutable std::mutex errorMutex;
     std::string actionError;
+    ScienceReportWindowModel reportModel;
 };
 
 ScienceWorkbenchPresenter::ScienceWorkbenchPresenter(
@@ -425,6 +502,26 @@ bool ScienceWorkbenchPresenter::onRmlContextReady(
         "source-select", "method-select", "first-year", "last-year"};
     for (const char* id : changeIds) _impl->attach(*this, id, "change");
     _impl->document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+    const std::string reportPath = _impl->documentPath.substr(
+        0, _impl->documentPath.find_last_of("/\\") + 1) + "report.rml";
+    _impl->reportDocument = context.LoadDocument(reportPath);
+    if (!_impl->reportDocument)
+    {
+        error = "Could not load ScienceEarth report RML: " + reportPath;
+        return false;
+    }
+    const char* reportClickIds[] = {
+        "report-minimize", "report-close", "report-overflow",
+        "report-delete", "report-delete-cancel", "tab-overview",
+        "tab-trends", "tab-spatial-range", "tab-methods-evidence",
+        "report-focus-target", "shelf-0", "shelf-1", "shelf-2"};
+    for (const char* id : reportClickIds)
+        _impl->attachReport(*this, id, "click");
+    const Rml::Vector2i dimensions = context.GetDimensions();
+    _impl->reportModel.setViewport(
+        static_cast<float>(dimensions.x), static_cast<float>(dimensions.y));
+    _impl->reportDocument->Show(
+        Rml::ModalFlag::None, Rml::FocusFlag::None);
     error.clear();
     return true;
 }
@@ -561,7 +658,7 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context&)
     {
         std::lock_guard<std::mutex> guard(_impl->errorMutex);
         if (_impl->actionError.empty())
-            _impl->setText("workbench-error", errorLabel(view));
+    _impl->setText("workbench-error", errorLabel(view));
     }
 
     ScienceTargetOverlayInput target;
@@ -577,6 +674,7 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context&)
         std::lock_guard<std::mutex> guard(_impl->targetMutex);
         _impl->target = std::move(target);
     }
+    _impl->updateReportShell(view);
 }
 
 void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
@@ -641,6 +739,68 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
         _impl->enqueue("run", schema + "\"run\"}");
     else if (id == "cancel-action")
         _impl->enqueue("cancel", schema + "\"cancel\"}");
+    else if (id == "report-minimize")
+    {
+        const ScienceReportWindowState* active = _impl->reportModel.active();
+        if (active)
+        {
+            _impl->reportModel.minimize(active->artifactId);
+            _impl->enqueue("minimize-report",
+                schema + "\"minimize-report\"}");
+            _impl->updateReportShell(_impl->state);
+        }
+    }
+    else if (id == "report-close")
+    {
+        const ScienceReportWindowState* active = _impl->reportModel.active();
+        if (active)
+        {
+            _impl->reportModel.close(active->artifactId);
+            _impl->enqueue("close-report", schema + "\"close-report\"}");
+            _impl->updateReportShell(_impl->state);
+        }
+    }
+    else if (id == "report-overflow")
+        _impl->setReportDisplay("delete-confirmation", true);
+    else if (id == "report-delete-cancel")
+        _impl->setReportDisplay("delete-confirmation", false);
+    else if (id == "report-delete")
+    {
+        const ScienceReportWindowState* active = _impl->reportModel.active();
+        if (active)
+        {
+            const std::string artifactId = active->artifactId;
+            _impl->reportModel.remove(artifactId);
+            _impl->enqueue("remove-artifact", schema +
+                "\"remove-artifact\",\"artifactId\":" +
+                jsonString(artifactId) + "}");
+            _impl->setReportDisplay("delete-confirmation", false);
+            _impl->updateReportShell(_impl->state);
+        }
+    }
+    else if (id.rfind("tab-", 0) == 0)
+    {
+        const ScienceReportWindowState* active = _impl->reportModel.active();
+        if (active)
+        {
+            _impl->reportModel.setSection(active->artifactId, id.substr(4));
+            _impl->updateReportShell(_impl->state);
+        }
+    }
+    else if (id == "report-focus-target")
+        _impl->enqueue("focus-target", schema + "\"focus-target\"}");
+    else if (id.rfind("shelf-", 0) == 0)
+    {
+        const std::string artifactId = target->GetAttribute<Rml::String>(
+            "data-artifact", "");
+        if (!artifactId.empty() && _impl->reportModel.reopen(artifactId))
+        {
+            _impl->enqueue("open-report", schema +
+                "\"open-report\",\"artifactId\":" +
+                jsonString(artifactId) + "}");
+            _impl->updateReportShell(_impl->state);
+        }
+    }
 }
 
 bool ScienceWorkbenchPresenter::takeQueuedAction(

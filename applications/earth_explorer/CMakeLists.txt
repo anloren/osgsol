@@ -32,6 +32,8 @@ IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
          "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Include_GL3.h")
     IF(OSGSOL_BUILD_SCIENCE)
         LIST(APPEND EXECUTABLE_FILES
+             science_ui/science_report_window.cpp
+             science_ui/science_report_window.h
              science_ui/science_workbench_presenter.cpp
              science_ui/science_workbench_presenter.h)
     ENDIF()
@@ -122,6 +124,20 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
         TIMEOUT 30)
 
     IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+        ADD_EXECUTABLE(osgSol_Test_ScienceReportWindow
+            "${CMAKE_SOURCE_DIR}/tests/science_report_window_tests.cpp"
+            science_ui/science_report_window.cpp)
+        TARGET_COMPILE_FEATURES(osgSol_Test_ScienceReportWindow PRIVATE
+            cxx_std_17)
+        TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceReportWindow PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}")
+        LINK_OSG_LIBRARY(osgSol_Test_ScienceReportWindow OpenThreads osg)
+        ADD_TEST(NAME osgSol_Test_ScienceReportWindow
+                 COMMAND $<TARGET_FILE:osgSol_Test_ScienceReportWindow>)
+        SET_TESTS_PROPERTIES(osgSol_Test_ScienceReportWindow PROPERTIES
+            LABELS "offline;scienceearth;ui"
+            TIMEOUT 30)
+
         ADD_EXECUTABLE(osgSol_Test_RmlInputBridge
             "${CMAKE_SOURCE_DIR}/tests/rml_input_bridge_tests.cpp"
             product_ui/rml_input_bridge.cpp)
