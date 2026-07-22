@@ -32,6 +32,8 @@ IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
          "${OSGSOL_RMLUI_SOURCE_DIR}/Backends/RmlUi_Include_GL3.h")
     IF(OSGSOL_BUILD_SCIENCE)
         LIST(APPEND EXECUTABLE_FILES
+             science_ui/map_context_capture.cpp
+             science_ui/map_context_capture.h
              science_ui/science_report_window.cpp
              science_ui/science_report_window.h
              science_ui/science_workbench_presenter.cpp
@@ -124,6 +126,25 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
         TIMEOUT 30)
 
     IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+        ADD_EXECUTABLE(osgSol_Test_MapContextCapture
+            "${CMAKE_SOURCE_DIR}/tests/map_context_capture_tests.cpp"
+            science_ui/map_context_capture.cpp
+            science_ui/science_target_overlay.cpp)
+        TARGET_COMPILE_FEATURES(osgSol_Test_MapContextCapture PRIVATE
+            cxx_std_17)
+        TARGET_INCLUDE_DIRECTORIES(osgSol_Test_MapContextCapture PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}")
+        LINK_OSG_LIBRARY(osgSol_Test_MapContextCapture OpenThreads osg osgDB)
+        IF(APPLE)
+            TARGET_LINK_LIBRARIES(osgSol_Test_MapContextCapture
+                                  "-framework OpenGL")
+        ENDIF()
+        ADD_TEST(NAME osgSol_Test_MapContextCapture
+                 COMMAND $<TARGET_FILE:osgSol_Test_MapContextCapture>)
+        SET_TESTS_PROPERTIES(osgSol_Test_MapContextCapture PROPERTIES
+            LABELS "offline;scienceearth;ui"
+            TIMEOUT 30)
+
         ADD_EXECUTABLE(osgSol_Test_ScienceReportWindow
             "${CMAKE_SOURCE_DIR}/tests/science_report_window_tests.cpp"
             science_ui/science_report_window.cpp)

@@ -2,6 +2,7 @@
 
 #include "../science_plugin_runtime.h"
 #include "science_report_window.h"
+#include "map_context_capture.h"
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
@@ -317,6 +318,27 @@ std::string jsonString(const std::string& value)
     return picojson::value(value).serialize();
 }
 
+bool overlayRectangle(const std::vector<osg::Vec2f>& points,
+                      float& left, float& top, float& width, float& height)
+{
+    if (points.empty()) return false;
+    float right = points.front().x(), bottom = points.front().y();
+    left = right;
+    top = bottom;
+    for (const osg::Vec2f& point : points)
+    {
+        left = std::min(left, point.x());
+        right = std::max(right, point.x());
+        top = std::min(top, point.y());
+        bottom = std::max(bottom, point.y());
+    }
+    width = std::max(0.012f, right - left);
+    height = std::max(0.012f, bottom - top);
+    left = std::clamp(left - 0.006f, 0.0f, 1.0f - width);
+    top = std::clamp(top - 0.006f, 0.0f, 1.0f - height);
+    return true;
+}
+
 bool running(const std::string& phase)
 {
     return phase == "queued" || phase == "fetching" ||
@@ -327,8 +349,10 @@ bool running(const std::string& phase)
 class ScienceWorkbenchPresenter::Impl
 {
 public:
-    Impl(SciencePluginRuntime& runtimeValue, std::string documentPathValue)
-        : runtime(runtimeValue), documentPath(std::move(documentPathValue)) {}
+    Impl(SciencePluginRuntime& runtimeValue, std::string documentPathValue,
+         MapContextCapture* contextCaptureValue)
+        : runtime(runtimeValue), documentPath(std::move(documentPathValue)),
+          contextCapture(contextCaptureValue) {}
 
     Rml::Element* element(const char* id) const
     {
@@ -405,8 +429,16 @@ public:
     void updateReportShell(const SnapshotView& view)
     {
         if (!reportDocument) return;
-        if (!view.activeArtifactId.empty())
-            reportModel.openReady(view.activeArtifactId);
+        if (!view.activeArtifactId.empty() &&
+            reportModel.openReady(view.activeArtifactId) && contextCapture)
+        {
+            ScienceTargetOverlayInput captureTarget;
+            {
+                std::lock_guard<std::mutex> guard(targetMutex);
+                captureTarget = target;
+            }
+            contextCapture->request(view.activeArtifactId, captureTarget);
+        }
         const ScienceReportWindowState* active = reportModel.active();
         setReportDisplay("science-report", active && active->visible);
         setReportDisplay("report-shelf", !reportModel.shelf().empty(), "flex");
@@ -425,6 +457,7 @@ public:
             }
         }
         if (!active || !active->visible) return;
+        updateContextSnapshot(active->artifactId);
         if (Rml::Element* window = reportElement("science-report"))
         {
             window->SetProperty("left", std::to_string(active->position.x()) + "px");
@@ -449,6 +482,88 @@ public:
         }
     }
 
+    void updateContextSnapshot(const std::string& artifactId)
+    {
+        if (!contextCapture || artifactId.empty() || !reportDocument) return;
+        ScienceContextSnapshot snapshot;
+        if (!contextCapture->copy(artifactId, snapshot) ||
+            snapshot.imagePath.empty())
+            return;
+        if (Rml::Element* image = reportElement("context-image"))
+        {
+            const std::string current = image->GetAttribute<Rml::String>(
+                "src", "");
+            if (current != snapshot.imagePath)
+                image->SetAttribute("src", snapshot.imagePath);
+        }
+        setReportDisplay("context-placeholder", false);
+        setReportDisplay("context-image", true);
+        auto applyOverlay = [this](const char* id,
+                                   const std::vector<osg::Vec2f>& points)
+        {
+            float left = 0.0f, top = 0.0f, width = 0.0f, height = 0.0f;
+            if (!overlayRectangle(points, left, top, width, height))
+            {
+                setReportDisplay(id, false);
+                return;
+            }
+            Rml::Element* overlay = reportElement(id);
+            if (!overlay) return;
+            setReportDisplay(id, true);
+            overlay->SetProperty("left", std::to_string(left * 100.0f) + "%");
+            overlay->SetProperty("top", std::to_string(top * 100.0f) + "%");
+            overlay->SetProperty("width", std::to_string(width * 100.0f) + "%");
+            overlay->SetProperty("height", std::to_string(height * 100.0f) + "%");
+        };
+        applyOverlay("context-requested-overlay", snapshot.requestedOverlay);
+        applyOverlay("context-actual-overlay", snapshot.actualOverlay);
+        setReportText("context-caption",
+            "固定分析范围 · 画面 " + std::to_string(snapshot.width) + " × " +
+            std::to_string(snapshot.height) + " · 捕获帧 " +
+            std::to_string(snapshot.capturedFrame));
+    }
+
+    void updateLiveTargetOverlay()
+    {
+        if (!contextCapture || !reportDocument) return;
+        ScienceLiveTargetProjection projection;
+        if (!contextCapture->copyLiveProjection(projection))
+        {
+            setReportDisplay("live-target-requested", false);
+            setReportDisplay("live-target-actual", false);
+            setReportDisplay("live-target-label", false);
+            return;
+        }
+        auto apply = [this](const char* id,
+                            const std::vector<osg::Vec2f>& points)
+        {
+            float left = 0.0f, top = 0.0f, width = 0.0f, height = 0.0f;
+            if (!overlayRectangle(points, left, top, width, height))
+            {
+                setReportDisplay(id, false);
+                return;
+            }
+            Rml::Element* element = reportElement(id);
+            if (!element) return;
+            setReportDisplay(id, true);
+            element->SetProperty("left", std::to_string(left * 100.0f) + "%");
+            element->SetProperty("top", std::to_string(top * 100.0f) + "%");
+            element->SetProperty("width", std::to_string(width * 100.0f) + "%");
+            element->SetProperty("height", std::to_string(height * 100.0f) + "%");
+        };
+        apply("live-target-requested", projection.requestedOverlay);
+        apply("live-target-actual", projection.actualOverlay);
+        if (Rml::Element* label = reportElement("live-target-label"))
+        {
+            setReportDisplay("live-target-label", true);
+            label->SetProperty("left",
+                std::to_string(projection.labelAnchor.x() * 100.0f) + "%");
+            label->SetProperty("top",
+                std::to_string(projection.labelAnchor.y() * 100.0f) + "%");
+            setReportText("live-target-label", projection.label);
+        }
+    }
+
     SciencePluginRuntime& runtime;
     std::string documentPath;
     Rml::ElementDocument* document = nullptr;
@@ -465,11 +580,13 @@ public:
     mutable std::mutex errorMutex;
     std::string actionError;
     ScienceReportWindowModel reportModel;
+    MapContextCapture* contextCapture = nullptr;
 };
 
 ScienceWorkbenchPresenter::ScienceWorkbenchPresenter(
-    SciencePluginRuntime& runtime, std::string documentPath)
-    : _impl(new Impl(runtime, std::move(documentPath)))
+    SciencePluginRuntime& runtime, std::string documentPath,
+    MapContextCapture* contextCapture)
+    : _impl(new Impl(runtime, std::move(documentPath), contextCapture))
 {
 }
 
@@ -528,6 +645,7 @@ bool ScienceWorkbenchPresenter::onRmlContextReady(
 
 void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context&)
 {
+    _impl->updateLiveTargetOverlay();
     {
         std::lock_guard<std::mutex> guard(_impl->errorMutex);
         if (!_impl->actionError.empty())
@@ -545,6 +663,8 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context&)
         _impl->setText("workbench-error", error);
         return;
     }
+    if (const ScienceReportWindowState* active = _impl->reportModel.active())
+        _impl->updateContextSnapshot(active->artifactId);
     if (view.revision == _impl->renderedRevision) return;
     _impl->state = view;
     _impl->renderedRevision = view.revision;
@@ -658,7 +778,7 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context&)
     {
         std::lock_guard<std::mutex> guard(_impl->errorMutex);
         if (_impl->actionError.empty())
-    _impl->setText("workbench-error", errorLabel(view));
+            _impl->setText("workbench-error", errorLabel(view));
     }
 
     ScienceTargetOverlayInput target;
@@ -673,6 +793,8 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context&)
     {
         std::lock_guard<std::mutex> guard(_impl->targetMutex);
         _impl->target = std::move(target);
+        if (_impl->contextCapture)
+            _impl->contextCapture->setLiveTarget(_impl->target);
     }
     _impl->updateReportShell(view);
 }

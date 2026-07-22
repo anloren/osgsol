@@ -58,6 +58,9 @@
 #if OSGSOL_BUILD_SCIENCE
 #include "science_plugin_runtime.h"
 #include "terrain_science_overlay.h"
+#if OSGSOL_BUILD_RMLUI_PRODUCT_UI
+#include "science_ui/map_context_capture.h"
+#endif
 #endif
 #if OSGSOL_BUILD_RMLUI_PRODUCT_UI
 #include "product_ui/rml_ui_runtime.h"
@@ -1012,6 +1015,33 @@ private:
     SciencePluginRuntime* _runtime;
     osgVerse::EarthManipulator* _manipulator;
 };
+
+class ScienceContextCaptureCallback : public osgVerse::CameraDrawCallback
+{
+public:
+    ScienceContextCaptureCallback(MapContextCapture* capture,
+                                  osg::Camera* sceneCamera)
+        : _capture(capture), _sceneCamera(sceneCamera) {}
+
+    void operator()(osg::RenderInfo& renderInfo) const override
+    {
+        if (_capture && _sceneCamera)
+        {
+            _capture->projectLiveTarget(*_sceneCamera);
+            std::uint64_t frame = 0;
+            osg::State* state = renderInfo.getState();
+            if (state && state->getFrameStamp())
+                frame = state->getFrameStamp()->getFrameNumber();
+            if (_capture->pending())
+                _capture->captureBeforeUi(*_sceneCamera, frame);
+        }
+        if (getSubCallback()) getSubCallback()->run(renderInfo);
+    }
+
+private:
+    MapContextCapture* _capture;
+    osg::Camera* _sceneCamera;
+};
 }
 #endif
 
@@ -1234,12 +1264,19 @@ int main(int argc, char** argv)
     }
 #endif
 #if OSGSOL_BUILD_SCIENCE && OSGSOL_BUILD_RMLUI_PRODUCT_UI
+    MapContextCapture mapContextCapture(
+        userDataPath.empty() ? std::string() :
+        userDataPath + "/EarthExplorer/science-context");
+    osg::ref_ptr<ScienceContextCaptureCallback> contextCaptureCallback =
+        new ScienceContextCaptureCallback(&mapContextCapture, sceneCamera);
+    contextCaptureCallback->setup(cameras[3], 1);
     std::unique_ptr<ScienceWorkbenchPresenter> scienceWorkbenchPresenter;
     if (scienceRuntime.supportsWorkbenchUi())
     {
         scienceWorkbenchPresenter.reset(new ScienceWorkbenchPresenter(
             scienceRuntime,
-            MISC_DIR + std::string("ui/scienceearth/workbench.rml")));
+            MISC_DIR + std::string("ui/scienceearth/workbench.rml"),
+            &mapContextCapture));
         productUiRuntime.setFrameClient(scienceWorkbenchPresenter.get());
         viewer.addEventHandler(new ScienceWorkbenchActionHandler(
             scienceWorkbenchPresenter.get(), &scienceRuntime,

@@ -5,6 +5,9 @@
     <link type="text/rcss" href="scienceearth.rcss"/>
 </head>
 <body id="report-layer" class="report-layer">
+    <div id="live-target-requested" class="live-target-overlay live-target-requested"></div>
+    <div id="live-target-actual" class="live-target-overlay live-target-actual"></div>
+    <div id="live-target-label" class="live-target-label"></div>
     <div id="science-report" class="science-report">
         <header class="report-titlebar">
             <handle move_target="#science-report" class="report-move-handle">
@@ -30,9 +33,13 @@
         <main class="report-content">
             <section id="overview" class="report-section">
                 <div id="context-thumbnail" class="context-thumbnail">
-                    <p>分析范围地图快照将在结果生成时固定在这里。</p>
+                    <p id="context-placeholder">分析范围地图快照将在结果生成时固定在这里。</p>
+                    <img id="context-image" class="context-image"/>
+                    <div id="context-requested-overlay" class="context-overlay requested-overlay"></div>
+                    <div id="context-actual-overlay" class="context-overlay actual-overlay"></div>
                     <div class="analysis-range-key">分析范围</div>
                 </div>
+                <p id="context-caption" class="context-caption"></p>
                 <button id="report-focus-target">回到实时地图中的分析区域</button>
                 <div id="overview-summary" class="report-summary">正在整理结果摘要…</div>
             </section>

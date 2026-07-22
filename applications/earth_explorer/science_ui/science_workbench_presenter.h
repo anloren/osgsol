@@ -12,6 +12,7 @@
 #include <string>
 
 class SciencePluginRuntime;
+class MapContextCapture;
 
 struct ScienceWorkbenchQueuedAction
 {
@@ -27,7 +28,8 @@ class ScienceWorkbenchPresenter : public RmlUiFrameClient,
 {
 public:
     ScienceWorkbenchPresenter(SciencePluginRuntime& runtime,
-                              std::string documentPath);
+                              std::string documentPath,
+                              MapContextCapture* contextCapture = nullptr);
     ~ScienceWorkbenchPresenter() override;
 
     bool onRmlContextReady(Rml::Context& context,
