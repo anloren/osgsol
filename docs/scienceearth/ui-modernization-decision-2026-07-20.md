@@ -88,3 +88,20 @@ Official sources:
   freezing or blocking Quit.
 - The packaged app remains self-contained and the new UI dependency has an
   auditable license and package-size delta.
+
+## 2026-07-22 ScienceEarth workbench decision
+
+The first formal RmlUi product surface is now the ScienceEarth analysis
+workbench. The accepted product contract is
+[`design/science-workbench-contract-2026-07-22.md`](design/science-workbench-contract-2026-07-22.md).
+
+The Science drawer becomes one connected analysis composer. Requested and
+provider-returned geometry are displayed on the live map. Scientific results
+open in a central movable, resizable, minimizable report with Overview, Trends,
+Spatial Range, and Methods & Evidence sections. The existing AI/chat migration
+remains planned, but it does not block the ScienceEarth workbench.
+
+The host owns RmlUi, input, layout, map projection, chart rendering, and context
+capture. The science plugin owns query state, execution, artifacts, and
+provenance. A bounded versioned snapshot/action protocol joins them. ImGui and
+the current ABI remain the rollback path until packaged manual acceptance.
