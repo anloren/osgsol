@@ -17,7 +17,11 @@
         <p id="science-help-copy" class="help-copy">先选择数据，再锁定地图上的位置或范围，检查年份与成本，最后开始分析。结果会在独立报告中打开。</p>
         <section id="analysis-template" class="workflow-card">
             <label for="source-select">分析方案</label>
-            <select id="source-select" name="source"></select>
+            <div class="select-shell">
+                <select id="source-select" name="source"></select>
+                <span id="source-chevron" class="select-chevron"
+                      aria-hidden="true">▼</span>
+            </div>
             <h2 id="analysis-name">农业气象年度分析</h2>
             <p id="analysis-summary" class="supporting-copy">比较所选位置各年度的温度、降水、蒸散、辐射和湿度。</p>
         </section>
@@ -67,11 +71,15 @@
                 <h2>分析方法</h2>
                 <button class="icon-control" aria-label="查看分析方法说明">?</button>
             </div>
-            <select id="method-select" name="method">
-                <option value="annual-summary">年度统计与趋势</option>
-                <option value="change-map">前后变化比较</option>
-                <option value="direction-change">高维方向变化</option>
-            </select>
+            <div class="select-shell">
+                <select id="method-select" name="method">
+                    <option value="annual-summary">年度统计与趋势</option>
+                    <option value="change-map">前后变化比较</option>
+                    <option value="direction-change">高维方向变化</option>
+                </select>
+                <span id="method-chevron" class="select-chevron"
+                      aria-hidden="true">▼</span>
+            </div>
             <p id="method-summary" class="muted">分别呈现不同单位的指标，不混合坐标轴。</p>
         </section>
 
@@ -90,6 +98,8 @@
     </main>
 
     <footer id="run-footer" class="run-footer">
+        <p id="run-feedback" class="run-feedback"
+           aria-live="polite"></p>
         <div id="progress-footer" class="progress-footer">
             <span id="progress-label">请先锁定分析位置</span>
             <progress id="run-progress" value="0" max="100"></progress>

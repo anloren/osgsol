@@ -118,6 +118,36 @@ button:disabled { color: #66716f; border-color: #283035; }
 select, input { width: 100%; padding: 6px 8px; }
 select, input { display: block; }
 
+.select-shell {
+    display: block;
+    position: relative;
+    box-sizing: border-box;
+    width: 290px;
+    height: 34px;
+}
+.select-shell select {
+    width: 290px;
+    height: 34px;
+}
+.select-chevron {
+    display: block;
+    box-sizing: border-box;
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    right: 0;
+    width: 34px;
+    height: 34px;
+    padding-top: 8px;
+    color: #93a09e;
+    text-align: center;
+    font-size: 11px;
+    pointer-events: none;
+}
+.select-shell:hover .select-chevron {
+    color: #a7efe9;
+}
+
 select selectvalue {
     display: block;
     box-sizing: border-box;
@@ -133,15 +163,15 @@ select selectarrow {
     box-sizing: border-box;
     width: 34px;
     height: 34px;
-    color: #93a09e;
-    background: #182125;
-    border-left: 1px #364249;
+    color: transparent;
+    background: transparent;
+    border-left: 0;
 }
 select:hover selectarrow,
 select:focus selectarrow,
 select selectarrow:checked {
-    background: #213033;
-    border-left-color: #28c9c3;
+    background: transparent;
+    border-left: 0;
 }
 select selectbox {
     display: block;
@@ -219,6 +249,15 @@ select selectbox option.disabled {
 .primary-action { width: 100%; color: #061211; background: #28c9c3; border-color: #28c9c3; font-weight: 600; }
 .primary-action:hover { background: #51ddd6; }
 .primary-action:disabled, .primary-action.disabled { color: #7f8b89; background: #263034; border-color: #364249; }
+.run-feedback {
+    display: block;
+    min-height: 17px;
+    margin-bottom: 5px;
+    color: #93a09e;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+}
 .progress-footer { display: none; margin-bottom: 8px; }
 .progress-footer progress { width: 100%; height: 5px; }
 .operation-error { padding: 0; }

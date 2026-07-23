@@ -372,6 +372,9 @@ int main()
            "RmlUi callback did not initialize the real workbench on a frame");
     expect(client.width("source-select") > 280.0f,
            "analysis selector is visually collapsed");
+    expect(client.width("source-chevron") >= 24.0f &&
+               client.height("source-chevron") >= 24.0f,
+           "analysis selector has no visible dropdown chevron");
     expect(client.width("lock-map-center") > 120.0f,
            "target action buttons are visually collapsed");
     expect(client.width("first-year") > 56.0f,

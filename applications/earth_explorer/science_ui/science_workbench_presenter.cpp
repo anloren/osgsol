@@ -1239,18 +1239,26 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
     {
         std::lock_guard<std::mutex> guard(_impl->errorMutex);
         if (!_impl->actionError.empty())
+        {
             _impl->setText("workbench-error", _impl->actionError);
+            _impl->setText("run-feedback", _impl->actionError);
+            _impl->setDisabled("run-action", false);
+        }
     }
     std::string json, error;
     if (!_impl->runtime.copyWorkbenchSnapshot(json, error))
     {
         _impl->setText("workbench-error", error);
+        _impl->setText("run-feedback", error);
+        _impl->setDisabled("run-action", false);
         return;
     }
     SnapshotView view;
     if (!parseSnapshot(json, view, error))
     {
         _impl->setText("workbench-error", error);
+        _impl->setText("run-feedback", error);
+        _impl->setDisabled("run-action", false);
         return;
     }
     if (const ScienceReportWindowState* active = _impl->reportModel.active())
@@ -1376,6 +1384,7 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
         ? "开始分析" : "锁定地图中心并开始分析");
     _impl->setDisplay("progress-footer", active);
     _impl->setText("progress-label", progressLabel(view.progressStage));
+    if (active) _impl->setText("run-feedback", "");
     if (Rml::Element* progress = _impl->element("run-progress"))
     {
         const double fraction = view.progressDeterminate
@@ -1386,7 +1395,12 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
     {
         std::lock_guard<std::mutex> guard(_impl->errorMutex);
         if (_impl->actionError.empty())
+        {
             _impl->setText("workbench-error", errorLabel(view));
+            _impl->setText("run-feedback",
+                view.phase == "failed"
+                    ? errorLabel(view) : "");
+        }
     }
 
     ScienceTargetOverlayInput target;
@@ -1482,6 +1496,13 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
         _impl->enqueue("focus-target", schema + "\"focus-target\"}");
     else if (id == "run-action")
     {
+        {
+            std::lock_guard<std::mutex> guard(_impl->errorMutex);
+            _impl->actionError.clear();
+        }
+        _impl->setText("workbench-error", "");
+        _impl->setText("run-feedback", "正在提交分析任务…");
+        _impl->setDisabled("run-action", true);
         if (!_impl->state.locked)
             _impl->enqueue("lock-map-center", "");
         _impl->enqueue("run", schema + "\"run\"}");

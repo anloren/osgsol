@@ -93,6 +93,23 @@ int main()
     expect(style.find("select selectbox option") != std::string::npos &&
                style.find("min-height: 34px") != std::string::npos,
            "native Rml select menus need explicit readable option rows");
+    expect(rml.find("id=\"source-chevron\"") != std::string::npos &&
+               rml.find(">▼</span>") != std::string::npos &&
+               style.find(".select-chevron") != std::string::npos &&
+               style.find("pointer-events: none") != std::string::npos,
+           "analysis selects need a visible non-interactive dropdown chevron");
+    const std::size_t mainEnd = rml.find("</main>");
+    const std::size_t runFeedback = rml.find("id=\"run-feedback\"");
+    const std::size_t runAction = rml.find("id=\"run-action\"");
+    expect(mainEnd != std::string::npos && runFeedback > mainEnd &&
+               runAction > runFeedback &&
+               style.find(".run-feedback") != std::string::npos,
+           "submission feedback must stay visible in the sticky Run footer");
+    expect(presenter.find("正在提交分析任务") != std::string::npos &&
+               presenter.find(
+                   "_impl->setDisabled(\"run-action\", true);") !=
+                   std::string::npos,
+           "Run clicks need immediate visible feedback before the next snapshot");
     expect(presenter.find(
                "if (!_impl->state.locked)\n"
                "            _impl->enqueue(\"lock-map-center\", \"\");") !=

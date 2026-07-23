@@ -130,6 +130,8 @@ int main()
             R"({"schema":"science-workbench-action-v1","action":"run"})";
         CHECK(runtime.dispatchWorkbenchAction(run, error));
         CHECK(error.empty());
+        CHECK(runtime.copyWorkbenchSnapshot(snapshot, error));
+        CHECK(snapshot.find("\"phase\":\"queued\"") != std::string::npos);
         CHECK(!runtime.dispatchWorkbenchAction("{}", error));
         CHECK(error == "fake action rejected");
     }

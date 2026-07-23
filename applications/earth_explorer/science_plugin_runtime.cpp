@@ -242,26 +242,44 @@ bool SciencePluginRuntime::copyWorkbenchSnapshot(
         error = "ScienceEarth workbench snapshot size is invalid";
         return false;
     }
-    std::vector<char> buffer(probe.bytesRequired, '\0');
-    OsgSolScienceUiBufferV1 output = {};
-    output.structSize = sizeof(output);
-    output.utf8 = buffer.data();
-    output.capacity = buffer.size();
-    if (!api->copyWorkbenchSnapshot(_session, &output))
+    std::size_t capacity = probe.bytesRequired;
+    for (int attempt = 0; attempt < 3; ++attempt)
     {
-        error = "ScienceEarth workbench snapshot copy failed";
-        return false;
+        std::vector<char> buffer(capacity, '\0');
+        OsgSolScienceUiBufferV1 output = {};
+        output.structSize = sizeof(output);
+        output.utf8 = buffer.data();
+        output.capacity = buffer.size();
+        if (!api->copyWorkbenchSnapshot(_session, &output))
+        {
+            // The science job can advance between the size probe and copy.
+            // Retry with the new requirement instead of treating a normal
+            // asynchronous snapshot growth as an ABI contract failure.
+            if (output.bytesRequired > capacity &&
+                output.bytesRequired <=
+                    OSGSOL_SCIENCE_UI_SNAPSHOT_MAX_BYTES + 1)
+            {
+                capacity = output.bytesRequired;
+                continue;
+            }
+            error = "ScienceEarth workbench snapshot copy failed";
+            return false;
+        }
+        if (output.bytesRequired == 0 ||
+            output.bytesRequired >
+                OSGSOL_SCIENCE_UI_SNAPSHOT_MAX_BYTES + 1 ||
+            output.bytesWritten + 1 != output.bytesRequired ||
+            output.bytesWritten >= buffer.size() ||
+            buffer[output.bytesWritten] != '\0')
+        {
+            error = "ScienceEarth workbench snapshot contract is invalid";
+            return false;
+        }
+        snapshot.assign(buffer.data(), output.bytesWritten);
+        return true;
     }
-    if (output.bytesWritten + 1 != output.bytesRequired ||
-        output.bytesRequired != probe.bytesRequired ||
-        output.bytesWritten >= buffer.size() ||
-        buffer[output.bytesWritten] != '\0')
-    {
-        error = "ScienceEarth workbench snapshot contract is invalid";
-        return false;
-    }
-    snapshot.assign(buffer.data(), output.bytesWritten);
-    return true;
+    error = "ScienceEarth workbench snapshot changed too quickly";
+    return false;
 }
 
 bool SciencePluginRuntime::dispatchWorkbenchAction(
