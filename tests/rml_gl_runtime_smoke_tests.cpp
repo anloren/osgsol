@@ -2,6 +2,7 @@
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <RmlUi/Core/Elements/ElementFormControlSelect.h>
 
 #include <osg/GraphicsContext>
 #include <osg/Group>
@@ -143,14 +144,22 @@ public:
         }
         if (Rml::Element* source = _document->GetElementById("source-select"))
             source->SetInnerRML(
-                "<option selected value='era5'>农业气象年度分析</option>"
-                "<option value='alphaearth'>AlphaEarth 年度变化</option>");
+                "<option selected value='era5-agro'>"
+                "ERA5 Agricultural Climate</option>"
+                "<option value='alphaearth'>AlphaEarth Foundations</option>"
+                "<option value='dem'>Copernicus DEM GLO-30</option>"
+                "<option value='era5-land'>"
+                "ERA5-Land Surface &amp; Soil History</option>"
+                "<option value='sentinel2'>Sentinel-2 Level-2A</option>");
         if (Rml::Element* help =
                 _document->GetElementById("science-help-copy"))
             help->SetProperty("display", "block");
         if (Rml::Element* helpButton =
                 _document->GetElementById("science-help"))
             helpButton->AddEventListener("click", this);
+        if (Rml::Element* runButton =
+                _document->GetElementById("run-action"))
+            runButton->AddEventListener("click", this);
         _document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
         return true;
     }
@@ -162,6 +171,8 @@ public:
         Rml::Element* target = event.GetTargetElement();
         if (target && target->GetId() == "science-help")
             ++_helpClicks;
+        if (target && target->GetId() == "run-action")
+            ++_runClicks;
     }
 
     float width(const char* id) const
@@ -200,6 +211,13 @@ public:
         return element ? element->GetScrollTop() : 0.0f;
     }
 
+    void setVisible(const char* id, bool visible)
+    {
+        if (Rml::Element* element = _document
+                ? _document->GetElementById(id) : nullptr)
+            element->SetProperty("display", visible ? "block" : "none");
+    }
+
     Rml::Vector2f center(const char* id) const
     {
         Rml::Element* element = _document
@@ -210,7 +228,46 @@ public:
                           element->GetOffsetHeight() * 0.5f);
     }
 
+    bool selectBoxVisible(const char* id) const
+    {
+        Rml::Element* element = _document
+            ? _document->GetElementById(id) : nullptr;
+        Rml::ElementFormControlSelect* select =
+            element
+                ? rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(element)
+                : nullptr;
+        return select && select->IsSelectBoxVisible();
+    }
+
+    Rml::Vector2f optionCenter(const char* id, int index) const
+    {
+        Rml::Element* element = _document
+            ? _document->GetElementById(id) : nullptr;
+        Rml::ElementFormControlSelect* select =
+            element
+                ? rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(element)
+                : nullptr;
+        Rml::Element* option = select ? select->GetOption(index) : nullptr;
+        if (!option) return Rml::Vector2f(-1.0f, -1.0f);
+        return option->GetAbsoluteOffset() +
+            Rml::Vector2f(option->GetOffsetWidth() * 0.5f,
+                          option->GetOffsetHeight() * 0.5f);
+    }
+
+    float optionHeight(const char* id, int index) const
+    {
+        Rml::Element* element = _document
+            ? _document->GetElementById(id) : nullptr;
+        Rml::ElementFormControlSelect* select =
+            element
+                ? rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(element)
+                : nullptr;
+        Rml::Element* option = select ? select->GetOption(index) : nullptr;
+        return option ? option->GetOffsetHeight() : 0.0f;
+    }
+
     int helpClicks() const { return _helpClicks; }
+    int runClicks() const { return _runClicks; }
 
     std::string value(const char* id) const
     {
@@ -225,6 +282,7 @@ public:
 private:
     Rml::ElementDocument* _document = nullptr;
     int _helpClicks = 0;
+    int _runClicks = 0;
 };
 
 bool writePpm(const char* path, const std::vector<unsigned char>& rgba)
@@ -339,6 +397,14 @@ int main()
            std::to_string(client.scrollWidth("composer-scroll")));
     expect(client.horizontalOverflow("science-help-copy") <= 1.0f,
            "Chinese help copy overflows horizontally instead of wrapping");
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::PUSH, helpCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::RELEASE, helpCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    client.setVisible("science-help-copy", false);
+    (*camera->getPostDrawCallback())(renderInfo);
 
     const Rml::Vector2f sourceCenter = client.center("source-select");
     const std::string sourceBefore = client.value("source-select");
@@ -350,11 +416,47 @@ int main()
     sendPointerEvent(runtime, osgGA::GUIEventAdapter::RELEASE, sourceCenter,
                      osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
     (*camera->getPostDrawCallback())(renderInfo);
-    runtime.enqueueKeyTap(RmlInputKey::Down);
-    runtime.enqueueKeyTap(RmlInputKey::Return);
+    expect(client.selectBoxVisible("source-select"),
+           "clicking the analysis selector did not open its menu");
+    Rml::Vector2f secondOption;
+    Rml::Vector2f previousOption;
+    float previousHeight = 0.0f;
+    for (int index = 0; index < 5; ++index)
+    {
+        const Rml::Vector2f option =
+            client.optionCenter("source-select", index);
+        const float optionHeight =
+            client.optionHeight("source-select", index);
+        expect(optionHeight >= 30.0f,
+               "analysis menu option has no readable row height at index " +
+               std::to_string(index));
+        if (index > 0)
+            expect(option.y - previousOption.y >=
+                       (previousHeight + optionHeight) * 0.45f,
+                   "analysis menu option labels overlap vertically at index " +
+                   std::to_string(index));
+        if (index == 1) secondOption = option;
+        previousOption = option;
+        previousHeight = optionHeight;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
+    glFinish();
+    std::vector<unsigned char> menuRgba(
+        static_cast<std::size_t>(WIDTH) * HEIGHT * 4);
+    glReadPixels(
+        0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, menuRgba.data());
+    expect(writePpm("/tmp/osgsol_rml_menu_open.ppm", menuRgba),
+           "could not write opened analysis menu evidence image");
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::MOVE, secondOption);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::PUSH, secondOption,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::RELEASE, secondOption,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
     (*camera->getPostDrawCallback())(renderInfo);
     expect(client.value("source-select") != sourceBefore,
-           "clicking the visible analysis selector cannot choose an option");
+           "clicking a visible analysis menu row cannot choose it");
 
     const Rml::Vector2f yearCenter = client.center("first-year");
     sendPointerEvent(runtime, osgGA::GUIEventAdapter::MOVE, yearCenter);
@@ -389,6 +491,17 @@ int main()
     (*camera->getPostDrawCallback())(renderInfo);
     expect(client.scrollTop("composer-scroll") < scrollAfterDown,
            "workbench cannot scroll upward after scrolling down");
+    const Rml::Vector2f runCenter = client.center("run-action");
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::MOVE, runCenter);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::PUSH, runCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::RELEASE, runCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(client.runClicks() == 1,
+           "visible Start Analysis CTA does not receive a real pointer click");
 
     glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
     glFinish();

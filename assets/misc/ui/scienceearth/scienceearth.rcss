@@ -118,6 +118,67 @@ button:disabled { color: #66716f; border-color: #283035; }
 select, input { width: 100%; padding: 6px 8px; }
 select, input { display: block; }
 
+select selectvalue {
+    display: block;
+    box-sizing: border-box;
+    width: 252px;
+    height: 32px;
+    padding: 6px 8px;
+    color: #e4e8e7;
+    white-space: nowrap;
+    overflow: hidden;
+}
+select selectarrow {
+    display: block;
+    box-sizing: border-box;
+    width: 34px;
+    height: 34px;
+    color: #93a09e;
+    background: #182125;
+    border-left: 1px #364249;
+}
+select:hover selectarrow,
+select:focus selectarrow,
+select selectarrow:checked {
+    background: #213033;
+    border-left-color: #28c9c3;
+}
+select selectbox {
+    display: block;
+    box-sizing: border-box;
+    width: 290px;
+    max-height: 280px;
+    margin-top: 4px;
+    padding: 4px;
+    color: #e4e8e7;
+    background: #101619;
+    border: 1px #425057;
+    border-radius: 7px;
+}
+select selectbox option {
+    display: block;
+    box-sizing: border-box;
+    width: 280px;
+    min-height: 34px;
+    padding: 7px 9px;
+    color: #dce3e1;
+    background: #101619;
+    white-space: normal;
+    word-break: break-word;
+}
+select selectbox option:hover {
+    color: #ffffff;
+    background: #1b3335;
+}
+select selectbox option:checked {
+    color: #a7efe9;
+    background: #173033;
+}
+select selectbox option.disabled {
+    color: #66716f;
+    background: #151a1d;
+}
+
 .icon-control { width: 32px; min-height: 32px; padding: 0; border-radius: 16px; }
 .status-chip { padding: 3px 7px; color: #e1bd62; background: #272315; border-radius: 8px; }
 .target-title { margin-top: 10px; font-size: 16px; }

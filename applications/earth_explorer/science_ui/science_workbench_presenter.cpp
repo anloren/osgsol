@@ -1368,10 +1368,12 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
             : "运行后计算");
 
     const bool active = running(view.phase);
-    const bool canRun = view.locked && !view.sourceId.empty() &&
+    const bool canRun = !view.sourceId.empty() &&
         view.firstYear > 0 && view.lastYear >= view.firstYear && !active;
     _impl->setDisabled("run-action", !canRun);
     _impl->setDisplay("run-action", !active);
+    _impl->setText("run-action", view.locked
+        ? "开始分析" : "锁定地图中心并开始分析");
     _impl->setDisplay("progress-footer", active);
     _impl->setText("progress-label", progressLabel(view.progressStage));
     if (Rml::Element* progress = _impl->element("run-progress"))
@@ -1479,7 +1481,11 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
     else if (id == "focus-target")
         _impl->enqueue("focus-target", schema + "\"focus-target\"}");
     else if (id == "run-action")
+    {
+        if (!_impl->state.locked)
+            _impl->enqueue("lock-map-center", "");
         _impl->enqueue("run", schema + "\"run\"}");
+    }
     else if (id == "cancel-action")
         _impl->enqueue("cancel", schema + "\"cancel\"}");
     else if (id == "report-minimize")

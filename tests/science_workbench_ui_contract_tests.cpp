@@ -40,6 +40,9 @@ int main()
     const std::string report = read("assets/misc/ui/scienceearth/report.rml");
     const std::string tokens = read("assets/misc/ui/scienceearth/tokens.rcss");
     const std::string style = read("assets/misc/ui/scienceearth/scienceearth.rcss");
+    const std::string presenter = read(
+        "applications/earth_explorer/science_ui/"
+        "science_workbench_presenter.cpp");
 
     const std::vector<std::string> requiredIds = {
         "analysis-template", "target-card", "time-range",
@@ -49,8 +52,12 @@ int main()
         expect(rml.find("id=\"" + id + "\"") != std::string::npos,
                "required connected-workflow element ID is missing");
 
-    expect(count(rml, "class=\"primary-action disabled\"") == 1,
-           "composer must expose one stable, visibly disabled initial CTA");
+    expect(count(rml, "class=\"primary-action disabled\"") == 0 &&
+               rml.find("id=\"run-action\" class=\"primary-action\"") !=
+                   std::string::npos,
+           "analysis CTA must remain actionable before an explicit target lock");
+    expect(rml.find("开始分析时会自动锁定地图中心") != std::string::npos,
+           "composer must explain the automatic target lock beside the CTA");
     expect(rml.find("data-action=\"lock-map-center\"") != std::string::npos,
            "target card must lock the map center");
     expect(rml.find("data-action=\"update-target\"") != std::string::npos,
@@ -83,6 +90,17 @@ int main()
     expect(style.find("overflow-y: auto") != std::string::npos &&
                style.find("scrollbar") != std::string::npos,
            "independent composer scrolling must remain visible");
+    expect(style.find("select selectbox option") != std::string::npos &&
+               style.find("min-height: 34px") != std::string::npos,
+           "native Rml select menus need explicit readable option rows");
+    expect(presenter.find(
+               "if (!_impl->state.locked)\n"
+               "            _impl->enqueue(\"lock-map-center\", \"\");") !=
+               std::string::npos &&
+               presenter.find(
+               "const bool canRun = !view.sourceId.empty()") !=
+               std::string::npos,
+           "Run must auto-lock the live map center before submitting");
     expect(report.find("<science-chart id=\"science-chart\"") !=
                std::string::npos &&
                report.find("id=\"report-metric-select\"") !=

@@ -31,6 +31,7 @@
             <p id="target-coordinates" class="coordinate-readout">在地图上定位后锁定范围</p>
             <p id="target-support" class="muted"></p>
             <p id="target-lock-note" class="lock-note">镜头移动不会改变已锁定范围</p>
+            <p id="target-auto-note" class="lock-note">开始分析时会自动锁定地图中心；也可以先手动锁定。</p>
             <div class="action-row">
                 <button id="lock-map-center" data-action="lock-map-center">锁定地图中心</button>
                 <button id="lock-current-view" data-action="lock-current-view">使用当前视野</button>
@@ -94,7 +95,7 @@
             <progress id="run-progress" value="0" max="100"></progress>
             <button id="cancel-action" data-action="cancel">取消</button>
         </div>
-        <button id="run-action" class="primary-action disabled" data-action="run" disabled>开始分析</button>
+        <button id="run-action" class="primary-action" data-action="run">锁定地图中心并开始分析</button>
     </footer>
 </body>
 </rml>
