@@ -274,6 +274,8 @@ IF(BUILD_TESTING)
             science_plugin_fake.cpp)
         ADD_LIBRARY(osgSol_Test_SciencePluginFakeV4 MODULE
             science_plugin_fake_v4.cpp)
+        ADD_LIBRARY(osgSol_Test_ScienceWorkbenchPresenterFakeV4 MODULE
+            science_workbench_presenter_fake_v4.cpp)
         ADD_LIBRARY(osgSol_Test_SciencePluginFakeBadAbi MODULE
             science_plugin_fake_bad_abi.cpp)
         ADD_LIBRARY(osgSol_Test_SciencePluginFakeMissingAnchor MODULE
@@ -283,6 +285,7 @@ IF(BUILD_TESTING)
         FOREACH(_science_fake_target
                 osgSol_Test_SciencePluginFake
                 osgSol_Test_SciencePluginFakeV4
+                osgSol_Test_ScienceWorkbenchPresenterFakeV4
                 osgSol_Test_SciencePluginFakeBadAbi
                 osgSol_Test_SciencePluginFakeMissingAnchor
                 osgSol_Test_SciencePluginFakeNullFunction)
@@ -323,6 +326,46 @@ IF(BUILD_TESTING)
         SET_TESTS_PROPERTIES(osgSol_Test_SciencePluginRuntime PROPERTIES
             LABELS "offline;scienceearth"
             TIMEOUT 30)
+
+        IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
+            ADD_EXECUTABLE(osgSol_Test_ScienceWorkbenchPresenterRuntime
+                science_workbench_presenter_runtime_tests.cpp
+                "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_plugin_runtime.cpp"
+                "${CMAKE_SOURCE_DIR}/applications/earth_explorer/terrain_science_overlay.cpp"
+                "${CMAKE_SOURCE_DIR}/applications/earth_explorer/terrain_science_overlay_math.cpp"
+                "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_ui/science_workbench_presenter.cpp"
+                "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_ui/science_report_window.cpp"
+                "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_ui/science_chart_model.cpp"
+                "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_ui/rml_science_chart.cpp"
+                "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_ui/map_context_capture.cpp"
+                "${CMAKE_SOURCE_DIR}/applications/earth_explorer/science_ui/science_target_overlay.cpp")
+            TARGET_COMPILE_FEATURES(
+                osgSol_Test_ScienceWorkbenchPresenterRuntime PRIVATE cxx_std_17)
+            TARGET_INCLUDE_DIRECTORIES(
+                osgSol_Test_ScienceWorkbenchPresenterRuntime PRIVATE
+                "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
+            TARGET_COMPILE_DEFINITIONS(
+                osgSol_Test_ScienceWorkbenchPresenterRuntime PRIVATE
+                OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+                OSGSOL_TEST_SCIENCE_PLUGIN_V4="$<TARGET_FILE:osgSol_Test_ScienceWorkbenchPresenterFakeV4>")
+            ADD_DEPENDENCIES(
+                osgSol_Test_ScienceWorkbenchPresenterRuntime
+                osgSol_Test_ScienceWorkbenchPresenterFakeV4)
+            TARGET_LINK_LIBRARIES(
+                osgSol_Test_ScienceWorkbenchPresenterRuntime
+                RmlUi::RmlUi png zlib ${CMAKE_DL_LIBS}
+                "-framework OpenGL")
+            LINK_OSG_LIBRARY(
+                osgSol_Test_ScienceWorkbenchPresenterRuntime
+                OpenThreads osg osgDB osgGA osgViewer)
+            ADD_TEST(NAME osgSol_Test_ScienceWorkbenchPresenterRuntime
+                     COMMAND
+                         $<TARGET_FILE:osgSol_Test_ScienceWorkbenchPresenterRuntime>)
+            SET_TESTS_PROPERTIES(
+                osgSol_Test_ScienceWorkbenchPresenterRuntime PROPERTIES
+                LABELS "offline;scienceearth;ui"
+                TIMEOUT 30)
+        ENDIF()
     ENDIF()
 
     IF(OSGSOL_BUILD_SCIENCE)

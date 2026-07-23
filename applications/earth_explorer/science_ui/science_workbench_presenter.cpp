@@ -608,6 +608,26 @@ bool running(const std::string& phase)
     return phase == "queued" || phase == "fetching" ||
            phase == "analyzing";
 }
+
+class ProgrammaticControlSync
+{
+public:
+    explicit ProgrammaticControlSync(int& depth) : _depth(depth)
+    {
+        ++_depth;
+    }
+
+    ~ProgrammaticControlSync()
+    {
+        --_depth;
+    }
+
+    ProgrammaticControlSync(const ProgrammaticControlSync&) = delete;
+    ProgrammaticControlSync& operator=(const ProgrammaticControlSync&) = delete;
+
+private:
+    int& _depth;
+};
 }
 
 class ScienceWorkbenchPresenter::Impl
@@ -690,6 +710,38 @@ public:
             rmlui_dynamic_cast<Rml::ElementFormControl*>(item))
             return control->GetValue();
         return "";
+    }
+
+    void setControlValue(Rml::Element* item, const std::string& newValue)
+    {
+        Rml::ElementFormControl* control =
+            item ? rmlui_dynamic_cast<Rml::ElementFormControl*>(item) : nullptr;
+        if (!control || control->GetValue() == newValue) return;
+        ProgrammaticControlSync sync(controlSyncDepth);
+        control->SetValue(newValue);
+    }
+
+    void setControlValue(const char* id, const std::string& newValue)
+    {
+        setControlValue(element(id), newValue);
+    }
+
+    void updateSourceDescription(
+        const SourceView* selected,
+        const ScienceWorkbenchMethod* selectedMethod)
+    {
+        if (!selected) return;
+        setText("analysis-name", selected->name);
+        std::string summary = selectedMethod
+            ? selectedMethod->summary
+            : "该数据源当前没有可执行的分析方法。";
+        if (selected->health != "ready" && !selected->healthMessage.empty())
+            summary += " · " + selected->healthMessage;
+        setText("analysis-summary", summary);
+        setText("method-summary", summary);
+        setText("provider-years",
+            std::to_string(selected->firstYear) + "–" +
+            std::to_string(selected->lastYear));
     }
 
     void enqueue(std::string name, std::string json)
@@ -905,6 +957,7 @@ public:
             rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(
                 reportElement("report-metric-select"));
         if (!select) return;
+        ProgrammaticControlSync sync(controlSyncDepth);
 
         std::string fingerprint = view.artifact.artifactId;
         for (const SeriesView& series : view.artifact.series)
@@ -932,7 +985,7 @@ public:
                 "这个结果没有可绘制的年度指标序列。");
             return;
         }
-        select->SetValue(metricId);
+        if (select->GetValue() != metricId) select->SetValue(metricId);
         reportModel.selectMetric(artifactId, metricId);
 
         const SeriesView* selected = nullptr;
@@ -1146,6 +1199,10 @@ public:
     std::string renderedArtifactFingerprint;
     bool costOpen = false;
     bool helpOpen = false;
+    int controlSyncDepth = 0;
+    std::string pendingSourceId;
+    std::string pendingMethodId;
+    std::string pendingYearRange;
     SnapshotView state;
     mutable std::mutex targetMutex;
     ScienceTargetOverlayInput target;
@@ -1294,12 +1351,21 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
     if (view.revision == _impl->renderedRevision) return;
     _impl->state = view;
     _impl->renderedRevision = view.revision;
+    if (_impl->pendingSourceId == view.sourceId)
+        _impl->pendingSourceId.clear();
+    if (_impl->pendingMethodId == view.methodId)
+        _impl->pendingMethodId.clear();
+    const std::string confirmedYearRange =
+        std::to_string(view.firstYear) + ":" + std::to_string(view.lastYear);
+    if (_impl->pendingYearRange == confirmedYearRange)
+        _impl->pendingYearRange.clear();
 
     std::string sourceFingerprint;
     for (const SourceView& source : view.sources)
         sourceFingerprint += source.id + "\n" + source.name + "\n";
     if (sourceFingerprint != _impl->renderedSourceFingerprint)
     {
+        ProgrammaticControlSync sync(_impl->controlSyncDepth);
         if (Rml::ElementFormControlSelect* select =
             rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(
                 _impl->element("source-select")))
@@ -1315,10 +1381,7 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
         }
         _impl->renderedSourceFingerprint = sourceFingerprint;
     }
-    if (Rml::ElementFormControl* source =
-        rmlui_dynamic_cast<Rml::ElementFormControl*>(
-            _impl->element("source-select")))
-        source->SetValue(view.sourceId);
+    _impl->setControlValue("source-select", view.sourceId);
 
     const SourceView* selected = nullptr;
     for (const SourceView& source : view.sources)
@@ -1334,6 +1397,7 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
         methodFingerprint += "\n" + method.id + "\n" + method.label;
     if (methodFingerprint != _impl->renderedMethodFingerprint)
     {
+        ProgrammaticControlSync sync(_impl->controlSyncDepth);
         if (Rml::ElementFormControlSelect* select =
             rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(
                 _impl->element("method-select")))
@@ -1355,39 +1419,23 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
         }
     }
     if (!selectedMethod && !methods.empty()) selectedMethod = &methods.front();
-    if (Rml::ElementFormControl* method =
-        rmlui_dynamic_cast<Rml::ElementFormControl*>(
-            _impl->element("method-select")))
-        method->SetValue(selectedMethod ? selectedMethod->id : "");
+    _impl->setControlValue(
+        "method-select", selectedMethod ? selectedMethod->id : "");
 
     const int displayedFirstYear = view.firstYear > 0 ? view.firstYear :
         (selected ? selected->firstYear : 0);
     const int displayedLastYear = view.lastYear > 0 ? view.lastYear :
         (selected ? selected->lastYear : 0);
-    if (Rml::ElementFormControl* first =
-        rmlui_dynamic_cast<Rml::ElementFormControl*>(
-            _impl->element("first-year")))
-        first->SetValue(std::to_string(displayedFirstYear));
-    if (Rml::ElementFormControl* last =
-        rmlui_dynamic_cast<Rml::ElementFormControl*>(
-            _impl->element("last-year")))
-        last->SetValue(std::to_string(displayedLastYear));
+    _impl->setControlValue(
+        "first-year", std::to_string(displayedFirstYear));
+    _impl->setControlValue(
+        "last-year", std::to_string(displayedLastYear));
 
     std::string runLabel = "开始分析";
     if (selected)
     {
-        _impl->setText("analysis-name", selected->name);
-        std::string summary = selectedMethod
-            ? selectedMethod->summary
-            : "该数据源当前没有可执行的分析方法。";
-        if (selected->health != "ready" && !selected->healthMessage.empty())
-            summary += " · " + selected->healthMessage;
-        _impl->setText("analysis-summary", summary);
-        _impl->setText("method-summary", summary);
+        _impl->updateSourceDescription(selected, selectedMethod);
         if (selectedMethod) runLabel = selectedMethod->runLabel;
-        _impl->setText("provider-years",
-            std::to_string(selected->firstYear) + "–" +
-            std::to_string(selected->lastYear));
     }
 
     _impl->setText("workbench-state", phaseLabel(view.phase));
@@ -1478,6 +1526,7 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
 
 void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
 {
+    if (_impl->controlSyncDepth > 0) return;
     Rml::Element* target = event.GetTargetElement();
     if (!target) return;
     if (target->IsClassSet("disabled") || target->HasAttribute("disabled"))
@@ -1488,6 +1537,11 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
     if (id == "source-select")
     {
         const std::string source = _impl->value("source-select");
+        if (source.empty() || source == _impl->pendingSourceId ||
+            (_impl->pendingSourceId.empty() &&
+             source == _impl->state.sourceId))
+            return;
+        _impl->pendingSourceId = source;
         _impl->enqueue("select-source", schema + "\"select-source\",\"sourceId\":" +
             jsonString(source) + "}");
         for (const SourceView& item : _impl->state.sources)
@@ -1497,14 +1551,46 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
                 scienceWorkbenchMethodsForSourceId(
                     item.id, item.supportsTimeSeries,
                     item.supportsAnalysis, item.supportsRaster);
+            const ScienceWorkbenchMethod* selectedMethod =
+                methods.empty() ? nullptr : &methods.front();
+            {
+                ProgrammaticControlSync sync(_impl->controlSyncDepth);
+                if (Rml::ElementFormControlSelect* select =
+                    rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(
+                        _impl->element("method-select")))
+                {
+                    select->RemoveAll();
+                    for (const ScienceWorkbenchMethod& method : methods)
+                        select->Add(
+                            escapedRml(method.label), method.id, -1, true);
+                    if (selectedMethod)
+                        select->SetValue(selectedMethod->id);
+                }
+            }
+            _impl->renderedMethodFingerprint = item.id;
+            for (const ScienceWorkbenchMethod& method : methods)
+                _impl->renderedMethodFingerprint +=
+                    "\n" + method.id + "\n" + method.label;
+            _impl->updateSourceDescription(&item, selectedMethod);
+            if (selectedMethod)
+                _impl->setText("run-action", _impl->state.locked
+                    ? selectedMethod->runLabel
+                    : "锁定地图中心并" + selectedMethod->runLabel);
             if (!methods.empty())
+            {
+                _impl->pendingMethodId = methods.front().id;
                 _impl->enqueue("set-method", schema +
                     "\"set-method\",\"methodId\":" +
                     jsonString(methods.front().id) + "}");
+            }
             const int first = std::clamp(
                 _impl->state.firstYear, item.firstYear, item.lastYear);
             const int last = std::clamp(
                 _impl->state.lastYear, first, item.lastYear);
+            _impl->setControlValue("first-year", std::to_string(first));
+            _impl->setControlValue("last-year", std::to_string(last));
+            _impl->pendingYearRange =
+                std::to_string(first) + ":" + std::to_string(last);
             _impl->enqueue("set-year-range", schema +
                 "\"set-year-range\",\"firstYear\":" +
                 std::to_string(first) + ",\"lastYear\":" +
@@ -1515,6 +1601,31 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
     else if (id == "method-select")
     {
         const std::string method = _impl->value("method-select");
+        if (method.empty() || method == _impl->pendingMethodId ||
+            (_impl->pendingMethodId.empty() &&
+             method == _impl->state.methodId))
+            return;
+        _impl->pendingMethodId = method;
+        const std::string sourceId = _impl->pendingSourceId.empty()
+            ? _impl->state.sourceId : _impl->pendingSourceId;
+        for (const SourceView& item : _impl->state.sources)
+        {
+            if (item.id != sourceId) continue;
+            const std::vector<ScienceWorkbenchMethod> methods =
+                scienceWorkbenchMethodsForSourceId(
+                    item.id, item.supportsTimeSeries,
+                    item.supportsAnalysis, item.supportsRaster);
+            for (const ScienceWorkbenchMethod& candidate : methods)
+            {
+                if (candidate.id != method) continue;
+                _impl->updateSourceDescription(&item, &candidate);
+                _impl->setText("run-action", _impl->state.locked
+                    ? candidate.runLabel
+                    : "锁定地图中心并" + candidate.runLabel);
+                break;
+            }
+            break;
+        }
         _impl->enqueue("set-method", schema + "\"set-method\",\"methodId\":" +
             jsonString(method) + "}");
     }
@@ -1543,6 +1654,14 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
                 return;
             }
             _impl->setText("time-error", "");
+            const std::string range =
+                std::to_string(first) + ":" + std::to_string(last);
+            if (range == _impl->pendingYearRange ||
+                (_impl->pendingYearRange.empty() &&
+                 first == _impl->state.firstYear &&
+                 last == _impl->state.lastYear))
+                return;
+            _impl->pendingYearRange = range;
             _impl->enqueue("set-year-range", schema +
                 "\"set-year-range\",\"firstYear\":" + std::to_string(first) +
                 ",\"lastYear\":" + std::to_string(last) + "}");
@@ -1680,6 +1799,14 @@ void ScienceWorkbenchPresenter::publishActionError(const std::string& error)
 {
     std::lock_guard<std::mutex> guard(_impl->errorMutex);
     _impl->actionError = error;
+    if (!error.empty())
+    {
+        _impl->pendingSourceId.clear();
+        _impl->pendingMethodId.clear();
+        _impl->pendingYearRange.clear();
+        _impl->renderedRevision =
+            std::numeric_limits<std::uint64_t>::max();
+    }
 }
 
 void ScienceWorkbenchPresenter::setVisible(bool visible)
