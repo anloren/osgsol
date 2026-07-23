@@ -54,6 +54,20 @@ bool running(ScienceWorkbenchPhase phase)
            phase == ScienceWorkbenchPhase::Fetching ||
            phase == ScienceWorkbenchPhase::Analyzing;
 }
+
+bool validTimeSelection(const earthscience::ScienceTimeSelection& time)
+{
+    switch (time.mode)
+    {
+    case earthscience::ScienceTimeMode::ExplicitYears:
+        return !time.explicitYears.empty();
+    case earthscience::ScienceTimeMode::Interval:
+        return !time.intervalStart.empty() && !time.intervalEnd.empty();
+    case earthscience::ScienceTimeMode::Instant:
+        return !time.instant.empty();
+    }
+    return false;
+}
 }
 
 void ScienceWorkbenchModel::updateLiveCameraContext(
@@ -92,6 +106,7 @@ bool ScienceWorkbenchModel::dispatch(
         if (running(_view.phase))
             return fail("workbench-run-active", error);
         _view.draft.sourceId = action.sourceId;
+        _view.selectedMethodId.clear();
         refreshDraftPhase();
         changed();
         return true;
@@ -148,7 +163,7 @@ bool ScienceWorkbenchModel::dispatch(
             return fail("workbench-target-not-locked", error);
         if (_view.draft.sourceId.empty())
             return fail("workbench-source-required", error);
-        if (_view.draft.time.explicitYears.empty())
+        if (!validTimeSelection(_view.draft.time))
             return fail("workbench-time-required", error);
         if (running(_view.phase))
             return fail("workbench-run-active", error);
@@ -328,7 +343,12 @@ void ScienceWorkbenchModel::applyJobSnapshot(
         refreshDraftPhase();
         break;
     }
-    if (snapshot.displayArtifact)
+    if (snapshot.state == earthscience::ScienceJobState::Ready &&
+        snapshot.lastSuccessfulAnalysisArtifact &&
+        snapshot.lastSuccessfulAnalysisArtifact->generation ==
+            snapshot.jobId)
+        applyArtifact(snapshot.lastSuccessfulAnalysisArtifact);
+    else if (snapshot.displayArtifact)
         applyArtifact(snapshot.displayArtifact);
     else if (snapshot.lastSuccessfulArtifact &&
              !hasArtifact(snapshot.lastSuccessfulArtifact->artifactId))

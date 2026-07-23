@@ -170,6 +170,51 @@ namespace
                 "selection did not expose missing point coverage");
     }
 
+    void testResolutionFallsBackToRasterBandMetadata()
+    {
+        std::string item = feature(
+            "missing-asset-gsd", "2025-01-20T03:12:06.317000Z", 0.1);
+        const std::string gsd = "\"gsd\":10";
+        const std::size_t position = item.find(gsd);
+        require(position != std::string::npos,
+                "test fixture lost its asset gsd");
+        item.replace(
+            position, gsd.size(),
+            "\"gsd\":null,\"raster:bands\":["
+            "{\"data_type\":\"uint8\",\"spatial_resolution\":10},"
+            "{\"data_type\":\"uint8\",\"spatial_resolution\":10},"
+            "{\"data_type\":\"uint8\",\"spatial_resolution\":10}]");
+
+        std::vector<earthscience::Sentinel2Scene> scenes;
+        std::string error;
+        require(earthscience::parseSentinel2Items(
+                    collection({item}), scenes, error) &&
+                    scenes.size() == 1 &&
+                    scenes.front().resolutionMeters == 10.0,
+                "official Earth Search item with null asset gsd did not"
+                " fall back to raster band spatial resolution");
+    }
+
+    void testInvalidCandidateDoesNotDiscardValidScene()
+    {
+        std::string invalid = feature(
+            "missing-resolution", "2025-01-20T03:12:06Z", 0.1);
+        const std::string gsd = "\"gsd\":10";
+        invalid.replace(invalid.find(gsd), gsd.size(), "\"gsd\":null");
+        std::vector<earthscience::Sentinel2Scene> scenes;
+        std::string error;
+        require(earthscience::parseSentinel2Items(
+                    collection({
+                        feature("usable", "2025-03-24T03:12:06Z", 0.2),
+                        invalid,
+                    }),
+                    scenes, error) &&
+                    scenes.size() == 1 &&
+                    scenes.front().itemId == "usable",
+                "one incomplete Earth Search candidate discarded the valid"
+                " Sentinel-2 scene");
+    }
+
     void testUnsafeOrMalformedResponsesAreRejected()
     {
         requireRejected("not-json", "malformed JSON was accepted");
@@ -225,6 +270,8 @@ int main()
     testSearchUrlIsBoundedAndEncoded();
     testParseAndDeterministicSelection();
     testSelectionRequiresCoverageOfRequestedPoint();
+    testResolutionFallsBackToRasterBandMetadata();
+    testInvalidCandidateDoesNotDiscardValidScene();
     testUnsafeOrMalformedResponsesAreRejected();
     std::cout << "[OK] Sentinel-2 STAC contract\n";
     return 0;

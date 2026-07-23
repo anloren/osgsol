@@ -7,6 +7,7 @@
 #include "science_query_builder.h"
 #include "science_workbench_model.h"
 #include "science_workbench_protocol.h"
+#include "science_workbench_query_plan.h"
 
 #include <AlphaEarthProvider.h>
 #include <CopernicusDemProvider.h>
@@ -171,11 +172,9 @@ namespace
             error = "workbench-source-not-found";
             return false;
         }
-        if (!view.target.locked ||
-            view.target.requested.kind !=
-                earthscience::ScienceGeometryKind::Point)
+        if (!view.target.locked)
         {
-            error = "workbench-point-target-required";
+            error = "workbench-target-required";
             return false;
         }
         if (view.draft.time.explicitYears.empty())
@@ -186,26 +185,13 @@ namespace
         const int firstYear = view.draft.time.explicitYears.front();
         const int lastYear = view.draft.time.explicitYears.back();
         earthscience::GeoTemporalQuery query;
-        if (source->id == "era5-land-surface-history" ||
-            source->id == "era5-agricultural-climate")
-        {
-            query = makeScienceVariablePointSeriesQuery(
-                *source, view.target.requested.point.latitude,
-                view.target.requested.point.longitude,
-                firstYear, lastYear);
-        }
-        else if (source->id == "alphaearth-foundations")
-        {
-            query = makeSciencePointSeriesQuery(
-                *source, view.target.requested.point.latitude,
-                view.target.requested.point.longitude,
-                firstYear, lastYear);
-        }
-        else
-        {
-            error = "workbench-analysis-not-supported-for-source";
+        if (!buildScienceWorkbenchQuery(
+                *source,
+                view.selectedMethodId.empty()
+                    ? scienceWorkbenchDefaultMethodId(*source)
+                    : view.selectedMethodId,
+                view.target.requested, firstYear, lastYear, query, error))
             return false;
-        }
         // The product workbench always exposes the exact cost immediately
         // above its sticky Run action. Clicking Run is the explicit consent
         // for that disclosed request; there is no hidden second checkbox.

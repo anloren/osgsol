@@ -189,6 +189,18 @@ public:
         return element ? element->GetOffsetHeight() : 0.0f;
     }
 
+    float top(const char* id) const
+    {
+        Rml::Element* element = _document
+            ? _document->GetElementById(id) : nullptr;
+        return element ? element->GetAbsoluteOffset().y : 0.0f;
+    }
+
+    float bottom(const char* id) const
+    {
+        return top(id) + height(id);
+    }
+
     float horizontalOverflow(const char* id) const
     {
         Rml::Element* element = _document
@@ -505,6 +517,27 @@ int main()
     (*camera->getPostDrawCallback())(renderInfo);
     expect(client.runClicks() == 1,
            "visible Start Analysis CTA does not receive a real pointer click");
+    client.setVisible("run-action", false);
+    client.setVisible("run-feedback", false);
+    client.setVisible("progress-footer", true);
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(client.height("run-footer") <= 74.0f,
+           "running footer is too tall and hollows out the panel");
+    expect(client.height("progress-footer") <= 54.0f,
+           "running status controls overflow into a second footer");
+    expect(client.bottom("cancel-action") <=
+               client.bottom("run-footer") + 1.0f,
+           "cancel action overflows below the running footer");
+    expect(client.horizontalOverflow("progress-footer") <= 1.0f,
+           "running status controls overflow horizontally");
+    glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
+    glFinish();
+    std::vector<unsigned char> runningRgba(
+        static_cast<std::size_t>(WIDTH) * HEIGHT * 4);
+    glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
+                 runningRgba.data());
+    expect(writePpm("/tmp/osgsol_rml_running.ppm", runningRgba),
+           "could not write compact running-state evidence image");
 
     glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
     glFinish();

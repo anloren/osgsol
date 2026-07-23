@@ -101,9 +101,11 @@
         <p id="run-feedback" class="run-feedback"
            aria-live="polite"></p>
         <div id="progress-footer" class="progress-footer">
-            <span id="progress-label">请先锁定分析位置</span>
+            <div class="progress-header">
+                <span id="progress-label">请先锁定分析位置</span>
+                <button id="cancel-action" data-action="cancel">取消</button>
+            </div>
             <progress id="run-progress" value="0" max="100"></progress>
-            <button id="cancel-action" data-action="cancel">取消</button>
         </div>
         <button id="run-action" class="primary-action" data-action="run">锁定地图中心并开始分析</button>
     </footer>

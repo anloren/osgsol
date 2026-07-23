@@ -36,7 +36,7 @@ h2 { font-size: 15px; font-weight: 500; }
     width: 360px;
     position: absolute;
     top: 68px;
-    bottom: 92px;
+    bottom: 72px;
     left: 0;
     right: 0;
     padding: 14px 12px 24px 12px;
@@ -46,17 +46,17 @@ h2 { font-size: 15px; font-weight: 500; }
 }
 
 scrollbarvertical {
-    width: 10px;
+    width: 7px;
 }
 scrollbarvertical slidertrack {
-    width: 10px;
+    width: 7px;
     background: #182125;
 }
 scrollbarvertical sliderbar {
-    width: 10px;
+    width: 7px;
     min-height: 40px;
     background: #526167;
-    border-radius: 5px;
+    border-radius: 4px;
 }
 scrollbarvertical sliderbar:hover,
 scrollbarvertical sliderbar:active {
@@ -65,6 +65,15 @@ scrollbarvertical sliderbar:active {
 scrollbarhorizontal {
     width: 0;
     height: 0;
+}
+scrollbarvertical sliderarrowdec,
+scrollbarvertical sliderarrowinc,
+scrollbarhorizontal sliderarrowdec,
+scrollbarhorizontal sliderarrowinc {
+    width: 0;
+    height: 0;
+    min-width: 0;
+    min-height: 0;
 }
 
 .help-copy {
@@ -238,11 +247,11 @@ select selectbox option.disabled {
     box-sizing: border-box;
     width: 360px;
     position: absolute;
-    height: 92px;
+    height: 72px;
     left: 0;
     right: 0;
     bottom: 0;
-    padding: 10px 14px 12px 14px;
+    padding: 8px 14px;
     border-top: 1px #2b373c;
     background: #0d1114;
 }
@@ -258,8 +267,38 @@ select selectbox option.disabled {
     white-space: nowrap;
     overflow: hidden;
 }
-.progress-footer { display: none; margin-bottom: 8px; }
-.progress-footer progress { width: 100%; height: 5px; }
+.progress-footer {
+    display: none;
+    box-sizing: border-box;
+    width: 332px;
+    height: 50px;
+}
+.progress-header {
+    display: flex;
+    box-sizing: border-box;
+    width: 332px;
+    height: 34px;
+    align-items: center;
+    justify-content: space-between;
+}
+.progress-header span {
+    display: block;
+    width: 248px;
+    color: #bdc8c6;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.progress-header button {
+    width: 64px;
+    min-height: 28px;
+    padding: 4px 8px;
+}
+.progress-footer progress {
+    display: block;
+    width: 332px;
+    height: 5px;
+    margin-top: 5px;
+}
 .operation-error { padding: 0; }
 
 .report-layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; margin: 0; color: #e4e8e7; background: transparent; font-family: LXGW Fasmart Gothic; font-size: 15px; pointer-events: none; }

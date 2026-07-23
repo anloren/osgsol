@@ -115,6 +115,8 @@ ADD_LIBRARY(osgdb_science MODULE
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_ai_tools.cpp"
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_ai_tools.h"
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_query_builder.h"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_workbench_methods.h"
+    "${OSGSOL_SCIENCE_EARTH_DIR}/science_workbench_query_plan.h"
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_workbench_protocol.cpp"
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_workbench_protocol.h"
     "${OSGSOL_SCIENCE_EARTH_DIR}/science_workbench_model.cpp"
@@ -154,6 +156,20 @@ ADD_EXECUTABLE(osgSol_Smoke_CopernicusDemProduction EXCLUDE_FROM_ALL
     CopernicusDemProductionSmoke.cpp)
 TARGET_COMPILE_FEATURES(osgSol_Smoke_CopernicusDemProduction PRIVATE cxx_std_17)
 TARGET_LINK_LIBRARIES(osgSol_Smoke_CopernicusDemProduction
+    PRIVATE osgSolSciencePreview)
+
+ADD_EXECUTABLE(osgSol_Smoke_Era5AgroProduction EXCLUDE_FROM_ALL
+    Era5AgroProductionSmoke.cpp)
+TARGET_COMPILE_FEATURES(osgSol_Smoke_Era5AgroProduction PRIVATE cxx_std_17)
+TARGET_LINK_LIBRARIES(osgSol_Smoke_Era5AgroProduction
+    PRIVATE osgSolSciencePreview)
+
+ADD_EXECUTABLE(osgSol_Smoke_AlphaEarthProduction EXCLUDE_FROM_ALL
+    AlphaEarthProductionSmoke.cpp)
+TARGET_COMPILE_FEATURES(osgSol_Smoke_AlphaEarthProduction PRIVATE cxx_std_17)
+TARGET_INCLUDE_DIRECTORIES(osgSol_Smoke_AlphaEarthProduction PRIVATE
+    "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
+TARGET_LINK_LIBRARIES(osgSol_Smoke_AlphaEarthProduction
     PRIVATE osgSolSciencePreview)
 
 IF(BUILD_TESTING)

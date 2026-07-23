@@ -136,6 +136,37 @@ void testProviderDraftConfigurationPreservesLockedGeometry()
            "provider configuration must preserve locked longitude");
 }
 
+void testRunAcceptsProviderValidatedIntervalAndInstantTime()
+{
+    for (earthscience::ScienceTimeMode mode : {
+             earthscience::ScienceTimeMode::Interval,
+             earthscience::ScienceTimeMode::Instant})
+    {
+        ScienceWorkbenchModel model;
+        makeRunnable(model);
+        earthscience::GeoTemporalQuery configured;
+        configured.sourceId = mode == earthscience::ScienceTimeMode::Interval
+            ? "sentinel-2-l2a" : "copernicus-dem-glo-30";
+        configured.geometry = point(24.3658, 104.1796);
+        configured.time.mode = mode;
+        if (mode == earthscience::ScienceTimeMode::Interval)
+        {
+            configured.time.intervalStart = "2025-01-01T00:00:00Z";
+            configured.time.intervalEnd = "2025-12-31T23:59:59Z";
+        }
+        else
+            configured.time.instant = "2021-01-01T00:00:00Z";
+        configured.outputKind = earthscience::ScienceOutputKind::RasterLayer;
+        model.configureDraft(configured);
+
+        std::string error;
+        expect(model.dispatch(action(ScienceWorkbenchActionKind::Run), error),
+               "validated interval or instant draft must run");
+        expect(model.takePendingSubmission().has_value(),
+               "validated raster draft must emit a submission");
+    }
+}
+
 std::shared_ptr<const earthscience::ScienceArtifact> artifact(
     const std::string& id, double west, double south,
     double east, double north)
@@ -205,6 +236,28 @@ void testFailureRetainsPreviousReadyArtifact()
     expect(model.viewModel().activeArtifactId == "ready-before-failure",
            "failed run must leave older report accessible");
 }
+
+void testReadyAnalysisOpensItsReportInsteadOfOldPreview()
+{
+    ScienceWorkbenchModel model;
+    model.applyArtifact(artifact("old-preview", 100.0, 20.0, 101.0, 21.0));
+
+    earthscience::ScienceJobSnapshot snapshot;
+    snapshot.jobId = 12;
+    snapshot.state = earthscience::ScienceJobState::Ready;
+    snapshot.progress.stage = earthscience::ScienceProgressStage::Ready;
+    snapshot.displayArtifact =
+        artifact("old-preview", 100.0, 20.0, 101.0, 21.0);
+    auto analysis = artifact("new-analysis", 104.0, 24.0, 105.0, 25.0);
+    const_cast<earthscience::ScienceArtifact*>(analysis.get())->generation =
+        snapshot.jobId;
+    snapshot.lastSuccessfulAnalysisArtifact = analysis;
+
+    model.applyJobSnapshot(snapshot);
+    expect(model.viewModel().activeArtifactId == "new-analysis",
+           "completed analysis must open its report instead of the retained"
+           " map preview");
+}
 }
 
 int main()
@@ -212,8 +265,10 @@ int main()
     testTargetLockIsImmutableAcrossCameraMotion();
     testRunRequiresValidFrozenDraftAndEmitsOnce();
     testProviderDraftConfigurationPreservesLockedGeometry();
+    testRunAcceptsProviderValidatedIntervalAndInstantTime();
     testReportLifecycleDoesNotDeleteOnCloseOrMinimize();
     testFailureRetainsPreviousReadyArtifact();
+    testReadyAnalysisOpensItsReportInsteadOfOldPreview();
     std::cout << "ScienceWorkbenchModel tests passed" << std::endl;
     return 0;
 }

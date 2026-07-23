@@ -335,6 +335,21 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
         LABELS "offline;scienceearth"
         TIMEOUT 30)
 
+    ADD_EXECUTABLE(osgSol_Test_ScienceWorkbenchQueryPlan
+        "${CMAKE_SOURCE_DIR}/tests/science_workbench_query_plan_tests.cpp")
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceWorkbenchQueryPlan PRIVATE
+        cxx_std_17)
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceWorkbenchQueryPlan PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/science")
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceWorkbenchQueryPlan
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceWorkbenchQueryPlan
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceWorkbenchQueryPlan>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceWorkbenchQueryPlan PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 30)
+
     ADD_EXECUTABLE(osgSol_Test_TerrainScienceOverlayMath
         terrain_science_overlay_math_test.cpp
         terrain_science_overlay_math.cpp)

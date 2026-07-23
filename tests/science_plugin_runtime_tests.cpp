@@ -2,8 +2,10 @@
 #include "../applications/earth_explorer/terrain_science_overlay.h"
 
 #include <dlfcn.h>
+#include <chrono>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ \
@@ -34,10 +36,80 @@ namespace
             dlsym(handle, "osgsol_science_test_gui_bridge"));
         return function ? function() : nullptr;
     }
+
+    int runLiveEraWorkbench(const std::string& indexPath)
+    {
+        SciencePluginRuntime runtime;
+        if (!runtime.load(OSGSOL_TEST_SCIENCE_PLUGIN_REAL, indexPath))
+        {
+            std::cerr << runtime.error() << "\n";
+            return 1;
+        }
+        std::string error;
+        const auto dispatch = [&runtime, &error](const std::string& body)
+        {
+            return runtime.dispatchWorkbenchAction(
+                "{\"schema\":\"science-workbench-action-v1\"," +
+                body + "}", error);
+        };
+        if (!dispatch(
+                "\"action\":\"update-target\",\"geometry\":{\"kind\":"
+                "\"point\",\"point\":{\"latitude\":24.3658,"
+                "\"longitude\":104.1796}}") ||
+            !dispatch(
+                "\"action\":\"select-source\",\"sourceId\":"
+                "\"era5-agricultural-climate\"") ||
+            !dispatch(
+                "\"action\":\"set-method\",\"methodId\":"
+                "\"annual-summary\"") ||
+            !dispatch(
+                "\"action\":\"set-year-range\",\"firstYear\":2017,"
+                "\"lastYear\":2025") ||
+            !dispatch("\"action\":\"run\""))
+        {
+            std::cerr << "live ERA5 workbench dispatch failed: "
+                      << error << "\n";
+            return 1;
+        }
+
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(30);
+        std::string snapshot;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (!runtime.copyWorkbenchSnapshot(snapshot, error))
+            {
+                std::cerr << error << "\n";
+                return 1;
+            }
+            if (snapshot.find("\"phase\":\"ready\"") !=
+                    std::string::npos &&
+                snapshot.find("\"activeArtifact\":{") !=
+                    std::string::npos &&
+                snapshot.find(
+                    "\"sourceId\":\"era5-agricultural-climate\"") !=
+                    std::string::npos &&
+                snapshot.find("\"series\":[{") != std::string::npos)
+            {
+                std::cout << "[OK] live ERA5 workbench opened its report\n";
+                return 0;
+            }
+            if (snapshot.find("\"phase\":\"failed\"") != std::string::npos)
+            {
+                std::cerr << snapshot << "\n";
+                return 1;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        std::cerr << "live ERA5 workbench timed out: " << snapshot << "\n";
+        return 1;
+    }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 3 && std::string(argv[1]) == "--live-era")
+        return runLiveEraWorkbench(argv[2]);
     {
         SciencePluginRuntime runtime;
         CHECK(runtime.load(OSGSOL_TEST_SCIENCE_PLUGIN, "index.sqlite"));
@@ -159,6 +231,67 @@ int main()
         CHECK(snapshot.find("\"phase\":\"ready-to-run\"") !=
               std::string::npos);
         CHECK(snapshot.find("\"locked\":true") != std::string::npos);
+
+        const auto dispatch = [&runtime, &error](
+            const std::string& action)
+        {
+            return runtime.dispatchWorkbenchAction(
+                "{\"schema\":\"science-workbench-action-v1\"," +
+                action + "}", error);
+        };
+        const auto runAndCancel = [&dispatch, &error, &runtime](
+            const std::string& sourceId,
+            const std::string& methodId,
+            int firstYear, int lastYear) -> bool
+        {
+            const auto step = [&dispatch, &error, &sourceId](
+                const char* name, const std::string& action)
+            {
+                if (dispatch(action)) return true;
+                std::cerr << "Science workbench " << sourceId << " "
+                          << name << " failed: " << error << "\n";
+                return false;
+            };
+            if (!step("select-source",
+                    "\"action\":\"select-source\",\"sourceId\":\"" +
+                    sourceId + "\""))
+                return false;
+            if (!step("set-method",
+                    "\"action\":\"set-method\",\"methodId\":\"" +
+                    methodId + "\""))
+                return false;
+            if (!step("set-year-range",
+                    "\"action\":\"set-year-range\",\"firstYear\":" +
+                    std::to_string(firstYear) + ",\"lastYear\":" +
+                    std::to_string(lastYear)))
+                return false;
+            if (!step("run", "\"action\":\"run\""))
+            {
+                std::string current;
+                if (runtime.copyWorkbenchSnapshot(current, error))
+                    std::cerr << current << "\n";
+                return false;
+            }
+            std::string current;
+            if (!runtime.copyWorkbenchSnapshot(current, error)) return false;
+            const bool active =
+                current.find("\"phase\":\"queued\"") != std::string::npos ||
+                current.find("\"phase\":\"fetching\"") != std::string::npos ||
+                current.find("\"phase\":\"analyzing\"") != std::string::npos;
+            if (active && !step("cancel", "\"action\":\"cancel\""))
+                return false;
+            if (!error.empty()) return false;
+            return true;
+        };
+
+        CHECK(runAndCancel(
+            "era5-land-surface-history", "annual-summary", 2024, 2025));
+        CHECK(runAndCancel(
+            "era5-agricultural-climate", "annual-summary", 2024, 2025));
+        CHECK(runAndCancel(
+            "sentinel-2-l2a", "satellite-preview", 2025, 2025));
+        CHECK(runAndCancel(
+            "copernicus-dem-glo-30", "terrain-preview", 2021, 2021));
     }
 
     std::cout << "[OK] ScienceEarth plugin runtime contract\n";

@@ -1,6 +1,7 @@
 #include "science_workbench_presenter.h"
 
 #include "../science_plugin_runtime.h"
+#include "../science_workbench_methods.h"
 #include "../earth_control_layout.h"
 #include "rml_science_chart.h"
 #include "science_chart_model.h"
@@ -36,6 +37,9 @@ struct SourceView
     int firstYear = 0;
     int lastYear = 0;
     bool supportsBounds = false;
+    bool supportsTimeSeries = false;
+    bool supportsAnalysis = false;
+    bool supportsRaster = false;
 };
 
 struct SeriesView
@@ -307,8 +311,15 @@ bool parseSnapshot(const std::string& json, SnapshotView& output,
             if (const picojson::value* capabilitiesValue =
                     field(source, "capabilities");
                 capabilitiesValue && capabilitiesValue->is<picojson::object>())
-                item.supportsBounds = boolField(
-                    capabilitiesValue->get<picojson::object>(), "bounds");
+            {
+                const picojson::object& capabilities =
+                    capabilitiesValue->get<picojson::object>();
+                item.supportsBounds = boolField(capabilities, "bounds");
+                item.supportsTimeSeries =
+                    boolField(capabilities, "timeSeries");
+                item.supportsAnalysis = boolField(capabilities, "analysis");
+                item.supportsRaster = boolField(capabilities, "raster");
+            }
             if (!item.id.empty()) output.sources.push_back(std::move(item));
         }
     }
@@ -1131,6 +1142,7 @@ public:
     Rml::ElementDocument* reportDocument = nullptr;
     std::uint64_t renderedRevision = std::numeric_limits<std::uint64_t>::max();
     std::string renderedSourceFingerprint;
+    std::string renderedMethodFingerprint;
     std::string renderedArtifactFingerprint;
     bool costOpen = false;
     bool helpOpen = false;
@@ -1307,32 +1319,72 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
         rmlui_dynamic_cast<Rml::ElementFormControl*>(
             _impl->element("source-select")))
         source->SetValue(view.sourceId);
-    if (Rml::ElementFormControl* method =
-        rmlui_dynamic_cast<Rml::ElementFormControl*>(
-            _impl->element("method-select")))
-        method->SetValue(view.methodId.empty() ? "annual-summary" : view.methodId);
-    if (Rml::ElementFormControl* first =
-        rmlui_dynamic_cast<Rml::ElementFormControl*>(
-            _impl->element("first-year")))
-        first->SetValue(std::to_string(view.firstYear));
-    if (Rml::ElementFormControl* last =
-        rmlui_dynamic_cast<Rml::ElementFormControl*>(
-            _impl->element("last-year")))
-        last->SetValue(std::to_string(view.lastYear));
 
     const SourceView* selected = nullptr;
     for (const SourceView& source : view.sources)
         if (source.id == view.sourceId) { selected = &source; break; }
     if (!selected && !view.sources.empty()) selected = &view.sources.front();
+    std::vector<ScienceWorkbenchMethod> methods;
+    if (selected)
+        methods = scienceWorkbenchMethodsForSourceId(
+            selected->id, selected->supportsTimeSeries,
+            selected->supportsAnalysis, selected->supportsRaster);
+    std::string methodFingerprint = selected ? selected->id : "";
+    for (const ScienceWorkbenchMethod& method : methods)
+        methodFingerprint += "\n" + method.id + "\n" + method.label;
+    if (methodFingerprint != _impl->renderedMethodFingerprint)
+    {
+        if (Rml::ElementFormControlSelect* select =
+            rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(
+                _impl->element("method-select")))
+        {
+            select->RemoveAll();
+            for (const ScienceWorkbenchMethod& method : methods)
+                select->Add(
+                    escapedRml(method.label), method.id, -1, true);
+        }
+        _impl->renderedMethodFingerprint = methodFingerprint;
+    }
+    const ScienceWorkbenchMethod* selectedMethod = nullptr;
+    for (const ScienceWorkbenchMethod& method : methods)
+    {
+        if (method.id == view.methodId)
+        {
+            selectedMethod = &method;
+            break;
+        }
+    }
+    if (!selectedMethod && !methods.empty()) selectedMethod = &methods.front();
+    if (Rml::ElementFormControl* method =
+        rmlui_dynamic_cast<Rml::ElementFormControl*>(
+            _impl->element("method-select")))
+        method->SetValue(selectedMethod ? selectedMethod->id : "");
+
+    const int displayedFirstYear = view.firstYear > 0 ? view.firstYear :
+        (selected ? selected->firstYear : 0);
+    const int displayedLastYear = view.lastYear > 0 ? view.lastYear :
+        (selected ? selected->lastYear : 0);
+    if (Rml::ElementFormControl* first =
+        rmlui_dynamic_cast<Rml::ElementFormControl*>(
+            _impl->element("first-year")))
+        first->SetValue(std::to_string(displayedFirstYear));
+    if (Rml::ElementFormControl* last =
+        rmlui_dynamic_cast<Rml::ElementFormControl*>(
+            _impl->element("last-year")))
+        last->SetValue(std::to_string(displayedLastYear));
+
+    std::string runLabel = "开始分析";
     if (selected)
     {
         _impl->setText("analysis-name", selected->name);
-        std::string summary = selected->category.empty()
-            ? "按时间和空间范围生成可复核的科学结果。"
-            : selected->category + " · " + selected->spatialSupport;
+        std::string summary = selectedMethod
+            ? selectedMethod->summary
+            : "该数据源当前没有可执行的分析方法。";
         if (selected->health != "ready" && !selected->healthMessage.empty())
             summary += " · " + selected->healthMessage;
         _impl->setText("analysis-summary", summary);
+        _impl->setText("method-summary", summary);
+        if (selectedMethod) runLabel = selectedMethod->runLabel;
         _impl->setText("provider-years",
             std::to_string(selected->firstYear) + "–" +
             std::to_string(selected->lastYear));
@@ -1377,12 +1429,15 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
 
     const bool active = running(view.phase);
     const bool canRun = !view.sourceId.empty() &&
-        view.firstYear > 0 && view.lastYear >= view.firstYear && !active;
+        displayedFirstYear > 0 &&
+        displayedLastYear >= displayedFirstYear &&
+        selectedMethod && !active;
     _impl->setDisabled("run-action", !canRun);
     _impl->setDisplay("run-action", !active);
     _impl->setText("run-action", view.locked
-        ? "开始分析" : "锁定地图中心并开始分析");
+        ? runLabel : "锁定地图中心并" + runLabel);
     _impl->setDisplay("progress-footer", active);
+    _impl->setDisplay("run-feedback", !active);
     _impl->setText("progress-label", progressLabel(view.progressStage));
     if (active) _impl->setText("run-feedback", "");
     if (Rml::Element* progress = _impl->element("run-progress"))
@@ -1435,6 +1490,27 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
         const std::string source = _impl->value("source-select");
         _impl->enqueue("select-source", schema + "\"select-source\",\"sourceId\":" +
             jsonString(source) + "}");
+        for (const SourceView& item : _impl->state.sources)
+        {
+            if (item.id != source) continue;
+            const std::vector<ScienceWorkbenchMethod> methods =
+                scienceWorkbenchMethodsForSourceId(
+                    item.id, item.supportsTimeSeries,
+                    item.supportsAnalysis, item.supportsRaster);
+            if (!methods.empty())
+                _impl->enqueue("set-method", schema +
+                    "\"set-method\",\"methodId\":" +
+                    jsonString(methods.front().id) + "}");
+            const int first = std::clamp(
+                _impl->state.firstYear, item.firstYear, item.lastYear);
+            const int last = std::clamp(
+                _impl->state.lastYear, first, item.lastYear);
+            _impl->enqueue("set-year-range", schema +
+                "\"set-year-range\",\"firstYear\":" +
+                std::to_string(first) + ",\"lastYear\":" +
+                std::to_string(last) + "}");
+            break;
+        }
     }
     else if (id == "method-select")
     {

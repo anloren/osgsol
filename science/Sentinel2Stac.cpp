@@ -137,6 +137,34 @@ namespace
         return found == object.end() ? nullptr : &found->second;
     }
 
+    bool parseVisualResolution(
+        const picojson::object& asset, double& resolutionMeters)
+    {
+        const picojson::value* gsd = member(asset, "gsd");
+        if (gsd && gsd->is<double>())
+        {
+            resolutionMeters = gsd->get<double>();
+            return std::isfinite(resolutionMeters) &&
+                std::abs(resolutionMeters - 10.0) <= 1e-9;
+        }
+        const picojson::value* bands = member(asset, "raster:bands");
+        if (!bands || !bands->is<picojson::array>() ||
+            bands->get<picojson::array>().size() != 3)
+            return false;
+        for (const picojson::value& band : bands->get<picojson::array>())
+        {
+            if (!band.is<picojson::object>()) return false;
+            const picojson::value* spatialResolution =
+                member(band.get<picojson::object>(), "spatial_resolution");
+            if (!spatialResolution || !spatialResolution->is<double>() ||
+                !std::isfinite(spatialResolution->get<double>()) ||
+                std::abs(spatialResolution->get<double>() - 10.0) > 1e-9)
+                return false;
+        }
+        resolutionMeters = 10.0;
+        return true;
+    }
+
     bool parseBounds(const picojson::value& value, ScienceWgs84Bounds& bounds)
     {
         if (!value.is<picojson::array>()) return false;
@@ -206,15 +234,15 @@ namespace
         const picojson::object& visualObject = visual->get<picojson::object>();
         const picojson::value* href = member(visualObject, "href");
         const picojson::value* mediaType = member(visualObject, "type");
-        const picojson::value* gsd = member(visualObject, "gsd");
         const picojson::value* roles = member(visualObject, "roles");
+        double resolutionMeters = 0.0;
         if (!href || !href->is<std::string>() ||
             !validAssetUrl(href->get<std::string>()) || !mediaType ||
             !mediaType->is<std::string>() ||
             mediaType->get<std::string>().rfind("image/tiff", 0) != 0 ||
             mediaType->get<std::string>().find("profile=cloud-optimized") ==
-                std::string::npos || !gsd || !gsd->is<double>() ||
-            std::abs(gsd->get<double>() - 10.0) > 1e-9 || !roles ||
+                std::string::npos ||
+            !parseVisualResolution(visualObject, resolutionMeters) || !roles ||
             !roles->is<picojson::array>())
         {
             error = "Sentinel-2 visual COG metadata is invalid";
@@ -231,7 +259,7 @@ namespace
         }
         scene.visualUrl = href->get<std::string>();
         scene.mediaType = mediaType->get<std::string>();
-        scene.resolutionMeters = gsd->get<double>();
+        scene.resolutionMeters = resolutionMeters;
         return true;
     }
 
@@ -375,13 +403,16 @@ bool parseSentinel2Items(
     }
     std::set<std::string> itemIds;
     scenes.reserve(featureValues.size());
+    std::string firstRejectedSceneError;
     for (const picojson::value& value : featureValues)
     {
         Sentinel2Scene scene;
-        if (!parseScene(value, scene, error))
+        std::string sceneError;
+        if (!parseScene(value, scene, sceneError))
         {
-            scenes.clear();
-            return false;
+            if (firstRejectedSceneError.empty())
+                firstRejectedSceneError = std::move(sceneError);
+            continue;
         }
         if (!itemIds.insert(scene.itemId).second)
         {
@@ -390,6 +421,13 @@ bool parseSentinel2Items(
             return false;
         }
         scenes.push_back(std::move(scene));
+    }
+    if (scenes.empty() && !featureValues.empty())
+    {
+        error = firstRejectedSceneError.empty()
+            ? "Sentinel-2 STAC response has no usable scenes"
+            : firstRejectedSceneError;
+        return false;
     }
     error.clear();
     return true;

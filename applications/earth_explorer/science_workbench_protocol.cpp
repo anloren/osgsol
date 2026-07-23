@@ -28,6 +28,18 @@ const char* phaseName(ScienceWorkbenchPhase phase)
     return "draft";
 }
 
+int isoYear(const std::string& value)
+{
+    if (value.size() < 4) return 0;
+    int year = 0;
+    for (std::size_t index = 0; index < 4; ++index)
+    {
+        if (value[index] < '0' || value[index] > '9') return 0;
+        year = year * 10 + (value[index] - '0');
+    }
+    return year;
+}
+
 bool validUtf8(const char* text, std::size_t size)
 {
     if (!text && size != 0) return false;
@@ -554,6 +566,21 @@ std::string serializeScienceWorkbenchSnapshot(
     picojson::array years;
     for (int year : model.draft.time.explicitYears)
         years.push_back(number(year));
+    if (years.empty() &&
+        model.draft.time.mode == earthscience::ScienceTimeMode::Interval)
+    {
+        const int firstYear = isoYear(model.draft.time.intervalStart);
+        const int lastYear = isoYear(model.draft.time.intervalEnd);
+        if (firstYear > 0) years.push_back(number(firstYear));
+        if (lastYear > 0 && lastYear != firstYear)
+            years.push_back(number(lastYear));
+    }
+    if (years.empty() &&
+        model.draft.time.mode == earthscience::ScienceTimeMode::Instant)
+    {
+        const int year = isoYear(model.draft.time.instant);
+        if (year > 0) years.push_back(number(year));
+    }
     query["years"] = picojson::value(years);
     root["draft"] = picojson::value(query);
 

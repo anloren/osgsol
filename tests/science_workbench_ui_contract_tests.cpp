@@ -90,6 +90,13 @@ int main()
     expect(style.find("overflow-y: auto") != std::string::npos &&
                style.find("scrollbar") != std::string::npos,
            "independent composer scrolling must remain visible");
+    expect(style.find("scrollbarvertical sliderarrowdec") !=
+               std::string::npos &&
+               style.find("scrollbarvertical sliderarrowinc") !=
+               std::string::npos &&
+               style.find("min-height: 0") != std::string::npos,
+           "generated scrollbar arrows must be collapsed instead of forming"
+           " bright vertical strips");
     expect(style.find("select selectbox option") != std::string::npos &&
                style.find("min-height: 34px") != std::string::npos,
            "native Rml select menus need explicit readable option rows");
@@ -105,6 +112,11 @@ int main()
                runAction > runFeedback &&
                style.find(".run-feedback") != std::string::npos,
            "submission feedback must stay visible in the sticky Run footer");
+    expect(rml.find("class=\"progress-header\"") != std::string::npos &&
+               style.find(".progress-footer {") != std::string::npos &&
+               style.find("height: 50px") != std::string::npos,
+           "running state must use one compact footer instead of a hollow"
+           " overflowing panel");
     expect(presenter.find("正在提交分析任务") != std::string::npos &&
                presenter.find(
                    "_impl->setDisabled(\"run-action\", true);") !=
