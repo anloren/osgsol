@@ -38,6 +38,7 @@ struct QueuedInput
     int value = 0;
     int modifiers = 0;
     bool pressed = false;
+    bool yIncreasesDownwards = true;
     RmlInputKey key = RmlInputKey::Unknown;
     std::string text;
 };
@@ -312,6 +313,9 @@ void RmlUiRuntime::processEvent(const osgGA::GUIEventAdapter& event)
         input.kind = QueuedKind::MouseMove;
         input.x = event.getX();
         input.y = event.getY();
+        input.yIncreasesDownwards =
+            event.getMouseYOrientation() ==
+            osgGA::GUIEventAdapter::Y_INCREASING_DOWNWARDS;
         break;
     case osgGA::GUIEventAdapter::PUSH:
     case osgGA::GUIEventAdapter::RELEASE:
@@ -364,9 +368,11 @@ void RmlUiRuntime::update(double)
         {
         case QueuedKind::MouseMove:
         {
+            int y = static_cast<int>(input.y);
+            if (!input.yIncreasesDownwards)
+                y = _impl->height - 1 - y;
             const bool pass = _impl->context->ProcessMouseMove(
-                static_cast<int>(input.x),
-                _impl->height - static_cast<int>(input.y), input.modifiers);
+                static_cast<int>(input.x), y, input.modifiers);
             _wantsPointer.store(!pass);
             _impl->bridge.setUiFocused(!pass || _wantsText.load());
             break;

@@ -40,16 +40,50 @@ h2 { font-size: 15px; font-weight: 500; }
     left: 0;
     right: 0;
     padding: 14px 12px 24px 12px;
+    overflow-x: hidden;
     overflow-y: auto;
     scrollbar-margin: 3px;
 }
 
-.help-copy { display: none; margin-bottom: 10px; padding: 10px; color: #bdc8c6; background: #122023; border-left: 3px #28c9c3; }
+scrollbarvertical {
+    width: 10px;
+}
+scrollbarvertical slidertrack {
+    width: 10px;
+    background: #182125;
+}
+scrollbarvertical sliderbar {
+    width: 10px;
+    min-height: 40px;
+    background: #526167;
+    border-radius: 5px;
+}
+scrollbarvertical sliderbar:hover,
+scrollbarvertical sliderbar:active {
+    background: #28c9c3;
+}
+scrollbarhorizontal {
+    width: 0;
+    height: 0;
+}
+
+.help-copy {
+    display: none;
+    box-sizing: border-box;
+    width: 320px;
+    margin-bottom: 10px;
+    padding: 10px;
+    color: #bdc8c6;
+    background: #122023;
+    border-left: 3px #28c9c3;
+    white-space: normal;
+    word-break: break-word;
+}
 
 .workflow-card {
     display: block;
     box-sizing: border-box;
-    width: 336px;
+    width: 320px;
     margin-bottom: 10px;
     padding: 14px;
     border: 1px #2c363b;
@@ -58,7 +92,10 @@ h2 { font-size: 15px; font-weight: 500; }
 }
 
 .supporting-copy, .muted { margin-top: 7px; color: #93a09e; line-height: 1.35; white-space: normal; word-break: break-word; }
-.workflow-card > .supporting-copy, .workflow-card > .muted { width: 306px; }
+.workflow-card > .supporting-copy, .workflow-card > .muted {
+    box-sizing: border-box;
+    width: 290px;
+}
 .section-heading, .action-row, .year-fields {
     display: flex;
     align-items: center;
@@ -90,12 +127,12 @@ select, input { display: block; }
 .action-row button { flex: 1; }
 .locked-actions { display: none; }
 
-.year-fields { width: 306px; margin-top: 10px; align-items: flex-end; }
-.year-field { display: block; width: 132px; }
-.year-field label { width: 132px; margin-bottom: 5px; color: #93a09e; font-size: 11px; }
-.year-field input { width: 132px; }
-.range-connector { width: 22px; height: 1px; margin: 0 10px 17px 10px; background: #28c9c3; }
-.range-strip { display: block; width: 306px; height: 4px; margin-top: 12px; background: #263034; border-radius: 2px; }
+.year-fields { width: 290px; margin-top: 10px; align-items: flex-end; }
+.year-field { display: block; flex: 1; min-width: 0; }
+.year-field label { width: 100%; margin-bottom: 5px; color: #93a09e; font-size: 11px; }
+.year-field input { width: 100%; }
+.range-connector { width: 18px; height: 1px; margin: 0 7px 17px 7px; background: #28c9c3; }
+.range-strip { display: block; width: 290px; height: 4px; margin-top: 12px; background: #263034; border-radius: 2px; }
 .range-strip span { display: block; width: 45%; height: 4px; margin-left: 48%; background: #28c9c3; }
 .field-error, .operation-error { min-height: 0; margin-top: 7px; color: #ef6a62; }
 

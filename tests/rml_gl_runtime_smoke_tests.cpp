@@ -1,11 +1,13 @@
 #include "product_ui/rml_ui_runtime.h"
 
 #include <RmlUi/Core.h>
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 
 #include <osg/GraphicsContext>
 #include <osg/Group>
 #include <osg/RenderInfo>
 #include <osg/State>
+#include <osgGA/GUIEventAdapter>
 #include <osgViewer/Viewer>
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/OpenGL.h>
@@ -26,6 +28,19 @@ void expect(bool condition, const std::string& message)
     if (condition) return;
     std::cerr << "FAIL: " << message << std::endl;
     std::exit(1);
+}
+
+std::string ancestry(Rml::Element* element)
+{
+    std::string output;
+    for (int depth = 0; element && depth < 6; ++depth)
+    {
+        if (!output.empty()) output += " <- ";
+        output += std::string(element->GetTagName()) + "#" +
+                  std::string(element->GetId());
+        element = element->GetParentNode();
+    }
+    return output.empty() ? std::string("<none>") : output;
 }
 
 class HeadlessCglContext : public osg::GraphicsContext
@@ -113,7 +128,7 @@ private:
     bool _realized;
 };
 
-class DocumentClient : public RmlUiFrameClient
+class DocumentClient : public RmlUiFrameClient, public Rml::EventListener
 {
 public:
     bool onRmlContextReady(Rml::Context& context, std::string& error) override
@@ -130,11 +145,24 @@ public:
             source->SetInnerRML(
                 "<option selected value='era5'>农业气象年度分析</option>"
                 "<option value='alphaearth'>AlphaEarth 年度变化</option>");
+        if (Rml::Element* help =
+                _document->GetElementById("science-help-copy"))
+            help->SetProperty("display", "block");
+        if (Rml::Element* helpButton =
+                _document->GetElementById("science-help"))
+            helpButton->AddEventListener("click", this);
         _document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
         return true;
     }
 
     void onRmlFrame(Rml::Context&) override {}
+
+    void ProcessEvent(Rml::Event& event) override
+    {
+        Rml::Element* target = event.GetTargetElement();
+        if (target && target->GetId() == "science-help")
+            ++_helpClicks;
+    }
 
     float width(const char* id) const
     {
@@ -150,8 +178,53 @@ public:
         return element ? element->GetOffsetHeight() : 0.0f;
     }
 
+    float horizontalOverflow(const char* id) const
+    {
+        Rml::Element* element = _document
+            ? _document->GetElementById(id) : nullptr;
+        return element
+            ? element->GetScrollWidth() - element->GetOffsetWidth() : 0.0f;
+    }
+
+    float scrollWidth(const char* id) const
+    {
+        Rml::Element* element = _document
+            ? _document->GetElementById(id) : nullptr;
+        return element ? element->GetScrollWidth() : 0.0f;
+    }
+
+    float scrollTop(const char* id) const
+    {
+        Rml::Element* element = _document
+            ? _document->GetElementById(id) : nullptr;
+        return element ? element->GetScrollTop() : 0.0f;
+    }
+
+    Rml::Vector2f center(const char* id) const
+    {
+        Rml::Element* element = _document
+            ? _document->GetElementById(id) : nullptr;
+        if (!element) return Rml::Vector2f(-1.0f, -1.0f);
+        return element->GetAbsoluteOffset() +
+            Rml::Vector2f(element->GetOffsetWidth() * 0.5f,
+                          element->GetOffsetHeight() * 0.5f);
+    }
+
+    int helpClicks() const { return _helpClicks; }
+
+    std::string value(const char* id) const
+    {
+        Rml::Element* element = _document
+            ? _document->GetElementById(id) : nullptr;
+        Rml::ElementFormControl* control =
+            element ? rmlui_dynamic_cast<Rml::ElementFormControl*>(element)
+                    : nullptr;
+        return control ? std::string(control->GetValue()) : std::string();
+    }
+
 private:
     Rml::ElementDocument* _document = nullptr;
+    int _helpClicks = 0;
 };
 
 bool writePpm(const char* path, const std::vector<unsigned char>& rgba)
@@ -167,6 +240,31 @@ bool writePpm(const char* path, const std::vector<unsigned char>& rgba)
             std::fwrite(row + x * 4, 1, 3, file);
     }
     return std::fclose(file) == 0;
+}
+
+void sendPointerEvent(RmlUiRuntime& runtime,
+                      osgGA::GUIEventAdapter::EventType type,
+                      const Rml::Vector2f& position, int button = 0)
+{
+    osg::ref_ptr<osgGA::GUIEventAdapter> event =
+        new osgGA::GUIEventAdapter;
+    event->setEventType(type);
+    event->setX(position.x);
+    event->setY(position.y);
+    event->setMouseYOrientation(
+        osgGA::GUIEventAdapter::Y_INCREASING_DOWNWARDS);
+    if (button != 0) event->setButton(button);
+    runtime.processEvent(*event);
+}
+
+void sendWheelEvent(RmlUiRuntime& runtime,
+                    osgGA::GUIEventAdapter::ScrollingMotion motion)
+{
+    osg::ref_ptr<osgGA::GUIEventAdapter> event =
+        new osgGA::GUIEventAdapter;
+    event->setEventType(osgGA::GUIEventAdapter::SCROLL);
+    event->setScrollingMotion(motion);
+    runtime.processEvent(*event);
 }
 }
 
@@ -222,6 +320,75 @@ int main()
            "year inputs are visually collapsed");
     expect(client.height("analysis-summary") > 28.0f,
            "long Chinese analysis summary is clipped instead of wrapped");
+    const Rml::Vector2f helpCenter = client.center("science-help");
+    expect(helpCenter.x >= 0.0f && helpCenter.y >= 0.0f,
+           "help button has no usable screen position");
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::MOVE, helpCenter);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::PUSH, helpCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::RELEASE, helpCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(client.helpClicks() == 1,
+           "downward-origin macOS pointer click did not reach RmlUi control");
+    expect(client.horizontalOverflow("composer-scroll") <= 1.0f,
+           "workbench content exceeds the panel width; panel=" +
+           std::to_string(client.width("composer-scroll")) + ", scroll=" +
+           std::to_string(client.scrollWidth("composer-scroll")));
+    expect(client.horizontalOverflow("science-help-copy") <= 1.0f,
+           "Chinese help copy overflows horizontally instead of wrapping");
+
+    const Rml::Vector2f sourceCenter = client.center("source-select");
+    const std::string sourceBefore = client.value("source-select");
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::MOVE, sourceCenter);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::PUSH, sourceCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::RELEASE, sourceCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    runtime.enqueueKeyTap(RmlInputKey::Down);
+    runtime.enqueueKeyTap(RmlInputKey::Return);
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(client.value("source-select") != sourceBefore,
+           "clicking the visible analysis selector cannot choose an option");
+
+    const Rml::Vector2f yearCenter = client.center("first-year");
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::MOVE, yearCenter);
+    (*camera->getPostDrawCallback())(renderInfo);
+    Rml::Element* yearHover = runtime.context()->GetHoverElement();
+    const std::string yearHoverTag = yearHover
+        ? std::string(yearHover->GetTagName()) : std::string("<none>");
+    const std::string yearHoverId = yearHover
+        ? std::string(yearHover->GetId()) : std::string("<none>");
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::PUSH, yearCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::RELEASE, yearCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    const std::string yearBeforeText = client.value("first-year");
+    runtime.enqueueCommittedText("9");
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(client.value("first-year") != yearBeforeText,
+           "clicking a visible year input does not enable text editing; "
+           "hover=" + yearHoverTag + "#" + yearHoverId +
+           " ancestry=" + ancestry(yearHover) +
+           ", center=" + std::to_string(yearCenter.x) + "," +
+           std::to_string(yearCenter.y));
+    const float scrollBefore = client.scrollTop("composer-scroll");
+    sendWheelEvent(runtime, osgGA::GUIEventAdapter::SCROLL_DOWN);
+    (*camera->getPostDrawCallback())(renderInfo);
+    const float scrollAfterDown = client.scrollTop("composer-scroll");
+    expect(scrollAfterDown > scrollBefore,
+           "visible workbench scrollbar does not respond to wheel down");
+    sendWheelEvent(runtime, osgGA::GUIEventAdapter::SCROLL_UP);
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(client.scrollTop("composer-scroll") < scrollAfterDown,
+           "workbench cannot scroll upward after scrolling down");
 
     glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
     glFinish();
