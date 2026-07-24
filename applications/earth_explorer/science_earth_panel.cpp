@@ -3,6 +3,7 @@
 #include "LayerManager.h"
 #include "earth_control_layout.h"
 #include "earth_ui_chart.h"
+#include "earth_ui_components.h"
 #include "earth_ui_tokens.h"
 #include "science_preview_layer.h"
 #include "science_query_builder.h"
@@ -266,13 +267,19 @@ void drawHelpButton(const char* id, ScienceHelpTopic topic,
     if (placeOnSameLine) ImGui::SameLine();
     ImGui::PushID(id);
     if (ImGui::SmallButton("?")) ImGui::OpenPopup("##science_help_popup");
+    const ImGuiIO& io = ImGui::GetIO();
+    const float popupWidth = std::min(
+        380.0f, std::max(220.0f, io.DisplaySize.x - 24.0f));
+    const float popupHeight = std::min(
+        520.0f, std::max(160.0f, io.DisplaySize.y - 24.0f));
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(std::min(220.0f, popupWidth), 0.0f),
+        ImVec2(popupWidth, popupHeight));
     if (ImGui::BeginPopup("##science_help_popup"))
     {
         ImGui::TextWrapped("%s", scienceHelpTopicTitle(topic));
         ImGui::Separator();
-        ImGui::PushTextWrapPos(
-            ImGui::GetCursorPosX() + std::min(360.0f,
-                std::max(220.0f, ImGui::GetContentRegionAvail().x)));
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextWrapped("%s", scienceHelpTopicBody(topic));
         ImGui::PopTextWrapPos();
         ImGui::EndPopup();
@@ -285,13 +292,19 @@ void drawLabeledHelpButton(const char* id, const char* label,
 {
     ImGui::PushID(id);
     if (ImGui::SmallButton(label)) ImGui::OpenPopup("##science_help_popup");
+    const ImGuiIO& io = ImGui::GetIO();
+    const float popupWidth = std::min(
+        380.0f, std::max(220.0f, io.DisplaySize.x - 24.0f));
+    const float popupHeight = std::min(
+        520.0f, std::max(160.0f, io.DisplaySize.y - 24.0f));
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(std::min(220.0f, popupWidth), 0.0f),
+        ImVec2(popupWidth, popupHeight));
     if (ImGui::BeginPopup("##science_help_popup"))
     {
         ImGui::TextWrapped("%s", scienceHelpTopicTitle(topic));
         ImGui::Separator();
-        ImGui::PushTextWrapPos(
-            ImGui::GetCursorPosX() + std::min(360.0f,
-                std::max(220.0f, ImGui::GetContentRegionAvail().x)));
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextWrapped("%s", scienceHelpTopicBody(topic));
         ImGui::PopTextWrapPos();
         ImGui::EndPopup();
@@ -2550,7 +2563,8 @@ void ScienceEarthPanel::drawResults(
     ImGui::TextUnformatted(u8"洞察透镜 / Insight Lens");
     ImGui::PopStyleColor();
     ImGui::TextDisabled(u8"ScienceEarth · 结果、图表与证据");
-    ImGui::SameLine();
+    earthui::continueRowIfFits(
+        earthui::buttonWidth(u8"折叠 >##science_results"));
     if (ImGui::SmallButton(u8"折叠 >##science_results"))
         _state.resultExpanded = false;
     ImGui::Separator();

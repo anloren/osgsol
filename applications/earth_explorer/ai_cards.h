@@ -28,10 +28,6 @@ struct AICard
     earthai::JobManager* jobs = nullptr;
     int jobId = 0;
     bool open = true;
-    // 上一帧该卡片 ImGui::Begin 窗口的实际高度(AlwaysAutoResize 窗口的高度要到 End() 之后
-    // 才确定,当帧再拿去摆下一张卡的位置会有一帧延迟——缓存上一帧的值,下一帧堆叠用它,
-    // 首帧(=0)时给个保守估计,避免第一帧卡片重叠。
-    float lastHeight = 0.0f;
     // 卡片的稳定身份,用于拼 ImGui 窗口 ID(见 AICardPanel::draw 注释)。
     // 不能用 vector 下标:关掉第 i 张卡后,后面的卡下标会左移,ImGui 按 ID 认窗口,
     // 下标变了就被当成一个新窗口打开——出现一帧闪烁/位置错乱。serial 现由 pushChart/

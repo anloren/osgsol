@@ -350,6 +350,42 @@ int main()
     CHECK(cards.find("ImGui::BeginTabBar") != std::string::npos);
     CHECK(cards.find("ImGuiWindowFlags_HorizontalScrollbar") ==
           std::string::npos);
+    CHECK(cards.find("ImGui::TextWrapped(") != std::string::npos);
+
+    // Compact action groups must wrap according to available width instead of
+    // assuming every translated label can remain on one row.
+    const size_t bookmarksBegin = source.find(
+        "\"bookmarks\", u8\"书签与巡游\"");
+    const size_t settingsBegin = source.find(
+        "// ---- 设置", bookmarksBegin);
+    CHECK(bookmarksBegin != std::string::npos &&
+          settingsBegin != std::string::npos &&
+          bookmarksBegin < settingsBegin);
+    const std::string bookmarks = source.substr(
+        bookmarksBegin, settingsBegin - bookmarksBegin);
+    CHECK(countOccurrences(bookmarks, "continueRowIfFits(") >= 3);
+    const size_t feedBegin = source.find("card.id = \"feed_detail\"");
+    const size_t tickerBegin = source.find(
+        "// T8:右上角事件流卡", feedBegin);
+    CHECK(feedBegin != std::string::npos &&
+          tickerBegin != std::string::npos && feedBegin < tickerBegin);
+    CHECK(source.substr(feedBegin, tickerBegin - feedBegin).find(
+              "continueRowIfFits(") != std::string::npos);
+
+    std::ifstream tokenInput(std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/earth_ui_tokens.h");
+    std::ostringstream tokenBuffer;
+    tokenBuffer << tokenInput.rdbuf();
+    const std::string tokens = tokenBuffer.str();
+    CHECK(tokenInput.good() || tokenInput.eof());
+    CHECK(tokens.find("colorU32") != std::string::npos);
+    std::ifstream chartInput(std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/earth_ui_chart.h");
+    std::ostringstream chartBuffer;
+    chartBuffer << chartInput.rdbuf();
+    const std::string chart = chartBuffer.str();
+    CHECK(chartInput.good() || chartInput.eof());
+    CHECK(chart.find("IM_COL32(") == std::string::npos);
 
     std::ifstream tickerInput(std::string(OSGVERSE_SOURCE_DIR) +
         "/applications/earth_explorer/event_ticker.h");

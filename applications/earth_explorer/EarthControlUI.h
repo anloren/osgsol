@@ -511,14 +511,18 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     _mani->insertControlPointFromCurrentView((float)_bookmarkTime);
                     _bookmarkTime += 60;
                 }
-                ImGui::SameLine();
+                earthui::continueRowIfFits(
+                    ImGui::CalcTextSize(u8"已存 0000").x);
                 ImGui::Text(u8"已存 %d", (int)_mani->getControlPoints().size());
                 if (ImGui::Button(u8"播放巡游 Play"))
                 {
                     if (!_mani->getControlPoints().empty()) _mani->startAnimation();
                 }
-                ImGui::SameLine();
+                earthui::continueRowIfFits(
+                    earthui::buttonWidth(u8"停止 Stop"));
                 if (ImGui::Button(u8"停止 Stop")) _mani->stopAnimation(false);
+                earthui::continueRowIfFits(
+                    earthui::buttonWidth(u8"清空 Clear"));
                 if (ImGui::Button(u8"清空 Clear")) { _mani->clearControlPoints(); _bookmarkTime = 0; }
                 earthui::endDrawerSection();
             }
@@ -746,7 +750,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                         // _aiCore 为 null(无 AI 构建/未注入)时同样不出现,零干扰。
                         if (_aiCore && fs.sourceId == "gdelt")
                         {
-                            ImGui::SameLine();
+                            earthui::continueRowIfFits(
+                                earthui::buttonWidth(u8"AI 摘要"));
                             if (ImGui::Button(u8"AI 摘要"))
                                 _aiCore->submit(u8"请总结这条新闻热点(地点:" + fs.title +
                                     u8")的主要内容并分析其重要性。文章链接:" + fs.url +

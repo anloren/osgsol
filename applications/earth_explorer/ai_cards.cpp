@@ -314,12 +314,14 @@ static void drawLineChart(ImDrawList* dl, ImVec2 origin, float width,
         ImGui::ColorConvertFloat4ToU32(earthui::design::kIron);
     const ImU32 border =
         ImGui::ColorConvertFloat4ToU32(earthui::design::kBorder);
-    const ImU32 grid = IM_COL32(59, 48, 46, 110);
+    const ImU32 grid = earthui::design::colorU32(
+        earthui::design::kBorder, 110.0f / 255.0f);
     const ImU32 axis =
         ImGui::ColorConvertFloat4ToU32(earthui::design::kTextDim);
     const ImU32 series =
         ImGui::ColorConvertFloat4ToU32(earthui::design::kCyan);
-    const ImU32 fill = IM_COL32(56, 195, 223, 35);
+    const ImU32 fill = earthui::design::colorU32(
+        earthui::design::kCyan, 35.0f / 255.0f);
     const ImVec2 chartMax(origin.x + width, origin.y + chartH);
     dl->AddRectFilled(origin, chartMax, background, 2.0f);
     dl->AddRect(origin, chartMax, border, 2.0f);

@@ -1,6 +1,7 @@
 #ifndef EARTH_UI_CARD_H
 #define EARTH_UI_CARD_H
 
+#include <algorithm>
 #include <functional>
 #include <cfloat>
 #include <string>
@@ -113,18 +114,21 @@ namespace earthui
             const float cardWidth = shell.insightWidth;
             const float topY = shell.insightTop;
             const float minimumHeight = std::min(128.0f, shell.insightHeight);
+            const float maximumHeight =
+                std::max(minimumHeight, shell.insightHeight);
+            const float windowHeight = std::clamp(
+                _preferredHeight, minimumHeight, maximumHeight);
             ImGui::SetNextWindowPos(
                 ImVec2(io.DisplaySize.x - rightMargin, topY),
                 ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-            ImGui::SetNextWindowSize(ImVec2(cardWidth, 0.0f), ImGuiCond_Always);
-            ImGui::SetNextWindowSizeConstraints(
-                ImVec2(cardWidth, minimumHeight),
-                ImVec2(cardWidth, std::max(minimumHeight, shell.insightHeight)));
+            ImGui::SetNextWindowSize(
+                ImVec2(cardWidth, windowHeight), ImGuiCond_Always);
 
             const ImGuiWindowFlags flags =
-                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoResize |
                 ImGuiWindowFlags_NoCollapse |
                 ImGuiWindowFlags_NoSavedSettings;
+            float measuredHeight = minimumHeight;
             if (ImGui::Begin(u8"洞察透镜###earth_insight_lens", nullptr, flags))
             {
                 if (ImGui::BeginTabBar(
@@ -146,8 +150,11 @@ namespace earthui
                                 if (!c.subtitle.empty())
                                 {
                                     ImGui::SameLine();
-                                    ImGui::TextDisabled(
+                                    ImGui::PushStyleColor(
+                                        ImGuiCol_Text, design::kTextDim);
+                                    ImGui::TextWrapped(
                                         "%s", c.subtitle.c_str());
+                                    ImGui::PopStyleColor();
                                 }
                                 ImGui::Separator();
                             }
@@ -158,13 +165,18 @@ namespace earthui
                     }
                     ImGui::EndTabBar();
                 }
+                measuredHeight = ImGui::GetCursorPosY() +
+                    ImGui::GetStyle().WindowPadding.y;
             }
             ImGui::End();
+            _preferredHeight = std::clamp(
+                measuredHeight, minimumHeight, maximumHeight);
             _frameCards.clear();
         }
 
     private:
         std::vector<Card> _frameCards;             // 本帧登记的卡片,draw() 末尾清空
+        float _preferredHeight = 220.0f;            // 上帧实测高度；超长内容在边界内滚动
     };
 }
 

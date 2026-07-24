@@ -27,6 +27,24 @@ static const ImVec4 kTextDim(0.451f, 0.478f, 0.471f, 1.000f);     // #737a78
 static const ImVec4 kBorder(0.231f, 0.188f, 0.180f, 0.920f);      // #3b302e
 static const ImVec4 kBorderStrong(0.333f, 0.255f, 0.239f, 1.0f);  // #55413d
 
+// Shared conversion helpers keep custom ImDrawList charts on the same token
+// contract as regular ImGui controls. Alpha-only variants must not copy RGB
+// literals into individual chart implementations.
+inline ImVec4 withAlpha(const ImVec4& color, float alpha)
+{
+    return ImVec4(color.x, color.y, color.z, alpha);
+}
+
+inline ImU32 colorU32(const ImVec4& color)
+{
+    return ImGui::ColorConvertFloat4ToU32(color);
+}
+
+inline ImU32 colorU32(const ImVec4& color, float alpha)
+{
+    return ImGui::ColorConvertFloat4ToU32(withAlpha(color, alpha));
+}
+
 }
 }
 

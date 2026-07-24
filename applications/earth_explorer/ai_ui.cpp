@@ -418,10 +418,14 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
             earthai::MediaManager::PendingVideoInfo info = video.pending;
             if (info.ready)
             {
-                ImGui::Text(u8"起点 A：纬度 %.4f° 经度 %.4f° 高度 %.1fm",
-                           osg::RadiansToDegrees(info.llaA[0]), osg::RadiansToDegrees(info.llaA[1]), info.llaA[2]);
-                ImGui::Text(u8"终点 B：纬度 %.4f° 经度 %.4f° 高度 %.1fm",
-                           osg::RadiansToDegrees(info.llaB[0]), osg::RadiansToDegrees(info.llaB[1]), info.llaB[2]);
+                ImGui::TextWrapped(
+                    u8"起点 A：纬度 %.4f° 经度 %.4f° 高度 %.1fm",
+                    osg::RadiansToDegrees(info.llaA[0]),
+                    osg::RadiansToDegrees(info.llaA[1]), info.llaA[2]);
+                ImGui::TextWrapped(
+                    u8"终点 B：纬度 %.4f° 经度 %.4f° 高度 %.1fm",
+                    osg::RadiansToDegrees(info.llaB[0]),
+                    osg::RadiansToDegrees(info.llaB[1]), info.llaB[2]);
                 ImGui::Separator();
                 ImGui::TextWrapped("%s", info.motionPrompt.c_str());
                 ImGui::Separator();

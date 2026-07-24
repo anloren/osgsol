@@ -131,7 +131,7 @@ void runViewport(float width, float height)
     first.title = u8"航班详情";
     first.style.chipLabel = u8"航班";
     first.drawBody = []() {
-        for (int row = 0; row < 24; ++row)
+        for (int row = 0; row < 96; ++row)
             ImGui::TextWrapped(
                 u8"第 %d 行详情：长文本必须在洞察透镜内部滚动。", row + 1);
     };
@@ -147,6 +147,14 @@ void runViewport(float width, float height)
     cards.upsert(second);
     cards.draw();
     ImGui::Render();
+    // Auto-resize constraints use the previous frame's measured content.
+    // Render the same card set once more before auditing its final scrollbar
+    // state, matching the steady state users interact with.
+    ImGui::NewFrame();
+    cards.upsert(first);
+    cards.upsert(second);
+    cards.draw();
+    ImGui::Render();
     expectInside(u8"洞察透镜###earth_insight_lens", width, height);
     ImGuiWindow* insight =
         window(u8"洞察透镜###earth_insight_lens");
@@ -154,6 +162,44 @@ void runViewport(float width, float height)
            "Insight Lens grows below its reserved region");
     expect(!insight->ScrollbarX,
            "Insight Lens exposes a horizontal scrollbar");
+
+    // Select the remaining long card by removing the short active tab, then
+    // give the auto-sized window one frame to settle on its measured content.
+    ImGui::NewFrame();
+    cards.upsert(first);
+    cards.draw();
+    ImGui::Render();
+    ImGui::NewFrame();
+    cards.upsert(first);
+    cards.draw();
+    ImGui::Render();
+    insight = window(u8"洞察透镜###earth_insight_lens");
+    expectInside(u8"洞察透镜###earth_insight_lens", width, height);
+    expect(insight->Size.y <= layout.insightHeight + 1.0f,
+           "long Insight Lens grows below its reserved region");
+    expect(insight->ScrollbarY && insight->ScrollMax.y > 1.0f,
+           "long Insight Lens content is not visibly scrollable; height=" +
+               std::to_string(insight->Size.y) + ", content=" +
+               std::to_string(insight->ContentSize.y) + ", scrollMax=" +
+               std::to_string(insight->ScrollMax.y) + ", scrollbar=" +
+               std::to_string(static_cast<int>(insight->ScrollbarY)));
+    ImGui::SetScrollY(insight, insight->ScrollMax.y);
+    ImGui::NewFrame();
+    cards.upsert(first);
+    cards.draw();
+    ImGui::Render();
+    insight = window(u8"洞察透镜###earth_insight_lens");
+    const float scrolledDown = insight->Scroll.y;
+    expect(scrolledDown > 1.0f,
+           "Insight Lens cannot reach content below the fold");
+    ImGui::SetScrollY(insight, 0.0f);
+    ImGui::NewFrame();
+    cards.upsert(first);
+    cards.draw();
+    ImGui::Render();
+    insight = window(u8"洞察透镜###earth_insight_lens");
+    expect(insight->Scroll.y < scrolledDown,
+           "Insight Lens cannot return upward after scrolling down");
 }
 
 void runModuleInteraction()

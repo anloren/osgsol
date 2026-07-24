@@ -85,11 +85,19 @@ void drawModuleHelp(EarthUiModule module)
 {
     if (ImGui::SmallButton("?")) ImGui::OpenPopup("##module_context_help");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip(u8"查看本模块的交互规则");
+    const ImGuiIO& io = ImGui::GetIO();
+    const float popupWidth = std::min(
+        360.0f, std::max(220.0f, io.DisplaySize.x - 24.0f));
+    const float popupHeight = std::min(
+        260.0f, std::max(120.0f, io.DisplaySize.y - 24.0f));
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(std::min(220.0f, popupWidth), 0.0f),
+        ImVec2(popupWidth, popupHeight));
     if (ImGui::BeginPopup("##module_context_help"))
     {
         ImGui::TextUnformatted(moduleLabel(module));
         ImGui::Separator();
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 320.0f);
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextWrapped("%s", moduleContextLabel(module));
         ImGui::PopTextWrapPos();
         ImGui::EndPopup();

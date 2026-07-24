@@ -70,10 +70,10 @@ inline bool drawAnnualSeriesChart(
         ImGui::ColorConvertFloat4ToU32(design::kIron);
     const ImU32 border =
         ImGui::ColorConvertFloat4ToU32(design::kBorder);
-    const ImU32 grid = IM_COL32(59, 48, 46, 110);
+    const ImU32 grid = design::colorU32(design::kBorder, 110.0f / 255.0f);
     const ImU32 axisText =
         ImGui::ColorConvertFloat4ToU32(design::kTextDim);
-    const ImU32 seriesColor = IM_COL32(56, 195, 223, 255);
+    const ImU32 seriesColor = design::colorU32(design::kCyan);
     const ImU32 hoverColor =
         ImGui::ColorConvertFloat4ToU32(design::kMeasure);
     draw->AddRectFilled(itemMin, itemMax, background, 2.0f);
