@@ -4,7 +4,7 @@
 
 ## 已冻结基线
 
-- 当前候选代码提交：`011f009 fix(ui): close hidden surface gaps`
+- 当前候选代码提交：`9f8f64a test(ui): prove formal control operability`
 - 分支：`codex/scienceearth-agro-climate-v1`
 - 正式 App：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前截图：`/Users/USER/Desktop/Screenshot 2026-07-24 at 11.21.07 AM.png`
@@ -79,7 +79,9 @@
   图层目录和实体详情，在 1024×576、1440×900、2048×1152 生成 24 个画面；
   窄屏 AI 双行、水平溢出、抽屉到底和返回顶部均进入门禁
 - UI 运行时：八个主模块、三档视口、科学菜单、滚轮双向、分析提交、
-  报告关闭边界和图表坐标均通过；八模块使用真实鼠标事件，不再直接写状态
+  报告关闭边界和图表坐标均通过；八模块使用真实鼠标事件，不再直接写状态。
+  顶栏、探索、跳转、书签、图层、任务、设置和 Quit 的正式命中矩形也逐项进入
+  真实点击门禁，并核对相机、图层、操纵器、运行参数和退出请求状态
 - 跨引擎同帧组合：RmlUi 科学工作台/报告先绘制，ImGui 正式 Shell
   随后合成；在 1024×576、1280×720、1440×900 同时检查模块轨与工作台
   无透明缝、工作台不压 AI 命令栏；在 1440×900 进一步检查报告不压
@@ -101,6 +103,7 @@
   Copernicus DEM、ERA5-Land 均通过
 - 地图与退出保护：地形科学融合合同、3D Tiles、相机、正常退出守卫均通过
 - 正式打包契约：通过
+- 包审计单元测试：77/77 通过
 - G0-v2 候选包审计：PASS，新增发现 0、违规 0、未解析依赖 0、四项包体门槛
   均 PASS；仍记录 1 个受 reference/ratchet 约束的历史编译路径根因，本次未新增
 - 暂存包严格深度签名：PASS
@@ -110,17 +113,17 @@
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前桌面候选：`0.6.1` / `G3.1`，来源提交
-  `011f00994e5aded2ee1b5833927c8770527cde6c`，channel
+  `9f8f64a0517d22737cbfbdc70f3feb66f24ce45e`，channel
   `ui-ux-goal-candidate`
 - 桌面/严格暂存包可执行文件 SHA-256：
-  `36bc63c1cbba44d4598ba4ed15360fcc4e461120e35b88e9c289e42bc362e669`
+  `21f47ca70dbd76e00e0859e04d03fb11c2d77d84b5f0512cc6be81c8260ab739`
 - 桌面/严格暂存包整包内容与模式指纹：
-  `0d0f5830213fe2e144df3b20a2703408e4a7ac676cf506cf363fe8029cef24c9`
+  `bb34ad6d9d47e4e37b190ea90b2a1729aba855a3a0b3f80c058ebf5f52ba58c3`
 - 桌面包与严格暂存包逐文件一致：371 个普通文件、37 个符号链接；
   桌面进程 0、同名 App 1 个、最新异常报告仍为
   `osgSol_Earth-2026-07-23-222801.ips`
 - 上一桌面候选备份：
-  `build/desktop-backups/pre-ui-hidden-surfaces-20260724-205716-011f009/osgSol Earth.previous.app`
+  `build/desktop-backups/pre-ui-control-operability-20260724-220156-011f009/osgSol Earth.previous.app`
 - 本次替换后没有出现 FileProvider 恢复的第二个 App；桌面仍只保留一个正式 App。
 - 自动化没有启动、前置或操作桌面候选
 

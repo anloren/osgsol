@@ -14,12 +14,12 @@ before it can be tagged or synchronized as accepted.
 - Version: 0.6.1
 - ScienceEarth phase: G3.1
 - Channel: ui-ux-goal-candidate
-- Source commit: `011f00994e5aded2ee1b5833927c8770527cde6c`
+- Source commit: `9f8f64a0517d22737cbfbdc70f3feb66f24ce45e`
 - Provenance: recorded in `Contents/Info.plist` and
   `Contents/Resources/package-audit.env`
 - Automated gates: package contract, bundle closure, provenance, data manifest,
   staging strict/deep signature, G0-v2 bundle audit, Rml document parsing, and
-  82/82 offline regression suite and 43/43 bundle-audit unit suite. The UI gate
+  82/82 offline regression suite and 77/77 bundle-audit unit suite. The UI gate
   also composes the production ImGui shell with the real RmlUi Science
   workbench/report in the same offscreen frame at 1024×576, 1280×720, and
   1440×900, verifies the shared workbench/Shell safe regions at all three sizes,
@@ -35,6 +35,12 @@ before it can be tagged or synchronized as accepted.
   card gate also renders bar/line/donut/stat charts, photo/video results,
   generation progress, the event stream/status strip, the single maximum-detail
   notice, and module help; it clicks or scrolls every applicable surface.
+  The formal drawer gate additionally clicks Home, drawer collapse/restore,
+  Always Day, real-time Sun, Ocean, auto-exposure, Atmosphere, Go To,
+  bookmark record/play/stop/clear, layer search/preset/opacity/visibility,
+  task event/status toggles, Settings value/reset, and Quit, then verifies each
+  production state change rather than treating a module screenshot as evidence
+  of operability.
 - Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle.
   A FileProvider-restored old `osgSol Earth 2.app` was archived outside Desktop
   without launching or altering either package.
