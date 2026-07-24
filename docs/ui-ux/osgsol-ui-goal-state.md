@@ -4,7 +4,7 @@
 
 ## 已冻结基线
 
-- 当前生产提交：`4eff01e fix(ui): bind report and help interactions`
+- 当前候选代码提交：`aa0e1da test(ui): add full-shell pixel regression`
 - 分支：`codex/scienceearth-agro-climate-v1`
 - 正式 App：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前截图：`/Users/USER/Desktop/Screenshot 2026-07-24 at 11.21.07 AM.png`
@@ -48,7 +48,8 @@
 - [x] 保持 OSG/Cocoa 1:1 稳定坐标契约，不以局部 Retina 开关制造地图与输入错位；
 - [x] 全产品正式表面完成性矩阵与证据等级；
 - [x] 1024×576、1440×900、2048×1152 自动边界测试；
-- [x] 80/80 离线全回归；
+- [x] 原生壳层八模块真实 GL 像素回归；
+- [x] 81/81 离线全回归；
 - [x] 签名和包体审计、唯一桌面候选更新；
 - [ ] 用户正式包可视与 Quit 验收。
 
@@ -56,7 +57,9 @@
 
 - 构建树：`build/science_g3_release`
 - 安装树：`build/science_g3_release/sdk`
-- 离线回归：80/80 通过，0 失败
+- 离线回归：81/81 通过，0 失败
+- 原生 GL 像素回归：八个主模块在 1440×900 使用生产 CJK 字体和壳层组件，
+  证明无透明缝、无大块白底、无整块覆盖地图；上下文托盘和洞察透镜正文完整
 - UI 运行时：八个主模块、三档视口、科学菜单、滚轮双向、分析提交、
   报告关闭边界和图表坐标均通过；八模块使用真实鼠标事件，不再直接写状态
 - 窗口缩放：科学工作台在 1024×576 与 1440×900 之间往返，RmlUi
@@ -74,17 +77,16 @@
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前桌面候选：`0.6.1` / `G3.1`，来源提交
-  `4eff01e9a28f6e1a37374e4715ea36bc427245e2`，channel
+  `aa0e1dae8af230ad750d2e5d3da66791ac3782f6`，channel
   `ui-ux-goal-candidate`
 - 桌面/严格暂存包可执行文件 SHA-256：
-  `279b1ebb807c645275515102fad9a97cda457126550d4005cce248064b065ca3`
+  `53eb11e444c3d2b5252afaf3cec83d60ddba05b0e9d1b44d05664fbbdb22cc8c`
 - 桌面包与严格暂存包逐文件一致：371 个普通文件、37 个符号链接；
   桌面进程 0、同名 App 1 个、最新异常报告仍为
   `osgSol_Earth-2026-07-23-222801.ips`
 - 上一桌面候选备份：
-  `build/desktop-backups/pre-ui-interaction-fix-20260724-163324-4eff01e9a28f/osgSol Earth.previous.app`
-- Desktop FileProvider 在替换后短暂恢复了旧候选为 `osgSol Earth 2.app`；
-  已原样移入同一备份目录的 `osgSol Earth.fileprovider-conflict.app`，桌面仍只保留一个正式 App。
+  `build/desktop-backups/pre-ui-shell-pixel-20260724-170700-aa0e1da/osgSol Earth.previous.app`
+- 本次替换后没有出现 FileProvider 恢复的第二个 App；桌面仍只保留一个正式 App。
 - 自动化没有启动、前置或操作桌面候选
 
 ## 仍需用户手测
