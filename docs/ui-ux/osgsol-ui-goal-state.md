@@ -4,7 +4,7 @@
 
 ## 已冻结基线
 
-- 代码基线：`2d8efc6 fix(scienceearth): separate UI sync from user events`
+- 当前生产提交：`091b2a4 fix(ui): enforce product interaction contracts`
 - 分支：`codex/scienceearth-agro-climate-v1`
 - 正式 App：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前截图：`/Users/USER/Desktop/Screenshot 2026-07-24 at 11.21.07 AM.png`
@@ -38,6 +38,11 @@
 - [x] 科学模块收起/展开状态与 RmlUi 产品表面显隐一致；
 - [x] 弱文本达到至少 4.5:1 对比度，并建立自动化回退门禁；
 - [x] Tab 焦点推进、成对键盘事件与模块—数据源隔离运行时测试；
+- [x] 八个可见模块按钮逐项真实鼠标命中、切换与再次点击收起；
+- [x] 短内容无假滚动条，长抽屉可下滚并返回顶部；
+- [x] 图层预设、事件流、状态带和数据源按模块归属隔离；
+- [x] RmlUi Resize、科学工作台 body 和渲染视口同步重排；
+- [x] 保持 OSG/Cocoa 1:1 稳定坐标契约，不以局部 Retina 开关制造地图与输入错位；
 - [x] 全产品正式表面完成性矩阵与证据等级；
 - [x] 1024×576、1440×900、2048×1152 自动边界测试；
 - [x] 80/80 离线全回归；
@@ -50,7 +55,10 @@
 - 安装树：`build/science_g3_release/sdk`
 - 离线回归：80/80 通过，0 失败
 - UI 运行时：八个主模块、三档视口、科学菜单、滚轮双向、分析提交、
-  报告关闭边界和图表坐标均通过
+  报告关闭边界和图表坐标均通过；八模块使用真实鼠标事件，不再直接写状态
+- 窗口缩放：科学工作台在 1024×576 与 1440×900 之间往返，RmlUi
+  context、renderer、生产 body 和报告安全区同步更新
+- 键盘与滚动：ImGui 全局 Tab 导航通过；短内容无装饰滚动条，长内容可下滚并返回
 - 科学源切换：ERA5 农业气候、AlphaEarth、Sentinel-2、
   Copernicus DEM、ERA5-Land 均通过
 - 地图与退出保护：地形科学融合合同、3D Tiles、相机、正常退出守卫均通过
@@ -62,8 +70,9 @@
   会报告外部元数据。
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
-- 候选版本：`0.6.1`，阶段 `G3.1`，来源提交
-  `d4be4470d47e03fe4f0060b4eb48d7475c7fbd17`
+- 当前桌面候选仍是上一轮 `0.6.1` / `G3.1`，来源提交
+  `d4be4470d47e03fe4f0060b4eb48d7475c7fbd17`；待本轮生产提交完成打包审计后
+  才会事务性替换，替换前不把工作树结果冒充桌面结果
 - 桌面/严格暂存包可执行文件 SHA-256：
   `08c4bf07ad79e5e81a146860e58d76690fc6d7e44fdfa62c858f9c8445bc9938`
 - 桌面包与严格暂存包逐文件一致：371 个普通文件、37 个符号链接；

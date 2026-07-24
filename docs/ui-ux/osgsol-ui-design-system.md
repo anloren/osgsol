@@ -163,6 +163,19 @@ ImGui 和 RmlUi 不得各自新增近似色。新颜色先进入 token，再进�
 - 滚动到底后必须能滚回；
 - 长中英文和单位符号不能越界。
 
+### macOS 缩放与坐标契约
+
+当前 OpenSceneGraph 3.6.5 Cocoa 后端使用非高分辨率 OpenGL surface，正式包按
+1 个逻辑点对应 1 个 backing 像素运行。这个选择同时约束地球 viewport、拾取、
+ImGui、RmlUi、鼠标和输入法坐标。
+
+- 本版本不得只通过 `NSHighResolutionCapable` 或单个 Cocoa 属性强开 Retina；
+- 窗口尺寸变化仍必须实时重排 ImGui 与 RmlUi，并更新 RmlUi renderer；
+- 未来高分辨率迁移必须从窗口 points 转换到 backing pixels，再统一校准地图、
+  UI、鼠标、触控板和文本输入坐标；
+- 未完成上述完整迁移前，以稳定、无半屏、无点击偏移为优先，不把清晰度开关
+  当作局部 UI 修复。
+
 ## 状态语法
 
 | 状态 | 表达 |
