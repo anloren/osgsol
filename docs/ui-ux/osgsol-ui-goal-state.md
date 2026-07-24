@@ -4,7 +4,7 @@
 
 ## 已冻结基线
 
-- 当前候选代码提交：`9f8f64a test(ui): prove formal control operability`
+- 当前桌面候选来源提交：`85c97ce docs(ui): record final interaction audit`
 - 后续审计证据提交：`0e3b834 test(ui): audit remaining command actions`
 - 完成性复核提交：`46926af test(ui): close remaining interaction evidence gaps`
 - 分支：`codex/scienceearth-agro-climate-v1`
@@ -127,19 +127,20 @@
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前桌面候选：`0.6.1` / `G3.1`，来源提交
-  `9f8f64a0517d22737cbfbdc70f3feb66f24ce45e`，channel
+  `85c97cef8af9a40e8e44ef7b8a5189bdd74ab813`，channel
   `ui-ux-goal-candidate`
-- `0e3b834` 只增加测试与 `OSGSOL_UI_AUDIT_HOOKS` 条件下的审计截获；生产目标
-  已重新构建且完整回归 82/82。正常生产构建不包含审计字段，因此没有替换桌面包
+- `0e3b834` 和 `46926af` 只增加测试与 `OSGSOL_UI_AUDIT_HOOKS` 条件下的
+  审计截获；正常生产构建不包含审计字段。生产目标已重新构建，完整回归
+  82/82，并由通过 G0-v2 的严格暂存包更新唯一桌面候选
 - 桌面/严格暂存包可执行文件 SHA-256：
-  `21f47ca70dbd76e00e0859e04d03fb11c2d77d84b5f0512cc6be81c8260ab739`
+  `531079dadb1405686835ac15e148cd2812a1939956af8d73c49fd4ca44650615`
 - 桌面/严格暂存包整包内容与模式指纹：
-  `bb34ad6d9d47e4e37b190ea90b2a1729aba855a3a0b3f80c058ebf5f52ba58c3`
+  `a8054a291462b512bc449ef8841cb10df4cc7b5f7384451f0afe866f7887ff6f`
 - 桌面包与严格暂存包逐文件一致：371 个普通文件、37 个符号链接；
   桌面进程 0、同名 App 1 个、最新异常报告仍为
   `osgSol_Earth-2026-07-23-222801.ips`
 - 上一桌面候选备份：
-  `build/desktop-backups/pre-ui-control-operability-20260724-220156-011f009/osgSol Earth.previous.app`
+  `build/desktop-backups/pre-ui-final-interactions-20260724-232335-9f8f64a/osgSol Earth.previous.app`
 - 本次替换后没有出现 FileProvider 恢复的第二个 App；桌面仍只保留一个正式 App。
 - 自动化没有启动、前置或操作桌面候选
 

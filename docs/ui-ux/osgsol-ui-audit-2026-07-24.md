@@ -207,11 +207,15 @@ AI 图表、媒体、生成进度、事件流/状态带、最高细节提示和�
 `workbench-shell.png`、`menu-open.png`、`running.png`、`overview.png`
 和 `trend-report.png`。这些图均由无前台 CGL 离屏运行时生成。
 桌面包与严格暂存包的 371 个普通文件和 37 个符号链接完全一致；自动化没有启动
-桌面 App。当前候选来源为 `9f8f64a0517d22737cbfbdc70f3feb66f24ce45e`，
+桌面 App。当前候选来源为 `85c97cef8af9a40e8e44ef7b8a5189bdd74ab813`，
 可执行文件 SHA-256 为
-`21f47ca70dbd76e00e0859e04d03fb11c2d77d84b5f0512cc6be81c8260ab739`，
+`531079dadb1405686835ac15e148cd2812a1939956af8d73c49fd4ca44650615`，
 桌面与严格暂存包的整包内容与模式指纹同为
-`bb34ad6d9d47e4e37b190ea90b2a1729aba855a3a0b3f80c058ebf5f52ba58c3`。
+`a8054a291462b512bc449ef8841cb10df4cc7b5f7384451f0afe866f7887ff6f`。
+桌面替换前候选保存在
+`build/desktop-backups/pre-ui-final-interactions-20260724-232335-9f8f64a/`
+`osgSol Earth.previous.app`。替换后桌面进程仍为 0、同名 App 仍为 1 个，
+最新异常报告仍为 `osgSol_Earth-2026-07-23-222801.ips`。
 
 ## 结构问题与表面问题
 

@@ -14,7 +14,11 @@ before it can be tagged or synchronized as accepted.
 - Version: 0.6.1
 - ScienceEarth phase: G3.1
 - Channel: ui-ux-goal-candidate
-- Source commit: `9f8f64a0517d22737cbfbdc70f3feb66f24ce45e`
+- Source commit: `85c97cef8af9a40e8e44ef7b8a5189bdd74ab813`
+- Executable SHA-256:
+  `531079dadb1405686835ac15e148cd2812a1939956af8d73c49fd4ca44650615`
+- Bundle content/mode fingerprint:
+  `a8054a291462b512bc449ef8841cb10df4cc7b5f7384451f0afe866f7887ff6f`
 - Provenance: recorded in `Contents/Info.plist` and
   `Contents/Resources/package-audit.env`
 - Automated gates: package contract, bundle closure, provenance, data manifest,
@@ -40,7 +44,11 @@ before it can be tagged or synchronized as accepted.
   bookmark record/play/stop/clear, layer search/preset/opacity/visibility,
   task event/status toggles, Settings value/reset, and Quit, then verifies each
   production state change rather than treating a module screenshot as evidence
-  of operability.
+  of operability. The final interaction audit also edits the ending year
+  through the real field, clicks the visible running Cancel action, opens all
+  three Science result shelves, clicks drawer/context help, selects an event
+  that relocates the camera, and closes an Insight Lens tab through its real
+  close target.
 - Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle.
   A FileProvider-restored old `osgSol Earth 2.app` was archived outside Desktop
   without launching or altering either package.
