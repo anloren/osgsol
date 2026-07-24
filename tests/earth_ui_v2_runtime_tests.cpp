@@ -247,6 +247,45 @@ void runModuleInteraction()
            "collapsing Science leaves the product workbench visible");
     expect(!earthui::productScienceSurfaceVisible(state, false),
            "unready Science workbench is reported visible");
+
+    expect(earthui::moduleAcceptsLayerGroup(
+               earthui::EarthUiModule::Layers, "Strategic"),
+           "Layers must accept every catalog group");
+    expect(earthui::moduleAcceptsLayerGroup(
+               earthui::EarthUiModule::Science, "ScienceEarth") &&
+               earthui::moduleAcceptsLayerGroup(
+                   earthui::EarthUiModule::Science, u8"科学数据") &&
+               !earthui::moduleAcceptsLayerGroup(
+                   earthui::EarthUiModule::Science, "Live Weather"),
+           "Science must accept science groups without retaining live content");
+    expect(earthui::moduleAcceptsLayerGroup(
+               earthui::EarthUiModule::Live, "Live Weather") &&
+               earthui::moduleAcceptsLayerGroup(
+                   earthui::EarthUiModule::Live, u8"实时天气") &&
+               !earthui::moduleAcceptsLayerGroup(
+                   earthui::EarthUiModule::Live, "ScienceEarth"),
+           "Live must accept only live/weather groups");
+    expect(earthui::moduleAcceptsLayerGroup(
+               earthui::EarthUiModule::Satellites, "Satellites") &&
+               earthui::moduleAcceptsLayerGroup(
+                   earthui::EarthUiModule::Satellites, u8"卫星") &&
+               !earthui::moduleAcceptsLayerGroup(
+                   earthui::EarthUiModule::Satellites, "3D City"),
+           "Satellites must accept only satellite groups");
+    expect(earthui::moduleAcceptsLayerGroup(
+               earthui::EarthUiModule::City3D, "3D City") &&
+               earthui::moduleAcceptsLayerGroup(
+                   earthui::EarthUiModule::City3D, u8"三维城市") &&
+               !earthui::moduleAcceptsLayerGroup(
+                   earthui::EarthUiModule::City3D, "ScienceEarth"),
+           "3D City must accept only city groups");
+    const std::vector<earthui::EarthUiModule> modulesWithoutLayerGroups = {
+        earthui::EarthUiModule::Explore,
+        earthui::EarthUiModule::Tasks,
+        earthui::EarthUiModule::Settings};
+    for (earthui::EarthUiModule module : modulesWithoutLayerGroups)
+        expect(!earthui::moduleAcceptsLayerGroup(module, "ScienceEarth"),
+               "non-layer module unexpectedly accepts a catalog group");
 }
 }
 

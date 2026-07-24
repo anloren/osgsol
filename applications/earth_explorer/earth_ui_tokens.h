@@ -23,7 +23,7 @@ static const ImVec4 kDanger(0.937f, 0.416f, 0.384f, 1.000f);      // #ef6a62
 static const ImVec4 kSuccess(0.361f, 0.722f, 0.416f, 1.000f);     // #5cb86a
 static const ImVec4 kText(0.655f, 0.667f, 0.651f, 1.000f);        // #a7aaa6
 static const ImVec4 kTextStrong(0.898f, 0.894f, 0.875f, 1.000f);  // #e5e4df
-static const ImVec4 kTextDim(0.451f, 0.478f, 0.471f, 1.000f);     // #737a78
+static const ImVec4 kTextDim(0.498f, 0.525f, 0.518f, 1.000f);     // #7f8684
 static const ImVec4 kBorder(0.231f, 0.188f, 0.180f, 0.920f);      // #3b302e
 static const ImVec4 kBorderStrong(0.333f, 0.255f, 0.239f, 1.0f);  // #55413d
 

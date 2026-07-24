@@ -65,6 +65,8 @@ int main()
 
     CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Explore) ==
           earthui::EarthUiContextKind::View);
+    CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Layers) ==
+          earthui::EarthUiContextKind::Layer);
     CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Science) ==
           earthui::EarthUiContextKind::DataSpecific);
     CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Live) ==
@@ -73,6 +75,8 @@ int main()
           earthui::EarthUiContextKind::Orbit);
     CHECK(earthui::contextKindForModule(earthui::EarthUiModule::City3D) ==
           earthui::EarthUiContextKind::Object);
+    CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Tasks) ==
+          earthui::EarthUiContextKind::Task);
     CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Settings) ==
           earthui::EarthUiContextKind::None);
 

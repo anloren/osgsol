@@ -109,7 +109,7 @@ void testFocusLossReleasesCapturedPointer()
            "focus transfer must be explicit and balanced");
 }
 
-void testEscapeAndReturnAreBalancedKeyEvents()
+void testNavigationAndActionKeysAreBalancedKeyEvents()
 {
     RecordingSink sink;
     RmlInputBridge bridge(sink);
@@ -118,14 +118,19 @@ void testEscapeAndReturnAreBalancedKeyEvents()
            "Escape tap must be consumed by focused UI");
     expect(bridge.processKeyTap(RmlInputKey::Return, 0),
            "Return tap must be consumed by focused UI");
-    expect(sink.keys.size() == 4 &&
+    expect(bridge.processKeyTap(RmlInputKey::Tab, 0),
+           "Tab tap must be consumed by focused UI");
+    expect(sink.keys.size() == 6 &&
                sink.keys[0] == RmlInputKey::Escape &&
                sink.keys[1] == RmlInputKey::Escape &&
                sink.keys[2] == RmlInputKey::Return &&
-               sink.keys[3] == RmlInputKey::Return,
-           "Escape and Return must both send down/up pairs");
+               sink.keys[3] == RmlInputKey::Return &&
+               sink.keys[4] == RmlInputKey::Tab &&
+               sink.keys[5] == RmlInputKey::Tab,
+           "Escape, Return and Tab must all send down/up pairs");
     expect(sink.keyStates[0] && !sink.keyStates[1] &&
-               sink.keyStates[2] && !sink.keyStates[3],
+               sink.keyStates[2] && !sink.keyStates[3] &&
+               sink.keyStates[4] && !sink.keyStates[5],
            "key tap transitions must be balanced");
 }
 
@@ -154,7 +159,7 @@ int main()
     testWheelAlwaysReachesUiInBothDirections();
     testNestedScrollCanHandUnconsumedWheelToWorld();
     testFocusLossReleasesCapturedPointer();
-    testEscapeAndReturnAreBalancedKeyEvents();
+    testNavigationAndActionKeysAreBalancedKeyEvents();
     testChineseCompositionCommitsOnlyFinalText();
     std::cout << "RmlInputBridge tests passed" << std::endl;
     return 0;

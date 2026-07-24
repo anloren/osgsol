@@ -122,7 +122,7 @@ button, select, input {
 button { padding: 7px 10px; }
 button:hover { border-color: #38c3df; background: #1a1e20; }
 button:focus, select:focus, input:focus { border-color: #38c3df; }
-button:disabled { color: #737a78; border-color: #3b302e; }
+button:disabled { color: #7f8684; border-color: #3b302e; }
 select, input { width: 100%; padding: 6px 8px; }
 select, input { display: block; }
 
@@ -213,7 +213,7 @@ select selectbox option:checked {
     background: #380f0c;
 }
 select selectbox option.disabled {
-    color: #737a78;
+    color: #7f8684;
     background: #141719;
 }
 
@@ -255,7 +255,7 @@ select selectbox option.disabled {
 }
 .primary-action { width: 100%; color: #07090a; background: #38c3df; border-color: #38c3df; font-weight: 600; }
 .primary-action:hover { background: #e1bd62; border-color: #e1bd62; }
-.primary-action:disabled, .primary-action.disabled { color: #737a78; background: #141719; border-color: #3b302e; }
+.primary-action:disabled, .primary-action.disabled { color: #7f8684; background: #141719; border-color: #3b302e; }
 .run-feedback {
     display: block;
     min-height: 17px;
@@ -348,7 +348,7 @@ select selectbox option.disabled {
 .chart-plot { display: block; flex: 1; min-width: 0; }
 .science-chart { display: block; height: 300px; cursor: crosshair; background: #0d1011; border: 1px #3b302e; border-radius: 3px; }
 .chart-x-axis { display: flex; justify-content: space-between; padding: 5px 18px 0 18px; color: #a7aaa6; font-size: 11px; }
-.chart-missing-note { margin-top: 8px; color: #737a78; font-size: 11px; }
+.chart-missing-note { margin-top: 8px; color: #7f8684; font-size: 11px; }
 .chart-readout { display: flex; justify-content: space-between; margin-top: 7px; color: #a7aaa6; font-size: 12px; }
 .delete-confirmation { display: none; position: absolute; right: 16px; top: 58px; width: 280px; padding: 16px; background: #380f0c; border: 1px #ef6a62; border-radius: 4px; z-index: 5; }
 .delete-confirmation p { margin: 10px 0; color: #e5e4df; }

@@ -626,6 +626,16 @@ int main()
            " ancestry=" + ancestry(yearHover) +
            ", center=" + std::to_string(yearCenter.x) + "," +
            std::to_string(yearCenter.y));
+    Rml::Element* focusBeforeTab = runtime.context()->GetFocusElement();
+    expect(focusBeforeTab != nullptr,
+           "clicked year field did not enter the document focus order");
+    runtime.enqueueKeyTap(RmlInputKey::Tab);
+    (*camera->getPostDrawCallback())(renderInfo);
+    Rml::Element* focusAfterTab = runtime.context()->GetFocusElement();
+    expect(focusAfterTab != nullptr && focusAfterTab != focusBeforeTab,
+           "Tab does not advance focus through the visible Science workflow;"
+           " before=" + ancestry(focusBeforeTab) +
+           ", after=" + ancestry(focusAfterTab));
     const float scrollBefore = client.scrollTop("composer-scroll");
     sendWheelEvent(runtime, osgGA::GUIEventAdapter::SCROLL_DOWN);
     (*camera->getPostDrawCallback())(renderInfo);

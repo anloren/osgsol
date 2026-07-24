@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -31,6 +33,42 @@ std::size_t count(const std::string& text, const std::string& needle)
          position += needle.size())
         ++result;
     return result;
+}
+
+std::string colorAfter(const std::string& text, const std::string& marker)
+{
+    const std::size_t markerPosition = text.find(marker);
+    expect(markerPosition != std::string::npos,
+           "named design token is missing");
+    const std::size_t colorPosition = text.find('#', markerPosition);
+    expect(colorPosition != std::string::npos &&
+               colorPosition + 7 <= text.size(),
+           "named design token has no hexadecimal color");
+    return text.substr(colorPosition, 7);
+}
+
+double colorChannel(const std::string& color, std::size_t offset)
+{
+    const int value = std::stoi(color.substr(offset, 2), nullptr, 16);
+    const double srgb = static_cast<double>(value) / 255.0;
+    return srgb <= 0.04045
+        ? srgb / 12.92
+        : std::pow((srgb + 0.055) / 1.055, 2.4);
+}
+
+double relativeLuminance(const std::string& color)
+{
+    return 0.2126 * colorChannel(color, 1) +
+        0.7152 * colorChannel(color, 3) +
+        0.0722 * colorChannel(color, 5);
+}
+
+double contrastRatio(const std::string& foreground,
+                     const std::string& background)
+{
+    const double a = relativeLuminance(foreground);
+    const double b = relativeLuminance(background);
+    return (std::max(a, b) + 0.05) / (std::min(a, b) + 0.05);
 }
 }
 
@@ -164,14 +202,28 @@ int main()
            "scientific chart needs visible X/Y axis label containers");
 
     const std::vector<std::string> unifiedTokens = {
-        "#07090a", "#0d1011", "#141719", "#3b302e", "#e5e4df",
-        "#a7aaa6", "#38c3df", "#d33123", "#380f0c", "#e1bd62",
-        "#ef6a62"};
+        "#07090a", "#0d1011", "#141719", "#1a1e20", "#3b302e",
+        "#e5e4df", "#a7aaa6", "#7f8684", "#38c3df", "#d33123",
+        "#380f0c", "#e1bd62", "#ef6a62", "#5cb86a"};
     for (const std::string& token : unifiedTokens)
         expect(tokens.find(token) != std::string::npos &&
                    nativeTokens.find(token) != std::string::npos,
                "ImGui and RmlUi tokens must match the unified Obsidian Survey"
                " palette");
+    const std::string lightestSurface =
+        colorAfter(tokens, "science-surface-hover");
+    const std::vector<std::string> normalTextTokens = {
+        colorAfter(tokens, "science-text"),
+        colorAfter(tokens, "science-secondary"),
+        colorAfter(tokens, "science-muted"),
+        colorAfter(tokens, "--science-run"),
+        colorAfter(tokens, "science-coverage"),
+        colorAfter(tokens, "--science-failure"),
+        colorAfter(tokens, "science-success")};
+    for (const std::string& color : normalTextTokens)
+        expect(contrastRatio(color, lightestSurface) >= 4.5,
+               "normal-size UI text token falls below 4.5:1 contrast on the"
+               " lightest product surface");
     const std::vector<std::string> reportIds = {
         "overview", "trends", "spatial-range", "methods-evidence",
         "context-caption", "report-focus-target", "requested-spatial-fact",

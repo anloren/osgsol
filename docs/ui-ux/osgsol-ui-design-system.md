@@ -61,7 +61,7 @@ Figma Community 在本次调研环境中被 `robots.txt` 阻止，未把不可�
 | `border-strong` | `#55413D` | 焦点和活动边界 |
 | `text-primary` | `#E5E4DF` | 主文本 |
 | `text-secondary` | `#A7AAA6` | 次要文本 |
-| `text-muted` | `#737A78` | 元信息与禁用说明 |
+| `text-muted` | `#7F8684` | 元信息与禁用说明；在最浅常用表面上保持至少 4.5:1 对比度 |
 | `accent-survey` | `#38C3DF` | 选中、空间目标、主序列 |
 | `accent-module` | `#D33123` | 当前模块/明确状态 |
 | `accent-module-deep` | `#380F0C` | 当前模块背景 |
