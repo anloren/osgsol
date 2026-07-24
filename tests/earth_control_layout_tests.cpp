@@ -189,6 +189,28 @@ int main()
     for (const std::string& section : drawerSections)
         CHECK(source.find(section) != std::string::npos);
     CHECK(source.find("computeMapToastLayout") != std::string::npos);
+    const char* auditedControls[] = {
+        "\"explore-home\"",
+        "\"explore-always-day\"",
+        "\"explore-realtime-sun\"",
+        "\"explore-ocean\"",
+        "\"explore-exposure-auto\"",
+        "\"explore-goto-submit\"",
+        "\"explore-bookmark-record\"",
+        "\"explore-bookmark-play\"",
+        "\"explore-bookmark-stop\"",
+        "\"explore-bookmark-clear\"",
+        "\"layers-search\"",
+        "\"tasks-toggle-event-stream\"",
+        "\"tasks-toggle-status-bar\"",
+        "\"settings-quit\""};
+    for (const char* control : auditedControls)
+        CHECK(source.find(control) != std::string::npos);
+    CHECK(source.find("\"layers-preset:\"") != std::string::npos);
+    CHECK(source.find("\"layer-enabled:\"") != std::string::npos);
+    CHECK(source.find("\"layer-opacity:\"") != std::string::npos);
+    CHECK(source.find("\"settings-value:\"") != std::string::npos);
+    CHECK(source.find("\"settings-reset:\"") != std::string::npos);
     CHECK(source.find("osg::Vec4(0.302f") == std::string::npos);
     CHECK(source.find("osg::Vec4(0.208f") == std::string::npos);
     CHECK(source.find("osg::Vec4(1.0f, 0.824f") == std::string::npos);

@@ -357,9 +357,25 @@ bool drawEarthUiTopBar(const EarthUiShellLayout& layout,
 
         ImGui::SetCursorPos(ImVec2(actionX, actionY));
         if (ImGui::Button(u8"回到全球")) requestHome = true;
+        {
+            const ImVec2 itemMin = ImGui::GetItemRectMin();
+            const ImVec2 itemMax = ImGui::GetItemRectMax();
+            state.homeButton = {
+                itemMin.x, itemMin.y,
+                itemMax.x - itemMin.x, itemMax.y - itemMin.y,
+                ImGui::IsItemVisible()};
+        }
         ImGui::SameLine();
         if (ImGui::Button(drawerLabel))
             state.drawerOpen = !state.drawerOpen;
+        {
+            const ImVec2 itemMin = ImGui::GetItemRectMin();
+            const ImVec2 itemMax = ImGui::GetItemRectMax();
+            state.drawerButton = {
+                itemMin.x, itemMin.y,
+                itemMax.x - itemMin.x, itemMax.y - itemMin.y,
+                ImGui::IsItemVisible()};
+        }
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text,
             data.aiBusy ? kVermilion : design::kSuccess);

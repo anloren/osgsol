@@ -339,6 +339,45 @@ void runModuleInteraction()
         earthui::computeEarthUiShellLayout(1440.0f, 900.0f, true);
     earthui::EarthUiShellState state;
     state.drawerOpen = true;
+    earthui::EarthUiTopBarData topBar;
+    topBar.latitudeDeg = 24.9752;
+    topBar.longitudeDeg = 102.0031;
+    topBar.altitudeKm = 1336.7;
+    topBar.scienceAvailable = true;
+    bool homeRequested = false;
+
+    const auto drawTopBar = [&]() {
+        ImGui::NewFrame();
+        homeRequested =
+            earthui::drawEarthUiTopBar(layout, state, topBar) ||
+            homeRequested;
+        ImGui::Render();
+    };
+    const auto clickTopBarItem =
+        [&](const earthui::EarthUiItemRect& item) {
+        expect(item.visible && item.width > 1.0f && item.height > 1.0f,
+               "top-bar action has no visible hit target");
+        io.AddMousePosEvent(
+            item.x + item.width * 0.5f,
+            item.y + item.height * 0.5f);
+        drawTopBar();
+        io.AddMouseButtonEvent(0, true);
+        drawTopBar();
+        io.AddMouseButtonEvent(0, false);
+        drawTopBar();
+    };
+
+    drawTopBar();
+    clickTopBarItem(state.homeButton);
+    expect(homeRequested,
+           "clicking the visible global-view action did not request Home");
+    const bool drawerBefore = state.drawerOpen;
+    clickTopBarItem(state.drawerButton);
+    expect(state.drawerOpen != drawerBefore,
+           "clicking the visible drawer action did not toggle the panel");
+    clickTopBarItem(state.drawerButton);
+    expect(state.drawerOpen == drawerBefore,
+           "clicking the drawer action again did not restore the panel");
 
     const auto drawRail = [&]() {
         ImGui::NewFrame();

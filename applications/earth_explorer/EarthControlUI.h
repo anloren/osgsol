@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <functional>
+#include <map>
 #include <memory>
 #include <osg/Vec3d>
 #include <osgViewer/Viewer>
@@ -40,6 +41,15 @@
 // 不经 USER 事件中转。
 struct EarthControlUI : public osgVerse::ImGuiContentHandler
 {
+    struct AuditItem
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        bool visible = false;
+    };
+
     osgVerse::EarthManipulator* _mani;
     osgVerse::EarthAtmosphereOcean* _earth;
     osgViewer::Viewer* _viewer;                      // 只读帧号,不得从渲染线程直接退出
@@ -73,6 +83,27 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
     std::string _detailBadgeLastLayer;       // 上次角标对应的激活层 id(变了则重置 dismissed)
     unsigned int _detailBadgeShownFrame = 0; // 角标本轮首次出现的帧号(Task 4:自消失计时起点)
     bool _detailBadgeStretchActivePrev = false;  // 上一帧是否处于"超缩放拉伸"去抖窗内(边沿检测用)
+    bool _auditCaptureControls = false;
+    std::map<std::string, AuditItem> _auditControls;
+
+    void auditLastItem(const std::string& key)
+    {
+        if (!_auditCaptureControls || key.empty()) return;
+        const ImVec2 minimum = ImGui::GetItemRectMin();
+        const ImVec2 maximum = ImGui::GetItemRectMax();
+        AuditItem& item = _auditControls[key];
+        item.x = minimum.x;
+        item.y = minimum.y;
+        item.width = std::max(0.0f, maximum.x - minimum.x);
+        item.height = std::max(0.0f, maximum.y - minimum.y);
+        item.visible = ImGui::IsItemVisible();
+    }
+
+    const AuditItem* auditControl(const std::string& key) const
+    {
+        const auto found = _auditControls.find(key);
+        return found == _auditControls.end() ? nullptr : &found->second;
+    }
 
     // ASCII 大小写折叠(UTF-8 多字节原样保留):搜索过滤大小写不敏感、中文按字节子串匹配。
     static std::string lowered(const std::string& s)
@@ -89,31 +120,45 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         ImGui::SetNextItemWidth(-1.0f);
     }
 
-    static bool panelSliderFloat(const char* label, const char* id, float* value,
-                                 float minimum, float maximum, const char* format)
+    bool panelSliderFloat(const char* label, const char* id, float* value,
+                          float minimum, float maximum, const char* format,
+                          const char* auditKey = nullptr)
     {
         panelControlLabel(label);
-        return ImGui::SliderFloat(id, value, minimum, maximum, format);
+        const bool changed =
+            ImGui::SliderFloat(id, value, minimum, maximum, format);
+        auditLastItem(auditKey ? auditKey : id);
+        return changed;
     }
 
-    static bool panelSliderInt(const char* label, const char* id, int* value,
-                               int minimum, int maximum)
+    bool panelSliderInt(const char* label, const char* id, int* value,
+                        int minimum, int maximum,
+                        const char* auditKey = nullptr)
     {
         panelControlLabel(label);
-        return ImGui::SliderInt(id, value, minimum, maximum);
+        const bool changed = ImGui::SliderInt(id, value, minimum, maximum);
+        auditLastItem(auditKey ? auditKey : id);
+        return changed;
     }
 
-    static bool panelInputFloat(const char* label, const char* id, float* value,
-                                const char* format)
+    bool panelInputFloat(const char* label, const char* id, float* value,
+                         const char* format,
+                         const char* auditKey = nullptr)
     {
         panelControlLabel(label);
-        return ImGui::InputFloat(id, value, 0.0f, 0.0f, format);
+        const bool changed =
+            ImGui::InputFloat(id, value, 0.0f, 0.0f, format);
+        auditLastItem(auditKey ? auditKey : id);
+        return changed;
     }
 
-    static bool panelInputInt(const char* label, const char* id, int* value)
+    bool panelInputInt(const char* label, const char* id, int* value,
+                       const char* auditKey = nullptr)
     {
         panelControlLabel(label);
-        return ImGui::InputInt(id, value);
+        const bool changed = ImGui::InputInt(id, value);
+        auditLastItem(auditKey ? auditKey : id);
+        return changed;
     }
 
 #if OSGSOL_BUILD_SCIENCE
@@ -129,9 +174,11 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
     }
 #endif
 
-    static bool panelCheckbox(const char* label, const char* id, bool* value)
+    bool panelCheckbox(const char* label, const char* id, bool* value,
+                       const char* auditKey = nullptr)
     {
         bool changed = ImGui::Checkbox(id, value);
+        auditLastItem(auditKey ? auditKey : id);
         ImGui::SameLine();
         ImGui::TextWrapped("%s", label);
         if (ImGui::IsItemClicked())
@@ -199,6 +246,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
 
     virtual void runInternal(osgVerse::ImGuiManager* mgr)
     {
+        if (_auditCaptureControls) _auditControls.clear();
         ImFont* font = ImGuiFonts.count("LXGWFasmartGothic") ? ImGuiFonts["LXGWFasmartGothic"] : NULL;
         if (font) ImGui::PushFont(font);
         if (_realTimeSun) applyRealtimeSun();
@@ -278,8 +326,10 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 ImGui::Text(u8"纬度: %.5f°", osg::RadiansToDegrees(lla[0]));
                 ImGui::Text(u8"经度: %.5f°", osg::RadiansToDegrees(lla[1]));
                 ImGui::Text(u8"相机高度: %.1f km", lla[2] / 1000.0);
-                if (earthui::fullWidthButton(
-                        u8"回到全球视角", earthui::StatusTone::Neutral))
+                const bool requestHome = earthui::fullWidthButton(
+                    u8"回到全球视角", earthui::StatusTone::Neutral);
+                auditLastItem("explore-home");
+                if (requestHome)
                     _mani->home(0.0);
                 earthui::endDrawerSection();
             }
@@ -290,16 +340,22 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             {
                 // v0.15-vision:常昼模式默认开启;开启时手动滑块/按钮禁用(同 _exposureAuto
                 // 禁用曝光滑块的既有惯例,见下方"渲染"节),与真实时间太阳互斥。
-                if (panelCheckbox(u8"常昼", "##always_day", &_alwaysDay))
+                if (panelCheckbox(
+                        u8"常昼", "##always_day", &_alwaysDay,
+                        "explore-always-day"))
                 { if (_alwaysDay) _realTimeSun = false; }
                 if (_alwaysDay) ImGui::BeginDisabled();
                 if (panelSliderFloat(u8"方位角 (°)", "##sun_azimuth",
-                                     &_sunAz, -180.0f, 180.0f, "%.0f"))
+                                     &_sunAz, -180.0f, 180.0f, "%.0f",
+                                     "explore-sun-azimuth"))
                     updateSun();
                 if (panelSliderFloat(u8"太阳高度角 (°)", "##sun_elevation",
-                                     &_sunEl, -90.0f, 90.0f, "%.0f"))
+                                     &_sunEl, -90.0f, 90.0f, "%.0f",
+                                     "explore-sun-elevation"))
                     updateSun();
-                if (ImGui::Button(u8"太阳对准相机")) {
+                const bool alignSun = ImGui::Button(u8"太阳对准相机");
+                auditLastItem("explore-sun-align");
+                if (alignSun) {
                     osg::Vec3d lla = _mani->computeEyeLatLonHeight();
                     _sunAz = (float)osg::RadiansToDegrees(lla[1]);
                     _sunEl = (float)osg::RadiansToDegrees(lla[0]);
@@ -307,19 +363,29 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 }
                 if (_alwaysDay) ImGui::EndDisabled();
                 ImGui::Separator();
-                if (panelCheckbox(u8"真实时间太阳", "##realtime_sun",
-                                  &_realTimeSun))
+                if (panelCheckbox(
+                        u8"真实时间太阳", "##realtime_sun", &_realTimeSun,
+                        "explore-realtime-sun"))
                 { if (_realTimeSun) { _alwaysDay = false; applyRealtimeSun(); } }
                 if (_realTimeSun)
                 {
-                    panelCheckbox(u8"跟随系统时钟", "##follow_clock", &_followClock);
+                    panelCheckbox(
+                        u8"跟随系统时钟", "##follow_clock", &_followClock,
+                        "explore-follow-clock");
                     if (!_followClock)
                     {
-                        panelInputInt(u8"年", "##sun_year", &_year);
-                        panelInputInt(u8"月", "##sun_month", &_month);
-                        panelInputInt(u8"日", "##sun_day", &_day);
+                        panelInputInt(
+                            u8"年", "##sun_year", &_year,
+                            "explore-sun-year");
+                        panelInputInt(
+                            u8"月", "##sun_month", &_month,
+                            "explore-sun-month");
+                        panelInputInt(
+                            u8"日", "##sun_day", &_day,
+                            "explore-sun-day");
                         panelSliderFloat(u8"UTC 小时", "##utc_hour",
-                                         &_utcHour, 0.0f, 24.0f, "%.1f");
+                                         &_utcHour, 0.0f, 24.0f, "%.1f",
+                                         "explore-utc-hour");
                     }
                 }
                 earthui::endDrawerSection();
@@ -329,16 +395,22 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             if (earthui::beginDrawerSection(
                     "render", u8"渲染", u8"海洋、曝光与大气"))
             {
-                if (panelCheckbox(u8"海洋", "##ocean", &_ocean))
+                if (panelCheckbox(
+                        u8"海洋", "##ocean", &_ocean,
+                        "explore-ocean"))
                     _earth->commonUniforms["OceanOpaque"]->set(_ocean ? 1.0f : 0.0f);
-                panelCheckbox(u8"自适应曝光", "##exposure_auto", &_exposureAuto);
+                panelCheckbox(
+                    u8"自适应曝光", "##exposure_auto", &_exposureAuto,
+                    "explore-exposure-auto");
                 if (_exposureAuto) ImGui::BeginDisabled();
                 if (panelSliderFloat(u8"曝光", "##exposure",
-                                     &_exposure, 0.05f, 1.5f, "%.2f"))
+                                     &_exposure, 0.05f, 1.5f, "%.2f",
+                                     "explore-exposure"))
                     _earth->commonUniforms["HdrExposure"]->set(_exposure);
                 if (_exposureAuto) ImGui::EndDisabled();
                 if (panelSliderFloat(u8"大气强度", "##atmosphere",
-                                     &_globalOpaque, 0.0f, 1.0f, "%.2f"))
+                                     &_globalOpaque, 0.0f, 1.0f, "%.2f",
+                                     "explore-atmosphere"))
                     _earth->commonUniforms["GlobalOpaque"]->set(_globalOpaque);
                 earthui::endDrawerSection();
             }
@@ -356,7 +428,11 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     ImGui::TextDisabled(u8"场景预设");
                     for (size_t p = 0; p < presets.size(); ++p)
                     {
-                        if (ImGui::SmallButton(presets[p].name.c_str()))
+                        const bool applyPreset =
+                            ImGui::SmallButton(presets[p].name.c_str());
+                        auditLastItem(
+                            "layers-preset:" + presets[p].name);
+                        if (applyPreset)
                             _layers->applyPreset(presets[p].name);
                         if (p + 1 < presets.size())
                             earthui::continueRowIfFits(
@@ -369,6 +445,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 ImGui::SetNextItemWidth(-1.0f);
                 ImGui::InputTextWithHint(u8"##图层搜索", u8"搜索当前模块的数据源…",
                                          _layerFilter, sizeof(_layerFilter));
+                auditLastItem("layers-search");
                 std::string filter = lowered(_layerFilter);
 
                 // 渲染前按 group 归并(组按首次出现顺序,组内按注册顺序)——同一 group 的层
@@ -426,7 +503,11 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                                 cur.x + ic*0.5f, cur.y + ic*0.5f, ic, icol);
                             ImGui::Dummy(ImVec2(ic + 4.0f, ic)); ImGui::SameLine();
                         }
-                        if (panelCheckbox(l.displayName.c_str(), "##enabled", &en))
+                        const std::string enabledAudit =
+                            "layer-enabled:" + l.id;
+                        if (panelCheckbox(
+                                l.displayName.c_str(), "##enabled", &en,
+                                enabledAudit.c_str()))
                             _layers->setEnabled(l.id, en);
                         if (l.needsKey) ImGui::TextDisabled(u8"需要 API 密钥");
                         if (!l.subtitle.empty())
@@ -469,8 +550,11 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                         {
                             float op = l.opacity;
                             std::string label = l.displayName + u8" 透明度";
+                            const std::string opacityAudit =
+                                "layer-opacity:" + l.id;
                             if (panelSliderFloat(label.c_str(), "##opacity", &op,
-                                                 0.0f, 1.0f, "%.2f"))
+                                                 0.0f, 1.0f, "%.2f",
+                                                 opacityAudit.c_str()))
                                 _layers->setOpacity(l.id, op);
                         }
                         if (inactive) ImGui::EndDisabled();
@@ -501,11 +585,19 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 earthui::beginDrawerSection(
                     "go_to", u8"跳转", u8"按经纬度和相机高度飞行"))
             {
-                panelInputFloat(u8"纬度 (°)", "##goto_lat", &_gotoLat, "%.4f");
-                panelInputFloat(u8"经度 (°)", "##goto_lon", &_gotoLon, "%.4f");
-                panelInputFloat(u8"相机高度 (km)", "##goto_altitude", &_gotoAltKm, "%.1f");
-                if (earthui::fullWidthButton(
-                        u8"飞过去", earthui::StatusTone::Active))
+                panelInputFloat(
+                    u8"纬度 (°)", "##goto_lat", &_gotoLat, "%.4f",
+                    "explore-goto-latitude");
+                panelInputFloat(
+                    u8"经度 (°)", "##goto_lon", &_gotoLon, "%.4f",
+                    "explore-goto-longitude");
+                panelInputFloat(
+                    u8"相机高度 (km)", "##goto_altitude", &_gotoAltKm, "%.1f",
+                    "explore-goto-altitude");
+                const bool flyTo = earthui::fullWidthButton(
+                    u8"飞过去", earthui::StatusTone::Active);
+                auditLastItem("explore-goto-submit");
+                if (flyTo)
                 {
                     _mani->setByEye(osg::DegreesToRadians((double)_gotoLat),
                                     osg::DegreesToRadians((double)_gotoLon),
@@ -519,7 +611,10 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     "bookmarks", u8"书签与巡游",
                     u8"记录视角并按顺序回放", false))
             {
-                if (ImGui::Button(u8"记录当前视角"))
+                const bool recordBookmark =
+                    ImGui::Button(u8"记录当前视角");
+                auditLastItem("explore-bookmark-record");
+                if (recordBookmark)
                 {
                     _mani->insertControlPointFromCurrentView((float)_bookmarkTime);
                     _bookmarkTime += 60;
@@ -527,16 +622,26 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 earthui::continueRowIfFits(
                     ImGui::CalcTextSize(u8"已存 0000").x);
                 ImGui::Text(u8"已存 %d", (int)_mani->getControlPoints().size());
-                if (ImGui::Button(u8"播放巡游"))
+                const bool playTour = ImGui::Button(u8"播放巡游");
+                auditLastItem("explore-bookmark-play");
+                if (playTour)
                 {
                     if (!_mani->getControlPoints().empty()) _mani->startAnimation();
                 }
                 earthui::continueRowIfFits(
                     earthui::buttonWidth(u8"停止"));
-                if (ImGui::Button(u8"停止")) _mani->stopAnimation(false);
+                const bool stopTour = ImGui::Button(u8"停止");
+                auditLastItem("explore-bookmark-stop");
+                if (stopTour) _mani->stopAnimation(false);
                 earthui::continueRowIfFits(
                     earthui::buttonWidth(u8"清空"));
-                if (ImGui::Button(u8"清空")) { _mani->clearControlPoints(); _bookmarkTime = 0; }
+                const bool clearTour = ImGui::Button(u8"清空");
+                auditLastItem("explore-bookmark-clear");
+                if (clearTour)
+                {
+                    _mani->clearControlPoints();
+                    _bookmarkTime = 0;
+                }
                 earthui::endDrawerSection();
             }
 
@@ -557,13 +662,19 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     _aiCore && _aiCore->busy()
                         ? u8"AI Agent 正在执行任务；过程显示在 AI 命令栏。"
                         : u8"当前没有正在执行的 AI 任务。");
-                if (ImGui::Button(_ticker.showTicker
-                        ? u8"关闭事件流" : u8"打开事件流"))
+                const bool toggleTicker = ImGui::Button(
+                    _ticker.showTicker
+                        ? u8"关闭事件流" : u8"打开事件流");
+                auditLastItem("tasks-toggle-event-stream");
+                if (toggleTicker)
                     _ticker.showTicker = !_ticker.showTicker;
                 earthui::continueRowIfFits(earthui::buttonWidth(
                     _ticker.showStatusBar ? u8"关闭状态带" : u8"打开状态带"));
-                if (ImGui::Button(_ticker.showStatusBar
-                        ? u8"关闭状态带" : u8"打开状态带"))
+                const bool toggleStatusBar = ImGui::Button(
+                    _ticker.showStatusBar
+                        ? u8"关闭状态带" : u8"打开状态带");
+                auditLastItem("tasks-toggle-status-bar");
+                if (toggleStatusBar)
                     _ticker.showStatusBar = !_ticker.showStatusBar;
                 ImGui::TextDisabled(
                     u8"任务模块统一呈现运行中、队列、失败和历史；不会把错误铺满地图。");
@@ -581,22 +692,30 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     earthcfg::Param& p = ps[i];
                     if (p.group != curGroup) { curGroup = p.group; ImGui::SeparatorText(p.group.c_str()); }
                     ImGui::PushID((int)i);
+                    const std::string settingAudit =
+                        "settings-value:" + p.id;
                     if (p.kind == earthcfg::PK_INT) {
                         int v = (int)p.value.load();
                         if (panelSliderInt(p.label.c_str(), "##value", &v,
-                                           (int)p.minVal, (int)p.maxVal))
+                                           (int)p.minVal, (int)p.maxVal,
+                                           settingAudit.c_str()))
                             earthcfg::setValue(p.id, (double)v);
                     } else if (p.kind == earthcfg::PK_DOUBLE) {
                         float v = (float)p.value.load();
                         if (panelSliderFloat(p.label.c_str(), "##value", &v,
-                                             (float)p.minVal, (float)p.maxVal, "%.1f"))
+                                             (float)p.minVal, (float)p.maxVal,
+                                             "%.1f", settingAudit.c_str()))
                             earthcfg::setValue(p.id, (double)v);
                     } else {
                         bool v = p.value.load() != 0.0;
-                        if (panelCheckbox(p.label.c_str(), "##value", &v))
+                        if (panelCheckbox(
+                                p.label.c_str(), "##value", &v,
+                                settingAudit.c_str()))
                             earthcfg::setValue(p.id, v ? 1.0 : 0.0);
                     }
-                    if (ImGui::SmallButton(u8"默认")) earthcfg::resetDefault(p.id);
+                    const bool resetSetting = ImGui::SmallButton(u8"默认");
+                    auditLastItem("settings-reset:" + p.id);
+                    if (resetSetting) earthcfg::resetDefault(p.id);
                     ImGui::PopID();
                     ImGui::Spacing();
                 }
@@ -607,8 +726,10 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             if (showSettings)
             {
                 ImGui::Separator();
-                if (earthui::fullWidthButton(
-                        u8"正常退出程序", earthui::StatusTone::Danger))
+                const bool requestQuit = earthui::fullWidthButton(
+                    u8"正常退出程序", earthui::StatusTone::Danger);
+                auditLastItem("settings-quit");
+                if (requestQuit)
                     if (_quitRequest) _quitRequest->request();
             }
         }

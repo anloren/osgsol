@@ -682,6 +682,15 @@ int main()
         osg::DegreesToRadians(102.0031),
         1336700.0);
     osgVerse::EarthAtmosphereOcean earth;
+    earth.commonUniforms["WorldSunDir"] =
+        new osg::Uniform(
+            "WorldSunDir", osg::Vec3(-1.0f, 0.0f, 0.0f));
+    earth.commonUniforms["GlobalOpaque"] =
+        new osg::Uniform("GlobalOpaque", 1.0f);
+    earth.commonUniforms["OceanOpaque"] =
+        new osg::Uniform("OceanOpaque", 1.0f);
+    earth.commonUniforms["HdrExposure"] =
+        new osg::Uniform("HdrExposure", 0.25f);
     osgViewer::Viewer viewer;
     osg::ref_ptr<osg::FrameStamp> frameStamp = new osg::FrameStamp;
     frameStamp->setFrameNumber(500);
@@ -812,6 +821,55 @@ int main()
         io.AddMouseButtonEvent(0, false);
         renderAuditFrame();
     };
+    const auto findVisibleEarthControl =
+        [&](const std::string& key)
+            -> const EarthControlUI::AuditItem* {
+        ImGuiWindow* drawer =
+            ImGui::FindWindowByName("##earth_ui_v2_drawer");
+        for (int step = 0; step <= 21; ++step)
+        {
+            const EarthControlUI::AuditItem* item =
+                productUi.auditControl(key);
+            const bool insideDrawer =
+                item && drawer &&
+                item->x >= drawer->InnerClipRect.Min.x - 0.5f &&
+                item->y >= drawer->InnerClipRect.Min.y - 0.5f &&
+                item->x + item->width <=
+                    drawer->InnerClipRect.Max.x + 0.5f &&
+                item->y + item->height <=
+                    drawer->InnerClipRect.Max.y + 0.5f;
+            if (item && item->visible && insideDrawer &&
+                item->width > 1.0f && item->height > 1.0f)
+                return item;
+            if (!drawer) break;
+            ImGui::SetScrollY(
+                drawer, drawer->ScrollMax.y *
+                    static_cast<float>(std::min(step, 20)) / 20.0f);
+            renderAuditFrame();
+            renderAuditFrame();
+            drawer = ImGui::FindWindowByName("##earth_ui_v2_drawer");
+        }
+        return nullptr;
+    };
+    const auto clickEarthControlAt =
+        [&](const std::string& key, float relativeX) {
+        const EarthControlUI::AuditItem* item =
+            findVisibleEarthControl(key);
+        expect(item != nullptr,
+               "formal Earth control is not visibly reachable: " + key);
+        const float x = item->x + item->width *
+            std::clamp(relativeX, 0.05f, 0.95f);
+        const float y = item->y + item->height * 0.5f;
+        io.AddMousePosEvent(x, y);
+        renderAuditFrame();
+        io.AddMouseButtonEvent(0, true);
+        renderAuditFrame();
+        io.AddMouseButtonEvent(0, false);
+        renderAuditFrame();
+    };
+    const auto clickEarthControl = [&](const std::string& key) {
+        clickEarthControlAt(key, 0.5f);
+    };
     const auto saveAuditFrame = [&](const char* name) {
         std::vector<unsigned char> rgba(
             static_cast<std::size_t>(auditWidth) * auditHeight * 4);
@@ -835,6 +893,183 @@ int main()
                        window->Pos.y + window->Size.y + 0.5f,
                std::string(label) + " is clipped by the AI command window");
     };
+
+    // Main-drawer controls used to be counted as covered merely because the
+    // module screenshot existed. Exercise the actual hit targets and assert
+    // their product state changes. External actions such as opening a URL are
+    // intentionally contract-tested elsewhere; this block never starts
+    // another app or touches the host desktop.
+    productUi._auditCaptureControls = true;
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Explore;
+    productUi._uiV2.drawerOpen = true;
+    productUi._alwaysDay = false;
+    productUi._realTimeSun = false;
+    productUi._followClock = true;
+    for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
+
+    clickEarthControl("explore-always-day");
+    expect(productUi._alwaysDay,
+           "formal Always Day checkbox did not change product state");
+    clickEarthControl("explore-always-day");
+    expect(!productUi._alwaysDay,
+           "formal Always Day checkbox could not be turned off");
+    clickEarthControl("explore-realtime-sun");
+    expect(productUi._realTimeSun && !productUi._alwaysDay,
+           "formal real-time Sun checkbox did not enforce mutual exclusion");
+    clickEarthControl("explore-realtime-sun");
+    expect(!productUi._realTimeSun,
+           "formal real-time Sun checkbox could not be turned off");
+
+    const bool oceanBefore = productUi._ocean;
+    clickEarthControl("explore-ocean");
+    expect(productUi._ocean != oceanBefore,
+           "formal Ocean checkbox did not change product state");
+    const bool exposureAutoBefore = productUi._exposureAuto;
+    clickEarthControl("explore-exposure-auto");
+    expect(productUi._exposureAuto != exposureAutoBefore,
+           "formal auto-exposure checkbox did not change product state");
+    const float atmosphereBefore = productUi._globalOpaque;
+    clickEarthControlAt("explore-atmosphere", 0.25f);
+    expect(std::fabs(productUi._globalOpaque - atmosphereBefore) > 0.05f,
+           "formal Atmosphere slider did not change product state");
+
+    productUi._gotoLat = 31.2304f;
+    productUi._gotoLon = 121.4737f;
+    productUi._gotoAltKm = 125.0f;
+    renderAuditFrame();
+    clickEarthControl("explore-goto-submit");
+    osg::Vec3d flownTo = manipulator->computeEyeLatLonHeight();
+    expect(std::fabs(osg::RadiansToDegrees(flownTo[0]) - 31.2304) < 0.05 &&
+               std::fabs(osg::RadiansToDegrees(flownTo[1]) - 121.4737) <
+                   0.05 &&
+               std::fabs(flownTo[2] / 1000.0 - 125.0) < 0.5,
+           "formal Go To action did not update the Earth camera");
+
+    ImGuiWindow* interactionDrawer =
+        ImGui::FindWindowByName("##earth_ui_v2_drawer");
+    expect(interactionDrawer != nullptr,
+           "Explore drawer disappeared before bookmark interaction audit");
+    interactionDrawer->StateStorage.SetInt(
+        interactionDrawer->GetID(
+            u8"书签与巡游###drawer_section_bookmarks"),
+        1);
+    renderAuditFrame();
+    renderAuditFrame();
+    manipulator->clearControlPoints();
+    productUi._bookmarkTime = 0;
+    clickEarthControl("explore-bookmark-record");
+    expect(manipulator->getControlPoints().size() == 1,
+           "formal bookmark action did not record the current view");
+    clickEarthControl("explore-bookmark-play");
+    expect(manipulator->isAnimationRunning(),
+           "formal tour Play action did not start animation");
+    clickEarthControl("explore-bookmark-stop");
+    expect(!manipulator->isAnimationRunning(),
+           "formal tour Stop action did not stop animation");
+    clickEarthControl("explore-bookmark-clear");
+    expect(manipulator->getControlPoints().empty() &&
+               productUi._bookmarkTime == 0,
+           "formal tour Clear action did not reset the tour");
+
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Layers;
+    productUi._uiV2.drawerOpen = true;
+    ImGui::SetScrollY(
+        ImGui::FindWindowByName("##earth_ui_v2_drawer"), 0.0f);
+    for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
+    clickEarthControl("layers-search");
+    io.AddInputCharactersUTF8("x");
+    renderAuditFrame();
+    expect(std::string(productUi._layerFilter).find('x') !=
+               std::string::npos,
+           "formal layer-search field did not accept text input");
+    clickEarthControl(u8"layers-preset:干净");
+    layers.drainPending();
+    expect(layers.lastAppliedPreset() == u8"干净",
+           "formal layer preset did not reach LayerManager");
+    ImGui::ClearActiveID();
+    productUi._layerFilter[0] = '\0';
+    renderAuditFrame();
+    const float firstLayerOpacity =
+        layers.layersSnapshot().front().opacity;
+    renderAuditFrame();
+    renderAuditFrame();
+    clickEarthControlAt("layer-opacity:product-ui-0", 0.25f);
+    layers.drainPending();
+    expect(std::fabs(
+               layers.layersSnapshot().front().opacity -
+               firstLayerOpacity) > 0.05f,
+           "formal layer-opacity slider did not reach LayerManager");
+    const std::vector<OverlayLayer> beforeLayerToggle =
+        layers.layersSnapshot();
+    const bool firstLayerEnabled = beforeLayerToggle.front().enabled;
+    clickEarthControl("layer-enabled:product-ui-0");
+    layers.drainPending();
+    const std::vector<OverlayLayer> afterLayerToggle =
+        layers.layersSnapshot();
+    expect(afterLayerToggle.front().enabled != firstLayerEnabled,
+           "formal layer visibility checkbox did not reach LayerManager");
+
+    const std::array<std::pair<earthui::EarthUiModule, std::string>, 3>
+        routedLayerControls = {{
+            {earthui::EarthUiModule::Live,
+             "layer-enabled:product-ui-8"},
+            {earthui::EarthUiModule::Satellites,
+             "layer-enabled:product-ui-16"},
+            {earthui::EarthUiModule::City3D,
+             "layer-enabled:product-ui-24"}}};
+    for (const auto& routed : routedLayerControls)
+    {
+        productUi._uiV2.activeModule = routed.first;
+        productUi._uiV2.drawerOpen = true;
+        for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
+        expect(findVisibleEarthControl(routed.second) != nullptr,
+               std::string("module-routed layer control is absent: ") +
+                   routed.second);
+    }
+
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Tasks;
+    productUi._uiV2.drawerOpen = true;
+    productUi._ticker.showTicker = false;
+    productUi._ticker.showStatusBar = false;
+    for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
+    clickEarthControl("tasks-toggle-event-stream");
+    expect(productUi._ticker.showTicker,
+           "formal event-stream action did not change product state");
+    clickEarthControl("tasks-toggle-status-bar");
+    expect(productUi._ticker.showStatusBar,
+           "formal status-strip action did not change product state");
+    productUi._ticker.showTicker = false;
+    productUi._ticker.showStatusBar = false;
+
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Settings;
+    productUi._uiV2.drawerOpen = true;
+    for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
+    std::deque<earthcfg::Param>& auditSettings = earthcfg::params();
+    expect(!auditSettings.empty(),
+           "settings registry is empty during formal control audit");
+    const double settingBefore = auditSettings.front().value.load();
+    clickEarthControlAt(
+        "settings-value:" + auditSettings.front().id, 0.75f);
+    expect(std::fabs(
+               auditSettings.front().value.load() - settingBefore) >
+               0.0001,
+           "formal settings slider did not update the registry");
+    clickEarthControl(
+        "settings-reset:" + auditSettings.front().id);
+    expect(std::fabs(
+               auditSettings.front().value.load() -
+               auditSettings.front().defVal) < 0.0001,
+           "formal settings Reset action did not restore the default");
+    earthexit::QuitRequest auditQuit;
+    productUi._quitRequest = &auditQuit;
+    clickEarthControl("settings-quit");
+    expect(auditQuit.consume(),
+           "formal Quit action did not publish the main-thread request");
+    productUi._quitRequest = nullptr;
+    saveAuditFrame("1440x900-drawer-controls.ppm");
+    productUi._auditCaptureControls = false;
+    layers.setEnabled("product-ui-0", true);
+    layers.drainPending();
 
     for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
     const AIChatUI::AuditSnapshot compactAi = command.auditSnapshot();
@@ -1003,6 +1238,7 @@ int main()
     // click to close.
     productUi._uiV2.activeModule = earthui::EarthUiModule::Science;
     productUi._uiV2.aboutOpen = true;
+    renderAuditFrame();
     renderAuditFrame();
     productUi._uiV2.aboutOpen = false;
     renderAuditFrame();

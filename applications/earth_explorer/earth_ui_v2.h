@@ -8,11 +8,22 @@
 namespace earthui
 {
 
+struct EarthUiItemRect
+{
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+    bool visible = false;
+};
+
 struct EarthUiShellState
 {
     EarthUiModule activeModule = EarthUiModule::Explore;
     bool drawerOpen = true;
     bool aboutOpen = false;
+    EarthUiItemRect homeButton;
+    EarthUiItemRect drawerButton;
 };
 
 struct EarthUiTopBarData
