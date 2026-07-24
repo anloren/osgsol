@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -55,10 +56,6 @@ MediaManager::VideoUiSnapshot MediaManager::videoUiSnapshot() const
 }
 }
 
-void AICardPanel::pushChart(const picojson::value&) {}
-
-void AICardPanel::registerCards(earthui::CardStack&) {}
-
 #if defined(__APPLE__)
 namespace earthime
 {
@@ -71,6 +68,7 @@ namespace earthfeed
 namespace
 {
 FeedSelection g_selection;
+std::vector<TickerEvent> g_events;
 }
 
 FeedSelection currentFeedSelection()
@@ -85,7 +83,7 @@ void clearFeedSelection()
 
 std::vector<TickerEvent> collectRecentEvents(size_t)
 {
-    return {};
+    return g_events;
 }
 
 void feedHealth(int& okCount, int& enabledCount)
@@ -97,6 +95,11 @@ void feedHealth(int& okCount, int& enabledCount)
 void setProductTestSelection(const FeedSelection& selection)
 {
     g_selection = selection;
+}
+
+void setProductTestEvents(const std::vector<TickerEvent>& events)
+{
+    g_events = events;
 }
 }
 
@@ -257,6 +260,29 @@ const char* moduleId(earthui::EarthUiModule module)
     return "unknown";
 }
 
+picojson::value chartSpec(
+    const char* type, const char* title, const char* unit,
+    const char* description,
+    const std::vector<std::string>& labels,
+    const std::vector<double>& values)
+{
+    picojson::array labelValues;
+    picojson::array numericValues;
+    for (const std::string& label : labels)
+        labelValues.push_back(picojson::value(label));
+    for (double value : values)
+        numericValues.push_back(picojson::value(value));
+
+    picojson::object object;
+    object["type"] = picojson::value(type);
+    object["title"] = picojson::value(title);
+    object["unit"] = picojson::value(unit);
+    object["description"] = picojson::value(description);
+    object["labels"] = picojson::value(labelValues);
+    object["values"] = picojson::value(numericValues);
+    return picojson::value(object);
+}
+
 void addProductLayers(LayerManager& manager)
 {
     const std::array<const char*, 5> groups = {{
@@ -282,6 +308,11 @@ void addProductLayers(LayerManager& manager)
             layer.enabled = index < 4;
             layer.hasOpacity = (index % 2) == 0;
             layer.opacity = 0.72f;
+            if (serial == 0)
+            {
+                layer.maxDetailNote = u8"原始分辨率约 250 m";
+                layer.opaque = true;
+            }
             layer.apply = [](const OverlayLayer&) {};
             layer.fetchStatus = [index](std::string& error) {
                 if (index % 4 == 0) return 0;
@@ -648,7 +679,11 @@ int main()
         osg::DegreesToRadians(102.0031),
         1336700.0);
     osgVerse::EarthAtmosphereOcean earth;
-    EarthControlUI productUi(manipulator.get(), &earth, nullptr);
+    osgViewer::Viewer viewer;
+    osg::ref_ptr<osg::FrameStamp> frameStamp = new osg::FrameStamp;
+    frameStamp->setFrameNumber(500);
+    viewer.setFrameStamp(frameStamp.get());
+    EarthControlUI productUi(manipulator.get(), &earth, &viewer);
     productUi._alwaysDay = false;
     productUi._realTimeSun = false;
     productUi._exposureAuto = false;
@@ -748,10 +783,12 @@ int main()
         {earthai::ChatEntry::ERR,
          u8"示例错误状态：上游暂不可用时必须保留重试说明，不能只显示空白。"}};
 
+    std::function<void()> auditOverlay;
     const auto renderAuditFrame = [&]() {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui::NewFrame();
         productUi.runInternal(nullptr);
+        if (auditOverlay) auditOverlay();
         ImGui::Render();
         gl.bind();
         glDisable(GL_SCISSOR_TEST);
@@ -844,6 +881,262 @@ int main()
     renderAuditFrame();
     expect(!command.auditSnapshot().templatePopupVisible,
            "clicking outside did not close the analysis-template gallery");
+
+    // AI-generated chart cards are formal product surfaces. Render the real
+    // AICardPanel implementation rather than a test stub so the shared
+    // Insight Lens, axes, units, legends, tokens and long labels all enter
+    // the same viewport/overflow/pixel gate as the shell.
+    const auto renderChartCard = [&](const char* evidenceName,
+                                     const picojson::value& spec) {
+        AICardPanel panel;
+        earthui::CardStack stack;
+        panel.pushChart(spec);
+        auditOverlay = [&]() {
+            panel.registerCards(stack);
+            stack.draw();
+        };
+        for (int frame = 0; frame < 4; ++frame) renderAuditFrame();
+        inspectProductionWindows(
+            auditWidth, auditHeight, earthui::EarthUiModule::Science);
+        ImGuiWindow* insight =
+            ImGui::FindWindowByName(u8"洞察透镜###earth_insight_lens");
+        expect(insight != nullptr && insight->Active && !insight->Hidden,
+               std::string(evidenceName) +
+                   ": real AI chart did not enter the Insight Lens");
+        expect(!insight->ScrollbarX && insight->ScrollMax.x <=
+                   (insight->ScrollbarY
+                        ? ImGui::GetStyle().ScrollbarSize + 0.5f : 0.5f),
+               std::string(evidenceName) +
+                   ": real AI chart has horizontal clipping");
+        saveAuditFrame(evidenceName);
+        auditOverlay = std::function<void()>();
+        renderAuditFrame();
+    };
+
+    renderChartCard(
+        "1440x900-ai-chart-bar.ppm",
+        chartSpec(
+            "bar", u8"农业指标比较", "mm",
+            u8"不同变量保持自己的科学单位，长标签必须在洞察透镜内完整呈现。",
+            {u8"年降水量", u8"参考蒸散量", u8"生长季水分盈亏"},
+            {1286.4, 1042.8, 243.6}));
+    renderChartCard(
+        "1440x900-ai-chart-line.ppm",
+        chartSpec(
+            "line", u8"年度平均气温趋势", u8"°C",
+            u8"横轴为年份，纵轴为温度；首年、中间年和末年必须可识别。",
+            {"2017", "2018", "2019", "2020", "2021",
+             "2022", "2023", "2024", "2025"},
+            {17.2, 17.5, 17.1, 17.9, 18.0, 18.4, 18.1, 18.7, 18.2}));
+    renderChartCard(
+        "1440x900-ai-chart-donut.ppm",
+        chartSpec(
+            "donut", u8"地表覆盖构成", "%",
+            u8"每个扇区必须拥有对应图例、标签和数值。",
+            {u8"耕地", u8"林地", u8"建设用地", u8"水体"},
+            {46.0, 31.0, 17.0, 6.0}));
+    renderChartCard(
+        "1440x900-ai-chart-stat.ppm",
+        chartSpec(
+            "stat", u8"区域平均高程", "m",
+            u8"基于 Copernicus DEM 的区域统计，不把单位混入数值。",
+            {u8"分析区域平均值"}, {1842.0}));
+
+    const auto renderMediaCard = [&](
+        const char* evidenceName,
+        const std::function<void(AICardPanel&)>& prepare) {
+        AICardPanel panel;
+        earthui::CardStack stack;
+        prepare(panel);
+        auditOverlay = [&]() {
+            panel.registerCards(stack);
+            stack.draw();
+        };
+        for (int frame = 0; frame < 4; ++frame) renderAuditFrame();
+        inspectProductionWindows(
+            auditWidth, auditHeight, earthui::EarthUiModule::Science);
+        ImGuiWindow* insight =
+            ImGui::FindWindowByName(u8"洞察透镜###earth_insight_lens");
+        expect(insight != nullptr && insight->Active && !insight->Hidden,
+               std::string(evidenceName) +
+                   ": real AI media card did not enter the Insight Lens");
+        saveAuditFrame(evidenceName);
+        auditOverlay = std::function<void()>();
+        renderAuditFrame();
+    };
+    renderMediaCard(
+        "1440x900-ai-photo-result.ppm",
+        [](AICardPanel& panel) {
+            panel.pushPhoto(
+                "/tmp/osgsol-ui-audit/"
+                u8"昆明农业气候与地表变化联合分析航拍结果.png",
+                u8"科学航拍结果", false);
+        });
+    renderMediaCard(
+        "1440x900-ai-video-result.ppm",
+        [](AICardPanel& panel) {
+            panel.pushPhoto(
+                "/tmp/osgsol-ui-audit/"
+                u8"香港维多利亚港科学巡航与地形融合验证视频.mp4",
+                u8"巡航视频结果", true);
+        });
+    earthai::JobManager auditJobs;
+    const int auditJobId =
+        auditJobs.create("photo", u8"正在生成科学航拍");
+    auditJobs.update(
+        auditJobId, earthai::AIJob::RUNNING, 0.63f,
+        std::string(), std::string());
+    renderMediaCard(
+        "1440x900-ai-generation-progress.ppm",
+        [&](AICardPanel& panel) {
+            panel.pushJob(
+                &auditJobs, auditJobId,
+                u8"生成昆明农业气候与地表变化联合航拍");
+        });
+
+    // Module help is a real hidden product surface. Open the drawer-scoped
+    // popup through the shell state, then prove the production popup remains
+    // bounded, wraps instead of scrolling sideways, and accepts an outside
+    // click to close.
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Science;
+    productUi._uiV2.aboutOpen = true;
+    renderAuditFrame();
+    productUi._uiV2.aboutOpen = false;
+    renderAuditFrame();
+    ImGuiWindow* moduleHelp = activeNonModalPopup();
+    expect(moduleHelp != nullptr && moduleHelp->Active &&
+               !moduleHelp->Hidden,
+           "module help popup did not enter the product frame");
+    expect(moduleHelp->Pos.x >= -0.5f && moduleHelp->Pos.y >= -0.5f &&
+               moduleHelp->Pos.x + moduleHelp->Size.x <=
+                   auditWidth + 0.5f &&
+               moduleHelp->Pos.y + moduleHelp->Size.y <=
+                   auditHeight + 0.5f,
+           "module help popup extends beyond the viewport");
+    expect(moduleHelp->ScrollMax.x <= 1.0f && !moduleHelp->ScrollbarX,
+           "module help popup has horizontal overflow");
+    ImGuiWindow* helpDrawer =
+        ImGui::FindWindowByName("##earth_ui_v2_drawer");
+    expect(helpDrawer != nullptr &&
+               moduleHelp->Pos.x >= helpDrawer->Pos.x - 0.5f &&
+               moduleHelp->Pos.x + moduleHelp->Size.x <=
+                   helpDrawer->Pos.x + helpDrawer->Size.x + 0.5f,
+           "drawer help popup drifted away from its trigger surface");
+    saveAuditFrame("1440x900-module-help.ppm");
+    io.AddMousePosEvent(
+        static_cast<float>(auditWidth) * 0.72f, 90.0f);
+    renderAuditFrame();
+    io.AddMouseButtonEvent(0, true);
+    renderAuditFrame();
+    io.AddMouseButtonEvent(0, false);
+    renderAuditFrame();
+    expect(activeNonModalPopup() == nullptr,
+           "outside click did not close the module help popup");
+
+    // Event stream and the global status strip are optional but formal UI
+    // states. Exercise their real product code together, including the long
+    // bounded scroll region and the exact boundary with the context tray.
+    std::vector<earthfeed::TickerEvent> auditEvents;
+    const double now = static_cast<double>(std::time(nullptr));
+    for (int index = 0; index < 18; ++index)
+    {
+        earthfeed::TickerEvent event;
+        event.title =
+            u8"农业气象、地表覆盖与基础设施联合观测事件 " +
+            std::to_string(index + 1) +
+            u8" · 长标题必须完整换行且可滚动返回";
+        event.sourceId = (index % 2 == 0) ? "ERA5" : "GDELT";
+        event.lat = 24.9752 + index * 0.01;
+        event.lon = 102.0031 + index * 0.01;
+        event.unixTime = now - index * 300.0;
+        auditEvents.push_back(event);
+    }
+    earthfeed::setProductTestEvents(auditEvents);
+    earthfeed::clearFeedSelection();
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Tasks;
+    productUi._ticker.showTicker = true;
+    productUi._ticker.showStatusBar = true;
+    for (int frame = 0; frame < 4; ++frame) renderAuditFrame();
+    inspectProductionWindows(
+        auditWidth, auditHeight, earthui::EarthUiModule::Tasks);
+    ImGuiWindow* statusBar = ImGui::FindWindowByName("##earth_statusbar");
+    ImGuiWindow* contextTray =
+        ImGui::FindWindowByName("##earth_ui_v2_context");
+    ImGuiWindow* eventLens =
+        ImGui::FindWindowByName(u8"洞察透镜###earth_insight_lens");
+    expect(statusBar != nullptr && contextTray != nullptr &&
+               eventLens != nullptr,
+           "event/status product surfaces are not all visible");
+    expect(contextTray->Pos.y + contextTray->Size.y <=
+               statusBar->Pos.y + 0.5f,
+           "global status strip overlaps the context tray");
+    expect(eventLens->ScrollMax.y > 1.0f && eventLens->ScrollbarY,
+           "long event stream has no visible vertical scroll range");
+    const float eventScrollMaximum = eventLens->ScrollMax.y;
+    ImGui::SetScrollY(eventLens, eventScrollMaximum);
+    renderAuditFrame();
+    renderAuditFrame();
+    eventLens =
+        ImGui::FindWindowByName(u8"洞察透镜###earth_insight_lens");
+    expect(eventLens && eventLens->Scroll.y >= eventScrollMaximum - 1.0f,
+           "event stream cannot scroll to the bottom");
+    ImGui::SetScrollY(eventLens, 0.0f);
+    renderAuditFrame();
+    renderAuditFrame();
+    eventLens =
+        ImGui::FindWindowByName(u8"洞察透镜###earth_insight_lens");
+    expect(eventLens && eventLens->Scroll.y <= 1.0f,
+           "event stream cannot scroll back to the top");
+    saveAuditFrame("1440x900-event-stream-status.ppm");
+    productUi._ticker.showTicker = false;
+    productUi._ticker.showStatusBar = false;
+    earthfeed::setProductTestEvents({});
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Science;
+
+    // The maximum-detail notice previously appeared as repeated map
+    // watermarks. Force the production debounced signal and prove the single
+    // bounded toast stays inside the map corridor and can coexist with the
+    // shell without becoming a full-screen overlay.
+    osgVerse::TileManager::instance()->markOverlayStretchedPastNative(500);
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Layers;
+    for (int frame = 0; frame < 4; ++frame) renderAuditFrame();
+    inspectProductionWindows(
+        auditWidth, auditHeight, earthui::EarthUiModule::Layers);
+    ImGuiWindow* detailToast =
+        ImGui::FindWindowByName(
+            u8"地图细节提示###max_detail_badge");
+    expect(detailToast != nullptr && detailToast->Active &&
+               !detailToast->Hidden,
+           "maximum-detail notice did not render as a single product toast");
+    ImGuiWindow* drawer =
+        ImGui::FindWindowByName("##earth_ui_v2_drawer");
+    ImGuiWindow* insight =
+        ImGui::FindWindowByName(u8"洞察透镜###earth_insight_lens");
+    expect(!overlaps(detailToast, drawer) &&
+               !overlaps(detailToast, insight),
+           "maximum-detail toast overlaps a docked product surface");
+    saveAuditFrame("1440x900-max-detail-toast.ppm");
+    const ImGuiStyle& toastStyle = ImGui::GetStyle();
+    const float toastCloseButtonSize = ImGui::GetFontSize();
+    io.AddMousePosEvent(
+        detailToast->Pos.x + detailToast->Size.x -
+            toastStyle.FramePadding.x - toastCloseButtonSize * 0.5f,
+        detailToast->Pos.y + toastStyle.FramePadding.y +
+            toastCloseButtonSize * 0.5f);
+    renderAuditFrame();
+    io.AddMouseButtonEvent(0, true);
+    renderAuditFrame();
+    io.AddMouseButtonEvent(0, false);
+    renderAuditFrame();
+    expect(productUi._detailBadgeDismissed,
+           "real close-button click did not dismiss maximum-detail toast");
+    renderAuditFrame();
+    detailToast = ImGui::FindWindowByName(
+        u8"地图细节提示###max_detail_badge");
+    expect(!detailToast || !detailToast->Active || detailToast->Hidden,
+           "dismissed maximum-detail toast remained visible");
+    osgVerse::TileManager::instance()->markOverlayStretchedPastNative(0);
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Science;
 
     command.auditSetVideoConfirm(true);
     renderAuditFrame();

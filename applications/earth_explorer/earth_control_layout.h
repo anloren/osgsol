@@ -80,7 +80,11 @@ inline EarthUiShellLayout computeEarthUiShellLayout(float viewportWidth,
     layout.topBarHeight = std::clamp(height * 0.045f, 42.0f, 50.0f);
     layout.navigationWidth = std::clamp(width * 0.048f, 64.0f, 76.0f);
     layout.outerGap = std::clamp(width * 0.006f, 6.0f, 10.0f);
-    layout.statusHeight = std::clamp(height * 0.027f, 22.0f, 28.0f);
+    // The production CJK font has a ~20 px line height. Reserve the actual
+    // text plus two pixels of vertical padding on each side; the previous
+    // 22–28 px contract was then clamped back to ImGui's default 32 px
+    // WindowMinSize, which pushed the optional status strip below the viewport.
+    layout.statusHeight = std::clamp(height * 0.032f, 24.0f, 30.0f);
     // The context strip contains a label row and a value row. 46 px clips
     // the second row with the production CJK font at common 900/1080 px
     // window heights, so treat 58 px as the real content minimum.

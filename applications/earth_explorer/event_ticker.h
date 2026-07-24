@@ -139,8 +139,10 @@ struct EventTickerUI
             ImVec2(std::max(1.0f, io.DisplaySize.x - shell.navigationWidth),
                    shell.statusHeight), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.96f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 3.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 2.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(
+            ImGuiStyleVar_WindowMinSize, ImVec2(1.0f, 1.0f));
         ImGui::PushStyleColor(
             ImGuiCol_WindowBg, earthui::design::kCarbon);
         ImGui::PushStyleColor(
@@ -156,7 +158,7 @@ struct EventTickerUI
         }
         ImGui::End();
         ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar(2);
+        ImGui::PopStyleVar(3);
     }
 };
 

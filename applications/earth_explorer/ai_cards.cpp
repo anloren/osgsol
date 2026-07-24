@@ -99,12 +99,14 @@ void AICardPanel::registerCards(earthui::CardStack& stack)
         else if (c.type == AICard::PHOTO)
             title = c.title.empty() ? u8"实景照片" : c.title;
         else if (c.type == AICard::JOB)
-            title = c.title.empty() ? u8"生成中" : c.title;
+            title = u8"生成任务";
 
         earthui::Card card;
         card.id = "ai_" + std::to_string(c.serial);   // serial 存活期间不变(同原 ID 拼接惯例)
         card.style.chipLabel = u8"AI";
         card.title = title;
+        if (c.type == AICard::JOB)
+            card.subtitle = c.title.empty() ? u8"正在生成媒体结果" : c.title;
         // 按值快照(而非按引用捕获 c):CardStack::draw() 真正调用这个 lambda 的时机
         // 在 registerCards() 返回之后,期间主线程随时可能 pushChart/pushPhoto/pushJob
         // 触发 _cards realloc,使 &c 悬垂——这是本任务要修的 UAF 根因(review 2026-07-08)。
@@ -205,42 +207,63 @@ static void drawBarChart(ImDrawList* dl, ImVec2 origin, float width,
     double maxV = 0.0;
     for (size_t i = 0; i < values.size(); ++i) maxV = std::max(maxV, values[i]);
 
-    const float rowH = 22.0f, rowGap = 6.0f;
-    float measuredLabelWidth = 0.0f;
-    for (const std::string& label : labels)
-        measuredLabelWidth = std::max(
-            measuredLabelWidth, ImGui::CalcTextSize(label.c_str()).x);
-    const float labelW = std::clamp(
-        measuredLabelWidth + 8.0f, 56.0f, width * 0.36f);
-    const float valueW = 46.0f;
-    float barAreaW = width - labelW - valueW - 8.0f;
-    if (barAreaW < 20.0f) barAreaW = 20.0f;
+    // Labels and formatted values are user/model supplied. The old side-by-side
+    // layout reserved fixed 36%/46 px columns, so "1286.4" lost its last digit
+    // and long scientific metric names were silently clipped. Put the semantic
+    // row above an independent full-width bar: the value is right aligned using
+    // its measured width and the label wraps inside the remaining space.
+    std::vector<std::string> formattedValues(values.size());
+    float valueW = 0.0f;
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        char buffer[32];
+        formatNum(buffer, sizeof(buffer), values[i]);
+        formattedValues[i] = buffer;
+        valueW = std::max(
+            valueW, ImGui::CalcTextSize(formattedValues[i].c_str()).x);
+    }
+    const float valueGap = 12.0f;
+    const float labelW = std::max(48.0f, width - valueW - valueGap);
+    const float barH = 8.0f;
+    const float labelToBarGap = 5.0f;
+    const float rowGap = 10.0f;
 
     float y = origin.y;
     for (size_t i = 0; i < values.size(); ++i)
     {
-        // 标签(左)
+        const ImVec2 labelSize = ImGui::CalcTextSize(
+            labels[i].c_str(), nullptr, false, labelW);
+        const float textH = std::max(
+            ImGui::GetTextLineHeight(), labelSize.y);
         const ImVec4 labelClip(
-            origin.x, y, origin.x + labelW - 4.0f, y + rowH);
-        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
-            ImVec2(origin.x, y + 3.0f), text, labels[i].c_str(), nullptr,
-            0.0f, &labelClip);
+            origin.x, y, origin.x + labelW, y + textH + 0.5f);
+        dl->AddText(
+            ImGui::GetFont(), ImGui::GetFontSize(),
+            ImVec2(origin.x, y), text, labels[i].c_str(), nullptr,
+            labelW, &labelClip);
 
-        // 条形背景 track + 前景 bar(0/负值钳到 0 长度,但数值文字仍照常显示)
-        float barX = origin.x + labelW;
-        dl->AddRectFilled(ImVec2(barX, y), ImVec2(barX + barAreaW, y + rowH), track, 4.0f);
+        const ImVec2 valueSize =
+            ImGui::CalcTextSize(formattedValues[i].c_str());
+        dl->AddText(
+            ImVec2(origin.x + width - valueSize.x, y),
+            text, formattedValues[i].c_str());
+
+        // Data bar is a separate visual channel below the complete label/value
+        // pair; it can use the entire card width without competing with text.
+        const float barY = y + textH + labelToBarGap;
+        dl->AddRectFilled(
+            ImVec2(origin.x, barY),
+            ImVec2(origin.x + width, barY + barH), track, barH * 0.5f);
         double v = values[i]; if (v < 0.0) v = 0.0;
         float frac = (maxV > 0.0) ? (float)(v / maxV) : 0.0f;
-        float barW = barAreaW * frac;
+        float barW = width * frac;
         if (barW > 1.0f)
-            dl->AddRectFilled(ImVec2(barX, y), ImVec2(barX + barW, y + rowH), accent, 4.0f);
+            dl->AddRectFilled(
+                ImVec2(origin.x, barY),
+                ImVec2(origin.x + barW, barY + barH),
+                accent, barH * 0.5f);
 
-        // 数值(右)
-        char buf[32];
-        formatNum(buf, sizeof(buf), values[i]);
-        dl->AddText(ImVec2(barX + barAreaW + 8.0f, y + 3.0f), text, buf);
-
-        y += rowH + rowGap;
+        y = barY + barH + rowGap;
     }
     ImGui::Dummy(ImVec2(width, y - origin.y));
 }
@@ -471,13 +494,18 @@ static std::string basename(const std::string& path)
 
 void AICardPanel::drawPhotoCard(const AICard& c)
 {
+    ImGui::PushStyleColor(
+        ImGuiCol_Text, earthui::design::kTextDim);
+    ImGui::TextUnformatted(c.isVideo ? u8"视频文件" : u8"图片文件");
+    ImGui::PopStyleColor();
     ImGui::TextWrapped("%s", basename(c.path).c_str());
     if (c.path.empty())
     {
         ImGui::TextDisabled(u8"（无文件）");
         return;
     }
-    if (ImGui::Button(u8"打开"))
+    const char* action = c.isVideo ? u8"播放视频" : u8"查看图片";
+    if (ImGui::Button(action, ImVec2(-1.0f, 0.0f)))
     {
         // macOS `open`;路径用单引号包住防止空格/特殊字符断开命令(与 spec 约定一致)。
         std::string cmd = "open '" + c.path + "'";
@@ -501,6 +529,12 @@ void AICardPanel::drawJobCard(const AICard& c)
     }
     static const char spin[4] = { '|', '/', '-', '\\' };
     int idx = (int)(ImGui::GetTime() * 8.0) % 4;
-    ImGui::Text(u8"生成中 %c", spin[idx]);
-    ImGui::ProgressBar(job.progress, ImVec2(-1.0f, 0.0f));
+    ImGui::Text(u8"正在生成 %c", spin[idx]);
+    char progress[16];
+    snprintf(
+        progress, sizeof(progress), "%.0f%%",
+        std::clamp(job.progress, 0.0f, 1.0f) * 100.0f);
+    ImGui::ProgressBar(
+        std::clamp(job.progress, 0.0f, 1.0f),
+        ImVec2(-1.0f, 0.0f), progress);
 }

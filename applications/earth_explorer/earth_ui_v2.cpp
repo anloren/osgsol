@@ -81,17 +81,37 @@ const char* contextKindShortLabel(EarthUiContextKind kind)
     return u8"无";
 }
 
-void drawModuleHelp(EarthUiModule module)
+void drawModuleHelp(EarthUiModule module, bool openRequested = false)
 {
-    if (ImGui::SmallButton("?")) ImGui::OpenPopup("##module_context_help");
+    if (ImGui::SmallButton("?") || openRequested)
+        ImGui::OpenPopup("##module_context_help");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip(u8"查看本模块的交互规则");
+    const ImVec2 anchorMin = ImGui::GetItemRectMin();
+    const ImVec2 anchorMax = ImGui::GetItemRectMax();
     const ImGuiIO& io = ImGui::GetIO();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const ImVec2 surfacePos = ImGui::GetWindowPos();
+    const ImVec2 surfaceSize = ImGui::GetWindowSize();
+    const float surfaceMinX = surfacePos.x + style.WindowPadding.x;
+    const float surfaceMaxX =
+        surfacePos.x + surfaceSize.x - style.WindowPadding.x;
     const float popupWidth = std::min(
-        360.0f, std::max(220.0f, io.DisplaySize.x - 24.0f));
+        300.0f, std::max(
+            220.0f, std::min(
+                io.DisplaySize.x - 24.0f, surfaceMaxX - surfaceMinX)));
     const float popupHeight = std::min(
         260.0f, std::max(120.0f, io.DisplaySize.y - 24.0f));
+    const float popupX = std::clamp(
+        anchorMax.x - popupWidth, surfaceMinX,
+        std::max(surfaceMinX, surfaceMaxX - popupWidth));
+    const float popupY = anchorMax.y + 4.0f + popupHeight <=
+            io.DisplaySize.y - 12.0f
+        ? anchorMax.y + 4.0f
+        : std::max(12.0f, anchorMin.y - popupHeight - 4.0f);
+    ImGui::SetNextWindowPos(
+        ImVec2(popupX, popupY), ImGuiCond_Appearing);
     ImGui::SetNextWindowSizeConstraints(
-        ImVec2(std::min(220.0f, popupWidth), 0.0f),
+        ImVec2(popupWidth, 0.0f),
         ImVec2(popupWidth, popupHeight));
     if (ImGui::BeginPopup("##module_context_help"))
     {
@@ -441,7 +461,7 @@ bool beginEarthUiModuleDrawer(const EarthUiShellLayout& layout,
     ImGui::TextUnformatted(moduleLabel(state.activeModule));
     ImGui::PopStyleColor();
     ImGui::SameLine();
-    drawModuleHelp(state.activeModule);
+    drawModuleHelp(state.activeModule, state.aboutOpen);
     ImGui::Separator();
     return true;
 }

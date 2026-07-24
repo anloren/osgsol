@@ -135,14 +135,17 @@ namespace earthui
                 if (ImGui::BeginTabBar(
                         "##insight_tabs",
                         ImGuiTabBarFlags_AutoSelectNewTabs |
-                        ImGuiTabBarFlags_FittingPolicyScroll))
+                        ImGuiTabBarFlags_FittingPolicyResizeDown))
                 {
                     for (Card& c : _frameCards)
                     {
                         bool open = true;
                         std::string tabLabel = c.title + "###insight_" + c.id;
-                        if (ImGui::BeginTabItem(
-                                tabLabel.c_str(), c.closable ? &open : nullptr))
+                        const bool tabVisible = ImGui::BeginTabItem(
+                            tabLabel.c_str(), c.closable ? &open : nullptr);
+                        if (ImGui::IsItemHovered() && !c.title.empty())
+                            ImGui::SetTooltip("%s", c.title.c_str());
+                        if (tabVisible)
                         {
                             renderedActiveTab = true;
                             if (!c.style.chipLabel.empty())

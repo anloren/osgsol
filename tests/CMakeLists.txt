@@ -200,7 +200,8 @@ IF(APPLE)
                    "${CMAKE_SOURCE_DIR}/applications/earth_explorer/earth_ui_v2.cpp"
                    "${CMAKE_SOURCE_DIR}/applications/earth_explorer/marker_style.cpp"
                    "${CMAKE_SOURCE_DIR}/applications/earth_explorer/earth_config.cpp"
-                   "${CMAKE_SOURCE_DIR}/applications/earth_explorer/ai_ui.cpp")
+                   "${CMAKE_SOURCE_DIR}/applications/earth_explorer/ai_ui.cpp"
+                   "${CMAKE_SOURCE_DIR}/applications/earth_explorer/ai_cards.cpp")
     TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_EarthProductUiGlRuntime PRIVATE
                                "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
     TARGET_COMPILE_FEATURES(osgVerse_Test_EarthProductUiGlRuntime PRIVATE cxx_std_17)
