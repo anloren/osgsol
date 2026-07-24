@@ -1815,11 +1815,11 @@ void ScienceEarthPanel::drawOperations(
         *selectedSource, eye[2]);
     if (operationsExpanded)
     {
-        ImGui::SeparatorText(u8"1  定位区域 / Locate area");
+        ImGui::SeparatorText(u8"1  定位分析范围");
         ImGui::TextWrapped(
             u8"屏幕中心 / Center: %.4f, %.4f · 自动分析范围 %.1f km",
             latitude, longitude, requestedSpanMeters / 1000.0);
-        ImGui::SeparatorText(u8"2  选择数据源与时间 / Source and time");
+        ImGui::SeparatorText(u8"2  选择数据源与时间");
         ImGui::TextWrapped(u8"数据源 / Source");
         if (configurationLocked) ImGui::BeginDisabled();
         ImGui::SetNextItemWidth(-1.0f);
@@ -1955,7 +1955,7 @@ void ScienceEarthPanel::drawOperations(
         describeScienceWorkflowStrip(
             source, activeMode, _state, _currentDraft, snapshot,
             visibleArtifactId);
-    ImGui::SeparatorText(u8"当前状态 / Current state");
+    ImGui::SeparatorText(u8"当前状态");
     ImGui::TextWrapped(u8"数据：%s · 时间：%s",
                        workflowStrip.source.c_str(),
                        workflowStrip.time.c_str());
@@ -2154,7 +2154,7 @@ void ScienceEarthPanel::drawOperations(
         activeMode != SciencePanelMode::Preview;
     if (embeddingAnalysis)
     {
-        ImGui::SeparatorText(u8"3  选择分析方法 / Choose method");
+        ImGui::SeparatorText(u8"3  选择分析方法");
         drawHelpButton("embedding_metrics", ScienceHelpTopic::EmbeddingMetrics);
         if (configurationLocked) ImGui::BeginDisabled();
         if (activeMode == SciencePanelMode::PointSeries)
@@ -2326,7 +2326,7 @@ void ScienceEarthPanel::drawOperations(
     bool estimateConfirmed = !estimateFailed &&
         sciencePanelEstimateConfirmationMatches(
             query, cost, _confirmedEstimateKey);
-    ImGui::SeparatorText(u8"4  复核资源 / Review exact cost");
+    ImGui::SeparatorText(u8"4  复核资源");
     if (!estimateFailed)
     {
         const ScienceCostPresentation estimate = describeScienceCost(cost);
@@ -2375,7 +2375,7 @@ void ScienceEarthPanel::drawOperations(
         selectSciencePanelArtifact(snapshot, activeMode);
     const bool currentDraftAlreadyLoaded = currentArtifact &&
         describeScienceArtifactUi(*currentArtifact, query).matchesDraft;
-    ImGui::SeparatorText(u8"5  开始或取消 / Start or cancel");
+    ImGui::SeparatorText(u8"5  开始或取消");
     if (_hasPendingAnalysis)
         drawColoredWrapped(earthui::design::kCyan,
             u8"第 1/2 步：正在加载对比年份的伪彩图；完成后会自动开始分析。"
@@ -2496,12 +2496,12 @@ void ScienceEarthPanel::drawOperations(
         if (!presentationAfterAction.detail.empty())
             ImGui::TextWrapped("%s",
                                presentationAfterAction.detail.c_str());
-        if (ImGui::Button(u8"取消当前请求 / Cancel request",
+        if (ImGui::Button(u8"取消当前请求",
                           ImVec2(-1.0f, 0.0f)))
             service->cancel(snapshotAfterAction.jobId);
     }
 
-    ImGui::SeparatorText(u8"6  查看地图、结果与证据 / View results");
+    ImGui::SeparatorText(u8"6  查看地图、结果与证据");
     const SciencePreviewPublishStatus statusAfterAction =
         previewLayer->displayStatus();
     const bool rendererUnavailable =
@@ -2516,7 +2516,7 @@ void ScienceEarthPanel::drawOperations(
                        display.title.c_str());
     if (!display.detail.empty())
         ImGui::TextWrapped("%s", display.detail.c_str());
-    if (ImGui::Button(u8"查看结果与证据 / View result and evidence",
+    if (ImGui::Button(u8"查看结果与证据",
                       ImVec2(-1.0f, 0.0f)))
         _state.resultExpanded = true;
 }
@@ -2537,9 +2537,8 @@ void ScienceEarthPanel::drawResults(
         layout.resultTop), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(layout.resultWidth, height), ImGuiCond_Always);
     pushScienceScrollbarStyle();
-    if (!ImGui::Begin("ScienceEarth Results / 科学结果", nullptr,
-                      ImGuiWindowFlags_NoTitleBar |
-                      ImGuiWindowFlags_AlwaysVerticalScrollbar))
+    if (!ImGui::Begin("ScienceEarth 科学结果", nullptr,
+                      ImGuiWindowFlags_NoTitleBar))
     {
         ImGui::End();
         popScienceScrollbarStyle();
@@ -2560,7 +2559,7 @@ void ScienceEarthPanel::drawResults(
     ImGui::PushTextWrapPos(0.0f);
     ImGui::PushStyleColor(ImGuiCol_Text,
                           earthui::design::kCyan);
-    ImGui::TextUnformatted(u8"洞察透镜 / Insight Lens");
+    ImGui::TextUnformatted(u8"洞察透镜");
     ImGui::PopStyleColor();
     ImGui::TextDisabled(u8"ScienceEarth · 结果、图表与证据");
     earthui::continueRowIfFits(
@@ -2677,7 +2676,7 @@ void ScienceEarthPanel::drawResults(
                 if (layers) layers->setEnabled("alphaearth", visible);
             }
         }
-        if (ImGui::Button(u8"移除 ScienceEarth 结果 / Remove results",
+        if (ImGui::Button(u8"移除 ScienceEarth 结果",
                           ImVec2(-1.0f, 0.0f)))
         {
             service->cancel(snapshot.jobId);

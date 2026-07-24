@@ -10,12 +10,18 @@
 typedef unsigned long long ImTextureID;
 struct ImFont;
 struct ImGuiContext;
+struct ImGuiIO;
 
 namespace osgVerse
 {
     /** Return an absolute per-user path for persistent ImGui settings.
         An empty result disables persistence rather than writing relative to the executable. */
     std::string defaultImGuiSettingsPath();
+
+    /** Apply the product-wide keyboard accessibility contract to an ImGui
+        context. Keeping this separate from renderer startup makes the policy
+        directly testable without opening a native window. */
+    void configureImGuiProductInput(ImGuiIO& io);
 
     class ImGuiManager;
 

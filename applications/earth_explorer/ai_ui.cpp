@@ -73,7 +73,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
 
         ImGui::PushStyleColor(
             ImGuiCol_Text, earthui::design::kCyan);
-        ImGui::TextUnformatted(u8"AI COMMAND / AI 地球助手");
+        ImGui::TextUnformatted(u8"AI 地球助手");
         ImGui::PopStyleColor();
         ImGui::SameLine();
         ImGui::TextDisabled(busy ? u8"正在执行…" : u8"就绪");
@@ -92,8 +92,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 if (!_historyCollapsed)
                 {
                     float maxH = std::min(360.0f, io.DisplaySize.y * 0.32f);
-                    ImGui::BeginChild("##ai_history", ImVec2(winWidth - 28.0f, maxH), true,
-                                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                    ImGui::BeginChild(
+                        "##ai_history", ImVec2(winWidth - 28.0f, maxH), true);
                     for (size_t i = 0; i < transcript.size(); ++i)
                     {
                         const earthai::ChatEntry& e = transcript[i];
@@ -180,8 +180,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 ImGui::Separator();
                 ImGui::BeginChild(
                     "##scienceearth_prompt_gallery",
-                    ImVec2(0.0f, 0.0f), false,
-                    ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                    ImVec2(0.0f, 0.0f), false);
                 const auto& examples = earthai::scienceEarthPromptExamples();
                 for (std::size_t index = 0; index < examples.size(); ++index)
                 {

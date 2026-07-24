@@ -5,6 +5,7 @@
 #include "ui_card.h"
 
 #include "3rdparty/imgui/imgui_internal.h"
+#include <ui/ImGui.h>
 
 #include <cmath>
 #include <cstdlib>
@@ -42,6 +43,16 @@ void expectInside(const char* name, float width, float height)
            std::string(name) + " extends beyond the viewport");
 }
 
+void drawLongDrawer(const earthui::EarthUiShellLayout& layout,
+                    const earthui::EarthUiShellState& state)
+{
+    if (!earthui::beginEarthUiModuleDrawer(layout, state)) return;
+    for (int row = 0; row < 96; ++row)
+        ImGui::TextWrapped(
+            u8"第 %d 条真实内容：只有内容超过面板时才应出现滚动条。", row + 1);
+    earthui::endEarthUiModuleDrawer();
+}
+
 void runViewport(float width, float height)
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -60,6 +71,29 @@ void runViewport(float width, float height)
     data.altitudeKm = 1336.7;
     data.scienceAvailable = true;
 
+    ImGui::NewFrame();
+    earthui::drawEarthUiTopBar(layout, state, data);
+    earthui::drawEarthUiModuleRail(layout, state);
+    if (earthui::beginEarthUiModuleDrawer(layout, state))
+    {
+        if (earthui::beginDrawerSection(
+                "runtime", u8"科学参数",
+                u8"用于边界测试的超长科学模块文字，不允许越过抽屉或遮挡操作。"))
+        {
+            ImGui::TextWrapped(
+                "%s", u8"状态、时间、方法和执行动作全部留在同一任务流。");
+            earthui::fullWidthButton(
+                u8"开始分析", earthui::StatusTone::Active);
+            earthui::endDrawerSection();
+        }
+        earthui::endEarthUiModuleDrawer();
+    }
+    earthui::drawEarthUiContextTray(layout, state);
+    ImGui::Render();
+
+    // Scrollbar visibility follows the previous frame's measured content.
+    // Repeat the stable short state before asserting that no decorative track
+    // remains from a prior long module.
     ImGui::NewFrame();
     earthui::drawEarthUiTopBar(layout, state, data);
     earthui::drawEarthUiModuleRail(layout, state);
@@ -104,6 +138,8 @@ void runViewport(float width, float height)
            "module drawer exposes a horizontal scrollbar");
     expect(window("##earth_ui_v2_drawer")->ScrollMax.x <= 0.5f,
            "module drawer content overflows horizontally");
+    expect(!window("##earth_ui_v2_drawer")->ScrollbarY,
+           "short module drawer shows a decorative scrollbar");
     expect(!window("##earth_ui_v2_context")->ScrollbarX,
            "context tray exposes a horizontal scrollbar");
     expect(window("##earth_ui_v2_context")->ScrollMax.x <= 0.5f,
@@ -124,6 +160,35 @@ void runViewport(float width, float height)
                    "shell draw command uses an out-of-viewport clip rectangle");
         }
     }
+
+    // The native drawer exposes a continuous scrollbar only when its content
+    // actually overflows.  It must reach the end and then return to the top.
+    ImGui::NewFrame();
+    drawLongDrawer(layout, state);
+    ImGui::Render();
+    // ImGui resolves scrollbar presence from the previous frame's measured
+    // content size. Render the same state once more before auditing it.
+    ImGui::NewFrame();
+    drawLongDrawer(layout, state);
+    ImGui::Render();
+    ImGuiWindow* drawer = window("##earth_ui_v2_drawer");
+    expect(drawer->ScrollbarY && drawer->ScrollMax.y > 1.0f,
+           "long module drawer does not expose a vertical scrollbar");
+    ImGui::SetScrollY(drawer, drawer->ScrollMax.y);
+    ImGui::NewFrame();
+    drawLongDrawer(layout, state);
+    ImGui::Render();
+    drawer = window("##earth_ui_v2_drawer");
+    const float drawerScrolledDown = drawer->Scroll.y;
+    expect(drawerScrolledDown > 1.0f,
+           "module drawer cannot reach content below the fold");
+    ImGui::SetScrollY(drawer, 0.0f);
+    ImGui::NewFrame();
+    drawLongDrawer(layout, state);
+    ImGui::Render();
+    drawer = window("##earth_ui_v2_drawer");
+    expect(drawer->Scroll.y < drawerScrolledDown,
+           "module drawer cannot return upward after scrolling down");
 
     // Every non-science detail uses one bounded Insight Lens. Multiple
     // information sources become tabs instead of independently overlapping
@@ -206,6 +271,63 @@ void runViewport(float width, float height)
            "Insight Lens cannot return upward after scrolling down");
 }
 
+void runKeyboardNavigation()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(640.0f, 360.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    osgVerse::configureImGuiProductInput(io);
+    expect((io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) != 0,
+           "product ImGui keyboard navigation is disabled");
+
+    ImGuiID firstId = 0;
+    ImGuiID secondId = 0;
+    char firstValue[16] = {};
+    char secondValue[16] = {};
+    ImGui::NewFrame();
+    ImGui::Begin("##keyboard_navigation");
+    ImGui::InputText("##first", firstValue, sizeof(firstValue));
+    ImGui::InputText("##second", secondValue, sizeof(secondValue));
+    ImGui::End();
+    ImGui::Render();
+
+    ImGui::NewFrame();
+    ImGui::Begin("##keyboard_navigation");
+    ImGui::SetWindowFocus();
+    ImGui::SetKeyboardFocusHere();
+    ImGui::InputText("##first", firstValue, sizeof(firstValue));
+    firstId = ImGui::GetItemID();
+    ImGui::InputText("##second", secondValue, sizeof(secondValue));
+    secondId = ImGui::GetItemID();
+    ImGui::End();
+    ImGui::Render();
+    ImGui::NewFrame();
+    ImGui::Begin("##keyboard_navigation");
+    ImGui::InputText("##first", firstValue, sizeof(firstValue));
+    ImGui::InputText("##second", secondValue, sizeof(secondValue));
+    ImGui::End();
+    ImGui::Render();
+    expect(GImGui->NavId == firstId,
+           "keyboard focus was not established on the first control");
+
+    io.AddKeyEvent(ImGuiKey_Tab, true);
+    ImGui::NewFrame();
+    ImGui::Begin("##keyboard_navigation");
+    ImGui::InputText("##first", firstValue, sizeof(firstValue));
+    ImGui::InputText("##second", secondValue, sizeof(secondValue));
+    ImGui::End();
+    ImGui::Render();
+    io.AddKeyEvent(ImGuiKey_Tab, false);
+    ImGui::NewFrame();
+    ImGui::Begin("##keyboard_navigation");
+    ImGui::InputText("##first", firstValue, sizeof(firstValue));
+    ImGui::InputText("##second", secondValue, sizeof(secondValue));
+    ImGui::End();
+    ImGui::Render();
+    expect(GImGui->NavId == secondId,
+           "Tab did not move keyboard focus to the next control");
+}
+
 void runModuleInteraction()
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -215,27 +337,52 @@ void runModuleInteraction()
         earthui::computeEarthUiShellLayout(1440.0f, 900.0f, true);
     earthui::EarthUiShellState state;
     state.drawerOpen = true;
-    for (int index = 1;
-         index <= static_cast<int>(earthui::EarthUiModule::Settings);
-         ++index)
-    {
-        earthui::activateEarthUiModule(
-            state, static_cast<earthui::EarthUiModule>(index));
+
+    const auto drawRail = [&]() {
         ImGui::NewFrame();
         earthui::drawEarthUiModuleRail(layout, state);
         ImGui::Render();
+    };
+    drawRail();
+    ImGuiWindow* rail = window("##earth_ui_v2_modules");
+    expect(rail != nullptr, "module rail was not produced for interaction");
+    const float firstButtonCenterY =
+        rail->Pos.y + rail->WindowPadding.y +
+        layout.topBarHeight * 0.18f + ImGui::GetStyle().ItemSpacing.y + 24.0f;
+    const float moduleStep = 48.0f + ImGui::GetStyle().ItemSpacing.y;
+    const float moduleCenterX = rail->Pos.x + rail->Size.x * 0.5f;
+    const auto clickModule = [&](int index) {
+        io.AddMousePosEvent(
+            moduleCenterX, firstButtonCenterY + moduleStep * index);
+        drawRail();
+        io.AddMouseButtonEvent(0, true);
+        drawRail();
+        io.AddMouseButtonEvent(0, false);
+        drawRail();
+    };
+
+    for (int index = 0;
+         index <= static_cast<int>(earthui::EarthUiModule::Settings);
+         ++index)
+    {
+        const earthui::EarthUiModule requested =
+            static_cast<earthui::EarthUiModule>(index);
+        state.activeModule = requested == earthui::EarthUiModule::Explore
+            ? earthui::EarthUiModule::Settings
+            : earthui::EarthUiModule::Explore;
+        state.drawerOpen = true;
+        clickModule(index);
         expect(static_cast<int>(state.activeModule) == index,
-               "module activation did not select index " +
+               "clicking the visible module button did not select index " +
                    std::to_string(index));
         expect(state.drawerOpen,
-               "switching module unexpectedly closed its drawer");
+               "clicking a different module unexpectedly closed its drawer");
         expect(std::string(earthui::moduleLabel(state.activeModule)).size() > 0,
                "active module has no visible label");
     }
-    earthui::activateEarthUiModule(
-        state, earthui::EarthUiModule::Settings);
+    clickModule(static_cast<int>(earthui::EarthUiModule::Settings));
     expect(!state.drawerOpen,
-           "activating the current module did not collapse its drawer");
+           "clicking the active module did not collapse its drawer");
 
     state.activeModule = earthui::EarthUiModule::Science;
     state.drawerOpen = true;
@@ -299,6 +446,7 @@ int main()
     runViewport(1024.0f, 576.0f);
     runViewport(1440.0f, 900.0f);
     runViewport(2048.0f, 1152.0f);
+    runKeyboardNavigation();
     runModuleInteraction();
     ImGui::DestroyContext(context);
     std::cout << "[OK] Earth UI v2 runtime bounds at 3 viewports\n";

@@ -1,4 +1,5 @@
 #include <ui/ImGui.h>
+#include <imgui/imgui.h>
 
 #include <cstdlib>
 #include <iostream>
@@ -10,6 +11,14 @@
 
 int main()
 {
+    ImGuiContext* context = ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    CHECK((io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) == 0);
+    osgVerse::configureImGuiProductInput(io);
+    CHECK((io.ConfigFlags & ImGuiConfigFlags_NavEnableKeyboard) != 0);
+    CHECK((io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) == 0);
+    ImGui::DestroyContext(context);
+
     const std::string path = osgVerse::defaultImGuiSettingsPath();
 #if defined(_WIN32)
     const char* localAppData = std::getenv("LOCALAPPDATA");

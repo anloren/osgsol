@@ -27,7 +27,8 @@ enum class QueuedKind
     Key,
     Text,
     MarkedText,
-    CancelComposition
+    CancelComposition,
+    Resize
 };
 
 struct QueuedInput
@@ -347,6 +348,12 @@ void RmlUiRuntime::processEvent(const osgGA::GUIEventAdapter& event)
         input.pressed = event.getEventType() == osgGA::GUIEventAdapter::KEYDOWN;
         if (input.key == RmlInputKey::Unknown) return;
         break;
+    case osgGA::GUIEventAdapter::RESIZE:
+        input.kind = QueuedKind::Resize;
+        input.x = static_cast<float>(event.getWindowWidth());
+        input.y = static_cast<float>(event.getWindowHeight());
+        if (input.x < 1.0f || input.y < 1.0f) return;
+        break;
     default:
         return;
     }
@@ -396,6 +403,20 @@ void RmlUiRuntime::update(double)
         case QueuedKind::CancelComposition:
             _impl->bridge.cancelMarkedText();
             break;
+        case QueuedKind::Resize:
+        {
+            const int width = std::max(1, static_cast<int>(input.x));
+            const int height = std::max(1, static_cast<int>(input.y));
+            if (width != _impl->width || height != _impl->height)
+            {
+                _impl->width = width;
+                _impl->height = height;
+                _impl->context->SetDimensions(
+                    Rml::Vector2i(_impl->width, _impl->height));
+                _impl->renderer.resize(_impl->width, _impl->height);
+            }
+            break;
+        }
         }
     }
     if (_impl->frameClient && _impl->frameClientReady)

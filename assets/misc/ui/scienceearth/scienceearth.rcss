@@ -5,7 +5,7 @@
     left: 76px;
     top: 56px;
     width: 360px;
-    height: 720px;
+    bottom: 124px;
     margin: 0;
     color: #e5e4df;
     background: #0d1011;

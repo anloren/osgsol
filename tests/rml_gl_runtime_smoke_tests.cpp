@@ -466,6 +466,15 @@ void sendWheelEvent(RmlUiRuntime& runtime,
     event->setScrollingMotion(motion);
     runtime.processEvent(*event);
 }
+
+void sendResizeEvent(RmlUiRuntime& runtime, int width, int height)
+{
+    osg::ref_ptr<osgGA::GUIEventAdapter> event =
+        new osgGA::GUIEventAdapter;
+    event->setEventType(osgGA::GUIEventAdapter::RESIZE);
+    event->setWindowRectangle(0, 0, width, height);
+    runtime.processEvent(*event);
+}
 }
 
 int main()
@@ -512,6 +521,23 @@ int main()
     expect(!runtime.failed(), "RmlUi runtime entered failed state");
     expect(runtime.ready(),
            "RmlUi callback did not initialize the real workbench on a frame");
+    sendResizeEvent(runtime, 1024, 576);
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(runtime.context()->GetDimensions() == Rml::Vector2i(1024, 576),
+           "RmlUi context ignores a real window resize event");
+    expect(client.width("science-workbench") <= 380.0f &&
+               client.bottom("science-workbench") <= 576.0f + 1.0f,
+           "compact Science workbench leaves the resized viewport; width=" +
+               std::to_string(client.width("science-workbench")) +
+               ", bottom=" +
+               std::to_string(client.bottom("science-workbench")));
+    expect(client.horizontalOverflow("composer-scroll") <= 1.0f,
+           "compact Science workbench overflows horizontally after resize");
+    sendResizeEvent(runtime, WIDTH, HEIGHT);
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(runtime.context()->GetDimensions() ==
+               Rml::Vector2i(WIDTH, HEIGHT),
+           "RmlUi context cannot return to the full viewport after resize");
     expect(client.width("source-select") > 280.0f,
            "analysis selector is visually collapsed");
     expect(client.width("source-chevron") >= 24.0f &&

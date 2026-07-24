@@ -388,9 +388,9 @@ protected:
 //      这样 handled 标记在它们看到事件之前就已置位;ui/ImGui.cpp 的 ImGuiHandler
 //      不检查 getHandled(键盘注入无条件进行),所以闸不会断 ImGui 自己的输入路。
 //
-// 判定用 WantTextInput || WantCaptureKeyboard:前者=文本框激活,后者补上"控件按住/
-// 弹窗激活"等 ImGui 明确占用键盘的态(本工程未开 NavEnableKeyboard,不会因窗口获得
-// 焦点而常驻为真)。KEYUP 与打字态按下的 KEYDOWN 配对吞,细节见 input_gate.h。
+// 判定用 WantTextInput || WantCaptureKeyboard:前者=文本框激活,后者补上键盘导航、
+// 控件激活和弹窗等 ImGui 明确占用键盘的状态。KEYUP 与已吞掉的 KEYDOWN 配对吞，
+// 避免启用 Tab/方向键导航后按键继续穿透到地球相机，细节见 input_gate.h。
 // 已知边界:WantTextInput 由 ImGui NewFrame(渲染回调里)重算,点进输入框后的第一个
 // 按键理论上有一帧窗口期——60fps 下 ~16ms,人手打字触不到。
 class GlobalKeyboardGate : public osgGA::GUIEventHandler

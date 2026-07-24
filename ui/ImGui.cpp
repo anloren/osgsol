@@ -60,6 +60,15 @@ std::string osgVerse::defaultImGuiSettingsPath()
 #endif
 }
 
+void osgVerse::configureImGuiProductInput(ImGuiIO& io)
+{
+    // The Earth shell is a keyboard-operable product surface, not a
+    // mouse-only debug overlay.  Tab/Shift+Tab traverse controls and
+    // Enter/Space activate the focused item.  Gamepad navigation remains off
+    // because no product-level gamepad mapping is exposed.
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+}
+
 void newImGuiFrame(osg::RenderInfo& renderInfo, double& time, std::function<void(ImGuiIO&)> func)
 {
     ImGuiContext* context = ImGui::GetCurrentContext();
@@ -163,6 +172,7 @@ void startImGuiContext(ImGuiManager* manager, std::map<std::string, ImFont*>& fo
     }
 
     ImGuiIO& io = ImGui::GetIO();
+    osgVerse::configureImGuiProductInput(io);
     static std::string s_iniFilename;
     s_iniFilename = defaultImGuiSettingsPath();
     if (!s_iniFilename.empty() && osgDB::makeDirectoryForFile(s_iniFilename))

@@ -84,6 +84,25 @@ int main()
 
     Rml::ElementDocument* composer = context->GetDocument(0);
     expect(composer != nullptr, "composer document must remain open");
+    context->Update();
+    context->SetDimensions(Rml::Vector2i(1024, 576));
+    expect(context->GetDimensions() == Rml::Vector2i(1024, 576),
+           "Science presenter context must accept a compact viewport");
+    presenter.onRmlFrame(*context);
+    context->Update();
+    Rml::Element* workbench =
+        composer->GetElementById("science-workbench");
+    expect(workbench != nullptr, "Science workbench root must exist");
+    expect(workbench->GetAbsoluteOffset().y +
+               workbench->GetOffsetHeight() <= 577.0f,
+           "production Science workbench leaves a compact viewport");
+    expect(workbench->GetOffsetWidth() <= 380.0f,
+           "production Science workbench grows too wide in compact mode");
+    context->SetDimensions(Rml::Vector2i(1440, 900));
+    expect(context->GetDimensions() == Rml::Vector2i(1440, 900),
+           "Science presenter context must restore its full viewport");
+    presenter.onRmlFrame(*context);
+    context->Update();
     expect(inner(composer, "analysis-name").find(
                "ERA5 Agricultural Climate") != std::string::npos,
            "initial source description must match the model source");

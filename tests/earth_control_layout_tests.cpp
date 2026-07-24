@@ -226,13 +226,26 @@ int main()
     CHECK(countOccurrences(source, "panelInputFloat(") >= 4);
     CHECK(countOccurrences(source, "panelInputInt(") >= 4);
     CHECK(countOccurrences(source, "panelCheckbox(") >= 8);
+    CHECK(source.find(
+        "const bool showLayerPresets =") != std::string::npos);
+    CHECK(source.find(
+        "acceptedGroups == 0") != std::string::npos);
+    CHECK(source.find(
+        u8"当前模块还没有已注册的数据源。") != std::string::npos);
+    CHECK(source.find(
+        u8"没有匹配的数据源；清空搜索可查看全部。") != std::string::npos);
+    CHECK(source.find(u8"搜索图层 Filter...") == std::string::npos);
+    CHECK(source.find(u8"需要密钥 🔑") == std::string::npos);
+    CHECK(source.find(u8"AI COMMAND / AI 地球助手") == std::string::npos);
+    CHECK(source.find(u8"航班详情 Flight") == std::string::npos);
+    CHECK(source.find(u8"卫星详情 Satellite") == std::string::npos);
     std::ifstream shellInput(std::string(OSGVERSE_SOURCE_DIR) +
         "/applications/earth_explorer/earth_ui_v2.cpp");
     std::ostringstream shellBuffer;
     shellBuffer << shellInput.rdbuf();
     const std::string shellSource = shellBuffer.str();
     CHECK(shellInput.good() || shellInput.eof());
-    CHECK(shellSource.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") !=
+    CHECK(shellSource.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") ==
           std::string::npos);
     CHECK(shellSource.find("PushTextWrapPos") != std::string::npos);
     CHECK(shellSource.find("PopTextWrapPos") != std::string::npos);
@@ -258,6 +271,7 @@ int main()
     CHECK(panel.find("drawAnnualSeriesChart") != std::string::npos);
     CHECK(panel.find("ImGui::PlotLines") == std::string::npos);
     CHECK(panel.find("AlwaysAutoResize") == std::string::npos);
+    CHECK(panel.find("AlwaysVerticalScrollbar") == std::string::npos);
     CHECK(panel.find("NoScrollbar") == std::string::npos);
     CHECK(panel.find("SliderInt") == std::string::npos);
     CHECK(panel.find("ProgressBar") == std::string::npos);
@@ -283,7 +297,7 @@ int main()
     CHECK(panel.find(u8"本次未启用聚类") == std::string::npos);
     CHECK(panel.find(u8"请在左侧设置本次研究并运行") ==
           std::string::npos);
-    CHECK(panel.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") !=
+    CHECK(panel.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") ==
           std::string::npos);
     CHECK(panel.find("ImGuiStyleVar_ScrollbarSize") != std::string::npos);
     CHECK(panel.find("ImGuiCol_ScrollbarGrab") != std::string::npos);
@@ -299,10 +313,12 @@ int main()
     CHECK(collapsedOperationsReturn != std::string::npos);
     CHECK(draftRefresh < collapsedOperationsReturn);
 
-    CHECK(panel.find(u8"当前状态 / Current state") != std::string::npos);
-    CHECK(panel.find(u8"取消当前请求 / Cancel request") !=
-          std::string::npos);
-    CHECK(panel.find(u8"查看结果与证据 / View result and evidence") !=
+    CHECK(panel.find(u8"当前状态") != std::string::npos);
+    CHECK(panel.find(u8"取消当前请求") != std::string::npos);
+    CHECK(panel.find(u8"查看结果与证据") != std::string::npos);
+    CHECK(panel.find(u8" / Current state") == std::string::npos);
+    CHECK(panel.find(u8" / Cancel request") == std::string::npos);
+    CHECK(panel.find(u8" / View result and evidence") ==
           std::string::npos);
     CHECK(panel.find("configurationLocked") != std::string::npos);
     CHECK(panel.find("presentation.sourceText") != std::string::npos);
@@ -323,6 +339,7 @@ int main()
     CHECK(aiInput.good() || aiInput.eof());
     CHECK(aiUi.find("_historyCollapsed(true)") != std::string::npos);
     CHECK(aiUi.find(u8"AI 地球助手") != std::string::npos);
+    CHECK(aiUi.find(u8"AI COMMAND /") == std::string::npos);
     CHECK(aiUi.find(u8"发送") != std::string::npos);
     CHECK(aiUi.find(u8"已准备：") != std::string::npos);
     const size_t galleryBegin = aiUi.find(
@@ -355,6 +372,8 @@ int main()
     CHECK(aiUi.find("SetNextWindowSize(ImVec2(420.0f") ==
           std::string::npos);
     CHECK(aiUi.find("const float actionWidth = core ? 184.0f") ==
+          std::string::npos);
+    CHECK(aiUi.find("ImGuiWindowFlags_AlwaysVerticalScrollbar") ==
           std::string::npos);
 
     std::ifstream cardInput(std::string(OSGVERSE_SOURCE_DIR) +

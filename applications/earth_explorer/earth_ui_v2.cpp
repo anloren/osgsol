@@ -424,8 +424,7 @@ bool beginEarthUiModuleDrawer(const EarthUiShellLayout& layout,
                              ImGuiCond_Always);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_AlwaysVerticalScrollbar;
+        ImGuiWindowFlags_NoSavedSettings;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     if (!ImGui::Begin("##earth_ui_v2_drawer", nullptr, flags))
     {

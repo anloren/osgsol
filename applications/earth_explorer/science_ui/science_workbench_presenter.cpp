@@ -1204,12 +1204,29 @@ public:
                 static_cast<float>(dimensions.y));
         if (document)
         {
-            document->SetProperty("left", std::to_string(shell.drawerX) + "px");
-            document->SetProperty("top", std::to_string(shell.drawerY) + "px");
-            document->SetProperty("width",
-                std::to_string(workbench.composerWidth) + "px");
-            document->SetProperty("height",
-                std::to_string(shell.drawerHeight) + "px");
+            // RmlUi keeps the <body> as a child of ElementDocument. Styling
+            // ElementDocument alone does not override the fixed fallback
+            // dimensions declared for #science-workbench in RCSS, so compact
+            // windows otherwise retain the 720 px body and overflow.
+            Rml::Element* workbenchRoot =
+                document->GetElementById("science-workbench");
+            auto setWorkbenchProperty =
+                [this, workbenchRoot](const char* name,
+                                      const std::string& value)
+                {
+                    document->SetProperty(name, value);
+                    if (workbenchRoot && workbenchRoot != document)
+                        workbenchRoot->SetProperty(name, value);
+                };
+            setWorkbenchProperty(
+                "left", std::to_string(shell.drawerX) + "px");
+            setWorkbenchProperty(
+                "top", std::to_string(shell.drawerY) + "px");
+            setWorkbenchProperty("bottom", "auto");
+            setWorkbenchProperty(
+                "width", std::to_string(workbench.composerWidth) + "px");
+            setWorkbenchProperty(
+                "height", std::to_string(shell.drawerHeight) + "px");
         }
         reportModel.setViewport(
             static_cast<float>(dimensions.x),
