@@ -27,13 +27,12 @@ void AIChatUI::pushChart(const picojson::value& spec)
     _cards.pushChart(spec);
 }
 
-void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osgVerse::EarthManipulator* mani,
-                     earthui::CardStack& cardStack)
+void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
+                    osgVerse::EarthManipulator* mani,
+                    const earthui::EarthUiShellLayout& shell,
+                    earthui::CardStack& cardStack)
 {
     ImGuiIO& io = ImGui::GetIO();
-    const earthui::EarthUiShellLayout shell =
-        earthui::computeEarthUiShellLayout(
-            io.DisplaySize.x, io.DisplaySize.y, true);
     const float winWidth = shell.commandWidth;
 
     // EarthUI v2 的 AI Command Deck 固定在地图下方中央；历史展开时向上生长，

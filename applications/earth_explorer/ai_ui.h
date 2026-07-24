@@ -7,7 +7,7 @@
 
 namespace earthai { class MediaManager; }
 namespace osgVerse { class EarthManipulator; }
-namespace earthui { class CardStack; }
+namespace earthui { class CardStack; struct EarthUiShellLayout; }
 
 // 底部悬浮 AI 操作条：默认只显示紧凑输入与明确发送按钮；历史按需展开，ScienceEarth
 // 模板使用独立弹层，避免二者把地图可视区向上遮住。右上角卡片存储/绘制委托给
@@ -23,7 +23,9 @@ public:
     // v0.15-vision:cardStack 用于把 AI 图表/照片/任务卡登记进共享 Card 组件
     // (EarthControlUI 帧末统一 draw() 绘制,见 ui_card.h)。
     void draw(earthai::AIChatCore* core, earthai::MediaManager* media,
-              osgVerse::EarthManipulator* mani, earthui::CardStack& cardStack);
+              osgVerse::EarthManipulator* mani,
+              const earthui::EarthUiShellLayout& shell,
+              earthui::CardStack& cardStack);
 
     // 主线程调用(工具 execute 在 drain 中,与 draw() 同线程,无需加锁——见 ai_cards.cpp 头注释)。
     // 转发给 _cards,保留原有调用方(ai_setup.cpp 的 show_chart 工具)不必改动。

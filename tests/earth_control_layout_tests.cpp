@@ -49,11 +49,18 @@ int main()
                       shell.statusHeight, 576.0f));
     CHECK(shell.contextX > shell.navigationWidth);
     CHECK(shell.contextWidth < 1024.0f - shell.navigationWidth);
+    const float insightLeft =
+        1024.0f - shell.outerGap - shell.insightWidth;
+    CHECK(shell.commandX >=
+          shell.drawerX + shell.drawerWidth + shell.outerGap);
+    CHECK(shell.commandX + shell.commandWidth <=
+          insightLeft - shell.outerGap);
 
     const earthui::EarthUiShellLayout shellClosed =
         earthui::computeEarthUiShellLayout(1024.0f, 576.0f, false);
     CHECK(nearlyEqual(shellClosed.drawerWidth, 0.0f));
-    CHECK(nearlyEqual(shellClosed.commandX, shell.commandX));
+    CHECK(shellClosed.commandX < shell.commandX);
+    CHECK(shellClosed.commandWidth > shell.commandWidth);
     CHECK(nearlyEqual(shellClosed.contextY, shell.contextY));
 
     CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Explore) ==
@@ -117,7 +124,9 @@ int main()
 
     const earthui::MapToastLayout compactToast =
         earthui::computeMapToastLayout(1024.0f, 576.0f, true);
-    CHECK(compactToast.x >= shell.navigationWidth + shell.drawerWidth);
+    CHECK(compactToast.x >=
+          shell.navigationWidth + std::max(shell.drawerWidth, 340.0f) +
+              shell.outerGap);
     CHECK(compactToast.x + compactToast.width <=
           1024.0f - shell.insightWidth - shell.outerGap);
     CHECK(compactToast.y >= shell.topBarHeight);
@@ -333,6 +342,11 @@ int main()
           std::string::npos);
     CHECK(aiUi.find("actionsOnNextLine") != std::string::npos);
     CHECK(aiUi.find("computeAiCommandRowLayout") != std::string::npos);
+    CHECK(aiUi.find(
+        "const earthui::EarthUiShellLayout& shell") !=
+          std::string::npos);
+    CHECK(aiUi.find("computeEarthUiShellLayout(") ==
+          std::string::npos);
     CHECK(aiUi.find("computeCenteredModalLayout") != std::string::npos);
     CHECK(aiUi.find("SetNextWindowSize(ImVec2(420.0f") ==
           std::string::npos);

@@ -101,9 +101,16 @@ inline EarthUiShellLayout computeEarthUiShellLayout(float viewportWidth,
     layout.insightHeight = std::max(
         1.0f, height - layout.insightTop - bottomStack);
 
-    const float mapLeft = layout.navigationWidth + layout.outerGap * 2.0f;
+    // The AI command deck belongs to the visible map corridor. When a drawer
+    // is open, start after the wider of the native drawer and the 340 px
+    // ScienceEarth composer; otherwise the command input visibly sits under
+    // the left panel even though both individual windows remain in-bounds.
+    const float leftPanelReserve = drawerOpen
+        ? std::max(layout.drawerWidth, 340.0f) : 0.0f;
+    const float mapLeft = layout.navigationWidth + leftPanelReserve +
+        layout.outerGap;
     const float mapRight = width - layout.insightWidth - layout.outerGap * 2.0f;
-    const float availableCommandWidth = std::max(320.0f, mapRight - mapLeft);
+    const float availableCommandWidth = std::max(1.0f, mapRight - mapLeft);
     layout.commandWidth = std::min(900.0f, availableCommandWidth);
     layout.commandX = mapLeft +
         std::max(0.0f, (availableCommandWidth - layout.commandWidth) * 0.5f);
@@ -224,8 +231,10 @@ inline MapToastLayout computeMapToastLayout(
     const float width = std::max(viewportWidth, 1.0f);
     const EarthUiShellLayout shell =
         computeEarthUiShellLayout(width, viewportHeight, drawerOpen);
-    const float left = shell.navigationWidth +
-        (drawerOpen ? shell.drawerWidth : 0.0f) + shell.outerGap;
+    const float leftPanelReserve = drawerOpen
+        ? std::max(shell.drawerWidth, 340.0f) : 0.0f;
+    const float left = shell.navigationWidth + leftPanelReserve +
+        shell.outerGap;
     const float right = width - shell.insightWidth - shell.outerGap * 2.0f;
     const float corridor = std::max(1.0f, right - left);
     MapToastLayout layout;

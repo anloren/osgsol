@@ -104,6 +104,10 @@ void runViewport(float width, float height)
            "module drawer exposes a horizontal scrollbar");
     expect(window("##earth_ui_v2_drawer")->ScrollMax.x <= 0.5f,
            "module drawer content overflows horizontally");
+    expect(!window("##earth_ui_v2_context")->ScrollbarX,
+           "context tray exposes a horizontal scrollbar");
+    expect(window("##earth_ui_v2_context")->ScrollMax.x <= 0.5f,
+           "context tray content overflows horizontally");
 
     ImDrawData* drawData = ImGui::GetDrawData();
     expect(drawData != nullptr && drawData->CmdListsCount > 0,
@@ -232,6 +236,17 @@ void runModuleInteraction()
         state, earthui::EarthUiModule::Settings);
     expect(!state.drawerOpen,
            "activating the current module did not collapse its drawer");
+
+    state.activeModule = earthui::EarthUiModule::Science;
+    state.drawerOpen = true;
+    expect(earthui::productScienceSurfaceVisible(state, true),
+           "ready Science workbench is not visible with its drawer open");
+    earthui::activateEarthUiModule(
+        state, earthui::EarthUiModule::Science);
+    expect(!earthui::productScienceSurfaceVisible(state, true),
+           "collapsing Science leaves the product workbench visible");
+    expect(!earthui::productScienceSurfaceVisible(state, false),
+           "unready Science workbench is reported visible");
 }
 }
 

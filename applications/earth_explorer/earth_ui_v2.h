@@ -30,6 +30,14 @@ const char* moduleContextLabel(EarthUiModule module);
 bool moduleAcceptsLayerGroup(EarthUiModule module, const std::string& group);
 void activateEarthUiModule(EarthUiShellState& state, EarthUiModule module);
 
+inline bool productScienceSurfaceVisible(
+    const EarthUiShellState& state, bool productUiReady)
+{
+    return productUiReady &&
+        state.activeModule == EarthUiModule::Science &&
+        state.drawerOpen;
+}
+
 // Carbon Spectrum is an application-level theme. It intentionally leaves the
 // renderer/backend untouched and changes only the Earth application's visual
 // language and component metrics.

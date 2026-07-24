@@ -239,8 +239,9 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
 
 #if OSGSOL_BUILD_SCIENCE
         const bool productScienceSelected =
-            _uiV2.activeModule == earthui::EarthUiModule::Science &&
-            _scienceProductUiReady && _scienceProductUiReady();
+            earthui::productScienceSurfaceVisible(
+                _uiV2,
+                _scienceProductUiReady && _scienceProductUiReady());
         if (_setScienceProductUiVisible)
             _setScienceProductUiVisible(productScienceSelected);
 #else
@@ -770,7 +771,9 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
         _ticker.drawStatusBar(_layers);   // 状态带不是卡片(顶部居中、不可关闭),不进 CardStack
 
         // ===== 底部 AI 对话条:独立浮窗,底部居中锚定,不与左上角/右上角面板重叠 =====
-        if (_aiUI) _aiUI->draw(_aiCore, _aiMedia, _mani, _cardStack);
+        if (_aiUI)
+            _aiUI->draw(
+                _aiCore, _aiMedia, _mani, shellLayout, _cardStack);
 
         // Science 模块由专属 Insight Lens 占用右侧轨道；其它模块统一绘制要素/事件/AI 卡。
         // 两套信息系统绝不叠放，避免旧版右侧多窗口互相遮挡。
