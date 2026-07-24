@@ -20,7 +20,9 @@ before it can be tagged or synchronized as accepted.
 - Automated gates: package contract, bundle closure, provenance, data manifest,
   staging strict/deep signature, G0-v2 bundle audit, Rml document parsing, and
   80/80 offline regression suite and 43/43 bundle-audit unit suite
-- Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle
+- Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle.
+  A FileProvider-restored old `osgSol Earth 2.app` was archived outside Desktop
+  without launching or altering either package.
 - Automated launch count: zero
 - Desktop executable bytes and normal signature verification: valid. Desktop
   FileProvider subsequently adds `com.apple.FinderInfo` inside the App, so the

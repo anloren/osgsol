@@ -83,6 +83,8 @@
   `osgSol_Earth-2026-07-23-222801.ips`
 - 上一桌面候选备份：
   `build/desktop-backups/pre-ui-interaction-fix-20260724-163324-4eff01e9a28f/osgSol Earth.previous.app`
+- Desktop FileProvider 在替换后短暂恢复了旧候选为 `osgSol Earth 2.app`；
+  已原样移入同一备份目录的 `osgSol Earth.fileprovider-conflict.app`，桌面仍只保留一个正式 App。
 - 自动化没有启动、前置或操作桌面候选
 
 ## 仍需用户手测
