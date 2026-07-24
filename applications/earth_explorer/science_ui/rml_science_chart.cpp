@@ -148,11 +148,11 @@ void RmlScienceChart::OnRender()
         return;
 
     Rml::Mesh mesh;
-    const Rml::ColourbPremultiplied grid(54, 66, 73, 160);
-    const Rml::ColourbPremultiplied series(40, 201, 195, 255);
-    const Rml::ColourbPremultiplied point(167, 239, 233, 255);
+    const Rml::ColourbPremultiplied grid(59, 48, 46, 190);
+    const Rml::ColourbPremultiplied series(56, 195, 223, 255);
+    const Rml::ColourbPremultiplied point(165, 228, 240, 255);
     const Rml::ColourbPremultiplied selected(225, 189, 98, 255);
-    const Rml::ColourbPremultiplied missing(147, 160, 158, 150);
+    const Rml::ColourbPremultiplied missing(115, 122, 120, 170);
 
     const float plotWidth = width - PAD_LEFT - PAD_RIGHT;
     const float plotHeight = height - PAD_TOP - PAD_BOTTOM;

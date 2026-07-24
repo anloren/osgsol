@@ -86,8 +86,11 @@ inline EarthUiShellLayout computeEarthUiShellLayout(float viewportWidth,
 
     const float bottomStack = layout.statusHeight + layout.contextHeight +
         layout.commandHeight + layout.outerGap * 3.0f;
-    layout.drawerX = layout.navigationWidth + layout.outerGap;
-    layout.drawerY = layout.topBarHeight + layout.outerGap;
+    // The module rail and its drawer form one docked instrument. Gaps here
+    // expose a meaningless strip of the map and make the scrollbar look
+    // detached from its panel.
+    layout.drawerX = layout.navigationWidth;
+    layout.drawerY = layout.topBarHeight;
     layout.drawerWidth = drawerOpen
         ? std::clamp(width * 0.245f, 310.0f, 372.0f) : 0.0f;
     layout.drawerHeight = std::max(
@@ -107,9 +110,14 @@ inline EarthUiShellLayout computeEarthUiShellLayout(float viewportWidth,
     layout.commandY = height - layout.statusHeight - layout.contextHeight -
         layout.commandHeight - layout.outerGap * 2.0f;
 
-    layout.contextX = layout.navigationWidth;
+    // Context is a compact instrument strip, not a full-width black footer.
+    // Keep it close to the module rail while leaving the map visible around
+    // the centered AI command deck.
+    layout.contextX = layout.navigationWidth + layout.outerGap;
     layout.contextY = height - layout.statusHeight - layout.contextHeight;
-    layout.contextWidth = std::max(1.0f, width - layout.navigationWidth);
+    layout.contextWidth = std::min(
+        std::max(1.0f, width - layout.contextX - layout.outerGap),
+        std::clamp(width * 0.30f, 380.0f, 540.0f));
     return layout;
 }
 
@@ -144,6 +152,88 @@ struct ScienceWorkbenchLayout
     float aiComposerY;
     bool compact;
 };
+
+struct AiCommandRowLayout
+{
+    float inputWidth;
+    float actionWidth;
+    bool actionsOnNextLine;
+};
+
+struct BoundedWindowLayout
+{
+    float x;
+    float y;
+    float width;
+    float maxHeight;
+};
+
+struct MapToastLayout
+{
+    float x;
+    float y;
+    float width;
+};
+
+inline AiCommandRowLayout computeAiCommandRowLayout(
+    float contentWidth, float itemSpacing, float cancelButtonWidth,
+    bool hasActions, bool waitingForVideoEnd)
+{
+    AiCommandRowLayout layout;
+    const int actionCount = waitingForVideoEnd ? 4 : 3;
+    layout.actionWidth = hasActions
+        ? 52.0f + 40.0f + (waitingForVideoEnd ? 64.0f : 40.0f) +
+            (waitingForVideoEnd ? std::max(0.0f, cancelButtonWidth) : 0.0f) +
+            std::max(0.0f, itemSpacing) *
+                static_cast<float>(actionCount - 1)
+        : 0.0f;
+    const float safeWidth = std::max(1.0f, contentWidth);
+    layout.actionsOnNextLine =
+        hasActions && safeWidth < layout.actionWidth + 180.0f;
+    layout.inputWidth = layout.actionsOnNextLine
+        ? safeWidth : std::max(140.0f, safeWidth - layout.actionWidth);
+    return layout;
+}
+
+inline BoundedWindowLayout computeCenteredModalLayout(
+    float viewportWidth, float viewportHeight, float desiredWidth,
+    float desiredMaxHeight)
+{
+    const float width = std::max(viewportWidth, 1.0f);
+    const float height = std::max(viewportHeight, 1.0f);
+    const float margin = std::clamp(
+        std::min(width, height) * 0.035f, 12.0f, 32.0f);
+    BoundedWindowLayout layout;
+    layout.width = std::min(
+        std::max(280.0f, desiredWidth),
+        std::max(1.0f, width - margin * 2.0f));
+    layout.maxHeight = std::min(
+        std::max(180.0f, desiredMaxHeight),
+        std::max(1.0f, height - margin * 2.0f));
+    layout.x = width * 0.5f;
+    layout.y = height * 0.5f;
+    return layout;
+}
+
+// Transient map notices live in the map corridor, never on top of the global
+// top-bar actions, module drawer, or Insight Lens. This replaces the previous
+// unconstrained top-right auto-size badge.
+inline MapToastLayout computeMapToastLayout(
+    float viewportWidth, float viewportHeight, bool drawerOpen)
+{
+    const float width = std::max(viewportWidth, 1.0f);
+    const EarthUiShellLayout shell =
+        computeEarthUiShellLayout(width, viewportHeight, drawerOpen);
+    const float left = shell.navigationWidth +
+        (drawerOpen ? shell.drawerWidth : 0.0f) + shell.outerGap;
+    const float right = width - shell.insightWidth - shell.outerGap * 2.0f;
+    const float corridor = std::max(1.0f, right - left);
+    MapToastLayout layout;
+    layout.width = std::min(520.0f, corridor);
+    layout.x = left + std::max(0.0f, (corridor - layout.width) * 0.5f);
+    layout.y = shell.topBarHeight + shell.outerGap;
+    return layout;
+}
 
 template<typename EndLeftPanel, typename DrawScienceResults>
 inline void finishLeftThenDrawScienceResults(
@@ -228,9 +318,8 @@ inline ScienceWorkbenchLayout computeScienceWorkbenchLayout(
     ScienceWorkbenchLayout layout;
     layout.compact = width <= 1100.0f || height <= 640.0f;
     layout.composerWidth = std::clamp(width * 0.18f, 340.0f, 380.0f);
-    const float mapLeft = shell.navigationWidth + shell.outerGap * 2.0f +
-        layout.composerWidth;
-    layout.mapWidth = std::max(480.0f, width - mapLeft - shell.outerGap);
+    const float mapLeft = shell.drawerX + layout.composerWidth;
+    layout.mapWidth = std::max(480.0f, width - mapLeft);
     layout.aiComposerY = shell.commandY;
 
     const float margin = layout.compact ? 16.0f : 32.0f;

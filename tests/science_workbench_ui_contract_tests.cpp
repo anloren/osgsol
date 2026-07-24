@@ -43,6 +43,8 @@ int main()
     const std::string presenter = read(
         "applications/earth_explorer/science_ui/"
         "science_workbench_presenter.cpp");
+    const std::string nativeTokens = read(
+        "applications/earth_explorer/earth_ui_tokens.h");
 
     const std::vector<std::string> requiredIds = {
         "analysis-template", "target-card", "time-range",
@@ -72,6 +74,11 @@ int main()
     expect(time != std::string::npos && first > time && last > first &&
                timeEnd > last,
            "start and end years must be one grouped time-range region");
+    expect(rml.find("id=\"year-range-summary\"") != std::string::npos &&
+               rml.find("range-strip") == std::string::npos &&
+               style.find(".range-strip") == std::string::npos,
+           "time range must use an explicit year summary, never a decorative"
+           " bar that looks like an inoperable slider");
 
     const std::size_t disclosure = rml.find("id=\"cost-disclosure\"");
     expect(disclosure != std::string::npos &&
@@ -90,6 +97,9 @@ int main()
     expect(style.find("overflow-y: auto") != std::string::npos &&
                style.find("scrollbar") != std::string::npos,
            "independent composer scrolling must remain visible");
+    expect(style.find("scrollbar-margin") == std::string::npos,
+           "scrollbars must stay inside their docked panel without exposing a"
+           " transparent map seam");
     expect(style.find("scrollbarvertical sliderarrowdec") !=
                std::string::npos &&
                style.find("scrollbarvertical sliderarrowinc") !=
@@ -133,13 +143,35 @@ int main()
     expect(report.find("<science-chart id=\"science-chart\"") !=
                std::string::npos &&
                report.find("id=\"report-metric-select\"") !=
-               std::string::npos &&
+                   std::string::npos &&
                report.find("id=\"chart-selected-year\"") !=
-               std::string::npos,
+                   std::string::npos,
            "report needs one interactive metric chart with year selection");
+    const std::vector<std::string> chartAxisIds = {
+        "chart-title", "chart-aggregation", "chart-unit",
+        "chart-y-max", "chart-y-mid", "chart-y-min",
+        "chart-x-first", "chart-x-mid", "chart-x-last",
+        "chart-missing-note"};
+    for (const std::string& id : chartAxisIds)
+        expect(report.find("id=\"" + id + "\"") != std::string::npos,
+               "scientific chart title, unit, axis or missing-data label is"
+               " absent");
     expect(style.find(".science-chart { display: block; height: 300px;") !=
                std::string::npos,
            "scientific chart needs a stable readable plot height");
+    expect(style.find(".chart-y-axis") != std::string::npos &&
+               style.find(".chart-x-axis") != std::string::npos,
+           "scientific chart needs visible X/Y axis label containers");
+
+    const std::vector<std::string> unifiedTokens = {
+        "#07090a", "#0d1011", "#141719", "#3b302e", "#e5e4df",
+        "#a7aaa6", "#38c3df", "#d33123", "#380f0c", "#e1bd62",
+        "#ef6a62"};
+    for (const std::string& token : unifiedTokens)
+        expect(tokens.find(token) != std::string::npos &&
+                   nativeTokens.find(token) != std::string::npos,
+               "ImGui and RmlUi tokens must match the unified Obsidian Survey"
+               " palette");
     const std::vector<std::string> reportIds = {
         "overview", "trends", "spatial-range", "methods-evidence",
         "context-caption", "report-focus-target", "requested-spatial-fact",

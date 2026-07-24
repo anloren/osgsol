@@ -949,6 +949,16 @@ public:
         if (!view.artifact.available ||
             view.artifact.artifactId != artifactId)
         {
+            setReportText("chart-title", "没有可用的年度序列");
+            setReportText("chart-aggregation", "当前结果未返回可绘制指标");
+            setReportText("chart-unit", "未提供");
+            setReportText("chart-y-max", "—");
+            setReportText("chart-y-mid", "—");
+            setReportText("chart-y-min", "—");
+            setReportText("chart-x-first", "—");
+            setReportText("chart-x-mid", "—");
+            setReportText("chart-x-last", "—");
+            setReportText("chart-missing-note", "没有年度点可供绘制。");
             setReportText("chart-statistics",
                 "这个结果没有可绘制的年度指标序列。");
             return;
@@ -981,6 +991,16 @@ public:
             metricId = view.artifact.series.front().id;
         if (metricId.empty())
         {
+            setReportText("chart-title", "没有可用的年度序列");
+            setReportText("chart-aggregation", "当前结果未返回可绘制指标");
+            setReportText("chart-unit", "未提供");
+            setReportText("chart-y-max", "—");
+            setReportText("chart-y-mid", "—");
+            setReportText("chart-y-min", "—");
+            setReportText("chart-x-first", "—");
+            setReportText("chart-x-mid", "—");
+            setReportText("chart-x-last", "—");
+            setReportText("chart-missing-note", "没有年度点可供绘制。");
             setReportText("chart-statistics",
                 "这个结果没有可绘制的年度指标序列。");
             return;
@@ -1000,12 +1020,39 @@ public:
             rmlui_dynamic_cast<RmlScienceChart*>(reportElement("science-chart")))
             chartElement->setModel(chart, selectedYear);
 
+        setReportText("chart-title", chart.title.empty()
+            ? "年度趋势" : chart.title);
+        setReportText("chart-aggregation",
+            "每年一个结果值 · 不同单位分开绘制");
+        setReportText("chart-unit",
+            chart.unit.empty() ? "无量纲" : chart.unit);
         if (!chart.points.empty())
         {
+            const std::size_t middle = chart.points.size() / 2;
             setReportText("chart-domain",
                 std::to_string(chart.points.front().year) + "–" +
                 std::to_string(chart.points.back().year) + " · " +
                 chart.title);
+            setReportText("chart-y-max",
+                formatScienceChartValue(chart.domainMaximum, ""));
+            setReportText("chart-y-mid",
+                formatScienceChartValue(
+                    (chart.domainMaximum + chart.domainMinimum) * 0.5, ""));
+            setReportText("chart-y-min",
+                formatScienceChartValue(chart.domainMinimum, ""));
+            setReportText("chart-x-first",
+                std::to_string(chart.points.front().year));
+            setReportText("chart-x-mid",
+                std::to_string(chart.points[middle].year));
+            setReportText("chart-x-last",
+                std::to_string(chart.points.back().year));
+            const std::size_t missing = static_cast<std::size_t>(std::count_if(
+                chart.points.begin(), chart.points.end(),
+                [](const ScienceChartPoint& point) { return point.missing; }));
+            setReportText("chart-missing-note", missing > 0
+                ? std::to_string(missing) +
+                    " 个年份缺测；曲线在缺测处断开。"
+                : "年度序列完整；点击曲线可固定一个年份。");
         }
         std::ostringstream statistics;
         statistics << "均值 "
@@ -1430,6 +1477,12 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
         "first-year", std::to_string(displayedFirstYear));
     _impl->setControlValue(
         "last-year", std::to_string(displayedLastYear));
+    const int displayedYearCount = displayedFirstYear > 0 &&
+        displayedLastYear >= displayedFirstYear
+        ? displayedLastYear - displayedFirstYear + 1 : 0;
+    _impl->setText("year-range-summary", displayedYearCount > 0
+        ? "共 " + std::to_string(displayedYearCount) + " 个完整年度"
+        : "请设置有效的开始与结束年份");
 
     std::string runLabel = "开始分析";
     if (selected)
@@ -1654,6 +1707,8 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
                 return;
             }
             _impl->setText("time-error", "");
+            _impl->setText("year-range-summary",
+                "共 " + std::to_string(last - first + 1) + " 个完整年度");
             const std::string range =
                 std::to_string(first) + ":" + std::to_string(last);
             if (range == _impl->pendingYearRange ||

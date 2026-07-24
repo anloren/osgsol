@@ -210,6 +210,8 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
                 product_ui/rml_input_bridge.cpp
                 product_ui/rml_osg_renderer.cpp
                 product_ui/rml_ui_runtime.cpp
+                science_ui/rml_science_chart.cpp
+                science_ui/science_chart_model.cpp
                 "${OSGSOL_RMLUI_GL3_PATCH_DIR}/RmlUi_Renderer_GL3.cpp")
             TARGET_COMPILE_FEATURES(osgSol_Test_RmlGlRuntimeSmoke PRIVATE
                 cxx_std_17)

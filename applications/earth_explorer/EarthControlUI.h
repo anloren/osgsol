@@ -28,6 +28,7 @@
 #include "overlay_lod_badge.h"
 #include "earth_config.h"
 #include "earth_control_layout.h"
+#include "earth_ui_components.h"
 #include "earth_ui_v2.h"
 #include "earth_exit.h"
 #include <readerwriter/TileCallback.h>
@@ -267,17 +268,22 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             if (showExplore)
             {
             // ---- 相机读数 ----
-            if (ImGui::CollapsingHeader(u8"相机 Camera", ImGuiTreeNodeFlags_DefaultOpen))
+            if (earthui::beginDrawerSection(
+                    "camera", u8"相机", u8"当前视角与全局复位"))
             {
                 osg::Vec3d lla = _mani->computeEyeLatLonHeight();  // 弧度, 弧度, 米
                 ImGui::Text(u8"纬度 Lat: %.5f", osg::RadiansToDegrees(lla[0]));
                 ImGui::Text(u8"经度 Lon: %.5f", osg::RadiansToDegrees(lla[1]));
                 ImGui::Text(u8"高度 Alt: %.1f km", lla[2] / 1000.0);
-                if (ImGui::Button(u8"回到全球视角 Home")) _mani->home(0.0);
+                if (earthui::fullWidthButton(
+                        u8"回到全球视角", earthui::StatusTone::Neutral))
+                    _mani->home(0.0);
+                earthui::endDrawerSection();
             }
 
             // ---- 太阳/光照 ----
-            if (ImGui::CollapsingHeader(u8"太阳 Sun", ImGuiTreeNodeFlags_DefaultOpen))
+            if (earthui::beginDrawerSection(
+                    "sun", u8"太阳与光照", u8"常昼、真实太阳与手动方向"))
             {
                 // v0.15-vision:常昼模式默认开启;开启时手动滑块/按钮禁用(同 _exposureAuto
                 // 禁用曝光滑块的既有惯例,见下方"渲染"节),与真实时间太阳互斥。
@@ -313,10 +319,12 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                                          &_utcHour, 0.0f, 24.0f, "%.1f");
                     }
                 }
+                earthui::endDrawerSection();
             }
 
             // ---- 渲染 ----
-            if (ImGui::CollapsingHeader(u8"渲染 Render", ImGuiTreeNodeFlags_DefaultOpen))
+            if (earthui::beginDrawerSection(
+                    "render", u8"渲染", u8"海洋、曝光与大气"))
             {
                 if (panelCheckbox(u8"海洋 Ocean", "##ocean", &_ocean))
                     _earth->commonUniforms["OceanOpaque"]->set(_ocean ? 1.0f : 0.0f);
@@ -329,24 +337,32 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 if (panelSliderFloat(u8"大气强度 Atmosphere", "##atmosphere",
                                      &_globalOpaque, 0.0f, 1.0f, "%.2f"))
                     _earth->commonUniforms["GlobalOpaque"]->set(_globalOpaque);
+                earthui::endDrawerSection();
             }
             }
             // ---- 图层 ----
             if (showLayerCatalog && _layers &&
-                ImGui::CollapsingHeader(u8"图层目录", ImGuiTreeNodeFlags_DefaultOpen))
+                earthui::beginDrawerSection(
+                    "layer_catalog", u8"图层目录",
+                    u8"搜索、显示、透明度与数据状态"))
             {
                 // 预设按钮行:一键切换场景图层组合(earth_main 注册,见 LayerManager::applyPreset)
                 const std::vector<Preset> presets = _layers->presetsSnapshot();
                 for (size_t p = 0; p < presets.size(); ++p)
                 {
-                    if (p > 0) ImGui::SameLine();
                     if (ImGui::SmallButton(presets[p].name.c_str()))
                         _layers->applyPreset(presets[p].name);
+                    if (p + 1 < presets.size())
+                        earthui::continueRowIfFits(
+                            earthui::buttonWidth(presets[p + 1].name.c_str()));
                 }
                 // T8:事件流卡/状态带开关(渲染在右上角/顶部,这里只是操作区里的开关按钮)
-                if (!presets.empty()) ImGui::SameLine();
+                if (!presets.empty())
+                    earthui::continueRowIfFits(
+                        earthui::buttonWidth(u8"事件流"));
                 if (ImGui::SmallButton(u8"事件流")) _ticker.showTicker = !_ticker.showTicker;
-                ImGui::SameLine();
+                earthui::continueRowIfFits(
+                    earthui::buttonWidth(u8"状态带"));
                 if (ImGui::SmallButton(u8"状态带")) _ticker.showStatusBar = !_ticker.showStatusBar;
                 // 搜索框:按 displayName/group 过滤(大小写不敏感;中文直接字节子串匹配)
                 ImGui::SetNextItemWidth(-1.0f);
@@ -408,7 +424,14 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                         if (panelCheckbox(l.displayName.c_str(), "##enabled", &en))
                             _layers->setEnabled(l.id, en);
                         if (l.needsKey) ImGui::TextDisabled(u8"需要密钥 🔑");
-                        if (!l.subtitle.empty()) ImGui::TextDisabled("%s", l.subtitle.c_str());
+                        if (!l.subtitle.empty())
+                        {
+                            ImGui::PushStyleColor(
+                                ImGuiCol_Text,
+                                earthui::design::kTextDim);
+                            ImGui::TextWrapped("%s", l.subtitle.c_str());
+                            ImGui::PopStyleColor();
+                        }
                         // 任务A:抓取失败 UI 可见——只在层已开启且接了 fetchStatus 回调时查询
                         // (底图/标注等常开层没有"抓取"概念,回调为空,天然跳过)。
                         // 0=未抓/idle(刚开启还没等到第一轮结果)→"加载中…";
@@ -422,7 +445,9 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                             int fetchSt = l.fetchStatus(fetchErr);
                             if (fetchSt == 2)
                             {
-                                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.35f, 1.0f), u8"⚠ 抓取失败");
+                                earthui::drawStatusLine(
+                                    earthui::StatusTone::Danger,
+                                    u8"抓取失败");
                                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", fetchErr.c_str());
                             }
                             else if (fetchSt == 0)
@@ -448,6 +473,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     }
                     ImGui::TreePop();
                 }
+                earthui::endDrawerSection();
             }
             // 地震详情等「信息呈现」UI 不在此操作面板内,统一放右上角独立面板(见 End() 之后)。
 
@@ -459,21 +485,26 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
 
             // ---- 跳转 ----
             if (showExplore &&
-                ImGui::CollapsingHeader(u8"跳转 Go To", ImGuiTreeNodeFlags_DefaultOpen))
+                earthui::beginDrawerSection(
+                    "go_to", u8"跳转", u8"按经纬度和相机高度飞行"))
             {
                 panelInputFloat(u8"纬度 Lat", "##goto_lat", &_gotoLat, "%.4f");
                 panelInputFloat(u8"经度 Lon", "##goto_lon", &_gotoLon, "%.4f");
                 panelInputFloat(u8"高度 km", "##goto_altitude", &_gotoAltKm, "%.1f");
-                if (ImGui::Button(u8"飞过去 Go"))
+                if (earthui::fullWidthButton(
+                        u8"飞过去", earthui::StatusTone::Active))
                 {
                     _mani->setByEye(osg::DegreesToRadians((double)_gotoLat),
                                     osg::DegreesToRadians((double)_gotoLon),
                                     (double)_gotoAltKm * 1000.0);
                 }
+                earthui::endDrawerSection();
             }
 
             // ---- 书签/巡游 ----
-            if (showExplore && ImGui::CollapsingHeader(u8"书签 Bookmarks"))
+            if (showExplore && earthui::beginDrawerSection(
+                    "bookmarks", u8"书签与巡游",
+                    u8"记录视角并按顺序回放", false))
             {
                 if (ImGui::Button(u8"记录当前视角 Save"))
                 {
@@ -489,6 +520,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 ImGui::SameLine();
                 if (ImGui::Button(u8"停止 Stop")) _mani->stopAnimation(false);
                 if (ImGui::Button(u8"清空 Clear")) { _mani->clearControlPoints(); _bookmarkTime = 0; }
+                earthui::endDrawerSection();
             }
 
             // ---- 设置(Task 5:earthcfg 可视化调节 + 恢复默认) ----
@@ -497,23 +529,33 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
             // 支持 operator[]/size()，遍历逻辑与 vector 一致，仅类型名不同。
             if (showTasks)
             {
-                ImGui::SeparatorText(u8"任务与状态");
-                ImGui::TextWrapped(_aiCore && _aiCore->busy()
-                    ? u8"AI Agent 正在执行任务。可在底部对话栏查看过程。"
-                    : u8"当前没有正在执行的 AI 任务。");
+                if (earthui::beginDrawerSection(
+                        "tasks", u8"任务与状态",
+                        u8"运行任务、事件与数据源健康"))
+                {
+                earthui::drawStatusLine(
+                    _aiCore && _aiCore->busy()
+                        ? earthui::StatusTone::Active
+                        : earthui::StatusTone::Neutral,
+                    _aiCore && _aiCore->busy()
+                        ? u8"AI Agent 正在执行任务；过程显示在 AI 命令栏。"
+                        : u8"当前没有正在执行的 AI 任务。");
                 if (ImGui::Button(_ticker.showTicker
                         ? u8"关闭事件流" : u8"打开事件流"))
                     _ticker.showTicker = !_ticker.showTicker;
-                ImGui::SameLine();
+                earthui::continueRowIfFits(earthui::buttonWidth(
+                    _ticker.showStatusBar ? u8"关闭状态带" : u8"打开状态带"));
                 if (ImGui::Button(_ticker.showStatusBar
                         ? u8"关闭状态带" : u8"打开状态带"))
                     _ticker.showStatusBar = !_ticker.showStatusBar;
                 ImGui::TextDisabled(
                     u8"任务模块统一呈现运行中、队列、失败和历史；不会把错误铺满地图。");
+                earthui::endDrawerSection();
+                }
             }
 
-            if (showSettings && ImGui::CollapsingHeader(
-                    u8"设置 Settings", ImGuiTreeNodeFlags_DefaultOpen))
+            if (showSettings && earthui::beginDrawerSection(
+                    "settings", u8"设置", u8"运行参数与恢复默认"))
             {
                 std::deque<earthcfg::Param>& ps = earthcfg::params();
                 std::string curGroup;
@@ -541,13 +583,15 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     ImGui::PopID();
                     ImGui::Spacing();
                 }
+                earthui::endDrawerSection();
             }
 
             // ---- 退出 ----
             if (showSettings)
             {
                 ImGui::Separator();
-                if (ImGui::Button(u8"正常退出程序", ImVec2(-1.0f, 0.0f)))
+                if (earthui::fullWidthButton(
+                        u8"正常退出程序", earthui::StatusTone::Danger))
                     if (_quitRequest) _quitRequest->request();
             }
         }
@@ -587,11 +631,14 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 card.id = "flight_detail";
                 card.style.chipLabel = u8"航班";
                 card.style.shape = earthmark::MarkerShape::Arrow;
-                card.style.accentColor = osg::Vec4(0.302f, 0.659f, 1.0f, 1.f);
+                card.style.accentColor =
+                    earthui::cardColor(earthui::design::kCyan);
                 card.title = u8"航班详情 Flight";
                 card.drawBody = [fi]() {
-                    ImGui::Text(u8"呼号 Callsign: %s", fi.callsign.c_str());
-                    ImGui::Text(u8"国家 Country: %s", fi.country.c_str());
+                    ImGui::TextWrapped(
+                        u8"呼号 Callsign: %s", fi.callsign.c_str());
+                    ImGui::TextWrapped(
+                        u8"国家 Country: %s", fi.country.c_str());
                     ImGui::Text(u8"高度 Alt: %.1f km", fi.altM / 1000.0);
                     ImGui::Text(u8"速度 Speed: %.0f km/h", fi.velMS * 3.6);
                     ImGui::Text(u8"航向 Heading: %.0f°", fi.headingDeg);
@@ -610,10 +657,13 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 card.id = "ship_detail";
                 card.style.chipLabel = u8"船舶";
                 card.style.shape = earthmark::MarkerShape::Ship;
-                card.style.accentColor = osg::Vec4(0.208f, 0.878f, 0.816f, 1.f);
+                card.style.accentColor =
+                    earthui::cardColor(earthui::design::kSuccess);
                 card.title = u8"船舶详情 Ship";
                 card.drawBody = [si]() {
-                    ImGui::Text(u8"船名 Name: %s", si.name.empty() ? "?" : si.name.c_str());
+                    ImGui::TextWrapped(
+                        u8"船名 Name: %s",
+                        si.name.empty() ? "?" : si.name.c_str());
                     ImGui::Text("MMSI: %lld", si.mmsi);
                     ImGui::Text(u8"航速 SOG: %.1f kn", si.sogKn);
                     ImGui::Text(u8"航向 COG: %.0f°", si.cogDeg);
@@ -633,7 +683,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                 card.id = "satellite_detail";
                 card.style.chipLabel = u8"卫星";
                 card.style.shape = earthmark::MarkerShape::SatBox;
-                card.style.accentColor = osg::Vec4(1.0f, 0.824f, 0.227f, 1.f);
+                card.style.accentColor =
+                    earthui::cardColor(earthui::design::kMeasure);
                 card.title = u8"卫星详情 Satellite";
                 card.drawBody = [si]() {
                     const char* catName = "?";
@@ -644,7 +695,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     case SatCategory::Weather:    catName = u8"气象卫星"; break;
                     default:                      catName = u8"Starlink"; break;
                     }
-                    ImGui::Text(u8"名称 Name: %s", si.name.c_str());
+                    ImGui::TextWrapped(
+                        u8"名称 Name: %s", si.name.c_str());
                     ImGui::Text(u8"NORAD ID: %d", si.noradId);
                     ImGui::Text(u8"类目 Category: %s", catName);
                     ImGui::Text(u8"高度 Alt: %.1f km", si.altKm);
@@ -668,7 +720,7 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                   card.style.shape = mv.shape; card.style.accentColor = mv.color; }
                 card.title = u8"要素详情";
                 card.drawBody = [fs, this]() {
-                    ImGui::Text("%s", fs.title.c_str());
+                    ImGui::TextWrapped("%s", fs.title.c_str());
                     ImGui::Separator();
                     ImGui::TextWrapped("%s", fs.detail.c_str());
                     // T2 迁移地震层新增:详情卡带链接(如 USGS 事件页)时多画一个"打开"按钮。
@@ -765,18 +817,33 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                                                       shownFrames, autoDismissFrames))
             {
                 ImGuiIO& io2 = ImGui::GetIO();
-                ImGui::SetNextWindowPos(ImVec2(io2.DisplaySize.x - 12.0f, 12.0f),
-                                        ImGuiCond_Always, ImVec2(1.0f, 0.0f));  // 右上角锚定
-                ImGui::SetNextWindowBgAlpha(0.85f);
+                const earthui::MapToastLayout toast =
+                    earthui::computeMapToastLayout(
+                        io2.DisplaySize.x, io2.DisplaySize.y,
+                        _uiV2.drawerOpen);
+                ImGui::SetNextWindowPos(
+                    ImVec2(toast.x, toast.y), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(
+                    ImVec2(toast.width, 0.0f), ImGuiCond_Always);
+                ImGui::SetNextWindowSizeConstraints(
+                    ImVec2(toast.width, 0.0f),
+                    ImVec2(toast.width, 160.0f));
+                ImGui::SetNextWindowBgAlpha(earthui::design::kCarbon.w);
                 bool open = true;
-                if (ImGui::Begin(u8"##max_detail_badge", &open,
-                                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar |
-                                 ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing))
+                if (ImGui::Begin(
+                        u8"地图细节提示###max_detail_badge", &open,
+                        ImGuiWindowFlags_AlwaysAutoResize |
+                        ImGuiWindowFlags_NoResize |
+                        ImGuiWindowFlags_NoMove |
+                        ImGuiWindowFlags_NoSavedSettings |
+                        ImGuiWindowFlags_NoNav |
+                        ImGuiWindowFlags_NoFocusOnAppearing))
                 {
                     std::string text = active->displayName + u8" · 已达最大细节 (" +
                                         active->maxDetailNote + u8")";
                     if (active->opaque) text += u8" · 关闭图层可看地形";
-                    ImGui::TextUnformatted(text.c_str());
+                    earthui::drawStatusLine(
+                        earthui::StatusTone::Measure, text.c_str());
                 }
                 ImGui::End();
                 if (!open) _detailBadgeDismissed = true;   // 用户点了 [x]

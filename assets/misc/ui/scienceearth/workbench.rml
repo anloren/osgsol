@@ -62,7 +62,7 @@
                     <input id="last-year" type="text" inputmode="numeric" value="2025"/>
                 </div>
             </div>
-            <div id="year-range-strip" class="range-strip"><span></span></div>
+            <p id="year-range-summary" class="range-summary">共 9 个完整年度</p>
             <p id="time-error" class="field-error"></p>
         </section>
 

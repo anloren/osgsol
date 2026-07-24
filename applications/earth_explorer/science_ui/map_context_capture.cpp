@@ -116,6 +116,35 @@ ScienceCaptureSize scienceContextCaptureSize(
     return output;
 }
 
+bool scienceCaptureHasVisualContent(
+    const std::vector<unsigned char>& bottomUpRgba)
+{
+    if (bottomUpRgba.size() < 8 || bottomUpRgba.size() % 4 != 0)
+        return false;
+    unsigned char minimum[3] = {255, 255, 255};
+    unsigned char maximum[3] = {0, 0, 0};
+    const std::size_t pixels = bottomUpRgba.size() / 4;
+    const std::size_t sampleStride = std::max<std::size_t>(
+        1, pixels / 4096);
+    for (std::size_t pixel = 0; pixel < pixels; pixel += sampleStride)
+    {
+        const std::size_t offset = pixel * 4;
+        for (std::size_t channel = 0; channel < 3; ++channel)
+        {
+            minimum[channel] = std::min(
+                minimum[channel], bottomUpRgba[offset + channel]);
+            maximum[channel] = std::max(
+                maximum[channel], bottomUpRgba[offset + channel]);
+        }
+    }
+    // A real map frame may be dark space, bright snow, or mostly ocean, but it
+    // still contains texture/edges. Uniform white/black frames are capture
+    // timing failures and must never be published as an analysis overview.
+    return maximum[0] - minimum[0] >= 6 ||
+        maximum[1] - minimum[1] >= 6 ||
+        maximum[2] - minimum[2] >= 6;
+}
+
 std::vector<osg::Vec2f> normalizeScienceOverlay(
     const std::vector<ScienceOverlayPath>& paths,
     float viewportWidth, float viewportHeight)
@@ -223,6 +252,19 @@ bool MapContextCapture::captureBeforeUi(
     glReadPixels(viewport[0], viewport[1], viewport[2], viewport[3],
                  GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
     glPixelStorei(GL_PACK_ALIGNMENT, previousAlignment);
+    if (!scienceCaptureHasVisualContent(pixels))
+    {
+        std::lock_guard<std::mutex> guard(_mutex);
+        bool alreadyQueued = false;
+        for (const PendingRequest& pending : _pending)
+            if (pending.artifactId == request.artifactId)
+            {
+                alreadyQueued = true;
+                break;
+            }
+        if (!alreadyQueued) _pending.push_front(request);
+        return false;
+    }
     osg::ref_ptr<osg::Viewport> projectionViewport = new osg::Viewport(
         0.0, 0.0, viewport[2], viewport[3]);
     const ScienceTargetOverlayFrame projected = projectScienceTarget(
@@ -256,6 +298,7 @@ bool MapContextCapture::store(
         bottomUpRgba.size() !=
             static_cast<std::size_t>(sourceWidth) * sourceHeight * 4)
         return false;
+    if (!scienceCaptureHasVisualContent(bottomUpRgba)) return false;
     const ScienceCaptureSize size = scienceContextCaptureSize(
         sourceWidth, sourceHeight);
     if (size.width <= 0 || size.height <= 0) return false;

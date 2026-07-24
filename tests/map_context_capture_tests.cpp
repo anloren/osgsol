@@ -39,6 +39,13 @@ void testSizingAndNormalization()
     expect(normalized.size() == 3 && normalized[1].x() == 0.5f &&
            normalized[1].y() == 0.5f,
            "target overlay must use normalized capture coordinates");
+
+    std::vector<unsigned char> blank(32 * 18 * 4, 255);
+    expect(!scienceCaptureHasVisualContent(blank),
+           "uniform white capture must be rejected as a timing failure");
+    blank[17] = 120;
+    expect(scienceCaptureHasVisualContent(blank),
+           "a frame with visible map contrast must be accepted");
 }
 
 void testReplacementAndMemoryCap()
@@ -49,6 +56,10 @@ void testReplacementAndMemoryCap()
     requested.vertices = {{100.0f, 50.0f}, {200.0f, 100.0f}};
     projected.requested.push_back(requested);
     std::vector<unsigned char> pixels(400 * 200 * 4, 127);
+    for (int y = 0; y < 200; ++y)
+        for (int x = 0; x < 400; ++x)
+            pixels[(static_cast<std::size_t>(y) * 400 + x) * 4] =
+                static_cast<unsigned char>((x + y) % 256);
     expect(capture.storeCapturedRgbaForTesting(
         "a", target(), 400, 200, pixels, 1, &projected),
         "first context snapshot must store");

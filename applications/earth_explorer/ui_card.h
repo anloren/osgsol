@@ -3,13 +3,13 @@
 
 #include <functional>
 #include <cfloat>
-#include <map>
 #include <string>
 #include <vector>
 #include <osg/Vec2>
 #include <osg/Vec4>
 #include <ui/ImGuiComponents.h>
 #include "earth_control_layout.h"
+#include "earth_ui_tokens.h"
 #include "marker_style.h"
 
 // v0.15-vision Task 5:统一的右上角信息卡组件。取代 ai_cards.cpp / event_ticker.h /
@@ -19,15 +19,18 @@
 // 使用约定(每帧):各生产者(ai_cards/event_ticker/EarthControlUI 的详情卡)在本帧
 // "应该显示"时调用一次 upsert();不应该显示的卡片(如未选中任何要素)不调用即可,
 // 不需要显式 remove()——CardStack 每帧的可见卡片列表由当帧的 upsert 调用决定。
-// 帧末由持有 CardStack 实例的一方(EarthControlUI)调用一次 draw(),统一定位+
-// ImGui::Begin/End 绘制所有本帧被 upsert 过的卡片,然后清空供下一帧使用。
-// 卡片高度(AlwaysAutoResize 窗口)只有在 End() 之后才确定,draw() 内部用一个
-// id->上一帧高度的缓存做溢出换列预判(同 ai_cards.cpp 原有手法),这个缓存跨帧持久。
+// 帧末由持有 CardStack 实例的一方(EarthControlUI)调用一次 draw()。所有来源收进
+// 一个有边界的“洞察透镜”，通过标签切换，避免旧版多窗口重叠和跨屏堆叠。
 namespace earthui
 {
+    inline osg::Vec4 cardColor(const ImVec4& color)
+    {
+        return osg::Vec4(color.x, color.y, color.z, color.w);
+    }
+
     struct CardStyle
     {
-        osg::Vec4 accentColor = osg::Vec4(0.231f, 0.655f, 1.0f, 1.0f);   // 默认主题强调色 #3ba7ff
+        osg::Vec4 accentColor = cardColor(design::kCyan);
         std::string chipLabel;   // 表头胶囊文字,如 "AI"/"航班"/"要素"/"事件流"
         earthmark::MarkerShape shape = earthmark::MarkerShape::Circle;   // 表头胶囊 icon 形状(外观)
     };
@@ -102,65 +105,66 @@ namespace earthui
         // 帧末调用一次:定位 + 绘制本帧全部登记过的卡片,然后清空供下一帧使用。
         void draw()
         {
+            if (_frameCards.empty()) return;
             ImGuiIO& io = ImGui::GetIO();
             const EarthUiShellLayout shell = computeEarthUiShellLayout(
                 io.DisplaySize.x, io.DisplaySize.y, true);
             const float rightMargin = shell.outerGap;
             const float cardWidth = shell.insightWidth;
-            const float cardGap = shell.outerGap;
             const float topY = shell.insightTop;
-            const float bottomReserve = std::max(0.0f,
-                io.DisplaySize.y - shell.insightTop - shell.insightHeight);
-            const float estimateHeight = 190.0f;
-            std::vector<float> heightHints; heightHints.reserve(_frameCards.size());
-            for (size_t i = 0; i < _frameCards.size(); ++i)
-            {
-                std::map<std::string, float>::iterator it = _lastHeight.find(_frameCards[i].id);
-                heightHints.push_back(it != _lastHeight.end() ? it->second : 0.0f);
-            }
-            std::vector<osg::Vec2> pos = computeCardLayout(heightHints, io.DisplaySize.x, io.DisplaySize.y,
-                rightMargin, cardWidth, cardGap, topY, bottomReserve, estimateHeight);
+            const float minimumHeight = std::min(128.0f, shell.insightHeight);
+            ImGui::SetNextWindowPos(
+                ImVec2(io.DisplaySize.x - rightMargin, topY),
+                ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(cardWidth, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSizeConstraints(
+                ImVec2(cardWidth, minimumHeight),
+                ImVec2(cardWidth, std::max(minimumHeight, shell.insightHeight)));
 
-            for (size_t i = 0; i < _frameCards.size(); ++i)
+            const ImGuiWindowFlags flags =
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoCollapse |
+                ImGuiWindowFlags_NoSavedSettings;
+            if (ImGui::Begin(u8"洞察透镜###earth_insight_lens", nullptr, flags))
             {
-                Card& c = _frameCards[i];
-                ImGui::SetNextWindowPos(ImVec2(pos[i].x(), pos[i].y()), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-                ImGui::SetNextWindowSize(ImVec2(cardWidth, 0.0f), ImGuiCond_Always);
-                ImGui::SetNextWindowSizeConstraints(
-                    ImVec2(cardWidth, 0.0f), ImVec2(cardWidth, FLT_MAX));
-
-                bool open = true;
-                // ImGui 窗口身份只看 "###" 后的部分——用卡片稳定 id 拼后缀,不用下标
-                // (ai_cards.cpp 踩过的坑:下标随卡片增删变化,会被认成不同窗口导致闪烁)。
-                std::string winId = std::string(u8"洞察透镜 · ") + c.title +
-                    "###card_" + c.id;
-                if (ImGui::Begin(winId.c_str(), c.closable ? &open : NULL,
-                                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse))
+                if (ImGui::BeginTabBar(
+                        "##insight_tabs",
+                        ImGuiTabBarFlags_AutoSelectNewTabs |
+                        ImGuiTabBarFlags_FittingPolicyScroll))
                 {
-                    if (!c.style.chipLabel.empty())
+                    for (Card& c : _frameCards)
                     {
-                        drawChip(c.style.chipLabel.c_str(), c.style.accentColor, c.style.shape);
-                        if (!c.subtitle.empty())
+                        bool open = true;
+                        std::string tabLabel = c.title + "###insight_" + c.id;
+                        if (ImGui::BeginTabItem(
+                                tabLabel.c_str(), c.closable ? &open : nullptr))
                         {
-                            ImGui::SameLine();
-                            ImGui::TextDisabled("%s", c.subtitle.c_str());
+                            if (!c.style.chipLabel.empty())
+                            {
+                                drawChip(c.style.chipLabel.c_str(),
+                                         c.style.accentColor, c.style.shape);
+                                if (!c.subtitle.empty())
+                                {
+                                    ImGui::SameLine();
+                                    ImGui::TextDisabled(
+                                        "%s", c.subtitle.c_str());
+                                }
+                                ImGui::Separator();
+                            }
+                            if (c.drawBody) c.drawBody();
+                            ImGui::EndTabItem();
                         }
-                        ImGui::Separator();
+                        if (c.closable && !open && c.onClose) c.onClose();
                     }
-                    if (c.drawBody) c.drawBody();
-                    // 必须在 End() 之前读:GetWindowSize() 取的是"当前窗口"的尺寸
-                    // (ai_cards.cpp 同款坑,见其注释)。
-                    _lastHeight[c.id] = ImGui::GetWindowSize().y;
+                    ImGui::EndTabBar();
                 }
-                ImGui::End();
-                if (c.closable && !open && c.onClose) c.onClose();
             }
+            ImGui::End();
             _frameCards.clear();
         }
 
     private:
         std::vector<Card> _frameCards;             // 本帧登记的卡片,draw() 末尾清空
-        std::map<std::string, float> _lastHeight;   // 跨帧持久:id -> 上一帧高度(溢出换列预判用)
     };
 }
 

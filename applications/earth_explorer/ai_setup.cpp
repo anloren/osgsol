@@ -332,10 +332,13 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
             u8"type 取值 bar(横向条形图)/donut(环形图)/line(折线图)/stat(单个大数字);"
             u8"labels 与 values 两个数组需等长,分别是每项的标签与数值(stat 图只用第一项:"
             u8"values[0] 是大数字,labels[0] 可选,作为副标题)。"
+            u8"unit 应填写数值单位，description 简短说明口径、时间或空间范围；"
             u8"适合在用户要求“画个图”“统计一下”“可视化”之类需求,或你自己觉得图表比文字更清楚时调用。";
         chart.parametersJson = "{\"type\":\"object\",\"properties\":{"
             "\"type\":{\"type\":\"string\",\"enum\":[\"bar\",\"donut\",\"line\",\"stat\"]},"
             "\"title\":{\"type\":\"string\"},"
+            "\"unit\":{\"type\":\"string\"},"
+            "\"description\":{\"type\":\"string\"},"
             "\"labels\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},"
             "\"values\":{\"type\":\"array\",\"items\":{\"type\":\"number\"}}},"
             "\"required\":[\"type\",\"values\"]}";

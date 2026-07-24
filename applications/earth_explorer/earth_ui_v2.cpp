@@ -1,5 +1,6 @@
 #include "earth_ui_v2.h"
 
+#include "earth_ui_tokens.h"
 #include "marker_style.h"
 
 #include <ui/ImGuiComponents.h>
@@ -12,16 +13,16 @@ namespace earthui
 {
 namespace
 {
-const ImVec4 kCarbon(0.027f, 0.035f, 0.039f, 0.965f);
-const ImVec4 kIron(0.052f, 0.063f, 0.068f, 0.975f);
-const ImVec4 kRaisedIron(0.078f, 0.091f, 0.097f, 0.985f);
-const ImVec4 kOxblood(0.220f, 0.058f, 0.047f, 0.980f);
-const ImVec4 kVermilion(0.827f, 0.192f, 0.137f, 1.000f);
-const ImVec4 kCyan(0.220f, 0.765f, 0.875f, 1.000f);
-const ImVec4 kText(0.735f, 0.755f, 0.765f, 1.000f);
-const ImVec4 kTextStrong(0.875f, 0.885f, 0.890f, 1.000f);
-const ImVec4 kTextDim(0.430f, 0.455f, 0.465f, 1.000f);
-const ImVec4 kBorder(0.255f, 0.220f, 0.215f, 0.850f);
+using design::kBorder;
+using design::kCarbon;
+using design::kCyan;
+using design::kIron;
+using design::kOxblood;
+using design::kRaisedIron;
+using design::kText;
+using design::kTextDim;
+using design::kTextStrong;
+using design::kVermilion;
 
 struct ModuleVisual
 {
@@ -170,6 +171,17 @@ bool moduleAcceptsLayerGroup(EarthUiModule module, const std::string& group)
     }
 }
 
+void activateEarthUiModule(EarthUiShellState& state, EarthUiModule module)
+{
+    if (state.activeModule == module)
+        state.drawerOpen = !state.drawerOpen;
+    else
+    {
+        state.activeModule = module;
+        state.drawerOpen = true;
+    }
+}
+
 void applyEarthUiV2Theme()
 {
     static ImGuiContext* themedContext = nullptr;
@@ -260,6 +272,7 @@ bool drawEarthUiTopBar(const EarthUiShellLayout& layout,
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoScrollWithMouse;
     bool requestHome = false;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     if (ImGui::Begin("##earth_ui_v2_top", nullptr, flags))
     {
         ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -268,10 +281,30 @@ bool drawEarthUiTopBar(const EarthUiShellLayout& layout,
             ImVec2(min.x + 3.0f, min.y + layout.topBarHeight),
             ImGui::ColorConvertFloat4ToU32(kVermilion));
 
-        const float actionsWidth = data.scienceAvailable ? 304.0f : 420.0f;
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const auto controlWidth = [&style](const char* label) {
+            return ImGui::CalcTextSize(label).x +
+                style.FramePadding.x * 2.0f;
+        };
+        const char* drawerLabel =
+            state.drawerOpen ? u8"收起面板" : u8"打开面板";
+        const char* statusLabel =
+            data.aiBusy ? u8"AI 运行中" : u8"系统就绪";
+        const float homeWidth = controlWidth(u8"回到全球");
+        const float drawerWidth = controlWidth(drawerLabel);
+        const float statusWidth = ImGui::CalcTextSize(statusLabel).x;
+        const float pluginWidth = ImGui::CalcTextSize(
+            u8"科学插件未载入").x;
+        const float baseActionsWidth =
+            homeWidth + drawerWidth + statusWidth +
+            style.ItemSpacing.x * 2.0f;
+        const bool showPluginStatus = !data.scienceAvailable &&
+            ImGui::GetWindowWidth() >= 920.0f;
+        const float actionsWidth = baseActionsWidth +
+            (showPluginStatus ? style.ItemSpacing.x + pluginWidth : 0.0f);
         const float actionX = std::max(
-            ImGui::GetStyle().WindowPadding.x,
-            ImGui::GetWindowWidth() - actionsWidth);
+            style.WindowPadding.x,
+            ImGui::GetWindowWidth() - style.WindowPadding.x - actionsWidth);
         const float actionY = std::max(
             0.0f, (layout.topBarHeight - ImGui::GetFrameHeight()) * 0.5f);
         const float leftClipRight = std::max(
@@ -297,20 +330,21 @@ bool drawEarthUiTopBar(const EarthUiShellLayout& layout,
         ImGui::SetCursorPos(ImVec2(actionX, actionY));
         if (ImGui::Button(u8"回到全球")) requestHome = true;
         ImGui::SameLine();
-        if (ImGui::Button(state.drawerOpen ? u8"收起面板" : u8"打开面板"))
+        if (ImGui::Button(drawerLabel))
             state.drawerOpen = !state.drawerOpen;
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text,
-            data.aiBusy ? kVermilion : ImVec4(0.36f, 0.78f, 0.42f, 1.0f));
+            data.aiBusy ? kVermilion : design::kSuccess);
         ImGui::TextUnformatted(data.aiBusy ? u8"AI 运行中" : u8"系统就绪");
         ImGui::PopStyleColor();
-        if (!data.scienceAvailable)
+        if (showPluginStatus)
         {
             ImGui::SameLine();
             ImGui::TextDisabled(u8"科学插件未载入");
         }
     }
     ImGui::End();
+    ImGui::PopStyleVar();
     return requestHome;
 }
 
@@ -325,6 +359,7 @@ void drawEarthUiModuleRail(const EarthUiShellLayout& layout,
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     if (ImGui::Begin("##earth_ui_v2_modules", nullptr, flags))
     {
         ImGui::Dummy(ImVec2(0.0f, layout.topBarHeight * 0.18f));
@@ -344,14 +379,7 @@ void drawEarthUiModuleRail(const EarthUiShellLayout& layout,
             }
             const ImVec2 buttonSize(layout.navigationWidth - 18.0f, 48.0f);
             if (ImGui::Button("##module", buttonSize))
-            {
-                if (active) state.drawerOpen = !state.drawerOpen;
-                else
-                {
-                    state.activeModule = visual.module;
-                    state.drawerOpen = true;
-                }
-            }
+                activateEarthUiModule(state, visual.module);
             if (active) ImGui::PopStyleColor();
 
             const ImVec2 itemMin = ImGui::GetItemRectMin();
@@ -375,6 +403,7 @@ void drawEarthUiModuleRail(const EarthUiShellLayout& layout,
         }
     }
     ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 bool beginEarthUiModuleDrawer(const EarthUiShellLayout& layout,
@@ -389,9 +418,11 @@ bool beginEarthUiModuleDrawer(const EarthUiShellLayout& layout,
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_AlwaysVerticalScrollbar;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     if (!ImGui::Begin("##earth_ui_v2_drawer", nullptr, flags))
     {
         ImGui::End();
+        ImGui::PopStyleVar();
         return false;
     }
     ImGui::PushTextWrapPos(0.0f);
@@ -408,6 +439,7 @@ void endEarthUiModuleDrawer()
 {
     ImGui::PopTextWrapPos();
     ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 void drawEarthUiContextTray(const EarthUiShellLayout& layout,
@@ -423,6 +455,7 @@ void drawEarthUiContextTray(const EarthUiShellLayout& layout,
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     if (ImGui::Begin("##earth_ui_v2_context", nullptr, flags))
     {
         drawContextItem(u8"当前模块", moduleLabel(state.activeModule));
@@ -434,6 +467,7 @@ void drawEarthUiContextTray(const EarthUiShellLayout& layout,
         drawModuleHelp(state.activeModule);
     }
     ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 }

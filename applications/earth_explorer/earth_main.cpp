@@ -1276,7 +1276,10 @@ int main(int argc, char** argv)
         userDataPath + "/EarthExplorer/science-context");
     osg::ref_ptr<ScienceContextCaptureCallback> contextCaptureCallback =
         new ScienceContextCaptureCallback(&mapContextCapture, sceneCamera);
-    contextCaptureCallback->setup(cameras[3], 1);
+    // Capture the fully composed Earth after finalCamera has drawn, but before
+    // the chained RmlUi and ImGui overlays. PRE_DRAW only sees the clear
+    // framebuffer and produced the blank report overview.
+    contextCaptureCallback->setup(cameras[3], 2);
     std::unique_ptr<ScienceWorkbenchPresenter> scienceWorkbenchPresenter;
     if (productUiSelector == "rml" &&
         scienceRuntime.supportsWorkbenchUi())

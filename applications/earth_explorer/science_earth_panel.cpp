@@ -3,6 +3,7 @@
 #include "LayerManager.h"
 #include "earth_control_layout.h"
 #include "earth_ui_chart.h"
+#include "earth_ui_tokens.h"
 #include "science_preview_layer.h"
 #include "science_query_builder.h"
 
@@ -218,17 +219,17 @@ ImVec4 severityColor(SciencePanelSeverity severity)
     switch (severity)
     {
     case SciencePanelSeverity::Info:
-        return ImVec4(0.35f, 0.78f, 1.0f, 1.0f);
+        return earthui::design::kCyan;
     case SciencePanelSeverity::Success:
-        return ImVec4(0.35f, 0.90f, 0.55f, 1.0f);
+        return earthui::design::kSuccess;
     case SciencePanelSeverity::Warning:
-        return ImVec4(1.0f, 0.78f, 0.25f, 1.0f);
+        return earthui::design::kMeasure;
     case SciencePanelSeverity::Error:
-        return ImVec4(1.0f, 0.42f, 0.35f, 1.0f);
+        return earthui::design::kDanger;
     case SciencePanelSeverity::Neutral:
-        return ImVec4(0.72f, 0.78f, 0.84f, 1.0f);
+        return earthui::design::kText;
     }
-    return ImVec4(0.72f, 0.78f, 0.84f, 1.0f);
+    return earthui::design::kText;
 }
 
 void drawColoredWrapped(const ImVec4& color, const char* text)
@@ -302,11 +303,11 @@ void pushScienceScrollbarStyle()
 {
     ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 14.0f);
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab,
-                          ImVec4(0.22f, 0.77f, 0.88f, 0.72f));
+                          earthui::design::kRaisedIron);
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered,
-                          ImVec4(0.22f, 0.77f, 0.88f, 0.90f));
+                          earthui::design::kCyan);
     ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive,
-                          ImVec4(0.83f, 0.19f, 0.14f, 1.0f));
+                          earthui::design::kVermilion);
 }
 
 void popScienceScrollbarStyle()
@@ -1782,7 +1783,7 @@ void ScienceEarthPanel::drawOperations(
     if (sources.empty())
     {
         if (operationsExpanded)
-            ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
+            ImGui::TextColored(earthui::design::kDanger,
                                u8"没有注册科学数据源 / No science source");
         return;
     }
@@ -1994,8 +1995,8 @@ void ScienceEarthPanel::drawOperations(
             earthscience::scienceSourceHealthName(source.health);
         drawColoredWrapped(
             sourceUnavailable
-                ? ImVec4(1.0f, 0.42f, 0.35f, 1.0f)
-                : ImVec4(1.0f, 0.78f, 0.25f, 1.0f),
+                ? earthui::design::kDanger
+                : earthui::design::kMeasure,
             health.c_str());
         if (!source.healthMessage.empty())
             ImGui::TextWrapped("%s", source.healthMessage.c_str());
@@ -2324,7 +2325,7 @@ void ScienceEarthPanel::drawOperations(
                            estimate.duration.c_str());
         if (_estimateVisible)
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.25f, 1.0f),
+            ImGui::TextColored(earthui::design::kMeasure,
                                u8"此任务超过数据源的普通资源上限");
             if (drawWrappedCheckbox("##confirm_science_cost",
                 u8"我确认运行这项较大任务 / Confirm large request",
@@ -2337,7 +2338,7 @@ void ScienceEarthPanel::drawOperations(
     {
         const std::string failure =
             std::string(u8"无法估算 / Estimate failed: ") + estimateError;
-        drawColoredWrapped(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
+        drawColoredWrapped(earthui::design::kDanger,
                            failure.c_str());
     }
 
@@ -2363,11 +2364,11 @@ void ScienceEarthPanel::drawOperations(
         describeScienceArtifactUi(*currentArtifact, query).matchesDraft;
     ImGui::SeparatorText(u8"5  开始或取消 / Start or cancel");
     if (_hasPendingAnalysis)
-        drawColoredWrapped(ImVec4(0.35f, 0.78f, 1.0f, 1.0f),
+        drawColoredWrapped(earthui::design::kCyan,
             u8"第 1/2 步：正在加载对比年份的伪彩图；完成后会自动开始分析。"
             u8"相机和分析范围已固定。");
     else if (_workflowFailed)
-        drawColoredWrapped(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
+        drawColoredWrapped(earthui::design::kDanger,
                            _workflowMessage.c_str());
     else if (currentDraftBusy)
         drawColoredWrapped(severityColor(presentation.severity),
@@ -2375,7 +2376,7 @@ void ScienceEarthPanel::drawOperations(
                 ? u8"已提交，正在处理当前设置。"
                 : _workflowMessage.c_str());
     else if (currentDraftAlreadyLoaded)
-        drawColoredWrapped(ImVec4(0.35f, 0.90f, 0.55f, 1.0f),
+        drawColoredWrapped(earthui::design::kSuccess,
                            u8"当前设置已完成；结果显示在右侧科学结果面板。");
     else if (currentDraftProblem)
     {
@@ -2392,25 +2393,25 @@ void ScienceEarthPanel::drawOperations(
     {
         const std::string selection = sciencePanelSelectionSummary(
             activeMode, _state, source.id);
-        drawColoredWrapped(ImVec4(0.35f, 0.78f, 1.0f, 1.0f),
+        drawColoredWrapped(earthui::design::kCyan,
                            selection.c_str());
     }
     if (sourceUnavailable)
-        drawColoredWrapped(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
+        drawColoredWrapped(earthui::design::kDanger,
                            u8"暂时无法开始：数据源不可用。");
     else if (invalidPreview)
-        drawColoredWrapped(ImVec4(1.0f, 0.42f, 0.35f, 1.0f),
+        drawColoredWrapped(earthui::design::kDanger,
                            u8"暂时无法开始：缺少匹配的显示方式。");
     else if (_estimateVisible && !estimateConfirmed)
-        drawColoredWrapped(ImVec4(1.0f, 0.78f, 0.25f, 1.0f),
+        drawColoredWrapped(earthui::design::kMeasure,
                            u8"勾选上方确认项后可以运行。");
     if (blocked) ImGui::BeginDisabled();
     ImGui::PushStyleColor(ImGuiCol_Button,
-                          ImVec4(0.52f, 0.10f, 0.07f, 1.0f));
+                          earthui::design::kOxblood);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                          ImVec4(0.70f, 0.14f, 0.10f, 1.0f));
+                          earthui::design::kVermilion);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                          ImVec4(0.83f, 0.19f, 0.14f, 1.0f));
+                          earthui::design::kCyan);
     if (ImGui::Button(
             sciencePanelPrimaryActionLabel(activeMode, source.id),
                       ImVec2(-1.0f, 0.0f)))
@@ -2545,7 +2546,7 @@ void ScienceEarthPanel::drawResults(
 
     ImGui::PushTextWrapPos(0.0f);
     ImGui::PushStyleColor(ImGuiCol_Text,
-                          ImVec4(0.22f, 0.77f, 0.88f, 1.0f));
+                          earthui::design::kCyan);
     ImGui::TextUnformatted(u8"洞察透镜 / Insight Lens");
     ImGui::PopStyleColor();
     ImGui::TextDisabled(u8"ScienceEarth · 结果、图表与证据");
@@ -2610,14 +2611,14 @@ void ScienceEarthPanel::drawResults(
             _hasCurrentDraft ? _currentDraft : artifact->query;
         const ScienceArtifactUiPresentation artifactUi =
             describeScienceArtifactUi(*artifact, draft);
-        drawColoredWrapped(ImVec4(0.35f, 0.85f, 1.0f, 1.0f),
+        drawColoredWrapped(earthui::design::kCyan,
                            artifactUi.scopeLabel.c_str());
         drawColoredWrapped(severityColor(display.severity),
                            display.title.c_str());
         if (!display.detail.empty())
             ImGui::TextWrapped("%s", display.detail.c_str());
         if (!artifactUi.pendingSettingsLabel.empty())
-            drawColoredWrapped(ImVec4(1.0f, 0.78f, 0.25f, 1.0f),
+            drawColoredWrapped(earthui::design::kMeasure,
                                artifactUi.pendingSettingsLabel.c_str());
 
         const std::vector<std::string> evidence =

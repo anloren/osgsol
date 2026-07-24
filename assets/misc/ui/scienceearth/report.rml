@@ -49,10 +49,40 @@
             </section>
             <section id="trends" class="report-section">
                 <div class="chart-toolbar">
-                    <label for="report-metric-select">指标</label>
-                    <select id="report-metric-select"></select>
+                    <div class="chart-heading">
+                        <h2 id="chart-title">年度趋势</h2>
+                        <p id="chart-aggregation" class="muted">年度统计</p>
+                    </div>
+                    <div class="chart-metric-control">
+                        <label for="report-metric-select">指标</label>
+                        <select id="report-metric-select"></select>
+                    </div>
                 </div>
-                <science-chart id="science-chart" class="science-chart"></science-chart>
+                <div class="chart-panel">
+                    <div class="chart-unit-row">
+                        <span>纵轴单位</span>
+                        <strong id="chart-unit">未提供</strong>
+                    </div>
+                    <div class="chart-body">
+                        <div class="chart-y-axis">
+                            <span id="chart-y-max">—</span>
+                            <span id="chart-y-mid">—</span>
+                            <span id="chart-y-min">—</span>
+                        </div>
+                        <div class="chart-plot">
+                            <science-chart id="science-chart"
+                                           class="science-chart"></science-chart>
+                            <div class="chart-x-axis">
+                                <span id="chart-x-first">—</span>
+                                <span id="chart-x-mid">—</span>
+                                <span id="chart-x-last">—</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p id="chart-missing-note" class="chart-missing-note">
+                        缺测年份会留空，趋势线不会跨越缺测连接。
+                    </p>
+                </div>
                 <div class="chart-readout">
                     <span id="chart-domain"></span>
                     <span id="chart-selected-year">点击图中年份可固定对比时点</span>

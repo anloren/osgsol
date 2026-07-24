@@ -11,6 +11,7 @@
 #include <readerwriter/EarthManipulator.h>
 #include "LayerManager.h"
 #include "earth_control_layout.h"
+#include "earth_ui_tokens.h"
 #include "feed_layer.h"
 #include "ui_card.h"
 
@@ -86,20 +87,27 @@ struct EventTickerUI
             for (size_t i = 0; i < evs.size(); ++i)
             {
                 const earthfeed::TickerEvent& e = evs[i];
-                std::string label = relativeTime(e.unixTime) + "  [" + e.sourceId + "] "
-                                  + e.title + "##ev" + std::to_string((long long)i);
-                if (ImGui::Selectable(label.c_str()) && mani)
+                ImGui::PushID(static_cast<int>(i));
+                const std::string metadata =
+                    relativeTime(e.unixTime) + "  ·  " + e.sourceId;
+                ImGui::TextDisabled("%s", metadata.c_str());
+                ImGui::TextWrapped("%s", e.title.c_str());
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(u8"点击定位到事件");
+                if (ImGui::IsItemClicked() && mani)
                 {
                     mani->setByEye(osg::DegreesToRadians(e.lat),
                                    osg::DegreesToRadians(e.lon), 300.0 * 1000.0);
                 }
+                if (i + 1 < evs.size()) ImGui::Separator();
+                ImGui::PopID();
             }
         };
         card.onClose = [this]() { showTicker = false; };
         stack.upsert(card);
     }
 
-    // 顶部微状态带:UTC 时钟 · 数据源健康 n/m · 当前预设名。顶部居中细条,
+    // 底部微状态带:UTC 时钟 · 数据源健康 n/m · 当前预设名。贴底细条,
     // NoInputs 完全不抢输入(纯展示,未来加交互再放开)。
     void drawStatusBar(LayerManager* layers)
     {
@@ -128,10 +136,15 @@ struct EventTickerUI
                    io.DisplaySize.y - shell.statusHeight),
             ImGuiCond_Always);
         ImGui::SetNextWindowSize(
-            ImVec2(io.DisplaySize.x - shell.navigationWidth,
+            ImVec2(std::max(1.0f, io.DisplaySize.x - shell.navigationWidth),
                    shell.statusHeight), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.96f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 3.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleColor(
+            ImGuiCol_WindowBg, earthui::design::kCarbon);
+        ImGui::PushStyleColor(
+            ImGuiCol_Border, earthui::design::kBorder);
         if (ImGui::Begin("##earth_statusbar", NULL,
                          ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
                          | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar
@@ -142,7 +155,8 @@ struct EventTickerUI
                         clock, okN, enN, preset.c_str());
         }
         ImGui::End();
-        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar(2);
     }
 };
 

@@ -1,4 +1,6 @@
 #include "product_ui/rml_ui_runtime.h"
+#include "science_ui/rml_science_chart.h"
+#include "science_ui/science_chart_model.h"
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
@@ -134,6 +136,7 @@ class DocumentClient : public RmlUiFrameClient, public Rml::EventListener
 public:
     bool onRmlContextReady(Rml::Context& context, std::string& error) override
     {
+        registerRmlScienceChartElement();
         _document = context.LoadDocument(
             std::string(OSGVERSE_SOURCE_DIR) +
             "/assets/misc/ui/scienceearth/workbench.rml");
@@ -160,7 +163,16 @@ public:
         if (Rml::Element* runButton =
                 _document->GetElementById("run-action"))
             runButton->AddEventListener("click", this);
+        _report = context.LoadDocument(
+            std::string(OSGVERSE_SOURCE_DIR) +
+            "/assets/misc/ui/scienceearth/report.rml");
+        if (!_report)
+        {
+            error = "real ScienceEarth report document did not load";
+            return false;
+        }
         _document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+        _report->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
         return true;
     }
 
@@ -281,6 +293,91 @@ public:
     int helpClicks() const { return _helpClicks; }
     int runClicks() const { return _runClicks; }
 
+    void showTrendReport()
+    {
+        Rml::Element* window = reportElement("science-report");
+        if (!window) return;
+        window->SetProperty("display", "block");
+        window->SetProperty("left", "500px");
+        window->SetProperty("top", "72px");
+        window->SetProperty("width", "800px");
+        window->SetProperty("height", "700px");
+        if (Rml::Element* overview = reportElement("overview"))
+            overview->SetProperty("display", "none");
+        if (Rml::Element* trends = reportElement("trends"))
+            trends->SetProperty("display", "block");
+        setReportText("report-title", "ERA5 Agricultural Climate");
+        setReportText("chart-title", "2 米平均气温");
+        setReportText("chart-aggregation", "年度平均 · 每年一个结果值");
+        setReportText("chart-unit", "°C");
+        setReportText("chart-y-max", "28.1");
+        setReportText("chart-y-mid", "27.2");
+        setReportText("chart-y-min", "26.3");
+        setReportText("chart-x-first", "2017");
+        setReportText("chart-x-mid", "2021");
+        setReportText("chart-x-last", "2025");
+        setReportText(
+            "chart-domain", "2017–2025 · 2 米平均气温");
+        setReportText("chart-missing-note",
+            "年度序列完整；点击曲线可固定一个年份。");
+        setReportText(
+            "chart-statistics",
+            "均值 26.9 °C · 首末变化 -0.3 °C · 有效年份 9/9");
+        if (Rml::Element* metric = reportElement("report-metric-select"))
+            metric->SetInnerRML(
+                "<option selected value='temperature'>2 米平均气温 · °C</option>");
+        if (RmlScienceChart* chart = rmlui_dynamic_cast<RmlScienceChart*>(
+                reportElement("science-chart")))
+        {
+            const std::vector<int> years =
+                {2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025};
+            const std::vector<double> values =
+                {26.7, 26.6, 26.5, 26.8, 27.0, 27.7, 27.3, 27.1, 26.4};
+            chart->setModel(makeScienceChartModel(
+                "mean_temperature_2m", "2 米平均气温", "°C",
+                years, values), 2023);
+        }
+    }
+
+    void hideTrendReport()
+    {
+        if (Rml::Element* window = reportElement("science-report"))
+            window->SetProperty("display", "none");
+    }
+
+    float reportWidth(const char* id) const
+    {
+        Rml::Element* element = reportElement(id);
+        return element ? element->GetOffsetWidth() : 0.0f;
+    }
+
+    float reportHeight(const char* id) const
+    {
+        Rml::Element* element = reportElement(id);
+        return element ? element->GetOffsetHeight() : 0.0f;
+    }
+
+    float reportRight(const char* id) const
+    {
+        Rml::Element* element = reportElement(id);
+        return element
+            ? element->GetAbsoluteOffset().x + element->GetOffsetWidth() : 0.0f;
+    }
+
+    float reportBottom(const char* id) const
+    {
+        Rml::Element* element = reportElement(id);
+        return element
+            ? element->GetAbsoluteOffset().y + element->GetOffsetHeight() : 0.0f;
+    }
+
+    float reportHorizontalOverflow(const char* id) const
+    {
+        Rml::Element* element = reportElement(id);
+        return element
+            ? element->GetScrollWidth() - element->GetOffsetWidth() : 0.0f;
+    }
+
     std::string value(const char* id) const
     {
         Rml::Element* element = _document
@@ -291,8 +388,41 @@ public:
         return control ? std::string(control->GetValue()) : std::string();
     }
 
+    void prepareCleanEvidenceState()
+    {
+        if (Rml::Element* year = _document
+                ? _document->GetElementById("first-year") : nullptr)
+            if (Rml::ElementFormControl* control =
+                    rmlui_dynamic_cast<Rml::ElementFormControl*>(year))
+                control->SetValue("2017");
+        if (Rml::Element* source = _document
+                ? _document->GetElementById("source-select") : nullptr)
+            if (Rml::ElementFormControl* control =
+                    rmlui_dynamic_cast<Rml::ElementFormControl*>(source))
+                control->SetValue("era5-agro");
+        if (Rml::Element* name = _document
+                ? _document->GetElementById("analysis-name") : nullptr)
+            name->SetInnerRML("ERA5 Agricultural Climate");
+        if (Rml::Element* summary = _document
+                ? _document->GetElementById("analysis-summary") : nullptr)
+            summary->SetInnerRML(
+                "历史农业气象年度分析 · 约 25–28 km 数据网格");
+    }
+
 private:
+    Rml::Element* reportElement(const char* id) const
+    {
+        return _report ? _report->GetElementById(id) : nullptr;
+    }
+
+    void setReportText(const char* id, const char* value)
+    {
+        if (Rml::Element* element = reportElement(id))
+            element->SetInnerRML(value);
+    }
+
     Rml::ElementDocument* _document = nullptr;
+    Rml::ElementDocument* _report = nullptr;
     int _helpClicks = 0;
     int _runClicks = 0;
 };
@@ -530,6 +660,8 @@ int main()
            "cancel action overflows below the running footer");
     expect(client.horizontalOverflow("progress-footer") <= 1.0f,
            "running status controls overflow horizontally");
+    client.prepareCleanEvidenceState();
+    (*camera->getPostDrawCallback())(renderInfo);
     glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
     glFinish();
     std::vector<unsigned char> runningRgba(
@@ -538,6 +670,40 @@ int main()
                  runningRgba.data());
     expect(writePpm("/tmp/osgsol_rml_running.ppm", runningRgba),
            "could not write compact running-state evidence image");
+
+    client.showTrendReport();
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(client.reportWidth("science-report") >= 780.0f &&
+               client.reportHeight("science-report") >= 680.0f,
+           "scientific report collapsed below its readable test size");
+    expect(client.reportRight("science-report") <= WIDTH + 1.0f &&
+               client.reportBottom("science-report") <= HEIGHT + 1.0f,
+           "scientific report extends beyond the viewport");
+    expect(client.reportRight("report-close") <=
+               client.reportRight("science-report") - 8.0f,
+           "report window actions are clipped at the right edge; close=" +
+           std::to_string(client.reportRight("report-close")) +
+           ", window=" +
+           std::to_string(client.reportRight("science-report")));
+    expect(client.reportHorizontalOverflow("report-content") <= 1.0f,
+           "scientific report content overflows horizontally");
+    expect(client.reportWidth("chart-y-max") >= 18.0f &&
+               client.reportWidth("chart-x-first") >= 24.0f,
+           "scientific chart axes are not visibly laid out");
+    glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
+    glFinish();
+    std::vector<unsigned char> reportRgba(
+        static_cast<std::size_t>(WIDTH) * HEIGHT * 4);
+    glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
+                 reportRgba.data());
+    expect(writePpm("/tmp/osgsol_rml_report.ppm", reportRgba),
+           "could not write scientific report evidence image");
+    client.hideTrendReport();
+    glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
+    glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
+            GL_STENCIL_BUFFER_BIT);
+    (*camera->getPostDrawCallback())(renderInfo);
 
     glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
     glFinish();

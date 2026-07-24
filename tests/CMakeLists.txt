@@ -173,6 +173,13 @@ TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_EarthControlLayout PRIVATE
                            "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_EarthControlLayout PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+NEW_CTEST(osgVerse_Test_EarthUiRuntime earth_ui_v2_runtime_tests.cpp
+          "offline;ui" 30)
+TARGET_SOURCES(osgVerse_Test_EarthUiRuntime PRIVATE
+               "${CMAKE_SOURCE_DIR}/applications/earth_explorer/earth_ui_v2.cpp"
+               "${CMAKE_SOURCE_DIR}/applications/earth_explorer/marker_style.cpp")
+TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_EarthUiRuntime PRIVATE
+                           "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
 NEW_CTEST(osgVerse_Test_McpSafety mcp_safety_tests.cpp offline 30)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_McpSafety PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

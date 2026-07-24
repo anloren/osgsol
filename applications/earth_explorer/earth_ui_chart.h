@@ -1,6 +1,8 @@
 #ifndef EARTH_UI_CHART_H
 #define EARTH_UI_CHART_H
 
+#include "earth_ui_tokens.h"
+
 #include <ui/ImGuiComponents.h>
 
 #include <algorithm>
@@ -49,7 +51,7 @@ inline bool drawAnnualSeriesChart(
         maximum += pad;
     }
 
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.22f, 0.77f, 0.88f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, design::kCyan);
     ImGui::TextUnformatted(label ? label : "");
     ImGui::PopStyleColor();
     if (!unit.empty())
@@ -64,12 +66,16 @@ inline bool drawAnnualSeriesChart(
     const ImVec2 itemMin = ImGui::GetItemRectMin();
     const ImVec2 itemMax = ImGui::GetItemRectMax();
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImU32 background = IM_COL32(12, 16, 18, 246);
-    const ImU32 border = IM_COL32(82, 62, 58, 220);
-    const ImU32 grid = IM_COL32(90, 102, 107, 60);
-    const ImU32 axisText = IM_COL32(126, 137, 142, 230);
+    const ImU32 background =
+        ImGui::ColorConvertFloat4ToU32(design::kIron);
+    const ImU32 border =
+        ImGui::ColorConvertFloat4ToU32(design::kBorder);
+    const ImU32 grid = IM_COL32(59, 48, 46, 110);
+    const ImU32 axisText =
+        ImGui::ColorConvertFloat4ToU32(design::kTextDim);
     const ImU32 seriesColor = IM_COL32(56, 195, 223, 255);
-    const ImU32 hoverColor = IM_COL32(224, 70, 45, 255);
+    const ImU32 hoverColor =
+        ImGui::ColorConvertFloat4ToU32(design::kMeasure);
     draw->AddRectFilled(itemMin, itemMax, background, 2.0f);
     draw->AddRect(itemMin, itemMax, border, 2.0f);
 

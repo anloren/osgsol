@@ -119,6 +119,37 @@ int main()
                    std::string::npos,
            "source action must choose AlphaEarth's default method");
 
+    // Exercise every formal science source through the same real select
+    // control. Each choice must update its own title immediately and queue
+    // source/method/year actions; this guards against the previous failure
+    // where choosing AlphaEarth left the ERA5 agriculture form underneath.
+    const std::vector<std::pair<std::string, std::string>> sourceCases = {
+        {"sentinel-2-l2a", "Sentinel-2"},
+        {"copernicus-dem-glo-30", "Copernicus DEM"},
+        {"era5-land-surface-history", "ERA5-Land"},
+        {"era5-agricultural-climate", "ERA5 Agricultural Climate"},
+        {"alphaearth-foundations", "AlphaEarth Foundations"},
+    };
+    for (const auto& sourceCase : sourceCases)
+    {
+        source->SetValue(sourceCase.first);
+        const std::string renderedName = inner(composer, "analysis-name");
+        expect(renderedName.find(sourceCase.second) !=
+                   std::string::npos,
+               "source selection retained the wrong form for " +
+                   sourceCase.first + "; rendered=" + renderedName);
+        const std::vector<ScienceWorkbenchQueuedAction> actions =
+            drain(presenter);
+        expect(actions.size() == 3,
+               "source selection must queue source, method and year for " +
+                   sourceCase.first);
+        expect(actions.front().name == "select-source" &&
+                   actions.front().json.find(sourceCase.first) !=
+                       std::string::npos,
+               "source selection action carries the wrong ID for " +
+                   sourceCase.first);
+    }
+
     Rml::ElementFormControl* method =
         rmlui_dynamic_cast<Rml::ElementFormControl*>(
             composer->GetElementById("method-select"));
@@ -154,6 +185,17 @@ int main()
     expect(inner(report, "report-title").find("AlphaEarth Foundations") !=
                std::string::npos,
            "the opened report must match the AlphaEarth artifact");
+    expect(!inner(report, "chart-title").empty() &&
+               !inner(report, "chart-unit").empty(),
+           "ready report must explain the selected chart metric and unit");
+    expect(!inner(report, "chart-y-max").empty() &&
+               !inner(report, "chart-y-mid").empty() &&
+               !inner(report, "chart-y-min").empty(),
+           "ready report must label the scientific Y axis");
+    expect(!inner(report, "chart-x-first").empty() &&
+               !inner(report, "chart-x-mid").empty() &&
+               !inner(report, "chart-x-last").empty(),
+           "ready report must label first, middle and last chart years");
 
     Rml::RemoveContext(context->GetName());
     Rml::Shutdown();

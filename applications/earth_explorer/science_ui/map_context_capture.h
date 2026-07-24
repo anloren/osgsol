@@ -42,6 +42,8 @@ struct ScienceLiveTargetProjection
 
 ScienceCaptureSize scienceContextCaptureSize(int sourceWidth,
                                              int sourceHeight);
+bool scienceCaptureHasVisualContent(
+    const std::vector<unsigned char>& bottomUpRgba);
 std::vector<osg::Vec2f> normalizeScienceOverlay(
     const std::vector<ScienceOverlayPath>& paths,
     float viewportWidth, float viewportHeight);

@@ -2,6 +2,8 @@
 #include "ai_media.h"
 #include "ai_prompts.h"
 #include "earth_control_layout.h"
+#include "earth_ui_components.h"
+#include "earth_ui_tokens.h"
 #if defined(__APPLE__)
 #include "ime_bridge.h"   // 中文 IME:上报输入框矩形给候选窗定位
 #endif
@@ -47,11 +49,16 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 7.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.027f, 0.035f, 0.039f, 0.98f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.32f, 0.24f, 0.22f, 0.92f));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.052f, 0.063f, 0.068f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.220f, 0.058f, 0.047f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.827f, 0.192f, 0.137f, 1.0f));
+    ImGui::PushStyleColor(
+        ImGuiCol_WindowBg, earthui::design::kCarbon);
+    ImGui::PushStyleColor(
+        ImGuiCol_Border, earthui::design::kBorder);
+    ImGui::PushStyleColor(
+        ImGuiCol_Button, earthui::design::kIron);
+    ImGui::PushStyleColor(
+        ImGuiCol_ButtonHovered, earthui::design::kOxblood);
+    ImGui::PushStyleColor(
+        ImGuiCol_ButtonActive, earthui::design::kVermilion);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
@@ -65,7 +72,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
     {
         bool busy = core && core->busy();
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.22f, 0.77f, 0.88f, 1.0f));
+        ImGui::PushStyleColor(
+            ImGuiCol_Text, earthui::design::kCyan);
         ImGui::TextUnformatted(u8"AI COMMAND / AI 地球助手");
         ImGui::PopStyleColor();
         ImGui::SameLine();
@@ -100,24 +108,28 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
                             float textW = ImGui::CalcTextSize(e.text.c_str()).x;
                             float pad = avail - textW; if (pad < 0.0f) pad = 0.0f;
                             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + pad);
-                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.75f, 1.0f, 1.0f));
+                            ImGui::PushStyleColor(
+                                ImGuiCol_Text, earthui::design::kCyan);
                             ImGui::TextWrapped(u8"%s", e.text.c_str());
                             ImGui::PopStyleColor();
                             break;
                         }
                         case earthai::ChatEntry::ASSISTANT:
-                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                            ImGui::PushStyleColor(
+                                ImGuiCol_Text, earthui::design::kTextStrong);
                             ImGui::TextWrapped(u8"%s", e.text.c_str());
                             ImGui::PopStyleColor();
                             break;
                         case earthai::ChatEntry::TOOL_NOTE:
-                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+                            ImGui::PushStyleColor(
+                                ImGuiCol_Text, earthui::design::kTextDim);
                             ImGui::TextWrapped(u8"%s", e.text.c_str());
                             ImGui::PopStyleColor();
                             break;
                         case earthai::ChatEntry::ERR:
                         default:
-                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                            ImGui::PushStyleColor(
+                                ImGuiCol_Text, earthui::design::kDanger);
                             ImGui::TextWrapped(u8"%s", e.text.c_str());
                             ImGui::PopStyleColor();
                             break;
@@ -244,9 +256,19 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
         if (!core) ImGui::BeginDisabled();
         else if (busy) ImGui::BeginDisabled();
 
-        // 输入框、明确发送按钮和媒体操作保持同一行；模板只负责准备，不会越过发送确认。
-        const float actionWidth = core ? 184.0f : 0.0f;
-        ImGui::SetNextItemWidth(winWidth - 28.0f - actionWidth);
+        // Measure the real action group. WAIT_B adds a wider button and
+        // Cancel; the old fixed reservation clipped the right edge.
+        const earthai::VideoPhaseKindPublic vphase = video.phase;
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float cancelWidth = ImGui::CalcTextSize(u8"取消").x +
+            ImGui::GetStyle().FramePadding.x * 2.0f;
+        const float contentWidth = ImGui::GetContentRegionAvail().x;
+        const earthui::AiCommandRowLayout commandRow =
+            earthui::computeAiCommandRowLayout(
+                contentWidth, spacing, cancelWidth, core != nullptr,
+                vphase == earthai::VIDEO_WAIT_B);
+        const bool actionsOnNextLine = commandRow.actionsOnNextLine;
+        ImGui::SetNextItemWidth(commandRow.inputWidth);
         const char* hint = core ? u8"问我：飞到纽约 / 打开航班层 / 统计全球地震…"
                                  : u8"设置 EARTH_AI_KEY 启用 AI 对话";
         if (ImGui::InputTextWithHint("##ai_input", hint, _inputBuf, sizeof(_inputBuf),
@@ -270,7 +292,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
 
         if (core)
         {
-            ImGui::SameLine();
+            if (!actionsOnNextLine) ImGui::SameLine();
             const bool canSubmit = !busy && _inputBuf[0] != '\0';
             if (!canSubmit) ImGui::BeginDisabled();
             if (ImGui::Button(u8"发送", ImVec2(52.0f, 0.0f)))
@@ -304,7 +326,6 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
             }
 
             // 🎬 三态：空闲"视频" -> 已录 A"完成B点"(+取消) -> 两点都录完:自动弹确认 Modal。
-            earthai::VideoPhaseKindPublic vphase = video.phase;
             bool videoEnabled = (core && media && mani && !busy
                                  && (vphase == earthai::VIDEO_IDLE || vphase == earthai::VIDEO_WAIT_B));
             ImGui::SameLine();
@@ -381,9 +402,16 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
         }
 
         ImGuiIO& ioModal = ImGui::GetIO();
-        ImGui::SetNextWindowPos(ImVec2(ioModal.DisplaySize.x * 0.5f, ioModal.DisplaySize.y * 0.5f),
-                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Always);
+        const earthui::BoundedWindowLayout modal =
+            earthui::computeCenteredModalLayout(
+                ioModal.DisplaySize.x, ioModal.DisplaySize.y,
+                480.0f, 560.0f);
+        ImGui::SetNextWindowPos(
+            ImVec2(modal.x, modal.y), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(modal.width, 0.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(modal.width, 0.0f),
+            ImVec2(modal.width, modal.maxHeight));
         if (ImGui::BeginPopupModal(u8"确认生成巡航视频", NULL,
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize))
         {
@@ -397,20 +425,35 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
                 ImGui::Separator();
                 ImGui::TextWrapped("%s", info.motionPrompt.c_str());
                 ImGui::Separator();
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.3f, 1.0f));
+                ImGui::PushStyleColor(
+                    ImGuiCol_Text, earthui::design::kMeasure);
                 ImGui::TextWrapped(u8"将提交视频生成(默认 Omni Flash,同步、较快;"
                                    u8"EARTH_AI_VIDEO_MODEL=veo-3.1-* 可换首尾帧穿越模式,约 $1-6/条)。"
                                    u8"此操作计费,确认?");
                 ImGui::PopStyleColor();
 
-                if (ImGui::Button(u8"确认生成", ImVec2(120.0f, 0.0f)))
+                const float actionGap = ImGui::GetStyle().ItemSpacing.x;
+                const float actionWidth = std::max(
+                    96.0f,
+                    (ImGui::GetContentRegionAvail().x - actionGap) * 0.5f);
+                ImGui::PushStyleColor(
+                    ImGuiCol_Button, earthui::design::kCyan);
+                ImGui::PushStyleColor(
+                    ImGuiCol_ButtonHovered, earthui::design::kTextStrong);
+                ImGui::PushStyleColor(
+                    ImGuiCol_ButtonActive, earthui::design::kMeasure);
+                ImGui::PushStyleColor(
+                    ImGuiCol_Text, earthui::design::kCarbon);
+                if (ImGui::Button(u8"确认生成", ImVec2(actionWidth, 0.0f)))
                 {
                     earthai::VideoUiRequest request;
                     request.kind = earthai::VideoUiRequest::Confirm;
                     media->enqueueVideoRequest(request);
                 }
+                ImGui::PopStyleColor(4);
                 ImGui::SameLine();
-                if (ImGui::Button(u8"取消", ImVec2(80.0f, 0.0f)) ||
+                if (ImGui::Button(
+                        u8"取消", ImVec2(actionWidth, 0.0f)) ||
                     ImGui::IsKeyPressed(ImGuiKey_Escape))
                 {
                     earthai::VideoUiRequest request;
@@ -420,7 +463,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media, osg
                 }
                 if (!video.commandError.empty())
                 {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+                    ImGui::PushStyleColor(
+                        ImGuiCol_Text, earthui::design::kDanger);
                     ImGui::TextWrapped(u8"错误：%s", video.commandError.c_str());
                     ImGui::PopStyleColor();
                 }

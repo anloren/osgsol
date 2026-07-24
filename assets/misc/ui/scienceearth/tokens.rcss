@@ -1,11 +1,13 @@
 /*
- * Carbon Spectrum tokens. RmlUi 6.2 deliberately implements a compact CSS
+ * Obsidian Survey tokens. RmlUi 6.2 deliberately implements a compact CSS
  * subset and does not expand browser CSS custom properties. Keep the tokens
  * named here for design/audit tooling; runtime rules use their literal values.
- * science-surface #0a0c0f; science-surface-raised #12171b;
- * science-surface-card #171d21; science-border #2c363b;
- * science-text #e4e8e7; science-muted #93a09e;
- * --science-run #28c9c3; --science-run-hover #51ddd6;
- * science-target #49d5d0; science-coverage #e1bd62;
- * --science-failure #ef6a62; --science-focus #a7efe9.
+ * science-canvas #07090a; science-surface #0d1011;
+ * science-surface-raised #141719; science-surface-hover #1a1e20;
+ * science-border #3b302e; science-border-strong #55413d;
+ * science-text #e5e4df; science-secondary #a7aaa6;
+ * science-muted #737a78; --science-run #38c3df;
+ * science-module #d33123; science-module-deep #380f0c;
+ * science-coverage #e1bd62; --science-failure #ef6a62;
+ * science-success #5cb86a.
  */

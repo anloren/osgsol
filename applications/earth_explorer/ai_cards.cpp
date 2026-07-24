@@ -3,6 +3,7 @@
 // 图表手绘渲染器 + 数值/取值小工具。图表部分纯移动,逻辑与原 ai_ui.cpp 版本逐行一致;
 // 照片卡(drawPhotoCard/pushPhoto)是 Task 8 新增。
 #include "ai_cards.h"
+#include "earth_ui_tokens.h"
 #include "ui_card.h"
 #include <ui/ImGuiComponents.h>
 #include <osg/Notify>
@@ -181,27 +182,37 @@ static void extractLabelsValues(const picojson::value& spec,
 // 六色调色板(hue 均分),donut 分片按序取色；用于区分不同切片而不需要每次算 HSV。
 static ImU32 sliceColor(size_t idx)
 {
-    static const ImU32 palette[6] = {
-        IM_COL32(90, 170, 255, 255),   // 蓝(accent)
-        IM_COL32(255, 170, 60, 255),   // 橙
-        IM_COL32(90, 220, 140, 255),   // 绿
-        IM_COL32(230, 90, 140, 255),   // 粉
-        IM_COL32(190, 130, 255, 255),  // 紫
-        IM_COL32(240, 220, 80, 255),   // 黄
+    const ImVec4 palette[6] = {
+        earthui::design::kCyan,
+        earthui::design::kMeasure,
+        earthui::design::kSuccess,
+        earthui::design::kVermilion,
+        earthui::design::kDanger,
+        earthui::design::kTextDim,
     };
-    return palette[idx % 6];
+    return ImGui::ColorConvertFloat4ToU32(palette[idx % 6]);
 }
 
 static void drawBarChart(ImDrawList* dl, ImVec2 origin, float width,
                          const std::vector<std::string>& labels, const std::vector<double>& values)
 {
-    const ImU32 accent = IM_COL32(90, 170, 255, 255);
-    const ImU32 track = IM_COL32(255, 255, 255, 25);
+    const ImU32 accent =
+        ImGui::ColorConvertFloat4ToU32(earthui::design::kCyan);
+    const ImU32 track =
+        ImGui::ColorConvertFloat4ToU32(earthui::design::kRaisedIron);
+    const ImU32 text =
+        ImGui::ColorConvertFloat4ToU32(earthui::design::kText);
     double maxV = 0.0;
     for (size_t i = 0; i < values.size(); ++i) maxV = std::max(maxV, values[i]);
 
     const float rowH = 22.0f, rowGap = 6.0f;
-    const float labelW = 56.0f, valueW = 40.0f;
+    float measuredLabelWidth = 0.0f;
+    for (const std::string& label : labels)
+        measuredLabelWidth = std::max(
+            measuredLabelWidth, ImGui::CalcTextSize(label.c_str()).x);
+    const float labelW = std::clamp(
+        measuredLabelWidth + 8.0f, 56.0f, width * 0.36f);
+    const float valueW = 46.0f;
     float barAreaW = width - labelW - valueW - 8.0f;
     if (barAreaW < 20.0f) barAreaW = 20.0f;
 
@@ -209,7 +220,11 @@ static void drawBarChart(ImDrawList* dl, ImVec2 origin, float width,
     for (size_t i = 0; i < values.size(); ++i)
     {
         // 标签(左)
-        dl->AddText(ImVec2(origin.x, y + 3.0f), IM_COL32(220, 220, 220, 255), labels[i].c_str());
+        const ImVec4 labelClip(
+            origin.x, y, origin.x + labelW - 4.0f, y + rowH);
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+            ImVec2(origin.x, y + 3.0f), text, labels[i].c_str(), nullptr,
+            0.0f, &labelClip);
 
         // 条形背景 track + 前景 bar(0/负值钳到 0 长度,但数值文字仍照常显示)
         float barX = origin.x + labelW;
@@ -223,7 +238,7 @@ static void drawBarChart(ImDrawList* dl, ImVec2 origin, float width,
         // 数值(右)
         char buf[32];
         formatNum(buf, sizeof(buf), values[i]);
-        dl->AddText(ImVec2(barX + barAreaW + 8.0f, y + 3.0f), IM_COL32(230, 230, 230, 255), buf);
+        dl->AddText(ImVec2(barX + barAreaW + 8.0f, y + 3.0f), text, buf);
 
         y += rowH + rowGap;
     }
@@ -244,7 +259,9 @@ static void drawDonutChart(ImDrawList* dl, ImVec2 origin, float width,
 
     if (total <= 0.0)
     {
-        dl->AddCircle(center, radius, IM_COL32(255, 255, 255, 40), 64, thickness);
+        dl->AddCircle(center, radius,
+            ImGui::ColorConvertFloat4ToU32(
+                earthui::design::kRaisedIron), 64, thickness);
     }
     else
     {
@@ -265,7 +282,8 @@ static void drawDonutChart(ImDrawList* dl, ImVec2 origin, float width,
     formatNum(totBuf, sizeof(totBuf), total);
     ImVec2 tSize = ImGui::CalcTextSize(totBuf);
     dl->AddText(ImVec2(center.x - tSize.x * 0.5f, center.y - tSize.y * 0.5f),
-               IM_COL32(255, 255, 255, 255), totBuf);
+               ImGui::ColorConvertFloat4ToU32(
+                   earthui::design::kTextStrong), totBuf);
 
     ImGui::Dummy(ImVec2(width, radius * 2.0f + 4.0f));
 
@@ -279,26 +297,55 @@ static void drawDonutChart(ImDrawList* dl, ImVec2 origin, float width,
         char numBuf[32], buf[96];
         formatNum(numBuf, sizeof(numBuf), values[i]);
         snprintf(buf, sizeof(buf), "%s: %s", labels[i].c_str(), numBuf);
-        ImGui::TextUnformatted(buf);
+        ImGui::TextWrapped("%s", buf);
     }
 }
 
 static void drawLineChart(ImDrawList* dl, ImVec2 origin, float width,
                           const std::vector<std::string>& labels, const std::vector<double>& values)
 {
-    const float chartH = 90.0f;
+    const float chartH = 148.0f;
     double vmin = values[0], vmax = values[0];
     for (size_t i = 1; i < values.size(); ++i) { vmin = std::min(vmin, values[i]); vmax = std::max(vmax, values[i]); }
     double range = vmax - vmin;
     if (range <= 0.0) range = 1.0;   // 全等值时避免除零,画一条水平线
 
+    const ImU32 background =
+        ImGui::ColorConvertFloat4ToU32(earthui::design::kIron);
+    const ImU32 border =
+        ImGui::ColorConvertFloat4ToU32(earthui::design::kBorder);
+    const ImU32 grid = IM_COL32(59, 48, 46, 110);
+    const ImU32 axis =
+        ImGui::ColorConvertFloat4ToU32(earthui::design::kTextDim);
+    const ImU32 series =
+        ImGui::ColorConvertFloat4ToU32(earthui::design::kCyan);
+    const ImU32 fill = IM_COL32(56, 195, 223, 35);
+    const ImVec2 chartMax(origin.x + width, origin.y + chartH);
+    dl->AddRectFilled(origin, chartMax, background, 2.0f);
+    dl->AddRect(origin, chartMax, border, 2.0f);
+
+    const ImVec2 plotMin(origin.x + 48.0f, origin.y + 10.0f);
+    const ImVec2 plotMax(origin.x + width - 10.0f, origin.y + chartH - 28.0f);
+    const float plotWidth = std::max(1.0f, plotMax.x - plotMin.x);
+    const float plotHeight = std::max(1.0f, plotMax.y - plotMin.y);
+    for (int tick = 0; tick < 3; ++tick)
+    {
+        const float t = static_cast<float>(tick) / 2.0f;
+        const float y = plotMax.y - t * plotHeight;
+        dl->AddLine(ImVec2(plotMin.x, y), ImVec2(plotMax.x, y), grid);
+        char valueText[32];
+        formatNum(valueText, sizeof(valueText), vmin + t * (vmax - vmin));
+        dl->AddText(ImVec2(origin.x + 5.0f, y - 7.0f), axis, valueText);
+    }
+
     std::vector<ImVec2> pts(values.size());
-    float stepX = (values.size() > 1) ? width / (float)(values.size() - 1) : 0.0f;
+    float stepX = (values.size() > 1)
+        ? plotWidth / (float)(values.size() - 1) : 0.0f;
     for (size_t i = 0; i < values.size(); ++i)
     {
         float t = (float)((values[i] - vmin) / range);
-        float x = origin.x + stepX * (float)i;
-        float y = origin.y + chartH - t * chartH;
+        float x = plotMin.x + stepX * (float)i;
+        float y = plotMax.y - t * plotHeight;
         pts[i] = ImVec2(x, y);
     }
 
@@ -309,34 +356,39 @@ static void drawLineChart(ImDrawList* dl, ImVec2 origin, float width,
     // 画一个梯形(两个顶点在折线上、两个顶点在底边上),每个梯形都必然是凸的,不会出错。
     if (pts.size() >= 2)
     {
-        const ImU32 fillCol = IM_COL32(90, 170, 255, 40);
-        float baseY = origin.y + chartH;
+        float baseY = plotMax.y;
         for (size_t i = 0; i + 1 < pts.size(); ++i)
         {
             dl->AddQuadFilled(pts[i], pts[i + 1], ImVec2(pts[i + 1].x, baseY), ImVec2(pts[i].x, baseY),
-                              fillCol);
+                              fill);
         }
     }
     if (pts.size() >= 2)
-        dl->AddPolyline(pts.data(), (int)pts.size(), IM_COL32(90, 170, 255, 255), 0, 2.0f);
+        dl->AddPolyline(pts.data(), (int)pts.size(), series, 0, 2.0f);
     for (size_t i = 0; i < pts.size(); ++i)
-        dl->AddCircleFilled(pts[i], 3.0f, IM_COL32(255, 255, 255, 220));
+        dl->AddCircleFilled(pts[i], 3.0f, series);
 
-    // 轴范围标注(左上角=max,左下角=min)
-    char maxBuf[32], minBuf[32];
-    snprintf(maxBuf, sizeof(maxBuf), "%.1f", vmax);
-    snprintf(minBuf, sizeof(minBuf), "%.1f", vmin);
-    dl->AddText(ImVec2(origin.x, origin.y - 2.0f), IM_COL32(180, 180, 180, 255), maxBuf);
-    dl->AddText(ImVec2(origin.x, origin.y + chartH - 12.0f), IM_COL32(180, 180, 180, 255), minBuf);
-
-    ImGui::Dummy(ImVec2(width, chartH + 6.0f));
-
-    // 首尾标签(数据点多时中间标签容易挤在一起,先只标首尾,够用)
+    // The x axis is part of the chart, not a detached line of text.
     if (!labels.empty())
     {
-        ImGui::TextDisabled("%s", labels.front().c_str());
-        if (labels.size() > 1) { ImGui::SameLine(width - ImGui::CalcTextSize(labels.back().c_str()).x); ImGui::TextDisabled("%s", labels.back().c_str()); }
+        dl->AddText(ImVec2(plotMin.x, plotMax.y + 7.0f),
+                    axis, labels.front().c_str());
+        if (labels.size() > 2)
+        {
+            const size_t middle = labels.size() / 2;
+            const ImVec2 size = ImGui::CalcTextSize(labels[middle].c_str());
+            dl->AddText(ImVec2(pts[middle].x - size.x * 0.5f,
+                               plotMax.y + 7.0f),
+                        axis, labels[middle].c_str());
+        }
+        if (labels.size() > 1)
+        {
+            const ImVec2 size = ImGui::CalcTextSize(labels.back().c_str());
+            dl->AddText(ImVec2(plotMax.x - size.x, plotMax.y + 7.0f),
+                        axis, labels.back().c_str());
+        }
     }
+    ImGui::Dummy(ImVec2(width, chartH + 4.0f));
 }
 
 static void drawStatChart(const std::vector<std::string>& labels, const std::vector<double>& values)
@@ -345,13 +397,20 @@ static void drawStatChart(const std::vector<std::string>& labels, const std::vec
     char buf[32];
     formatNum(buf, sizeof(buf), v);
 
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(
+        ImGuiCol_Text, earthui::design::kTextStrong);
     ImGui::SetWindowFontScale(2.2f);
     ImGui::TextUnformatted(buf);
     ImGui::SetWindowFontScale(1.0f);
     ImGui::PopStyleColor();
 
-    if (!labels.empty()) ImGui::TextDisabled("%s", labels[0].c_str());
+    if (!labels.empty())
+    {
+        ImGui::PushStyleColor(
+            ImGuiCol_Text, earthui::design::kTextDim);
+        ImGui::TextWrapped("%s", labels[0].c_str());
+        ImGui::PopStyleColor();
+    }
 }
 
 void AICardPanel::drawChartCard(const picojson::value& spec, float width)
@@ -364,6 +423,18 @@ void AICardPanel::drawChartCard(const picojson::value& spec, float width)
     std::vector<std::string> labels;
     std::vector<double> values;
     extractLabelsValues(spec, labels, values);
+    const std::string unit =
+        spec.contains("unit") && spec.get("unit").is<std::string>()
+            ? spec.get("unit").get<std::string>() : std::string();
+    const std::string description =
+        spec.contains("description") &&
+        spec.get("description").is<std::string>()
+            ? spec.get("description").get<std::string>() : std::string();
+
+    ImGui::TextDisabled(u8"单位：%s",
+        unit.empty() ? u8"未提供" : unit.c_str());
+    if (!description.empty())
+        ImGui::TextWrapped("%s", description.c_str());
 
     if (values.empty())
     {

@@ -38,6 +38,8 @@ int main()
     CHECK(nearlyEqual(shell.navigationWidth, 64.0f));
     CHECK(nearlyEqual(shell.drawerWidth, 310.0f));
     CHECK(nearlyEqual(shell.insightWidth, 330.0f));
+    CHECK(nearlyEqual(shell.drawerX, shell.navigationWidth));
+    CHECK(nearlyEqual(shell.drawerY, shell.topBarHeight));
     CHECK(shell.drawerX + shell.drawerWidth <
           1024.0f - shell.outerGap - shell.insightWidth);
     CHECK(shell.drawerY + shell.drawerHeight <= shell.commandY + 0.01f);
@@ -45,6 +47,8 @@ int main()
     CHECK(shell.commandY + shell.commandHeight < shell.contextY);
     CHECK(nearlyEqual(shell.contextY + shell.contextHeight +
                       shell.statusHeight, 576.0f));
+    CHECK(shell.contextX > shell.navigationWidth);
+    CHECK(shell.contextWidth < 1024.0f - shell.navigationWidth);
 
     const earthui::EarthUiShellLayout shellClosed =
         earthui::computeEarthUiShellLayout(1024.0f, 576.0f, false);
@@ -90,6 +94,34 @@ int main()
     CHECK(nearlyEqual(scienceLarge.reportHeight, 680.0f));
     CHECK(scienceLarge.mapWidth >= 480.0f);
 
+    const earthui::AiCommandRowLayout normalCommand =
+        earthui::computeAiCommandRowLayout(
+            720.0f, 8.0f, 42.0f, true, false);
+    CHECK(!normalCommand.actionsOnNextLine);
+    CHECK(normalCommand.actionWidth > 140.0f);
+    CHECK(normalCommand.inputWidth + normalCommand.actionWidth <= 720.01f);
+    const earthui::AiCommandRowLayout videoCommand =
+        earthui::computeAiCommandRowLayout(
+            330.0f, 8.0f, 42.0f, true, true);
+    CHECK(videoCommand.actionsOnNextLine);
+    CHECK(nearlyEqual(videoCommand.inputWidth, 330.0f));
+    CHECK(videoCommand.actionWidth > normalCommand.actionWidth);
+
+    const earthui::BoundedWindowLayout compactModal =
+        earthui::computeCenteredModalLayout(
+            640.0f, 360.0f, 480.0f, 560.0f);
+    CHECK(compactModal.width <= 640.0f - 24.0f);
+    CHECK(compactModal.maxHeight <= 360.0f - 24.0f);
+    CHECK(nearlyEqual(compactModal.x, 320.0f));
+    CHECK(nearlyEqual(compactModal.y, 180.0f));
+
+    const earthui::MapToastLayout compactToast =
+        earthui::computeMapToastLayout(1024.0f, 576.0f, true);
+    CHECK(compactToast.x >= shell.navigationWidth + shell.drawerWidth);
+    CHECK(compactToast.x + compactToast.width <=
+          1024.0f - shell.insightWidth - shell.outerGap);
+    CHECK(compactToast.y >= shell.topBarHeight);
+
     std::vector<std::string> scienceFrameOrder;
     earthui::finishLeftThenDrawScienceResults(
         [&scienceFrameOrder]() { scienceFrameOrder.push_back("end-left"); },
@@ -132,6 +164,17 @@ int main()
     CHECK(source.find("drawEarthUiContextTray") != std::string::npos);
     CHECK(source.find("SetNextWindowPos(ImVec2(20.0f, 20.0f)") ==
           std::string::npos);
+    const std::vector<std::string> drawerSections = {
+        "\"camera\", u8\"相机\"", "\"sun\", u8\"太阳与光照\"",
+        "\"render\", u8\"渲染\"", "\"layer_catalog\", u8\"图层目录\"",
+        "\"go_to\", u8\"跳转\"", "\"bookmarks\", u8\"书签与巡游\"",
+        "\"tasks\", u8\"任务与状态\"", "\"settings\", u8\"设置\""};
+    for (const std::string& section : drawerSections)
+        CHECK(source.find(section) != std::string::npos);
+    CHECK(source.find("computeMapToastLayout") != std::string::npos);
+    CHECK(source.find("osg::Vec4(0.302f") == std::string::npos);
+    CHECK(source.find("osg::Vec4(0.208f") == std::string::npos);
+    CHECK(source.find("osg::Vec4(1.0f, 0.824f") == std::string::npos);
 
     // RmlUi must own the outer post-draw callback so it can initialize on the
     // first rendered frame and then invoke the legacy ImGui shell as its
@@ -149,6 +192,9 @@ int main()
     CHECK(rmlAttach != std::string::npos);
     CHECK(imguiAttach != std::string::npos);
     CHECK(rmlAttach < imguiAttach);
+    CHECK(mainSource.find(
+        "contextCaptureCallback->setup(cameras[3], 2);") !=
+        std::string::npos);
 
     // A constrained panel must not use ImGui's default "control then visible
     // label on the right" form. At compact widths that pattern clips the
@@ -282,7 +328,39 @@ int main()
     CHECK(gallery.find("DegreesToRadians") != std::string::npos);
     CHECK(gallery.find(u8"不会自动运行") != std::string::npos);
     CHECK(gallery.find("submit(") == std::string::npos);
+    CHECK(aiUi.find(
+        "const float contentWidth = ImGui::GetContentRegionAvail().x;") !=
+          std::string::npos);
+    CHECK(aiUi.find("actionsOnNextLine") != std::string::npos);
+    CHECK(aiUi.find("computeAiCommandRowLayout") != std::string::npos);
+    CHECK(aiUi.find("computeCenteredModalLayout") != std::string::npos);
+    CHECK(aiUi.find("SetNextWindowSize(ImVec2(420.0f") ==
+          std::string::npos);
+    CHECK(aiUi.find("const float actionWidth = core ? 184.0f") ==
+          std::string::npos);
 
+    std::ifstream cardInput(std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/ui_card.h");
+    std::ostringstream cardBuffer;
+    cardBuffer << cardInput.rdbuf();
+    const std::string cards = cardBuffer.str();
+    CHECK(cardInput.good() || cardInput.eof());
+    CHECK(cards.find(u8"洞察透镜###earth_insight_lens") !=
+          std::string::npos);
+    CHECK(cards.find("ImGui::BeginTabBar") != std::string::npos);
+    CHECK(cards.find("ImGuiWindowFlags_HorizontalScrollbar") ==
+          std::string::npos);
+
+    std::ifstream tickerInput(std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/event_ticker.h");
+    std::ostringstream tickerBuffer;
+    tickerBuffer << tickerInput.rdbuf();
+    const std::string ticker = tickerBuffer.str();
+    CHECK(tickerInput.good() || tickerInput.eof());
+    CHECK(ticker.find("ImGuiStyleVar_WindowRounding, 0.0f") !=
+          std::string::npos);
+    CHECK(ticker.find("ImGui::TextWrapped(\"%s\", e.title.c_str())") !=
+          std::string::npos);
 
     std::cout << "[OK] Earth control panel responsive layout\n";
     return 0;
