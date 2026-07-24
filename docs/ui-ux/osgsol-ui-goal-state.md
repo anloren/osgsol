@@ -4,7 +4,7 @@
 
 ## 已冻结基线
 
-- 当前候选代码提交：`19d0bbb fix(ui): prevent report and command overlap`
+- 当前候选代码提交：`43d7517 fix(ui): complete interactive surface gates`
 - 分支：`codex/scienceearth-agro-climate-v1`
 - 正式 App：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前截图：`/Users/USER/Desktop/Screenshot 2026-07-24 at 11.21.07 AM.png`
@@ -54,6 +54,12 @@
   1024×576、1280×720、1440×900 跨引擎组合回归；
 - [x] 跨引擎组合直接执行真实 AI 命令栏，并消除默认 AI 工具头
   超出 Shell 高度后与科学报告重叠的问题；
+- [x] 科学位置操作改为单一原生菜单，地图中心、当前视野、更新和返回
+  均经过真实 RmlUi 选择事件验证；
+- [x] 科学报告的指标、复制、更多、删除、最小化、恢复、关闭和返回区域
+  均经过真实点击链路；
+- [x] AI 历史、分析模板和视频确认进入真实鼠标与像素门禁，模板浮层
+  不压命令栏，照片/视频标签不裁剪；
 - [x] 82/82 离线全回归；
 - [x] 签名和包体审计、唯一桌面候选更新；
 - [ ] 用户正式包可视与 Quit 验收。
@@ -77,7 +83,8 @@
   开始分析及带坐标轴趋势图
 - 真实 AI 组合：同帧门禁不再使用命令栏替身，直接运行正式 `AIChatUI::draw`；
   默认标题、状态、历史和分析模板在宽屏合并为一行，窄屏只进行规则换行；
-  实际 ImGui 窗口几何证明工作台、报告、AI 命令栏、洞察轨道和上下文条互不覆盖
+  实际 ImGui 窗口几何证明工作台、报告、AI 命令栏、洞察轨道和上下文条互不覆盖；
+  真实鼠标继续展开/收起历史、打开/外点关闭分析模板，并呈现完整视频确认。
 - 跨引擎证据：
   `build/science_g3_release/ui-evidence/science-composite/`
   中的 `workbench-shell-1024x576.png`、`workbench-shell-1280x720.png`、
@@ -90,26 +97,26 @@
   Copernicus DEM、ERA5-Land 均通过
 - 地图与退出保护：地形科学融合合同、3D Tiles、相机、正常退出守卫均通过
 - 正式打包契约：通过
-- G0-v2 桌面包审计：PASS，新增发现 0、违规 0、未解析依赖 0、
-  四项包体门槛均 PASS；保留一项既有 OSG 运行时编译路径基线债务
+- G0-v2 桌面包审计：PASS，根因 0、新增发现 0、违规 0、未解析依赖 0、
+  四项包体门槛均 PASS
 - 暂存包严格深度签名：PASS
-- 桌面可执行文件普通签名与字节校验：PASS；macOS Desktop FileProvider 随后在
-  App 内容附加 `com.apple.FinderInfo`，因此桌面路径的 `codesign --strict`
-  会报告外部元数据。
+- 桌面包文件字节、模式与暂存包完全一致，内嵌 ad-hoc CodeDirectory 可读；
+  macOS Desktop FileProvider 随后在 App 内容附加 `com.apple.FinderInfo`，
+  因此桌面路径的 `codesign --strict` 会报告外部元数据。
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前桌面候选：`0.6.1` / `G3.1`，来源提交
-  `19d0bbb60b5e4d7aeb6d2bce6b991426230ccbb3`，channel
+  `43d7517d7ef72a2a6ccf1b6bba96eaf6151b1b7b`，channel
   `ui-ux-goal-candidate`
 - 桌面/严格暂存包可执行文件 SHA-256：
-  `20af891534de2a01f70a6f8c1dadcda2ef083dfbd962e7aa89c12d3ff947187a`
+  `ec6f115ed1c87a9198dcc99178cb9dd050d611d9a38948a7b573dec797a8a534`
 - 桌面/严格暂存包整包内容与模式指纹：
-  `3ec15c26ef030efc9e17499cd8e89fd28198099f8d3ebbc582f6382976156616`
+  `49cd8c7d58b73dcced7cb17d7f9111eeb65035cc6cf5d0813c54f148251867e1`
 - 桌面包与严格暂存包逐文件一致：371 个普通文件、37 个符号链接；
   桌面进程 0、同名 App 1 个、最新异常报告仍为
   `osgSol_Earth-2026-07-23-222801.ips`
 - 上一桌面候选备份：
-  `build/desktop-backups/pre-ui-report-command-20260724-184501-a22ecb9/osgSol Earth.previous.app`
+  `build/desktop-backups/pre-ui-interactive-gates-20260724-200837-43d7517/osgSol Earth.previous.app`
 - 本次替换后没有出现 FileProvider 恢复的第二个 App；桌面仍只保留一个正式 App。
 - 自动化没有启动、前置或操作桌面候选
 

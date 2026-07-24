@@ -14,7 +14,7 @@ before it can be tagged or synchronized as accepted.
 - Version: 0.6.1
 - ScienceEarth phase: G3.1
 - Channel: ui-ux-goal-candidate
-- Source commit: `19d0bbb60b5e4d7aeb6d2bce6b991426230ccbb3`
+- Source commit: `43d7517d7ef72a2a6ccf1b6bba96eaf6151b1b7b`
 - Provenance: recorded in `Contents/Info.plist` and
   `Contents/Resources/package-audit.env`
 - Automated gates: package contract, bundle closure, provenance, data manifest,
@@ -27,6 +27,11 @@ before it can be tagged or synchronized as accepted.
   scrolling, run action, report safe region, and axis-bearing trend report.
   The composite frame now executes the real `AIChatUI` rather than a command-bar
   surrogate and rejects overlap against the actual ImGui command window.
+  The interaction gate also selects every Science data source and target
+  operation, then clicks report tabs, metric, copy, overflow, delete
+  cancel/confirm, minimize/reopen, close, and target focus. The native AI gate
+  clicks history and templates, checks the template popup against the real
+  command window, and renders the video confirmation surface.
 - Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle.
   A FileProvider-restored old `osgSol Earth 2.app` was archived outside Desktop
   without launching or altering either package.
@@ -46,7 +51,8 @@ before it can be tagged or synchronized as accepted.
   wheel can scroll both down and back up after reaching either edge.
 - [ ] Short module and AI panels do not show a decorative scroll bar when
   nothing overflows. Long content shows one continuous in-panel scroll bar.
-- [ ] Select `ERA5 agricultural climate`, lock the map center, and verify the
+- [ ] Select `ERA5 agricultural climate`, use the `位置操作` menu to lock the
+  map center, and verify the
   exact coordinates and the message `镜头移动不会改变已锁定范围`.
 - [ ] Moving the camera after locking does not silently change the target.
   `回到分析区域` is the only control in this flow that moves the camera.
@@ -84,6 +90,9 @@ before it can be tagged or synchronized as accepted.
 - [ ] In the default collapsed AI state, title/status/history/template form one
   compact tool header at normal width and a deliberate two-line header at
   compact width; the AI bar never covers the scientific report.
+- [ ] Open AI history, analysis templates, and video confirmation once. The
+  template panel stays entirely above the command bar, and the photo/video
+  labels and confirmation actions are complete and clickable.
 - [ ] Resize the window smaller and then larger once. The Science composer and
   report reflow inside the viewport; no old 720 px panel remains outside it.
 - [ ] Tab advances through visible native and Science controls in task order;
