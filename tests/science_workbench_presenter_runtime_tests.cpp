@@ -44,6 +44,48 @@ std::string inner(Rml::ElementDocument* document, const char* id)
     return element ? std::string(element->GetInnerRML()) : std::string();
 }
 
+Rml::ElementDocument* documentContaining(Rml::Context& context,
+                                         const char* id)
+{
+    for (int index = 0; index < context.GetNumDocuments(); ++index)
+    {
+        Rml::ElementDocument* document = context.GetDocument(index);
+        if (document && document->GetElementById(id)) return document;
+    }
+    return nullptr;
+}
+
+float height(Rml::ElementDocument* document, const char* id)
+{
+    Rml::Element* element = document ? document->GetElementById(id) : nullptr;
+    return element ? element->GetOffsetHeight() : 0.0f;
+}
+
+bool visible(Rml::ElementDocument* document, const char* id)
+{
+    Rml::Element* element = document ? document->GetElementById(id) : nullptr;
+    return element && element->IsVisible(true);
+}
+
+void click(Rml::Context& context, Rml::ElementDocument* document,
+           const char* id)
+{
+    Rml::Element* element = document ? document->GetElementById(id) : nullptr;
+    expect(element != nullptr, std::string("click target is missing: ") + id);
+    element->ScrollIntoView(true);
+    context.Update();
+    const Rml::Vector2f center = element->GetAbsoluteOffset() +
+        Rml::Vector2f(
+            element->GetOffsetWidth() * 0.5f,
+            element->GetOffsetHeight() * 0.5f);
+    context.ProcessMouseMove(-1, -1, 0);
+    context.ProcessMouseMove(
+        static_cast<int>(center.x), static_cast<int>(center.y), 0);
+    context.ProcessMouseButtonDown(0, 0);
+    context.ProcessMouseButtonUp(0, 0);
+    context.Update();
+}
+
 std::vector<ScienceWorkbenchQueuedAction> drain(
     ScienceWorkbenchPresenter& presenter)
 {
@@ -184,6 +226,11 @@ int main()
                methodActions.front().json.find("direction-change") !=
                    std::string::npos,
            "one method selection must dispatch exactly one method action");
+    expect(height(composer, "method-help-copy") == 0.0f,
+           "method help must be collapsed before user interaction");
+    click(*context, composer, "method-help");
+    expect(height(composer, "method-help-copy") > 1.0f,
+           "method help button does not reveal its explanation");
 
     presenter.publishActionError("simulated action rejection");
     presenter.onRmlFrame(*context);
@@ -199,11 +246,13 @@ int main()
     expect(drain(presenter).empty(),
            "opening an artifact must not dispatch a metric change recursively");
 
-    Rml::ElementDocument* report = context->GetDocument(1);
+    Rml::ElementDocument* report =
+        documentContaining(*context, "science-report");
     expect(report != nullptr, "report document must remain open");
-    expect(inner(report, "report-title").find("AlphaEarth Foundations") !=
-               std::string::npos,
-           "the opened report must match the AlphaEarth artifact");
+    const std::string reportTitle = inner(report, "report-title");
+    expect(reportTitle.find("AlphaEarth Foundations") != std::string::npos,
+           "the opened report must match the AlphaEarth artifact; rendered=" +
+               reportTitle);
     expect(!inner(report, "chart-title").empty() &&
                !inner(report, "chart-unit").empty(),
            "ready report must explain the selected chart metric and unit");
@@ -215,6 +264,21 @@ int main()
                !inner(report, "chart-x-mid").empty() &&
                !inner(report, "chart-x-last").empty(),
            "ready report must label first, middle and last chart years");
+    click(*context, report, "tab-trends");
+    expect(visible(report, "trends") && !visible(report, "overview"),
+           "real report tab click does not switch to time trends");
+    click(*context, report, "tab-spatial-range");
+    expect(visible(report, "spatial-range") &&
+               !visible(report, "trends"),
+           "real report tab click does not switch to spatial evidence");
+    click(*context, report, "tab-methods-evidence");
+    expect(visible(report, "methods-evidence") &&
+               !visible(report, "spatial-range"),
+           "real report tab click does not switch to methods and evidence");
+    click(*context, report, "tab-overview");
+    expect(visible(report, "overview") &&
+               !visible(report, "methods-evidence"),
+           "real report tab click does not return to overview");
 
     Rml::RemoveContext(context->GetName());
     Rml::Shutdown();

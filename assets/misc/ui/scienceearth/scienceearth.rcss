@@ -87,6 +87,7 @@ scrollbarhorizontal sliderarrowinc {
     white-space: normal;
     word-break: break-word;
 }
+.method-help-copy { margin-top: 10px; margin-bottom: 0; }
 
 .workflow-card {
     display: block;
@@ -318,6 +319,7 @@ select selectbox option.disabled {
 .report-section { display: none; }
 #overview { display: block; }
 .context-thumbnail { position: relative; width: 512px; height: 288px; margin-left: auto; margin-right: auto; padding: 0; background: #141719; border: 1px #3b302e; border-radius: 4px; overflow: hidden; }
+#context-placeholder { position: absolute; left: 28px; right: 28px; top: 118px; color: #a7aaa6; text-align: center; }
 .context-image { display: none; position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 .context-overlay { display: none; position: absolute; pointer-events: none; }
 .requested-overlay { border: 2px #38c3df; }

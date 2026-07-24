@@ -69,7 +69,8 @@
         <section id="method-options" class="workflow-card">
             <div class="section-heading">
                 <h2>分析方法</h2>
-                <button class="icon-control" aria-label="查看分析方法说明">?</button>
+                <button id="method-help" class="icon-control"
+                        aria-label="查看分析方法说明">?</button>
             </div>
             <div class="select-shell">
                 <select id="method-select" name="method">
@@ -81,6 +82,9 @@
                       aria-hidden="true">▼</span>
             </div>
             <p id="method-summary" class="muted">分别呈现不同单位的指标，不混合坐标轴。</p>
+            <p id="method-help-copy" class="help-copy method-help-copy">
+                方法只决定如何比较当前数据源，不会改变分析位置或年份。报告会分开标注指标、单位、缺测、请求范围和数据实际覆盖。
+            </p>
         </section>
 
         <section id="cost-disclosure" class="workflow-card disclosure">

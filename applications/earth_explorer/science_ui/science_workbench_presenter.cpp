@@ -795,6 +795,12 @@ public:
             }
         }
         if (!active || !active->visible) return;
+        // Clicking or editing the composer can move its document above the
+        // report document in RmlUi's document stack.  A newly opened report
+        // must reclaim the front; otherwise its visible tabs and window
+        // actions are covered by the transparent composer document and appear
+        // unresponsive.
+        reportDocument->PullToFront();
         updateContextSnapshot(active->artifactId);
         if (Rml::Element* window = reportElement("science-report"))
         {
@@ -1263,6 +1269,7 @@ public:
     std::string renderedArtifactFingerprint;
     bool costOpen = false;
     bool helpOpen = false;
+    bool methodHelpOpen = false;
     int controlSyncDepth = 0;
     std::string pendingSourceId;
     std::string pendingMethodId;
@@ -1312,7 +1319,7 @@ bool ScienceWorkbenchPresenter::onRmlContextReady(
     const char* clickIds[] = {
         "lock-map-center", "lock-current-view", "update-target",
         "focus-target", "run-action", "cancel-action", "cost-toggle",
-        "science-help"};
+        "science-help", "method-help"};
     for (const char* id : clickIds) _impl->attach(*this, id, "click");
     const char* changeIds[] = {
         "source-select", "method-select", "first-year", "last-year"};
@@ -1754,6 +1761,12 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
     {
         _impl->helpOpen = !_impl->helpOpen;
         _impl->setDisplay("science-help-copy", _impl->helpOpen);
+    }
+    else if (id == "method-help")
+    {
+        _impl->methodHelpOpen = !_impl->methodHelpOpen;
+        _impl->setDisplay(
+            "method-help-copy", _impl->methodHelpOpen);
     }
     else if (id == "lock-map-center" || id == "update-target")
         _impl->enqueue("lock-map-center", "");

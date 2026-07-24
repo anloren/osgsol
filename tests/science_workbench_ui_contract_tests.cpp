@@ -70,6 +70,38 @@ double contrastRatio(const std::string& foreground,
     const double b = relativeLuminance(background);
     return (std::max(a, b) + 0.05) / (std::min(a, b) + 0.05);
 }
+
+void expectButtonsHaveBindings(const std::string& markup,
+                               const std::string& presenter)
+{
+    std::size_t position = 0;
+    while ((position = markup.find("<button", position)) !=
+           std::string::npos)
+    {
+        const std::size_t end = markup.find('>', position);
+        expect(end != std::string::npos, "button tag must be complete");
+        const std::size_t idStart = markup.find("id=\"", position);
+        if (idStart == std::string::npos || idStart > end)
+        {
+            std::cerr << "FAIL: every visible RmlUi button needs a stable ID"
+                      << std::endl;
+            std::exit(1);
+        }
+        const std::size_t valueStart = idStart + 4;
+        const std::size_t valueEnd = markup.find('"', valueStart);
+        expect(valueEnd != std::string::npos && valueEnd <= end,
+               "button ID must be complete");
+        const std::string id =
+            markup.substr(valueStart, valueEnd - valueStart);
+        if (presenter.find("\"" + id + "\"") == std::string::npos)
+        {
+            std::cerr << "FAIL: visible RmlUi button is not bound by the "
+                         "presenter: " << id << std::endl;
+            std::exit(1);
+        }
+        position = end + 1;
+    }
+}
 }
 
 int main()
@@ -126,8 +158,13 @@ int main()
            "resource estimate must be collapsed by default");
     expect(rml.find("aria-label=\"查看科学分析帮助\"") != std::string::npos,
            "icon controls need accessible Chinese names");
+    expect(rml.find("id=\"method-help\"") != std::string::npos &&
+               rml.find("id=\"method-help-copy\"") != std::string::npos,
+           "analysis-method help must be a real bound disclosure");
     expect(rml.find(" / ") == std::string::npos,
            "normal mode must not duplicate every label in English");
+    expectButtonsHaveBindings(rml, presenter);
+    expectButtonsHaveBindings(report, presenter);
 
     expect(tokens.find("--science-run") != std::string::npos &&
                tokens.find("--science-failure") != std::string::npos,
@@ -235,6 +272,10 @@ int main()
                "report evidence element ID is missing");
     expect(count(report, "id=\"report-focus-target\"") == 1,
            "report must expose one explicit map focus action");
+    expect(style.find("#context-placeholder") != std::string::npos &&
+               style.find("background: #141719") != std::string::npos,
+           "report overview needs a dark non-blank placeholder while a valid"
+           " map snapshot is unavailable");
 
     std::cout << "Science workbench UI contract tests passed" << std::endl;
     return 0;

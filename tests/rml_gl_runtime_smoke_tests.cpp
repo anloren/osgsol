@@ -339,6 +339,35 @@ public:
         }
     }
 
+    void showOverviewReport()
+    {
+        Rml::Element* window = reportElement("science-report");
+        if (!window) return;
+        window->SetProperty("display", "block");
+        window->SetProperty("left", "500px");
+        window->SetProperty("top", "72px");
+        window->SetProperty("width", "800px");
+        window->SetProperty("height", "700px");
+        if (Rml::Element* overview = reportElement("overview"))
+            overview->SetProperty("display", "block");
+        if (Rml::Element* trends = reportElement("trends"))
+            trends->SetProperty("display", "none");
+        setReportText("report-title", "ERA5 Agricultural Climate");
+        setReportText(
+            "context-placeholder",
+            "地图快照尚未就绪；不会用白底冒充分析范围。");
+        setReportText(
+            "context-caption",
+            "固定分析位置 · 24.9752°, 102.0031°");
+        setReportText(
+            "overview-summary",
+            "2017–2025 · 9 个年度 · 6 项独立单位指标");
+        setReportText("overview-time-range", "2017–2025");
+        setReportText(
+            "overview-spatial-support", "ERA5 0.25° 数据网格");
+        setReportText("overview-completeness", "54/54 个年度值");
+    }
+
     void hideTrendReport()
     {
         if (Rml::Element* window = reportElement("science-report"))
@@ -362,6 +391,18 @@ public:
         Rml::Element* element = reportElement(id);
         return element
             ? element->GetAbsoluteOffset().x + element->GetOffsetWidth() : 0.0f;
+    }
+
+    float reportLeft(const char* id) const
+    {
+        Rml::Element* element = reportElement(id);
+        return element ? element->GetAbsoluteOffset().x : 0.0f;
+    }
+
+    float reportTop(const char* id) const
+    {
+        Rml::Element* element = reportElement(id);
+        return element ? element->GetAbsoluteOffset().y : 0.0f;
     }
 
     float reportBottom(const char* id) const
@@ -706,6 +747,31 @@ int main()
                  runningRgba.data());
     expect(writePpm("/tmp/osgsol_rml_running.ppm", runningRgba),
            "could not write compact running-state evidence image");
+
+    client.showOverviewReport();
+    (*camera->getPostDrawCallback())(renderInfo);
+    glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
+    glFinish();
+    std::vector<unsigned char> overviewRgba(
+        static_cast<std::size_t>(WIDTH) * HEIGHT * 4);
+    glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
+                 overviewRgba.data());
+    const int overviewSampleX = static_cast<int>(
+        client.reportLeft("context-thumbnail") + 20.0f);
+    const int overviewSampleY = HEIGHT - 1 - static_cast<int>(
+        client.reportTop("context-thumbnail") + 20.0f);
+    expect(overviewSampleX >= 0 && overviewSampleX < WIDTH &&
+               overviewSampleY >= 0 && overviewSampleY < HEIGHT,
+           "report overview thumbnail sample lies outside the framebuffer");
+    const std::size_t overviewSample =
+        (static_cast<std::size_t>(overviewSampleY) * WIDTH +
+         overviewSampleX) * 4;
+    expect(overviewRgba[overviewSample] < 80 &&
+               overviewRgba[overviewSample + 1] < 80 &&
+               overviewRgba[overviewSample + 2] < 80,
+           "report overview falls back to a blank white canvas");
+    expect(writePpm("/tmp/osgsol_rml_overview.ppm", overviewRgba),
+           "could not write scientific overview evidence image");
 
     client.showTrendReport();
     (*camera->getPostDrawCallback())(renderInfo);
