@@ -25,6 +25,8 @@ before it can be tagged or synchronized as accepted.
   1440×900, verifies the shared workbench/Shell safe regions at all three sizes,
   then at 1440×900 exercises the menu, year input, bidirectional wheel
   scrolling, run action, report safe region, and axis-bearing trend report.
+  The composite frame now executes the real `AIChatUI` rather than a command-bar
+  surrogate and rejects overlap against the actual ImGui command window.
 - Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle.
   A FileProvider-restored old `osgSol Earth 2.app` was archived outside Desktop
   without launching or altering either package.
@@ -79,6 +81,9 @@ before it can be tagged or synchronized as accepted.
 - [ ] At normal Retina size and at the smallest practical window, the top
   actions, AI command row, context strip, Insight Lens tabs, object cards,
   warnings, menus, dialogs, and close/cancel actions remain reachable.
+- [ ] In the default collapsed AI state, title/status/history/template form one
+  compact tool header at normal width and a deliberate two-line header at
+  compact width; the AI bar never covers the scientific report.
 - [ ] Resize the window smaller and then larger once. The Science composer and
   report reflow inside the viewport; no old 720 px panel remains outside it.
 - [ ] Tab advances through visible native and Science controls in task order;

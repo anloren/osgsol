@@ -79,11 +79,17 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         ImGui::TextDisabled(busy ? u8"正在执行…" : u8"就绪");
 
         // ---- 历史抽屉（默认折叠；只有用户主动打开时占用地图空间）----
+        // 默认态把标题、历史和模板组织成一个响应式工具头：宽屏同一行，
+        // 窄屏只把历史/模板换到第二行。旧布局无条件占三行，实际高度超过
+        // Shell 预留并压到科学报告上。
+        const bool inlineHeader = winWidth >= 420.0f;
+        bool templateCanShareLine = inlineHeader;
         if (core)
         {
             std::vector<earthai::ChatEntry> transcript = core->transcript();   // 每帧一次快照
             if (!transcript.empty())
             {
+                if (inlineHeader) ImGui::SameLine();
                 if (ImGui::SmallButton(_historyCollapsed ? u8"历史" : u8"收起历史"))
                     _historyCollapsed = !_historyCollapsed;
                 ImGui::SameLine();
@@ -91,6 +97,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
 
                 if (!_historyCollapsed)
                 {
+                    templateCanShareLine = false;
                     float maxH = std::min(360.0f, io.DisplaySize.y * 0.32f);
                     ImGui::BeginChild(
                         "##ai_history", ImVec2(winWidth - 28.0f, maxH), true);
@@ -150,9 +157,12 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                     }
                     ImGui::EndChild();
                 }
+                else
+                    templateCanShareLine = true;
             }
             else if (busy)
             {
+                templateCanShareLine = false;
                 static const char spin[4] = { '|', '/', '-', '\\' };
                 int idx = (int)(ImGui::GetTime() * 8.0) % 4;
                 ImGui::TextDisabled(u8"思考中 %c", spin[idx]);
@@ -162,6 +172,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         // ---- ScienceEarth 分析模板：准备视角和参数，不自动提交 ----
         if (core)
         {
+            if (templateCanShareLine) ImGui::SameLine();
             if (ImGui::SmallButton(u8"分析模板"))
                 ImGui::OpenPopup("##scienceearth_templates");
 

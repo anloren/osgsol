@@ -207,6 +207,7 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
         IF(APPLE)
             ADD_EXECUTABLE(osgSol_Test_RmlGlRuntimeSmoke
                 "${CMAKE_SOURCE_DIR}/tests/rml_gl_runtime_smoke_tests.cpp"
+                ai_ui.cpp
                 earth_ui_v2.cpp
                 marker_style.cpp
                 product_ui/rml_input_bridge.cpp
@@ -226,7 +227,8 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
                 "${OSGSOL_RMLUI_GL3_PATCH_DIR}"
                 "${OSGSOL_RMLUI_SOURCE_DIR}/Backends")
             TARGET_LINK_LIBRARIES(osgSol_Test_RmlGlRuntimeSmoke
-                osgVerseUI osgVersePipeline RmlUi::RmlUi ${CMAKE_DL_LIBS}
+                osgVerseUI osgVerseReaderWriter osgVersePipeline
+                RmlUi::RmlUi ${CMAKE_DL_LIBS}
                 "-framework OpenGL")
             LINK_OSG_LIBRARY(osgSol_Test_RmlGlRuntimeSmoke
                 OpenThreads osg osgGA osgViewer)

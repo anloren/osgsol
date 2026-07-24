@@ -1,6 +1,9 @@
+#define IMGUI_DEFINE_MATH_OPERATORS
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/OpenGL.h>
 
+#include "ai_media.h"
+#include "ai_ui.h"
 #include "earth_control_layout.h"
 #include "earth_ui_tokens.h"
 #include "earth_ui_v2.h"
@@ -8,6 +11,7 @@
 #include "science_ui/rml_science_chart.h"
 #include "science_ui/science_chart_model.h"
 #include "science_ui/science_report_window.h"
+#include "ui_card.h"
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
@@ -31,6 +35,50 @@
 #include <iostream>
 #include <string>
 #include <vector>
+
+// The composite test executes the production AI command surface while keeping
+// all network and media owners absent. These narrow definitions provide stable
+// offline UI state without constructing workers, opening files, or touching
+// the packaged Desktop application.
+namespace earthai
+{
+AIChatCore::AIChatCore(LLMProvider* provider, ToolRegistry* registry)
+    : _provider(provider), _registry(registry)
+{
+}
+
+AIChatCore::~AIChatCore() {}
+
+bool AIChatCore::busy() const
+{
+    return false;
+}
+
+void AIChatCore::submit(const std::string&) {}
+
+std::vector<ChatEntry> AIChatCore::transcript() const
+{
+    return {
+        {ChatEntry::USER, u8"比较当前区域的农业气候与地表变化。"},
+        {ChatEntry::ASSISTANT, u8"已准备数据源与空间范围，等待提交。"}};
+}
+
+MediaManager::VideoUiSnapshot MediaManager::videoUiSnapshot() const
+{
+    return VideoUiSnapshot();
+}
+}
+
+void AICardPanel::pushChart(const picojson::value&) {}
+
+void AICardPanel::registerCards(earthui::CardStack&) {}
+
+#if defined(__APPLE__)
+namespace earthime
+{
+void setInputRect(float, float, float, float) {}
+}
+#endif
 
 namespace
 {
@@ -552,7 +600,7 @@ class ProductShellCallback : public osgVerse::CameraDrawCallback
 {
 public:
     explicit ProductShellCallback(RmlUiRuntime& runtime)
-        : _runtime(runtime)
+        : _runtime(runtime), _core(nullptr, nullptr)
     {
         _state.activeModule = earthui::EarthUiModule::Science;
         _state.drawerOpen = true;
@@ -627,42 +675,18 @@ public:
         earthui::drawEarthUiTopBar(shell, _state, top);
         earthui::drawEarthUiModuleRail(shell, _state);
         earthui::drawEarthUiContextTray(shell, _state);
-        drawCommandDeck(shell);
+        _command.draw(&_core, nullptr, nullptr, shell, _cards);
+        _cards.draw();
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 
 private:
-    static void drawCommandDeck(const earthui::EarthUiShellLayout& shell)
-    {
-        ImGui::SetNextWindowPos(
-            ImVec2(shell.commandX, shell.contextY - shell.outerGap),
-            ImGuiCond_Always, ImVec2(0.0f, 1.0f));
-        ImGui::SetNextWindowSize(
-            ImVec2(shell.commandWidth, shell.commandHeight),
-            ImGuiCond_Always);
-        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
-            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoScrollbar |
-            ImGuiWindowFlags_NoScrollWithMouse;
-        if (ImGui::Begin("##composite_ai_command", nullptr, flags))
-        {
-            ImGui::TextColored(
-                earthui::design::kCyan, u8"AI 地球助手");
-            ImGui::SameLine();
-            ImGui::TextDisabled(u8"就绪");
-            ImGui::SetNextItemWidth(-1.0f);
-            char command[2] = "";
-            ImGui::InputTextWithHint(
-                "##composite_command", u8"询问当前区域或联动数据源…",
-                command, sizeof(command));
-        }
-        ImGui::End();
-    }
-
     RmlUiRuntime& _runtime;
     mutable earthui::EarthUiShellState _state;
+    mutable earthai::AIChatCore _core;
+    mutable AIChatUI _command;
+    mutable earthui::CardStack _cards;
     ImGuiContext* _context = nullptr;
     bool _backendReady = false;
 };
@@ -695,6 +719,41 @@ public:
 private:
     RmlUiRuntime& _runtime;
 };
+
+void expectProductCommandFits(
+    const earthui::EarthUiShellLayout& shell,
+    float viewportWidth, float viewportHeight,
+    float workbenchRight, const std::string& viewportLabel)
+{
+    ImGuiWindow* command = ImGui::FindWindowByName(u8"AI 对话条");
+    expect(command != nullptr,
+           viewportLabel + ": production AI command window is absent");
+    expect(command->Pos.x >= workbenchRight + shell.outerGap - 1.0f,
+           viewportLabel +
+               ": production AI command overlaps the Science workbench; "
+               "command_left=" + std::to_string(command->Pos.x) +
+               ", workbench_right=" + std::to_string(workbenchRight));
+    expect(command->Pos.x + command->Size.x <=
+               viewportWidth - shell.insightWidth -
+                   shell.outerGap * 2.0f + 1.0f,
+           viewportLabel +
+               ": production AI command enters the Insight Lens track");
+    expect(command->Pos.y >= -0.5f &&
+               command->Pos.y + command->Size.y <=
+                   shell.contextY - shell.outerGap + 1.0f &&
+               command->Pos.y + command->Size.y <= viewportHeight + 0.5f,
+           viewportLabel +
+               ": production AI command leaves its vertical safe region; "
+               "top=" + std::to_string(command->Pos.y) +
+               ", height=" + std::to_string(command->Size.y) +
+               ", safe_bottom=" +
+                   std::to_string(shell.contextY - shell.outerGap));
+    expect(!command->ScrollbarX && !command->ScrollbarY &&
+               command->ScrollMax.x <= 0.5f &&
+               command->ScrollMax.y <= 0.5f,
+           viewportLabel +
+               ": production AI command clips controls behind a scrollbar");
+}
 
 bool writePpm(const std::filesystem::path& path,
               const std::vector<unsigned char>& rgba,
@@ -814,6 +873,7 @@ int main()
            "RmlUi callback did not initialize the real workbench on a frame");
     sendResizeEvent(runtime, 1024, 576);
     (*camera->getPostDrawCallback())(renderInfo);
+    (*camera->getPostDrawCallback())(renderInfo);
     expect(runtime.context()->GetDimensions() == Rml::Vector2i(1024, 576),
            "RmlUi context ignores a real window resize event");
     expect(client.width("science-workbench") <= 380.0f &&
@@ -836,6 +896,11 @@ int main()
         expect(client.bottom("science-workbench") <=
                    compactShell.commandY - compactShell.outerGap + 1.0f,
                "compact Science workbench overlaps the AI command deck");
+        expectProductCommandFits(
+            compactShell, 1024.0f, 576.0f,
+            client.left("science-workbench") +
+                client.width("science-workbench"),
+            "1024x576");
         glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
         glFinish();
         std::vector<unsigned char> compactRgba(
@@ -852,6 +917,7 @@ int main()
            "compact Science workbench overflows horizontally after resize");
     sendResizeEvent(runtime, MID_WIDTH, MID_HEIGHT);
     (*camera->getPostDrawCallback())(renderInfo);
+    (*camera->getPostDrawCallback())(renderInfo);
     expect(runtime.context()->GetDimensions() ==
                Rml::Vector2i(MID_WIDTH, MID_HEIGHT),
            "RmlUi context ignores the medium product viewport");
@@ -867,6 +933,13 @@ int main()
         expect(client.bottom("science-workbench") <=
                    mediumShell.commandY - mediumShell.outerGap + 1.0f,
                "medium Science workbench overlaps the AI command deck");
+        expectProductCommandFits(
+            mediumShell,
+            static_cast<float>(MID_WIDTH),
+            static_cast<float>(MID_HEIGHT),
+            client.left("science-workbench") +
+                client.width("science-workbench"),
+            "1280x720");
         glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
         glFinish();
         std::vector<unsigned char> mediumRgba(
@@ -881,6 +954,7 @@ int main()
     }
     sendResizeEvent(runtime, WIDTH, HEIGHT);
     (*camera->getPostDrawCallback())(renderInfo);
+    (*camera->getPostDrawCallback())(renderInfo);
     expect(runtime.context()->GetDimensions() ==
                Rml::Vector2i(WIDTH, HEIGHT),
            "RmlUi context cannot return to the full viewport after resize");
@@ -889,6 +963,19 @@ int main()
                std::to_string(client.width("source-select")) +
                ", workbench=" +
                std::to_string(client.width("science-workbench")));
+    {
+        const earthui::EarthUiShellLayout fullShell =
+            earthui::computeEarthUiShellLayout(
+                static_cast<float>(WIDTH),
+                static_cast<float>(HEIGHT), true);
+        expectProductCommandFits(
+            fullShell,
+            static_cast<float>(WIDTH),
+            static_cast<float>(HEIGHT),
+            client.left("science-workbench") +
+                client.width("science-workbench"),
+            "1440x900");
+    }
     expect(client.width("source-chevron") >= 24.0f &&
                client.height("source-chevron") >= 24.0f,
            "analysis selector has no visible dropdown chevron");
@@ -1112,6 +1199,15 @@ int main()
         expect(client.reportBottom("science-report") <=
                    shell.commandY - shell.outerGap + 1.0f,
                "scientific report covers the AI command deck");
+        ImGuiWindow* command = ImGui::FindWindowByName(u8"AI 对话条");
+        expect(command != nullptr,
+               "production AI command disappeared behind the report");
+        expect(client.reportBottom("science-report") <=
+                   command->Pos.y - shell.outerGap + 1.0f,
+               "scientific report overlaps the actual production AI command; "
+               "report_bottom=" +
+                   std::to_string(client.reportBottom("science-report")) +
+               ", command_top=" + std::to_string(command->Pos.y));
     }
     expect(client.reportRight("report-close") <=
                client.reportRight("science-report") - 8.0f,
