@@ -505,11 +505,33 @@ void AICardPanel::drawPhotoCard(const AICard& c)
         return;
     }
     const char* action = c.isVideo ? u8"播放视频" : u8"查看图片";
-    if (ImGui::Button(action, ImVec2(-1.0f, 0.0f)))
+    const bool openMedia =
+        ImGui::Button(action, ImVec2(-1.0f, 0.0f));
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    {
+        const ImVec2 minimum = ImGui::GetItemRectMin();
+        const ImVec2 maximum = ImGui::GetItemRectMax();
+        _auditMediaAction = {
+            minimum.x,
+            minimum.y,
+            std::max(0.0f, maximum.x - minimum.x),
+            std::max(0.0f, maximum.y - minimum.y),
+            ImGui::IsItemVisible()};
+    }
+#endif
+    if (openMedia)
     {
         // macOS `open`;路径用单引号包住防止空格/特殊字符断开命令(与 spec 约定一致)。
-        std::string cmd = "open '" + c.path + "'";
-        int rc = system(cmd.c_str());
+        int rc = -1;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+        if (_auditExternalOpen)
+            rc = _auditExternalOpen(c.path);
+        else
+#endif
+        {
+            std::string cmd = "open '" + c.path + "'";
+            rc = system(cmd.c_str());
+        }
         if (rc != 0)
             OSG_WARN << "[AIChat] open " << (c.isVideo ? "video" : "photo")
                      << " failed, rc=" << rc << " path=" << c.path << std::endl;

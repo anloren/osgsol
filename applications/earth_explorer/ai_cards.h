@@ -2,6 +2,7 @@
 #define EARTH_AI_CARDS_H
 #include "ai_tools.h"
 #include <picojson.h>
+#include <functional>
 #include <vector>
 #include <string>
 #include <OpenThreads/Mutex>
@@ -44,6 +45,24 @@ class AICardPanel
 public:
     AICardPanel() : _nextSerial(0) {}
 
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    struct AuditRect
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        bool valid = false;
+    };
+
+    const AuditRect& auditMediaAction() const { return _auditMediaAction; }
+    void auditSetExternalOpen(
+        const std::function<int(const std::string&)>& callback)
+    {
+        _auditExternalOpen = callback;
+    }
+#endif
+
     // 主线程调用(工具 execute 在 drain 中);viewer 多线程(DrawThreadPerContext),
     // registerCards/drawBody 跑在 draw 线程,与本函数并发访问 _cards,已加锁——见 .cpp。
     void pushChart(const picojson::value& spec);
@@ -71,5 +90,9 @@ private:
     std::vector<AICard> _cards;
     int _nextSerial;   // 下一张新卡分配的 serial(见 AICard::serial 注释)
     mutable OpenThreads::Mutex _mutex;   // _cards 跨线程(主线程 push/remove × draw 线程 registerCards/draw)
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    AuditRect _auditMediaAction;
+    std::function<int(const std::string&)> _auditExternalOpen;
+#endif
 };
 #endif

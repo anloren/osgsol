@@ -892,6 +892,21 @@ int main()
     const auto clickEarthControl = [&](const std::string& key) {
         clickEarthControlAt(key, 0.5f);
     };
+    const auto clickProductControl = [&](const std::string& key) {
+        const EarthControlUI::AuditItem* item =
+            productUi.auditControl(key);
+        expect(item && item->visible && item->width > 1.0f &&
+                   item->height > 1.0f,
+               "formal product control is not visibly reachable: " + key);
+        const float x = item->x + item->width * 0.5f;
+        const float y = item->y + item->height * 0.5f;
+        io.AddMousePosEvent(x, y);
+        renderAuditFrame();
+        io.AddMouseButtonEvent(0, true);
+        renderAuditFrame();
+        io.AddMouseButtonEvent(0, false);
+        renderAuditFrame();
+    };
     const auto replaceFocusedInput = [&](const char* value) {
         io.AddKeyEvent(ImGuiMod_Ctrl, true);
         io.AddKeyEvent(ImGuiKey_A, true);
@@ -947,6 +962,18 @@ int main()
     productUi._realTimeSun = false;
     productUi._followClock = true;
     for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
+
+    manipulator->setByEye(
+        osg::DegreesToRadians(-44.0),
+        osg::DegreesToRadians(-123.0), 780000.0);
+    renderAuditFrame();
+    clickEarthControl("explore-home");
+    const osg::Vec3d homeLla =
+        manipulator->computeEyeLatLonHeight();
+    expect(std::fabs(osg::RadiansToDegrees(homeLla[0]) + 44.0) > 1.0 ||
+               std::fabs(osg::RadiansToDegrees(homeLla[1]) + 123.0) > 1.0 ||
+               std::fabs(homeLla[2] - 780000.0) > 1000.0,
+           "formal drawer Home action did not change the camera");
 
     clickEarthControl("explore-always-day");
     expect(productUi._alwaysDay,
@@ -1189,6 +1216,43 @@ int main()
     layers.setEnabled("product-ui-0", true);
     layers.drainPending();
 
+    // The feed card's two visible actions were previously covered only by a
+    // screenshot and a source-level protocol check. Click both production hit
+    // targets while intercepting only the external application launch.
+    productUi._auditCaptureControls = true;
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Layers;
+    productUi._uiV2.drawerOpen = true;
+    configureSelection(
+        earthui::EarthUiModule::Layers,
+        productUi, flights, satellites, ships);
+    std::vector<std::string> openedFeedUrls;
+    productUi._auditExternalOpen =
+        [&](const std::string& url) {
+            openedFeedUrls.push_back(url);
+            return 0;
+        };
+    for (int frame = 0; frame < 4; ++frame) renderAuditFrame();
+    clickProductControl("feed-open-source");
+    expect(openedFeedUrls.size() == 1 &&
+               openedFeedUrls.front() ==
+                   "https://example.invalid/evidence",
+           "real Open Source click did not publish the exact feed URL");
+    const std::size_t summarySubmitBefore =
+        earthai::g_productUiSubmissions.size();
+    clickProductControl("feed-ai-summary");
+    expect(earthai::g_productUiSubmissions.size() ==
+               summarySubmitBefore + 1 &&
+               earthai::g_productUiSubmissions.back().find(
+                   "https://example.invalid/evidence") !=
+                   std::string::npos &&
+               earthai::g_productUiSubmissions.back().find(
+                   "get_news_content") != std::string::npos,
+           "real AI Summary click did not submit the feed and fetch contract");
+    saveAuditFrame("1440x900-feed-actions.ppm");
+    productUi._auditExternalOpen =
+        std::function<int(const std::string&)>();
+    productUi._auditCaptureControls = false;
+
     for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
     const AIChatUI::AuditSnapshot compactAi = command.auditSnapshot();
     ImGuiWindow* aiCommand = ImGui::FindWindowByName(u8"AI 对话条");
@@ -1394,9 +1458,16 @@ int main()
 
     const auto renderMediaCard = [&](
         const char* evidenceName,
+        const std::string& expectedOpenTarget,
         const std::function<void(AICardPanel&)>& prepare) {
         AICardPanel panel;
         earthui::CardStack stack;
+        std::vector<std::string> openedMedia;
+        panel.auditSetExternalOpen(
+            [&](const std::string& target) {
+                openedMedia.push_back(target);
+                return 0;
+            });
         prepare(panel);
         auditOverlay = [&]() {
             panel.registerCards(stack);
@@ -1410,24 +1481,52 @@ int main()
         expect(insight != nullptr && insight->Active && !insight->Hidden,
                std::string(evidenceName) +
                    ": real AI media card did not enter the Insight Lens");
+        if (!expectedOpenTarget.empty())
+        {
+            const AICardPanel::AuditRect action =
+                panel.auditMediaAction();
+            expect(action.valid && action.width > 1.0f &&
+                       action.height > 1.0f,
+                   std::string(evidenceName) +
+                       ": real media action is not visibly reachable");
+            AIChatUI::AuditRect actionRect;
+            actionRect.x = action.x;
+            actionRect.y = action.y;
+            actionRect.width = action.width;
+            actionRect.height = action.height;
+            actionRect.valid = action.valid;
+            clickAuditRect(actionRect);
+            expect(openedMedia.size() == 1 &&
+                       openedMedia.front() == expectedOpenTarget,
+                   std::string(evidenceName) +
+                       ": real media action did not publish the exact file");
+        }
         saveAuditFrame(evidenceName);
         auditOverlay = std::function<void()>();
         renderAuditFrame();
     };
+    const std::string photoPath =
+        "/tmp/osgsol-ui-audit/" +
+        std::string(
+            u8"昆明农业气候与地表变化联合分析航拍结果.png");
     renderMediaCard(
         "1440x900-ai-photo-result.ppm",
-        [](AICardPanel& panel) {
+        photoPath,
+        [photoPath](AICardPanel& panel) {
             panel.pushPhoto(
-                "/tmp/osgsol-ui-audit/"
-                u8"昆明农业气候与地表变化联合分析航拍结果.png",
+                photoPath,
                 u8"科学航拍结果", false);
         });
+    const std::string videoPath =
+        "/tmp/osgsol-ui-audit/" +
+        std::string(
+            u8"香港维多利亚港科学巡航与地形融合验证视频.mp4");
     renderMediaCard(
         "1440x900-ai-video-result.ppm",
-        [](AICardPanel& panel) {
+        videoPath,
+        [videoPath](AICardPanel& panel) {
             panel.pushPhoto(
-                "/tmp/osgsol-ui-audit/"
-                u8"香港维多利亚港科学巡航与地形融合验证视频.mp4",
+                videoPath,
                 u8"巡航视频结果", true);
         });
     earthai::JobManager auditJobs;
@@ -1438,6 +1537,7 @@ int main()
         std::string(), std::string());
     renderMediaCard(
         "1440x900-ai-generation-progress.ppm",
+        std::string(),
         [&](AICardPanel& panel) {
             panel.pushJob(
                 &auditJobs, auditJobId,

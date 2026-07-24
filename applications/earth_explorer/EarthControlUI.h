@@ -85,6 +85,12 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
     bool _detailBadgeStretchActivePrev = false;  // 上一帧是否处于"超缩放拉伸"去抖窗内(边沿检测用)
     bool _auditCaptureControls = false;
     std::map<std::string, AuditItem> _auditControls;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    // Tests use this callback to exercise the real "open source" hit target
+    // without starting another macOS application. Production builds do not
+    // contain the interception path.
+    std::function<int(const std::string&)> _auditExternalOpen;
+#endif
 
     void auditLastItem(const std::string& key)
     {
@@ -869,14 +875,23 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     if (!fs.url.empty())
                     {
                         ImGui::Separator();
-                        if (ImGui::Button(u8"打开来源"))
+                        const bool openSource =
+                            ImGui::Button(u8"打开来源");
+                        auditLastItem("feed-open-source");
+                        if (openSource)
                         {
                             // url 来自 feed 网络响应(不可信):剥单引号防 shell 逃逸 + 限定 http(s) 协议
                             std::string safeUrl = fs.url;
                             safeUrl.erase(std::remove(safeUrl.begin(), safeUrl.end(), '\''), safeUrl.end());
                             bool okProto = safeUrl.compare(0, 7, "http://") == 0 || safeUrl.compare(0, 8, "https://") == 0;
                             std::string cmd = okProto ? ("open '" + safeUrl + "'") : std::string();
-                            int rc = cmd.empty() ? -1 : system(cmd.c_str());
+                            int rc = -1;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                            if (okProto && _auditExternalOpen)
+                                rc = _auditExternalOpen(safeUrl);
+                            else
+#endif
+                                rc = cmd.empty() ? -1 : system(cmd.c_str());
                             if (rc != 0)
                                 OSG_WARN << "[Feed] open url failed/blocked, rc=" << rc
                                          << " url=" << fs.url << std::endl;
@@ -889,7 +904,10 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                         {
                             earthui::continueRowIfFits(
                                 earthui::buttonWidth(u8"AI 摘要"));
-                            if (ImGui::Button(u8"AI 摘要"))
+                            const bool summarize =
+                                ImGui::Button(u8"AI 摘要");
+                            auditLastItem("feed-ai-summary");
+                            if (summarize)
                                 _aiCore->submit(u8"请总结这条新闻热点(地点:" + fs.title +
                                     u8")的主要内容并分析其重要性。文章链接:" + fs.url +
                                     u8" —— 请先调用 get_news_content 抓取正文再总结。");
