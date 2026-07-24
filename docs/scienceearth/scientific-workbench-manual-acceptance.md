@@ -14,7 +14,7 @@ before it can be tagged or synchronized as accepted.
 - Version: 0.6.1
 - ScienceEarth phase: G3.1
 - Channel: ui-ux-goal-candidate
-- Source commit: `43d7517d7ef72a2a6ccf1b6bba96eaf6151b1b7b`
+- Source commit: `011f00994e5aded2ee1b5833927c8770527cde6c`
 - Provenance: recorded in `Contents/Info.plist` and
   `Contents/Resources/package-audit.env`
 - Automated gates: package contract, bundle closure, provenance, data manifest,
@@ -31,7 +31,10 @@ before it can be tagged or synchronized as accepted.
   operation, then clicks report tabs, metric, copy, overflow, delete
   cancel/confirm, minimize/reopen, close, and target focus. The native AI gate
   clicks history and templates, checks the template popup against the real
-  command window, and renders the video confirmation surface.
+  command window, and renders the video confirmation surface. The production
+  card gate also renders bar/line/donut/stat charts, photo/video results,
+  generation progress, the event stream/status strip, the single maximum-detail
+  notice, and module help; it clicks or scrolls every applicable surface.
 - Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle.
   A FileProvider-restored old `osgSol Earth 2.app` was archived outside Desktop
   without launching or altering either package.
