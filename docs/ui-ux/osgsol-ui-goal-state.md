@@ -4,7 +4,7 @@
 
 ## 已冻结基线
 
-- 当前候选代码提交：`a22ecb9 fix(ui): verify production shell geometry`
+- 当前候选代码提交：`19d0bbb fix(ui): prevent report and command overlap`
 - 分支：`codex/scienceearth-agro-climate-v1`
 - 正式 App：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前截图：`/Users/USER/Desktop/Screenshot 2026-07-24 at 11.21.07 AM.png`
@@ -99,15 +99,17 @@
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前桌面候选：`0.6.1` / `G3.1`，来源提交
-  `a22ecb9f43f445a5cc979056f556bfe4c519fff6`，channel
+  `19d0bbb60b5e4d7aeb6d2bce6b991426230ccbb3`，channel
   `ui-ux-goal-candidate`
 - 桌面/严格暂存包可执行文件 SHA-256：
-  `8637bc000e59d59293f4c6a7eedf8bf8a103514282712f110ff6cdf1db75e152`
+  `20af891534de2a01f70a6f8c1dadcda2ef083dfbd962e7aa89c12d3ff947187a`
+- 桌面/严格暂存包整包内容与模式指纹：
+  `3ec15c26ef030efc9e17499cd8e89fd28198099f8d3ebbc582f6382976156616`
 - 桌面包与严格暂存包逐文件一致：371 个普通文件、37 个符号链接；
   桌面进程 0、同名 App 1 个、最新异常报告仍为
   `osgSol_Earth-2026-07-23-222801.ips`
 - 上一桌面候选备份：
-  `build/desktop-backups/pre-ui-product-entry-20260724-174208-a22ecb9/osgSol Earth.previous.app`
+  `build/desktop-backups/pre-ui-report-command-20260724-184501-a22ecb9/osgSol Earth.previous.app`
 - 本次替换后没有出现 FileProvider 恢复的第二个 App；桌面仍只保留一个正式 App。
 - 自动化没有启动、前置或操作桌面候选
 
