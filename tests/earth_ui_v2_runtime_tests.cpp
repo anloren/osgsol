@@ -144,6 +144,8 @@ void runViewport(float width, float height)
            "context tray exposes a horizontal scrollbar");
     expect(window("##earth_ui_v2_context")->ScrollMax.x <= 0.5f,
            "context tray content overflows horizontally");
+    expect(window("##earth_ui_v2_context")->ScrollMax.y <= 0.5f,
+           "context tray clips its label or value row vertically");
 
     ImDrawData* drawData = ImGui::GetDrawData();
     expect(drawData != nullptr && drawData->CmdListsCount > 0,

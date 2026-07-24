@@ -129,6 +129,7 @@ namespace earthui
                 ImGuiWindowFlags_NoCollapse |
                 ImGuiWindowFlags_NoSavedSettings;
             float measuredHeight = minimumHeight;
+            bool renderedActiveTab = false;
             if (ImGui::Begin(u8"洞察透镜###earth_insight_lens", nullptr, flags))
             {
                 if (ImGui::BeginTabBar(
@@ -143,6 +144,7 @@ namespace earthui
                         if (ImGui::BeginTabItem(
                                 tabLabel.c_str(), c.closable ? &open : nullptr))
                         {
+                            renderedActiveTab = true;
                             if (!c.style.chipLabel.empty())
                             {
                                 drawChip(c.style.chipLabel.c_str(),
@@ -169,8 +171,15 @@ namespace earthui
                     ImGui::GetStyle().WindowPadding.y;
             }
             ImGui::End();
-            _preferredHeight = std::clamp(
-                measuredHeight, minimumHeight, maximumHeight);
+            // A newly-added ImGui tab can have no active body during its
+            // registration frame. Do not collapse the lens to the minimum
+            // based on that empty transient frame; otherwise the real body is
+            // visibly clipped on the next frame before the height recovers.
+            if (renderedActiveTab)
+            {
+                _preferredHeight = std::clamp(
+                    measuredHeight, minimumHeight, maximumHeight);
+            }
             _frameCards.clear();
         }
 

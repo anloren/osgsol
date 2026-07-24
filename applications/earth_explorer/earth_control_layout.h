@@ -81,7 +81,10 @@ inline EarthUiShellLayout computeEarthUiShellLayout(float viewportWidth,
     layout.navigationWidth = std::clamp(width * 0.048f, 64.0f, 76.0f);
     layout.outerGap = std::clamp(width * 0.006f, 6.0f, 10.0f);
     layout.statusHeight = std::clamp(height * 0.027f, 22.0f, 28.0f);
-    layout.contextHeight = std::clamp(height * 0.052f, 46.0f, 58.0f);
+    // The context strip contains a label row and a value row. 46 px clips
+    // the second row with the production CJK font at common 900/1080 px
+    // window heights, so treat 58 px as the real content minimum.
+    layout.contextHeight = std::clamp(height * 0.052f, 58.0f, 64.0f);
     layout.commandHeight = std::clamp(height * 0.082f, 72.0f, 90.0f);
 
     const float bottomStack = layout.statusHeight + layout.contextHeight +
