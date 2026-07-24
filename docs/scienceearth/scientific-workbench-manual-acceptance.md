@@ -14,7 +14,7 @@ before it can be tagged or synchronized as accepted.
 - Version: 0.6.1
 - ScienceEarth phase: G3.1
 - Channel: ui-ux-goal-candidate
-- Source commit: `539db2e09083e59f4660df2e35708a4206db8ffb`
+- Source commit: `4eff01e9a28f6e1a37374e4715ea36bc427245e2`
 - Provenance: recorded in `Contents/Info.plist` and
   `Contents/Resources/package-audit.env`
 - Automated gates: package contract, bundle closure, provenance, data manifest,

@@ -4,7 +4,7 @@
 
 ## 已冻结基线
 
-- 当前生产提交：`091b2a4 fix(ui): enforce product interaction contracts`
+- 当前生产提交：`4eff01e fix(ui): bind report and help interactions`
 - 分支：`codex/scienceearth-agro-climate-v1`
 - 正式 App：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前截图：`/Users/USER/Desktop/Screenshot 2026-07-24 at 11.21.07 AM.png`
@@ -74,15 +74,15 @@
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前桌面候选：`0.6.1` / `G3.1`，来源提交
-  `539db2e09083e59f4660df2e35708a4206db8ffb`，channel
+  `4eff01e9a28f6e1a37374e4715ea36bc427245e2`，channel
   `ui-ux-goal-candidate`
 - 桌面/严格暂存包可执行文件 SHA-256：
-  `b9a7f0c5a590587b5fcd18656dccc248ddcc7f7e5aa34d24bdf090f9fbfe1d9b`
+  `279b1ebb807c645275515102fad9a97cda457126550d4005cce248064b065ca3`
 - 桌面包与严格暂存包逐文件一致：371 个普通文件、37 个符号链接；
   桌面进程 0、同名 App 1 个、最新异常报告仍为
   `osgSol_Earth-2026-07-23-222801.ips`
 - 上一桌面候选备份：
-  `build/desktop-backups/pre-ui-goal-complete-20260724-155204-539db2e/osgSol Earth.previous.app`
+  `build/desktop-backups/pre-ui-interaction-fix-20260724-163324-4eff01e9a28f/osgSol Earth.previous.app`
 - 自动化没有启动、前置或操作桌面候选
 
 ## 仍需用户手测
