@@ -1,21 +1,27 @@
 # ScienceEarth scientific workbench manual acceptance
 
-Date: 2026-07-22
+Date: 2026-07-24
 
-Candidate: `dist/osgSol Earth.app`
+Candidate: `/Users/USER/Desktop/osgSol Earth.app`
 
 Automated implementation never launches or foregrounds this application. The
-checks below must be performed by the user on the exact candidate before it can
-replace the Desktop application or be tagged as accepted.
+checks below must be performed by the user on this exact fixed-path candidate
+before it can be tagged or synchronized as accepted.
 
 ## Candidate identity
 
 - Product: osgSol Earth
-- Channel: science-workbench-candidate
-- Source commit: recorded in `Contents/Info.plist` and
+- Version: 0.6.1
+- ScienceEarth phase: G3.1
+- Channel: ui-ux-goal-candidate
+- Source commit: `7ff1263816713e3005aea98c3280ce6b94b98551`
+- Provenance: recorded in `Contents/Info.plist` and
   `Contents/Resources/package-audit.env`
 - Automated gates: package contract, bundle closure, provenance, data manifest,
-  signature, Rml document parsing, and non-network regression suite
+  strict/deep signature, G0-v2 bundle audit, Rml document parsing, and 80/80
+  offline regression suite
+- Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle
+- Automated launch count: zero
 
 ## Visual and interaction matrix
 
@@ -53,6 +59,13 @@ replace the Desktop application or be tagged as accepted.
   returning restores the scientific workflow without losing the result.
 - [ ] Existing AlphaEarth, Sentinel-2, terrain, 3D city, satellite, AI research,
   photo/video visible-view capture, and natural-language tools remain usable.
+- [ ] Open every left-rail module once: Explore, Layers, Science, Live,
+  Satellites, 3D, Tasks, and Settings. The drawer remains flush with the rail,
+  uses the same dark palette, and no edge, button, label, or scrollbar is
+  clipped.
+- [ ] At normal Retina size and at the smallest practical window, the top
+  actions, AI command row, context strip, Insight Lens tabs, object cards,
+  warnings, menus, dialogs, and close/cancel actions remain reachable.
 
 ## Normal Quit gate
 
@@ -64,5 +77,5 @@ replace the Desktop application or be tagged as accepted.
 - [ ] No new matching `.ips` report appears after the recorded timestamp.
 
 Acceptance remains pending until all unchecked items above are confirmed on the
-exact candidate. Do not copy the candidate over `/Users/USER/Desktop/osgSol
-Earth.app`, tag it, or publish it before that confirmation.
+exact candidate. Do not tag, push, synchronize, or publish it before that
+confirmation.
