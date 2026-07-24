@@ -225,6 +225,9 @@ public:
         if (Rml::Element* runButton =
                 _document->GetElementById("run-action"))
             runButton->AddEventListener("click", this);
+        if (Rml::Element* cancelButton =
+                _document->GetElementById("cancel-action"))
+            cancelButton->AddEventListener("click", this);
         _report = context.LoadDocument(
             std::string(OSGVERSE_SOURCE_DIR) +
             "/assets/misc/ui/scienceearth/report.rml");
@@ -290,6 +293,8 @@ public:
             ++_helpClicks;
         if (target && target->GetId() == "run-action")
             ++_runClicks;
+        if (target && target->GetId() == "cancel-action")
+            ++_cancelClicks;
     }
 
     float width(const char* id) const
@@ -404,6 +409,7 @@ public:
 
     int helpClicks() const { return _helpClicks; }
     int runClicks() const { return _runClicks; }
+    int cancelClicks() const { return _cancelClicks; }
 
     void setReportSection(const char* selected)
     {
@@ -557,6 +563,11 @@ public:
             if (Rml::ElementFormControl* control =
                     rmlui_dynamic_cast<Rml::ElementFormControl*>(year))
                 control->SetValue("2017");
+        if (Rml::Element* year = _document
+                ? _document->GetElementById("last-year") : nullptr)
+            if (Rml::ElementFormControl* control =
+                    rmlui_dynamic_cast<Rml::ElementFormControl*>(year))
+                control->SetValue("2025");
         if (Rml::Element* source = _document
                 ? _document->GetElementById("source-select") : nullptr)
             if (Rml::ElementFormControl* control =
@@ -604,6 +615,7 @@ private:
     ScienceReportWindowModel _reportModel;
     int _helpClicks = 0;
     int _runClicks = 0;
+    int _cancelClicks = 0;
 };
 
 class ProductShellCallback : public osgVerse::CameraDrawCallback
@@ -1114,6 +1126,20 @@ int main()
            "Tab does not advance focus through the visible Science workflow;"
            " before=" + ancestry(focusBeforeTab) +
            ", after=" + ancestry(focusAfterTab));
+    const Rml::Vector2f lastYearCenter = client.center("last-year");
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::MOVE, lastYearCenter);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::PUSH, lastYearCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::RELEASE, lastYearCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    const std::string lastYearBeforeText = client.value("last-year");
+    runtime.enqueueCommittedText("8");
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(client.value("last-year") != lastYearBeforeText,
+           "clicking the visible end-year input does not enable text editing");
     const float scrollBefore = client.scrollTop("composer-scroll");
     sendWheelEvent(runtime, osgGA::GUIEventAdapter::SCROLL_DOWN);
     (*camera->getPostDrawCallback())(renderInfo);
@@ -1148,6 +1174,18 @@ int main()
            "cancel action overflows below the running footer");
     expect(client.horizontalOverflow("progress-footer") <= 1.0f,
            "running status controls overflow horizontally");
+    const Rml::Vector2f cancelCenter = client.center("cancel-action");
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::MOVE, cancelCenter);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::PUSH, cancelCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    sendPointerEvent(runtime, osgGA::GUIEventAdapter::RELEASE, cancelCenter,
+                     osgGA::GUIEventAdapter::LEFT_MOUSE_BUTTON);
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(client.cancelClicks() == 1,
+           "visible running-state Cancel action does not receive a real "
+           "pointer click");
     client.prepareCleanEvidenceState();
     (*camera->getPostDrawCallback())(renderInfo);
     glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());

@@ -15,6 +15,7 @@ struct EarthUiItemRect
     float width = 0.0f;
     float height = 0.0f;
     bool visible = false;
+    unsigned int id = 0;
 };
 
 struct EarthUiShellState
@@ -24,6 +25,8 @@ struct EarthUiShellState
     bool aboutOpen = false;
     EarthUiItemRect homeButton;
     EarthUiItemRect drawerButton;
+    EarthUiItemRect drawerHelpButton;
+    EarthUiItemRect contextHelpButton;
 };
 
 struct EarthUiTopBarData
@@ -63,11 +66,11 @@ void drawEarthUiModuleRail(const EarthUiShellLayout& layout,
                            EarthUiShellState& state);
 
 bool beginEarthUiModuleDrawer(const EarthUiShellLayout& layout,
-                              const EarthUiShellState& state);
+                              EarthUiShellState& state);
 void endEarthUiModuleDrawer();
 
 void drawEarthUiContextTray(const EarthUiShellLayout& layout,
-                            const EarthUiShellState& state);
+                            EarthUiShellState& state);
 
 }
 

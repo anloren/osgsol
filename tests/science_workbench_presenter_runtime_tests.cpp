@@ -518,13 +518,57 @@ int main()
            "a second run must open a distinct formal report");
     expect(visible(report, "science-report"),
            "a newly completed run must open its report");
+    click(*context, report, "report-minimize");
+    expectSingleAction(presenter, "minimize-report");
+
+    expect(runtime.dispatchWorkbenchAction(
+               "{\"schema\":\"science-workbench-action-v1\","
+               "\"action\":\"run\"}", error),
+           error);
+    presenter.onRmlFrame(*context);
+    context->Update();
+    const std::string thirdArtifactId =
+        inner(report, "report-artifact-id");
+    expect(thirdArtifactId == "alphaearth-test-artifact-3",
+           "a third run must open a distinct formal report");
+    click(*context, report, "report-minimize");
+    expectSingleAction(presenter, "minimize-report");
+
+    expect(runtime.dispatchWorkbenchAction(
+               "{\"schema\":\"science-workbench-action-v1\","
+               "\"action\":\"run\"}", error),
+           error);
+    presenter.onRmlFrame(*context);
+    context->Update();
+    const std::string fourthArtifactId =
+        inner(report, "report-artifact-id");
+    expect(fourthArtifactId == "alphaearth-test-artifact-4",
+           "a fourth run must open a distinct formal report");
+    click(*context, report, "report-minimize");
+    expectSingleAction(presenter, "minimize-report");
+    expect(visible(report, "shelf-0") &&
+               visible(report, "shelf-1") &&
+               visible(report, "shelf-2"),
+           "three minimized reports do not expose all formal shelf slots");
+
+    click(*context, report, "shelf-2");
+    expect(inner(report, "report-artifact-id") == fourthArtifactId,
+           "third shelf slot reopens the wrong report");
+    expectSingleAction(presenter, "open-report", fourthArtifactId);
+    click(*context, report, "report-minimize");
+    expectSingleAction(presenter, "minimize-report");
+    click(*context, report, "shelf-1");
+    expect(inner(report, "report-artifact-id") == thirdArtifactId,
+           "second shelf slot reopens the wrong report");
+    expectSingleAction(presenter, "open-report", thirdArtifactId);
+
     click(*context, report, "report-overflow");
     expect(visible(report, "delete-confirmation"),
-           "second report does not expose the delete confirmation");
+           "reopened report does not expose the delete confirmation");
     click(*context, report, "report-delete");
     expect(!visible(report, "science-report"),
            "permanent deletion leaves the removed report visible");
-    expectSingleAction(presenter, "remove-artifact", secondArtifactId);
+    expectSingleAction(presenter, "remove-artifact", thirdArtifactId);
 
     Rml::RemoveContext(context->GetName());
     Rml::Shutdown();

@@ -33,6 +33,17 @@ struct EventTickerUI
     size_t _lastLoggedCount = (size_t)-1;   // -1 哨兵:首帧(含 0 条)也打印一次
     std::string _lastLoggedNewest;
     int _statusFrame = 0;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    struct AuditRect
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        bool visible = false;
+    };
+    AuditRect _auditFirstEvent;
+#endif
 
     EventTickerUI()
     {
@@ -61,6 +72,9 @@ struct EventTickerUI
     void registerCards(earthui::CardStack& stack, osgVerse::EarthManipulator* mani)
     {
         if (!showTicker) return;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+        _auditFirstEvent = AuditRect();
+#endif
         std::vector<earthfeed::TickerEvent> evs = earthfeed::collectRecentEvents(20);
         if (_logTicker && (evs.size() != _lastLoggedCount
                            || (evs.empty() ? std::string() : evs[0].title) != _lastLoggedNewest))
@@ -78,7 +92,7 @@ struct EventTickerUI
         // evs 按值捕获(拷贝):它是本函数的局部临时量(每帧现算),函数返回后就析构,
         // CardStack::draw() 真正调用这个 lambda 是在本帧稍后——若按引用捕获会是悬空引用。
         // 与上面 ai_cards.cpp 对 AICard& c 的按引用捕获不同:c 指向持久成员容器的元素。
-        card.drawBody = [evs, mani]() {
+        card.drawBody = [this, evs, mani]() {
             if (evs.empty())
             {
                 ImGui::TextDisabled(u8"暂无带时间戳的事件");
@@ -92,6 +106,17 @@ struct EventTickerUI
                     relativeTime(e.unixTime) + "  ·  " + e.sourceId;
                 ImGui::TextDisabled("%s", metadata.c_str());
                 ImGui::TextWrapped("%s", e.title.c_str());
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                if (i == 0)
+                {
+                    const ImVec2 minimum = ImGui::GetItemRectMin();
+                    const ImVec2 maximum = ImGui::GetItemRectMax();
+                    _auditFirstEvent = {
+                        minimum.x, minimum.y,
+                        maximum.x - minimum.x, maximum.y - minimum.y,
+                        ImGui::IsItemVisible()};
+                }
+#endif
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip(u8"点击定位到事件");
                 if (ImGui::IsItemClicked() && mani)

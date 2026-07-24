@@ -44,7 +44,7 @@ void expectInside(const char* name, float width, float height)
 }
 
 void drawLongDrawer(const earthui::EarthUiShellLayout& layout,
-                    const earthui::EarthUiShellState& state)
+                    earthui::EarthUiShellState& state)
 {
     if (!earthui::beginEarthUiModuleDrawer(layout, state)) return;
     for (int row = 0; row < 96; ++row)

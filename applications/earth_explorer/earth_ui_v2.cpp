@@ -81,13 +81,18 @@ const char* contextKindShortLabel(EarthUiContextKind kind)
     return u8"无";
 }
 
-void drawModuleHelp(EarthUiModule module, bool openRequested = false)
+EarthUiItemRect drawModuleHelp(
+    EarthUiModule module, bool openRequested = false)
 {
     if (ImGui::SmallButton("?") || openRequested)
         ImGui::OpenPopup("##module_context_help");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip(u8"查看本模块的交互规则");
     const ImVec2 anchorMin = ImGui::GetItemRectMin();
     const ImVec2 anchorMax = ImGui::GetItemRectMax();
+    const EarthUiItemRect itemRect = {
+        anchorMin.x, anchorMin.y,
+        anchorMax.x - anchorMin.x, anchorMax.y - anchorMin.y,
+        ImGui::IsItemVisible(), ImGui::GetItemID()};
     const ImGuiIO& io = ImGui::GetIO();
     const ImGuiStyle& style = ImGui::GetStyle();
     const ImVec2 surfacePos = ImGui::GetWindowPos();
@@ -122,6 +127,7 @@ void drawModuleHelp(EarthUiModule module, bool openRequested = false)
         ImGui::PopTextWrapPos();
         ImGui::EndPopup();
     }
+    return itemRect;
 }
 }
 
@@ -455,7 +461,7 @@ void drawEarthUiModuleRail(const EarthUiShellLayout& layout,
 }
 
 bool beginEarthUiModuleDrawer(const EarthUiShellLayout& layout,
-                              const EarthUiShellState& state)
+                              EarthUiShellState& state)
 {
     if (!state.drawerOpen || layout.drawerWidth <= 0.0f) return false;
     ImGui::SetNextWindowPos(ImVec2(layout.drawerX, layout.drawerY),
@@ -477,7 +483,8 @@ bool beginEarthUiModuleDrawer(const EarthUiShellLayout& layout,
     ImGui::TextUnformatted(moduleLabel(state.activeModule));
     ImGui::PopStyleColor();
     ImGui::SameLine();
-    drawModuleHelp(state.activeModule, state.aboutOpen);
+    state.drawerHelpButton =
+        drawModuleHelp(state.activeModule, state.aboutOpen);
     ImGui::Separator();
     return true;
 }
@@ -490,7 +497,7 @@ void endEarthUiModuleDrawer()
 }
 
 void drawEarthUiContextTray(const EarthUiShellLayout& layout,
-                            const EarthUiShellState& state)
+                            EarthUiShellState& state)
 {
     if (contextKindForModule(state.activeModule) == EarthUiContextKind::None)
         return;
@@ -511,7 +518,7 @@ void drawEarthUiContextTray(const EarthUiShellLayout& layout,
             contextKindShortLabel(contextKindForModule(state.activeModule)),
             true);
         ImGui::SameLine(0.0f, 18.0f);
-        drawModuleHelp(state.activeModule);
+        state.contextHelpButton = drawModuleHelp(state.activeModule);
     }
     ImGui::End();
     ImGui::PopStyleVar();

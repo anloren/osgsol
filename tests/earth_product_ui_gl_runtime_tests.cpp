@@ -826,6 +826,23 @@ int main()
         io.AddMouseButtonEvent(0, false);
         renderAuditFrame();
     };
+    const auto clickShellRect = [&](earthui::EarthUiItemRect rect) {
+        expect(rect.visible && rect.width > 1.0f && rect.height > 1.0f,
+               "shell audit click target has no rendered rectangle");
+        const float x = rect.x + rect.width * 0.5f;
+        const float y = rect.y + rect.height * 0.5f;
+        io.AddMousePosEvent(x, y);
+        renderAuditFrame();
+        expect(rect.id == 0 || GImGui->HoveredId == rect.id,
+               "shell audit click target is covered; expected id=" +
+                   std::to_string(rect.id) + ", hovered id=" +
+                   std::to_string(GImGui->HoveredId) + ", point=" +
+                   std::to_string(x) + "," + std::to_string(y));
+        io.AddMouseButtonEvent(0, true);
+        renderAuditFrame();
+        io.AddMouseButtonEvent(0, false);
+        renderAuditFrame();
+    };
     const auto findVisibleEarthControl =
         [&](const std::string& key)
             -> const EarthControlUI::AuditItem* {
@@ -1427,15 +1444,13 @@ int main()
                 u8"生成昆明农业气候与地表变化联合航拍");
         });
 
-    // Module help is a real hidden product surface. Open the drawer-scoped
-    // popup through the shell state, then prove the production popup remains
-    // bounded, wraps instead of scrolling sideways, and accepts an outside
-    // click to close.
+    // Module help is a real hidden product surface. Click its production
+    // hit target, then prove the popup remains bounded, wraps instead of
+    // scrolling sideways, and accepts an outside click to close.
     productUi._uiV2.activeModule = earthui::EarthUiModule::Science;
-    productUi._uiV2.aboutOpen = true;
     renderAuditFrame();
+    clickShellRect(productUi._uiV2.drawerHelpButton);
     renderAuditFrame();
-    productUi._uiV2.aboutOpen = false;
     renderAuditFrame();
     ImGuiWindow* moduleHelp = activeNonModalPopup();
     expect(moduleHelp != nullptr && moduleHelp->Active &&
@@ -1466,6 +1481,20 @@ int main()
     renderAuditFrame();
     expect(activeNonModalPopup() == nullptr,
            "outside click did not close the module help popup");
+    clickShellRect(productUi._uiV2.contextHelpButton);
+    renderAuditFrame();
+    renderAuditFrame();
+    expect(activeNonModalPopup() != nullptr,
+           "context-tray module help does not receive a real pointer click");
+    io.AddMousePosEvent(
+        static_cast<float>(auditWidth) * 0.72f, 90.0f);
+    renderAuditFrame();
+    io.AddMouseButtonEvent(0, true);
+    renderAuditFrame();
+    io.AddMouseButtonEvent(0, false);
+    renderAuditFrame();
+    expect(activeNonModalPopup() == nullptr,
+           "outside click did not close context-tray module help");
 
     // Event stream and the global status strip are optional but formal UI
     // states. Exercise their real product code together, including the long
@@ -1521,8 +1550,53 @@ int main()
         ImGui::FindWindowByName(u8"洞察透镜###earth_insight_lens");
     expect(eventLens && eventLens->Scroll.y <= 1.0f,
            "event stream cannot scroll back to the top");
+    expect(productUi._ticker._auditFirstEvent.visible,
+           "first event has no reachable product hit target");
+    const EventTickerUI::AuditRect& firstEvent =
+        productUi._ticker._auditFirstEvent;
+    earthui::EarthUiItemRect firstEventRect = {
+        firstEvent.x, firstEvent.y, firstEvent.width, firstEvent.height,
+        firstEvent.visible};
+    clickShellRect(firstEventRect);
+    const osg::Vec3d eventEye =
+        manipulator->computeEyeLatLonHeight();
+    expect(std::fabs(
+               osg::RadiansToDegrees(eventEye[0]) -
+               auditEvents.front().lat) < 0.01 &&
+               std::fabs(
+                   osg::RadiansToDegrees(eventEye[1]) -
+               auditEvents.front().lon) < 0.01,
+           "clicking a formal event did not relocate the Earth camera");
     saveAuditFrame("1440x900-event-stream-status.ppm");
-    productUi._ticker.showTicker = false;
+    eventLens =
+        ImGui::FindWindowByName(u8"洞察透镜###earth_insight_lens");
+    ImGuiTabBar* eventTabBar = eventLens
+        ? GImGui->TabBars.GetByKey(
+              eventLens->GetID("##insight_tabs"))
+        : nullptr;
+    expect(eventTabBar != nullptr,
+           "event stream has no formal Insight Lens tab bar");
+    const ImGuiTabItem* selectedEventTab = nullptr;
+    for (const ImGuiTabItem& tab : eventTabBar->Tabs)
+        if (tab.ID == eventTabBar->SelectedTabId)
+            selectedEventTab = &tab;
+    expect(selectedEventTab != nullptr,
+           "event stream has no selected closable tab");
+    const float closeX =
+        eventTabBar->BarRect.Min.x + selectedEventTab->Offset +
+        selectedEventTab->Width - eventTabBar->FramePadding.x -
+        ImGui::GetFontSize() * 0.5f;
+    const float closeY =
+        eventTabBar->BarRect.Min.y + eventTabBar->FramePadding.y +
+        ImGui::GetFontSize() * 0.5f;
+    io.AddMousePosEvent(closeX, closeY);
+    renderAuditFrame();
+    io.AddMouseButtonEvent(0, true);
+    renderAuditFrame();
+    io.AddMouseButtonEvent(0, false);
+    renderAuditFrame();
+    expect(!productUi._ticker.showTicker,
+           "real Insight Lens close control did not close the event stream");
     productUi._ticker.showStatusBar = false;
     earthfeed::setProductTestEvents({});
     productUi._uiV2.activeModule = earthui::EarthUiModule::Science;
