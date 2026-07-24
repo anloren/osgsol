@@ -58,9 +58,9 @@
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
 - 候选版本：`0.6.1`，阶段 `G3.1`，来源提交
-  `7ff1263816713e3005aea98c3280ce6b94b98551`
+  `b7db63f52aaf285dbcaaec26a04016a8e8145ac6`
 - 上一桌面候选备份：
-  `build/desktop-backups/pre-ui-ux-goal-20260724-7ff1263/osgSol Earth.previous.app`
+  `build/desktop-backups/pre-ui-goal-residual-20260724-134422-7ff1263/osgSol Earth.previous.app`
 - 自动化没有启动、前置或操作桌面候选
 
 ## 仍需用户手测
