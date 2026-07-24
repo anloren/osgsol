@@ -70,16 +70,16 @@
   会报告外部元数据。
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
-- 当前桌面候选仍是上一轮 `0.6.1` / `G3.1`，来源提交
-  `d4be4470d47e03fe4f0060b4eb48d7475c7fbd17`；待本轮生产提交完成打包审计后
-  才会事务性替换，替换前不把工作树结果冒充桌面结果
+- 当前桌面候选：`0.6.1` / `G3.1`，来源提交
+  `539db2e09083e59f4660df2e35708a4206db8ffb`，channel
+  `ui-ux-goal-candidate`
 - 桌面/严格暂存包可执行文件 SHA-256：
-  `08c4bf07ad79e5e81a146860e58d76690fc6d7e44fdfa62c858f9c8445bc9938`
+  `b9a7f0c5a590587b5fcd18656dccc248ddcc7f7e5aa34d24bdf090f9fbfe1d9b`
 - 桌面包与严格暂存包逐文件一致：371 个普通文件、37 个符号链接；
   桌面进程 0、同名 App 1 个、最新异常报告仍为
   `osgSol_Earth-2026-07-23-222801.ips`
 - 上一桌面候选备份：
-  `build/desktop-backups/pre-ui-goal-accessibility-20260724-143702-d4be447/osgSol Earth.previous.app`
+  `build/desktop-backups/pre-ui-goal-complete-20260724-155204-539db2e/osgSol Earth.previous.app`
 - 自动化没有启动、前置或操作桌面候选
 
 ## 仍需用户手测

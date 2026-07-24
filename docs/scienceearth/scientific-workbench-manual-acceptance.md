@@ -14,12 +14,12 @@ before it can be tagged or synchronized as accepted.
 - Version: 0.6.1
 - ScienceEarth phase: G3.1
 - Channel: ui-ux-goal-candidate
-- Source commit: `b7db63f52aaf285dbcaaec26a04016a8e8145ac6`
+- Source commit: `539db2e09083e59f4660df2e35708a4206db8ffb`
 - Provenance: recorded in `Contents/Info.plist` and
   `Contents/Resources/package-audit.env`
 - Automated gates: package contract, bundle closure, provenance, data manifest,
   staging strict/deep signature, G0-v2 bundle audit, Rml document parsing, and
-  80/80 offline regression suite
+  80/80 offline regression suite and 43/43 bundle-audit unit suite
 - Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle
 - Automated launch count: zero
 - Desktop executable bytes and normal signature verification: valid. Desktop
@@ -35,6 +35,8 @@ before it can be tagged or synchronized as accepted.
   rail. It does not cover the rail, top bar, map command area, or bottom AI area.
 - [ ] The composer scroll bar is visible when content overflows, and the mouse
   wheel can scroll both down and back up after reaching either edge.
+- [ ] Short module and AI panels do not show a decorative scroll bar when
+  nothing overflows. Long content shows one continuous in-panel scroll bar.
 - [ ] Select `ERA5 agricultural climate`, lock the map center, and verify the
   exact coordinates and the message `镜头移动不会改变已锁定范围`.
 - [ ] Moving the camera after locking does not silently change the target.
@@ -70,6 +72,11 @@ before it can be tagged or synchronized as accepted.
 - [ ] At normal Retina size and at the smallest practical window, the top
   actions, AI command row, context strip, Insight Lens tabs, object cards,
   warnings, menus, dialogs, and close/cancel actions remain reachable.
+- [ ] Resize the window smaller and then larger once. The Science composer and
+  report reflow inside the viewport; no old 720 px panel remains outside it.
+- [ ] Tab advances through visible native and Science controls in task order;
+  pointer clicks still select every left-rail module and clicking the current
+  module again collapses it.
 
 ## Normal Quit gate
 
