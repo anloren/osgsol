@@ -16,6 +16,29 @@ namespace earthui { class CardStack; struct EarthUiShellLayout; }
 class AIChatUI
 {
 public:
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    struct AuditRect
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        bool valid = false;
+    };
+    struct AuditSnapshot
+    {
+        AuditRect historyButton;
+        AuditRect templateButton;
+        AuditRect input;
+        AuditRect sendButton;
+        AuditRect photoButton;
+        AuditRect videoButton;
+        bool historyExpanded = false;
+        bool templatePopupVisible = false;
+        bool videoModalVisible = false;
+    };
+#endif
+
     AIChatUI();
     // media 为空(未配置 key/EARTH_AI_FAKE_IMG)时📷按钮保持禁用态,其余不受影响。
     // mani(Task 9):🎬 按钮记录 A/B 两点位姿需要读当前相机经纬度/高度
@@ -34,11 +57,23 @@ public:
     // 供其它模块(如 Task 8 的 MediaManager)直接推卡片,不必都经 AIChatUI 转发方法。
     AICardPanel* cards() { return &_cards; }
 
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    const AuditSnapshot& auditSnapshot() const { return _auditSnapshot; }
+    void auditSetVideoConfirm(bool enabled)
+    {
+        _auditVideoConfirm = enabled;
+    }
+#endif
+
 private:
     char _inputBuf[1024];      // InputText 缓冲区，提交时转 std::string 再清空
     bool _historyCollapsed;    // 历史面板折叠状态（默认折叠，地图优先）
     size_t _lastEntryCount;    // 上次绘制时的历史条数，用于检测新增条目并自动滚动到底部
     std::string _preparedTemplateStatus; // 已准备的地点/参数摘要，发送前保持可见
     AICardPanel _cards;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    AuditSnapshot _auditSnapshot;
+    bool _auditVideoConfirm = false;
+#endif
 };
 #endif

@@ -744,6 +744,26 @@ public:
             std::to_string(selected->lastYear));
     }
 
+    void updateUnlockedTargetActions(bool supportsBounds)
+    {
+        const std::string fingerprint =
+            supportsBounds ? "point-and-view" : "point";
+        if (fingerprint == renderedTargetActionFingerprint) return;
+        ProgrammaticControlSync sync(controlSyncDepth);
+        if (Rml::ElementFormControlSelect* select =
+            rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(
+                element("unlocked-target-action")))
+        {
+            select->RemoveAll();
+            select->Add("选择操作…", "");
+            select->Add("锁定地图中心", "lock-map-center");
+            if (supportsBounds)
+                select->Add("使用当前视野", "lock-current-view");
+            select->SetValue("");
+        }
+        renderedTargetActionFingerprint = fingerprint;
+    }
+
     void enqueue(std::string name, std::string json)
     {
         std::lock_guard<std::mutex> guard(queueMutex);
@@ -1266,10 +1286,12 @@ public:
     std::uint64_t renderedRevision = std::numeric_limits<std::uint64_t>::max();
     std::string renderedSourceFingerprint;
     std::string renderedMethodFingerprint;
+    std::string renderedTargetActionFingerprint;
     std::string renderedArtifactFingerprint;
     bool costOpen = false;
     bool helpOpen = false;
     bool methodHelpOpen = false;
+    bool targetActionSelectionConsumed = false;
     int controlSyncDepth = 0;
     std::string pendingSourceId;
     std::string pendingMethodId;
@@ -1317,12 +1339,12 @@ bool ScienceWorkbenchPresenter::onRmlContextReady(
         return false;
     }
     const char* clickIds[] = {
-        "lock-map-center", "lock-current-view", "update-target",
-        "focus-target", "run-action", "cancel-action", "cost-toggle",
+        "run-action", "cancel-action", "cost-toggle",
         "science-help", "method-help"};
     for (const char* id : clickIds) _impl->attach(*this, id, "click");
     const char* changeIds[] = {
-        "source-select", "method-select", "first-year", "last-year"};
+        "source-select", "method-select", "first-year", "last-year",
+        "unlocked-target-action", "locked-target-action"};
     for (const char* id : changeIds) _impl->attach(*this, id, "change");
     if (_impl->desiredVisible.load())
         _impl->document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
@@ -1354,6 +1376,7 @@ bool ScienceWorkbenchPresenter::onRmlContextReady(
 
 void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
 {
+    _impl->targetActionSelectionConsumed = false;
     _impl->updateViewportLayout(context);
     const bool visible = _impl->desiredVisible.load();
     if (visible != _impl->renderedVisible)
@@ -1458,6 +1481,10 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
     for (const SourceView& source : view.sources)
         if (source.id == view.sourceId) { selected = &source; break; }
     if (!selected && !view.sources.empty()) selected = &view.sources.front();
+    _impl->updateUnlockedTargetActions(
+        selected && selected->supportsBounds);
+    _impl->setControlValue("unlocked-target-action", "");
+    _impl->setControlValue("locked-target-action", "");
     std::vector<ScienceWorkbenchMethod> methods;
     if (selected)
         methods = scienceWorkbenchMethodsForSourceId(
@@ -1537,11 +1564,8 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
         _impl->setText("target-support", "");
     }
     _impl->setDisplay("target-lock-note", view.locked);
-    _impl->setDisplay("lock-map-center", !view.locked, "inline-block");
-    _impl->setDisplay("lock-current-view",
-        !view.locked && selected && selected->supportsBounds, "inline-block");
-    _impl->setDisplay("update-target", view.locked, "inline-block");
-    _impl->setDisplay("focus-target", view.locked, "inline-block");
+    _impl->setDisplay("unlocked-target-actions", !view.locked);
+    _impl->setDisplay("locked-target-actions", view.locked);
 
     _impl->setText("source-bytes", formatBytes(view.sourceBytes));
     _impl->setText("result-cells", view.resultCells > 0.0
@@ -1624,6 +1648,7 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
         for (const SourceView& item : _impl->state.sources)
         {
             if (item.id != source) continue;
+            _impl->updateUnlockedTargetActions(item.supportsBounds);
             const std::vector<ScienceWorkbenchMethod> methods =
                 scienceWorkbenchMethodsForSourceId(
                     item.id, item.supportsTimeSeries,
@@ -1718,6 +1743,22 @@ void ScienceWorkbenchPresenter::ProcessEvent(Rml::Event& event)
                 jsonString(metric) + "}");
             _impl->updateReportShell(_impl->state);
         }
+    }
+    else if (id == "unlocked-target-action" ||
+             id == "locked-target-action")
+    {
+        if (_impl->targetActionSelectionConsumed) return;
+        const std::string action = _impl->value(id.c_str());
+        if (action.empty()) return;
+        _impl->targetActionSelectionConsumed = true;
+        _impl->setControlValue(id.c_str(), "");
+        if (action == "lock-map-center")
+            _impl->enqueue("lock-map-center", "");
+        else if (action == "lock-current-view")
+            _impl->enqueue("lock-current-view", "");
+        else if (action == "focus-target")
+            _impl->enqueue(
+                "focus-target", schema + "\"focus-target\"}");
     }
     else if (id == "first-year" || id == "last-year")
     {

@@ -36,13 +36,23 @@
             <p id="target-support" class="muted"></p>
             <p id="target-lock-note" class="lock-note">镜头移动不会改变已锁定范围</p>
             <p id="target-auto-note" class="lock-note">开始分析时会自动锁定地图中心；也可以先手动锁定。</p>
-            <div class="action-row">
-                <button id="lock-map-center" data-action="lock-map-center">锁定地图中心</button>
-                <button id="lock-current-view" data-action="lock-current-view">使用当前视野</button>
+            <div id="unlocked-target-actions" class="target-action-menu">
+                <label for="unlocked-target-action">位置操作</label>
+                <div class="select-shell">
+                    <select id="unlocked-target-action"></select>
+                    <span class="select-chevron" aria-hidden="true">▼</span>
+                </div>
             </div>
-            <div class="action-row locked-actions">
-                <button id="update-target" data-action="update-target">更新为地图中心</button>
-                <button id="focus-target" data-action="focus-target">回到分析区域</button>
+            <div id="locked-target-actions" class="target-action-menu">
+                <label for="locked-target-action">已锁定位置操作</label>
+                <div class="select-shell">
+                    <select id="locked-target-action">
+                        <option value="">选择操作…</option>
+                        <option value="lock-map-center">更新为地图中心</option>
+                        <option value="focus-target">回到分析区域</option>
+                    </select>
+                    <span class="select-chevron" aria-hidden="true">▼</span>
+                </div>
             </div>
         </section>
 

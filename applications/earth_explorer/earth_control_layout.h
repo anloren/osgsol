@@ -199,7 +199,7 @@ inline AiCommandRowLayout computeAiCommandRowLayout(
     AiCommandRowLayout layout;
     const int actionCount = waitingForVideoEnd ? 4 : 3;
     layout.actionWidth = hasActions
-        ? 52.0f + 40.0f + (waitingForVideoEnd ? 64.0f : 40.0f) +
+        ? 52.0f + 52.0f + (waitingForVideoEnd ? 80.0f : 52.0f) +
             (waitingForVideoEnd ? std::max(0.0f, cancelButtonWidth) : 0.0f) +
             std::max(0.0f, itemSpacing) *
                 static_cast<float>(actionCount - 1)

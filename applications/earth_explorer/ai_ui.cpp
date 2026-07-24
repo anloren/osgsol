@@ -15,6 +15,24 @@
 #include <cfloat>
 #include <cstring>
 
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+namespace
+{
+AIChatUI::AuditRect auditLastItemRect()
+{
+    const ImVec2 minimum = ImGui::GetItemRectMin();
+    const ImVec2 maximum = ImGui::GetItemRectMax();
+    AIChatUI::AuditRect result;
+    result.x = minimum.x;
+    result.y = minimum.y;
+    result.width = std::max(0.0f, maximum.x - minimum.x);
+    result.height = std::max(0.0f, maximum.y - minimum.y);
+    result.valid = result.width > 0.0f && result.height > 0.0f;
+    return result;
+}
+}
+#endif
+
 AIChatUI::AIChatUI()
     : _historyCollapsed(true), _lastEntryCount(0)
 {
@@ -34,6 +52,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
 {
     ImGuiIO& io = ImGui::GetIO();
     const float winWidth = shell.commandWidth;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    _auditSnapshot = AuditSnapshot();
+#endif
 
     // EarthUI v2 的 AI Command Deck 固定在地图下方中央；历史展开时向上生长，
     // 不侵占模块抽屉、右侧 Insight Lens 或底部上下文控件。
@@ -67,6 +88,21 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
     bool openVideoModal = false;
     earthai::MediaManager::VideoUiSnapshot video = media
         ? media->videoUiSnapshot() : earthai::MediaManager::VideoUiSnapshot();
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    if (_auditVideoConfirm)
+    {
+        video.phase = earthai::VIDEO_AWAIT_CONFIRM;
+        video.pending.ready = true;
+        video.pending.llaA.set(
+            osg::DegreesToRadians(22.2950),
+            osg::DegreesToRadians(114.1404), 1200.0);
+        video.pending.llaB.set(
+            osg::DegreesToRadians(22.3193),
+            osg::DegreesToRadians(114.1694), 900.0);
+        video.pending.motionPrompt =
+            u8"从香港西九龙上空平滑推进至维多利亚港，保持地平线稳定并保留真实比例。";
+    }
+#endif
     if (ImGui::Begin(u8"AI 对话条", NULL, flags))
     {
         bool busy = core && core->busy();
@@ -90,8 +126,13 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             if (!transcript.empty())
             {
                 if (inlineHeader) ImGui::SameLine();
-                if (ImGui::SmallButton(_historyCollapsed ? u8"历史" : u8"收起历史"))
+                if (ImGui::SmallButton(
+                        _historyCollapsed ? u8"历史" : u8"收起历史"))
                     _historyCollapsed = !_historyCollapsed;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                _auditSnapshot.historyButton = auditLastItemRect();
+                _auditSnapshot.historyExpanded = !_historyCollapsed;
+#endif
                 ImGui::SameLine();
                 ImGui::TextDisabled(u8"%d 条", (int)transcript.size());
 
@@ -175,15 +216,29 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             if (templateCanShareLine) ImGui::SameLine();
             if (ImGui::SmallButton(u8"分析模板"))
                 ImGui::OpenPopup("##scienceearth_templates");
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+            _auditSnapshot.templateButton = auditLastItemRect();
+#endif
 
             const float popupWidth = std::min(520.0f,
                 std::max(320.0f, io.DisplaySize.x - 40.0f));
             const float popupHeight = std::min(540.0f,
                 std::max(260.0f, io.DisplaySize.y * 0.62f));
+            const float popupX = std::clamp(
+                shell.commandX + winWidth - popupWidth,
+                12.0f, std::max(12.0f, io.DisplaySize.x - popupWidth - 12.0f));
+            const float popupY = std::max(
+                shell.topBarHeight + shell.outerGap,
+                shell.commandY - shell.outerGap - popupHeight);
+            ImGui::SetNextWindowPos(
+                ImVec2(popupX, popupY), ImGuiCond_Appearing);
             ImGui::SetNextWindowSize(ImVec2(popupWidth, popupHeight),
                                      ImGuiCond_Appearing);
             if (ImGui::BeginPopup("##scienceearth_templates"))
             {
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                _auditSnapshot.templatePopupVisible = true;
+#endif
                 ImGui::TextUnformatted(u8"ScienceEarth 分析模板");
                 ImGui::TextDisabled(
                     u8"带地点模板会先定位并填好参数；当前视野模板保留相机。"
@@ -287,6 +342,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             _inputBuf[0] = '\0';
             ImGui::SetKeyboardFocusHere(-1);
         }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+        _auditSnapshot.input = auditLastItemRect();
+#endif
 #if defined(__APPLE__)
         // 中文 IME 候选窗定位:输入框激活时把它的矩形(ImGui 坐标/左上原点)
         // 报给 ime_bridge(firstRectForCharacterRange 用)。每帧覆盖,开销可忽略。
@@ -310,6 +368,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 submitted = true;
                 _inputBuf[0] = '\0';
             }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+            _auditSnapshot.sendButton = auditLastItemRect();
+#endif
             if (!canSubmit) ImGui::EndDisabled();
         }
 
@@ -324,7 +385,10 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             ImGui::SameLine();
             bool photoEnabled = (core && media && !busy);
             if (!photoEnabled) ImGui::BeginDisabled();
-            if (ImGui::Button(u8"照片", ImVec2(40.0f, 0.0f))) photoSubmit = true;
+            if (ImGui::Button(u8"照片", ImVec2(52.0f, 0.0f))) photoSubmit = true;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+            _auditSnapshot.photoButton = auditLastItemRect();
+#endif
             if (!photoEnabled) ImGui::EndDisabled();
             // ImGui 1.92 起 IsItemHovered() 默认对禁用项返回 false，需显式加
             // ImGuiHoveredFlags_AllowWhenDisabled 才能在禁用按钮上弹出 tooltip。
@@ -341,7 +405,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             if (vphase == earthai::VIDEO_WAIT_B)
             {
                 if (!videoEnabled) ImGui::BeginDisabled();
-                if (ImGui::Button(u8"完成B点", ImVec2(64.0f, 0.0f)) && mani)
+                if (ImGui::Button(u8"完成B点", ImVec2(80.0f, 0.0f)) && mani)
                 {
                     osg::Vec3d llaB = mani->computeEyeLatLonHeight();
                     earthai::VideoUiRequest request;
@@ -349,6 +413,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                     request.lla = llaB;
                     media->enqueueVideoRequest(request);
                 }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                _auditSnapshot.videoButton = auditLastItemRect();
+#endif
                 if (!videoEnabled) ImGui::EndDisabled();
                 ImGui::SameLine();
                 if (ImGui::SmallButton(u8"取消") && media)
@@ -362,7 +429,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             {
                 bool idleEnabled = (core && media && mani && !busy && vphase == earthai::VIDEO_IDLE);
                 if (!idleEnabled) ImGui::BeginDisabled();
-                if (ImGui::Button(u8"视频", ImVec2(40.0f, 0.0f)) && mani)
+                if (ImGui::Button(u8"视频", ImVec2(52.0f, 0.0f)) && mani)
                 {
                     osg::Vec3d llaA = mani->computeEyeLatLonHeight();
                     earthai::VideoUiRequest request;
@@ -370,6 +437,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                     request.lla = llaA;
                     media->enqueueVideoRequest(request);
                 }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                _auditSnapshot.videoButton = auditLastItemRect();
+#endif
                 if (!idleEnabled) ImGui::EndDisabled();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 {
@@ -403,7 +473,11 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
 
     // ---- 视频确认 Modal(Task 9):居中弹窗,展示 A/B 坐标 + 运动提示词预览 + 费用提示。----
     // 放在 AI 对话条窗口 Begin/End 之外(Modal 是独立的顶层窗口,不依赖对话条是否展开)。
-    if (media)
+    bool videoUiAvailable = media != nullptr;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+    videoUiAvailable = videoUiAvailable || _auditVideoConfirm;
+#endif
+    if (videoUiAvailable)
     {
         if (openVideoModal && !ImGui::IsPopupOpen(u8"确认生成巡航视频"))
         {
@@ -424,6 +498,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         if (ImGui::BeginPopupModal(u8"确认生成巡航视频", NULL,
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize))
         {
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+            _auditSnapshot.videoModalVisible = true;
+#endif
             earthai::MediaManager::PendingVideoInfo info = video.pending;
             if (info.ready)
             {
@@ -459,9 +536,12 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                     ImGuiCol_Text, earthui::design::kCarbon);
                 if (ImGui::Button(u8"确认生成", ImVec2(actionWidth, 0.0f)))
                 {
-                    earthai::VideoUiRequest request;
-                    request.kind = earthai::VideoUiRequest::Confirm;
-                    media->enqueueVideoRequest(request);
+                    if (media)
+                    {
+                        earthai::VideoUiRequest request;
+                        request.kind = earthai::VideoUiRequest::Confirm;
+                        media->enqueueVideoRequest(request);
+                    }
                 }
                 ImGui::PopStyleColor(4);
                 ImGui::SameLine();
@@ -469,9 +549,12 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                         u8"取消", ImVec2(actionWidth, 0.0f)) ||
                     ImGui::IsKeyPressed(ImGuiKey_Escape))
                 {
-                    earthai::VideoUiRequest request;
-                    request.kind = earthai::VideoUiRequest::Cancel;
-                    media->enqueueVideoRequest(request);
+                    if (media)
+                    {
+                        earthai::VideoUiRequest request;
+                        request.kind = earthai::VideoUiRequest::Cancel;
+                        media->enqueueVideoRequest(request);
+                    }
                     ImGui::CloseCurrentPopup();
                 }
                 if (!video.commandError.empty())

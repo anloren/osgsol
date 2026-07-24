@@ -105,7 +105,7 @@ scrollbarhorizontal sliderarrowinc {
     box-sizing: border-box;
     width: 100%;
 }
-.section-heading, .action-row, .year-fields {
+.section-heading, .year-fields {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -223,9 +223,18 @@ select selectbox option.disabled {
 .target-title { margin-top: 10px; font-size: 16px; }
 .coordinate-readout { margin-top: 5px; color: #38c3df; font-family: LXGW Fasmart Gothic; }
 .lock-note { margin-top: 9px; color: #a7aaa6; font-size: 12px; }
-.action-row { margin-top: 10px; }
-.action-row button { flex: 1; }
-.locked-actions { display: none; }
+.target-action-menu {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    margin-top: 10px;
+}
+.target-action-menu label {
+    margin-bottom: 5px;
+    color: #a7aaa6;
+    font-size: 11px;
+}
+#locked-target-actions { display: none; }
 
 .year-fields { width: 100%; margin-top: 10px; align-items: flex-end; }
 .year-field { display: block; flex: 1; min-width: 0; }

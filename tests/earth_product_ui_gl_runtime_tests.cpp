@@ -25,6 +25,11 @@
 // files, launching AppKit, or touching the packaged Desktop application.
 namespace earthai
 {
+bool g_productUiBusy = false;
+std::vector<ChatEntry> g_productUiTranscript = {
+    {ChatEntry::USER, u8"比较当前区域的农业气候与地表变化。"},
+    {ChatEntry::ASSISTANT, u8"已准备数据源与空间范围，等待提交。"}};
+
 AIChatCore::AIChatCore(LLMProvider* provider, ToolRegistry* registry)
     : _provider(provider), _registry(registry)
 {
@@ -34,16 +39,14 @@ AIChatCore::~AIChatCore() {}
 
 bool AIChatCore::busy() const
 {
-    return false;
+    return g_productUiBusy;
 }
 
 void AIChatCore::submit(const std::string&) {}
 
 std::vector<ChatEntry> AIChatCore::transcript() const
 {
-    return {
-        {ChatEntry::USER, u8"比较当前区域的农业气候与地表变化。"},
-        {ChatEntry::ASSISTANT, u8"已准备数据源与空间范围，等待提交。"}};
+    return g_productUiTranscript;
 }
 
 MediaManager::VideoUiSnapshot MediaManager::videoUiSnapshot() const
@@ -355,6 +358,21 @@ bool overlaps(const ImGuiWindow* first, const ImGuiWindow* second)
         firstMax.y > second->Pos.y + 0.5f;
 }
 
+ImGuiWindow* activeNonModalPopup()
+{
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    for (ImGuiWindow* window : context.Windows)
+    {
+        if (!window || !window->Active || window->Hidden)
+            continue;
+        if ((window->Flags & ImGuiWindowFlags_Popup) == 0 ||
+            (window->Flags & ImGuiWindowFlags_Modal) != 0)
+            continue;
+        return window;
+    }
+    return nullptr;
+}
+
 void inspectProductionWindows(int width, int height,
                               earthui::EarthUiModule module)
 {
@@ -366,6 +384,15 @@ void inspectProductionWindows(int width, int height,
         expect(window->Pos.x >= -0.5f && window->Pos.y >= -0.5f,
                std::string(moduleId(module)) +
                    ": production window starts outside viewport: " + name);
+        if (window->Pos.x + window->Size.x > width + 0.5f ||
+            window->Pos.y + window->Size.y > height + 0.5f)
+        {
+            std::cerr << "viewport-overflow: viewport=" << width << "x"
+                      << height << " window=" << name
+                      << " pos=" << window->Pos.x << "," << window->Pos.y
+                      << " size=" << window->Size.x << "x"
+                      << window->Size.y << std::endl;
+        }
         expect(window->Pos.x + window->Size.x <= width + 0.5f &&
                    window->Pos.y + window->Size.y <= height + 0.5f,
                std::string(moduleId(module)) +
@@ -696,6 +723,137 @@ int main()
                 viewport[0], viewport[1], evidenceDirectory);
         }
     }
+
+    // Hidden AI surfaces are part of the formal product, not optional mockups.
+    // Exercise them through the real ImGui mouse path and keep their geometry
+    // under the same viewport/overflow gates as the eight module shells.
+    const int auditWidth = 1440;
+    const int auditHeight = 900;
+    expect(gl.resize(auditWidth, auditHeight),
+           "could not resize GL target for AI surface audit");
+    io.DisplaySize = ImVec2(
+        static_cast<float>(auditWidth), static_cast<float>(auditHeight));
+    productUi._uiV2.activeModule = earthui::EarthUiModule::Science;
+    productUi._uiV2.drawerOpen = true;
+    configureSelection(
+        earthui::EarthUiModule::Science,
+        productUi, flights, satellites, ships);
+    earthai::g_productUiTranscript = {
+        {earthai::ChatEntry::USER,
+         u8"比较 2017–2025 年昆明周边农业气候、地表覆盖与高程约束。"},
+        {earthai::ChatEntry::ASSISTANT,
+         u8"已锁定当前研究位置，并把不同科学单位保留在独立图表中。"},
+        {earthai::ChatEntry::TOOL_NOTE,
+         u8"工具：准备 ERA5、AlphaEarth 与 Copernicus DEM 的来源和时间范围。"},
+        {earthai::ChatEntry::ERR,
+         u8"示例错误状态：上游暂不可用时必须保留重试说明，不能只显示空白。"}};
+
+    const auto renderAuditFrame = [&]() {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui::NewFrame();
+        productUi.runInternal(nullptr);
+        ImGui::Render();
+        gl.bind();
+        glDisable(GL_SCISSOR_TEST);
+        glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
+                GL_STENCIL_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        glFinish();
+    };
+    const auto clickAuditRect = [&](const AIChatUI::AuditRect& rect) {
+        expect(rect.valid, "AI audit click target has no rendered rectangle");
+        const float x = rect.x + rect.width * 0.5f;
+        const float y = rect.y + rect.height * 0.5f;
+        io.AddMousePosEvent(x, y);
+        renderAuditFrame();
+        io.AddMouseButtonEvent(0, true);
+        renderAuditFrame();
+        io.AddMouseButtonEvent(0, false);
+        renderAuditFrame();
+    };
+    const auto saveAuditFrame = [&](const char* name) {
+        std::vector<unsigned char> rgba(
+            static_cast<std::size_t>(auditWidth) * auditHeight * 4);
+        glReadPixels(
+            0, 0, auditWidth, auditHeight,
+            GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+        const std::filesystem::path output = evidenceDirectory / name;
+        expect(writePpm(output, rgba, auditWidth, auditHeight),
+               "could not write AI surface evidence: " + output.string());
+    };
+    const auto expectRectInside = [&](const AIChatUI::AuditRect& rect,
+                                      const ImGuiWindow* window,
+                                      const char* label) {
+        expect(rect.valid, std::string(label) + " is not rendered");
+        expect(window != nullptr, "AI command window is absent");
+        expect(rect.x >= window->Pos.x - 0.5f &&
+                   rect.y >= window->Pos.y - 0.5f &&
+                   rect.x + rect.width <=
+                       window->Pos.x + window->Size.x + 0.5f &&
+                   rect.y + rect.height <=
+                       window->Pos.y + window->Size.y + 0.5f,
+               std::string(label) + " is clipped by the AI command window");
+    };
+
+    for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
+    const AIChatUI::AuditSnapshot compactAi = command.auditSnapshot();
+    ImGuiWindow* aiCommand = ImGui::FindWindowByName(u8"AI 对话条");
+    expectRectInside(compactAi.historyButton, aiCommand, "history button");
+    expectRectInside(compactAi.templateButton, aiCommand, "template button");
+    expectRectInside(compactAi.input, aiCommand, "AI input");
+    expectRectInside(compactAi.sendButton, aiCommand, "send button");
+    expectRectInside(compactAi.photoButton, aiCommand, "photo button");
+    expectRectInside(compactAi.videoButton, aiCommand, "video button");
+
+    clickAuditRect(compactAi.historyButton);
+    renderAuditFrame();
+    renderAuditFrame();
+    expect(command.auditSnapshot().historyExpanded,
+           "real AI history button click did not expand the transcript");
+    inspectProductionWindows(
+        auditWidth, auditHeight, earthui::EarthUiModule::Science);
+    saveAuditFrame("1440x900-ai-history.ppm");
+
+    clickAuditRect(command.auditSnapshot().historyButton);
+    renderAuditFrame();
+    renderAuditFrame();
+    expect(!command.auditSnapshot().historyExpanded,
+           "real AI history button click did not collapse the transcript");
+
+    clickAuditRect(command.auditSnapshot().templateButton);
+    renderAuditFrame();
+    renderAuditFrame();
+    expect(command.auditSnapshot().templatePopupVisible,
+           "real analysis-template button click did not open the gallery");
+    inspectProductionWindows(
+        auditWidth, auditHeight, earthui::EarthUiModule::Science);
+    ImGuiWindow* templatePopup = activeNonModalPopup();
+    aiCommand = ImGui::FindWindowByName(u8"AI 对话条");
+    expect(templatePopup != nullptr,
+           "analysis-template popup has no active product window");
+    expect(!overlaps(templatePopup, aiCommand),
+           "analysis-template popup covers the AI command controls");
+    saveAuditFrame("1440x900-ai-templates.ppm");
+    io.AddMousePosEvent(
+        static_cast<float>(auditWidth) * 0.72f, 90.0f);
+    renderAuditFrame();
+    io.AddMouseButtonEvent(0, true);
+    renderAuditFrame();
+    io.AddMouseButtonEvent(0, false);
+    renderAuditFrame();
+    expect(!command.auditSnapshot().templatePopupVisible,
+           "clicking outside did not close the analysis-template gallery");
+
+    command.auditSetVideoConfirm(true);
+    renderAuditFrame();
+    renderAuditFrame();
+    expect(command.auditSnapshot().videoModalVisible,
+           "video confirmation modal did not enter the formal product frame");
+    inspectProductionWindows(
+        auditWidth, auditHeight, earthui::EarthUiModule::Science);
+    saveAuditFrame("1440x900-ai-video-confirm.ppm");
+    command.auditSetVideoConfirm(false);
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui::DestroyContext(context);

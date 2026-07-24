@@ -119,7 +119,9 @@ int main()
     const std::vector<std::string> requiredIds = {
         "analysis-template", "target-card", "time-range",
         "method-options", "cost-disclosure", "run-footer",
-        "progress-footer", "focus-target"};
+        "progress-footer", "unlocked-target-actions",
+        "unlocked-target-action", "locked-target-actions",
+        "locked-target-action"};
     for (const std::string& id : requiredIds)
         expect(rml.find("id=\"" + id + "\"") != std::string::npos,
                "required connected-workflow element ID is missing");
@@ -130,10 +132,18 @@ int main()
            "analysis CTA must remain actionable before an explicit target lock");
     expect(rml.find("开始分析时会自动锁定地图中心") != std::string::npos,
            "composer must explain the automatic target lock beside the CTA");
-    expect(rml.find("data-action=\"lock-map-center\"") != std::string::npos,
-           "target card must lock the map center");
-    expect(rml.find("data-action=\"update-target\"") != std::string::npos,
-           "target card must support an explicit target update");
+    expect(presenter.find(
+               "select->Add(\"锁定地图中心\", \"lock-map-center\")") !=
+               std::string::npos &&
+               presenter.find(
+               "select->Add(\"使用当前视野\", \"lock-current-view\")") !=
+               std::string::npos,
+           "unlocked target menu must expose the supported lock operations");
+    expect(rml.find("<option value=\"lock-map-center\">"
+                    "更新为地图中心</option>") != std::string::npos &&
+               rml.find("<option value=\"focus-target\">"
+                        "回到分析区域</option>") != std::string::npos,
+           "locked target menu must support update and focus operations");
     expect(rml.find("镜头移动不会改变已锁定范围") != std::string::npos,
            "immutable target explanation must be exact and visible");
 

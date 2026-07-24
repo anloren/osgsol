@@ -12,6 +12,22 @@
 
 namespace
 {
+class TestSystemInterface : public Rml::SystemInterface
+{
+public:
+    void SetClipboardText(const Rml::String& text) override
+    {
+        clipboard = text;
+    }
+
+    void GetClipboardText(Rml::String& text) override
+    {
+        text = clipboard;
+    }
+
+    std::string clipboard;
+};
+
 class NullRenderer : public Rml::RenderInterface
 {
 public:
@@ -72,7 +88,19 @@ void click(Rml::Context& context, Rml::ElementDocument* document,
 {
     Rml::Element* element = document ? document->GetElementById(id) : nullptr;
     expect(element != nullptr, std::string("click target is missing: ") + id);
-    element->ScrollIntoView(true);
+    const Rml::Vector2f before = element->GetAbsoluteOffset();
+    const Rml::Vector2i viewport = context.GetDimensions();
+    Rml::Element* scroll = element->GetClosestScrollableContainer();
+    const Rml::Vector2f scrollOffset =
+        scroll ? scroll->GetAbsoluteOffset() : Rml::Vector2f();
+    const float clipTop = scroll
+        ? scrollOffset.y : 0.0f;
+    const float clipBottom = scroll
+        ? scrollOffset.y + scroll->GetClientHeight()
+        : static_cast<float>(viewport.y);
+    if (before.y < clipTop ||
+        before.y + element->GetOffsetHeight() > clipBottom)
+        element->ScrollIntoView(true);
     context.Update();
     const Rml::Vector2f center = element->GetAbsoluteOffset() +
         Rml::Vector2f(
@@ -81,6 +109,38 @@ void click(Rml::Context& context, Rml::ElementDocument* document,
     context.ProcessMouseMove(-1, -1, 0);
     context.ProcessMouseMove(
         static_cast<int>(center.x), static_cast<int>(center.y), 0);
+    Rml::Element* hover = context.GetHoverElement();
+    bool targetHovered = false;
+    for (Rml::Element* node = hover; node; node = node->GetParentNode())
+        if (node == element) { targetHovered = true; break; }
+    if (!targetHovered)
+    {
+        std::string detail = std::string("click target is covered: ") + id;
+        if (hover)
+            detail += "; hover=" + std::string(hover->GetTagName()) +
+                "#" + std::string(hover->GetId()) +
+                "." + std::string(hover->GetClassNames()) +
+                " at " + std::to_string(hover->GetAbsoluteOffset().x) +
+                "," + std::to_string(hover->GetAbsoluteOffset().y) +
+                " size " + std::to_string(hover->GetOffsetWidth()) +
+                "x" + std::to_string(hover->GetOffsetHeight());
+        detail += "; target at " +
+            std::to_string(element->GetAbsoluteOffset().x) + "," +
+            std::to_string(element->GetAbsoluteOffset().y) + " size " +
+            std::to_string(element->GetOffsetWidth()) + "x" +
+            std::to_string(element->GetOffsetHeight());
+        if (Rml::Element* parent = element->GetParentNode())
+            detail += "; parent=" + std::string(parent->GetTagName()) +
+                "#" + std::string(parent->GetId()) + "." +
+                std::string(parent->GetClassNames()) + " at " +
+                std::to_string(parent->GetAbsoluteOffset().x) + "," +
+                std::to_string(parent->GetAbsoluteOffset().y) + " size " +
+                std::to_string(parent->GetOffsetWidth()) + "x" +
+                std::to_string(parent->GetOffsetHeight());
+        detail += "; center=" + std::to_string(center.x) + "," +
+            std::to_string(center.y);
+        expect(false, detail);
+    }
     context.ProcessMouseButtonDown(0, 0);
     context.ProcessMouseButtonUp(0, 0);
     context.Update();
@@ -95,6 +155,27 @@ std::vector<ScienceWorkbenchQueuedAction> drain(
         actions.push_back(std::move(action));
     return actions;
 }
+
+void expectSingleAction(
+    ScienceWorkbenchPresenter& presenter, const std::string& name,
+    const std::string& payload = std::string())
+{
+    const std::vector<ScienceWorkbenchQueuedAction> actions =
+        drain(presenter);
+    if (actions.size() != 1)
+    {
+        std::string detail = "expected exactly one action for " + name +
+            ", got " + std::to_string(actions.size()) + ":";
+        for (const ScienceWorkbenchQueuedAction& action : actions)
+            detail += " " + action.name;
+        expect(false, detail);
+    }
+    expect(actions.front().name == name,
+           "expected action " + name + ", got " + actions.front().name);
+    if (!payload.empty())
+        expect(actions.front().json.find(payload) != std::string::npos,
+               "action " + name + " is missing payload " + payload);
+}
 }
 
 int main()
@@ -104,7 +185,9 @@ int main()
            runtime.error());
 
     NullRenderer renderer;
+    TestSystemInterface system;
     Rml::SetRenderInterface(&renderer);
+    Rml::SetSystemInterface(&system);
     expect(Rml::Initialise(), "RmlUi core must initialize headlessly");
     expect(Rml::LoadFontFace(
                std::string(OSGVERSE_SOURCE_DIR) +
@@ -148,6 +231,31 @@ int main()
     expect(inner(composer, "analysis-name").find(
                "ERA5 Agricultural Climate") != std::string::npos,
            "initial source description must match the model source");
+    expect(!visible(composer, "science-help-copy"),
+           "science help must start collapsed");
+    click(*context, composer, "science-help");
+    expect(visible(composer, "science-help-copy"),
+           "science help button does not reveal its explanation");
+    click(*context, composer, "science-help");
+    expect(!visible(composer, "science-help-copy"),
+           "science help button does not collapse its explanation");
+    expect(!visible(composer, "cost-body"),
+           "preflight cost details must start collapsed");
+    click(*context, composer, "cost-toggle");
+    expect(visible(composer, "cost-body"),
+           "preflight cost disclosure does not open");
+    click(*context, composer, "cost-toggle");
+    expect(!visible(composer, "cost-body"),
+           "preflight cost disclosure does not close");
+    Rml::ElementFormControl* unlockedTargetAction =
+        rmlui_dynamic_cast<Rml::ElementFormControl*>(
+            composer->GetElementById("unlocked-target-action"));
+    expect(unlockedTargetAction != nullptr,
+           "unlocked target action menu must exist");
+    unlockedTargetAction->SetValue("lock-map-center");
+    expectSingleAction(presenter, "lock-map-center");
+    presenter.onRmlFrame(*context);
+    context->Update();
 
     Rml::ElementFormControl* source =
         rmlui_dynamic_cast<Rml::ElementFormControl*>(
@@ -210,6 +318,8 @@ int main()
                "source selection action carries the wrong ID for " +
                    sourceCase.first);
     }
+    unlockedTargetAction->SetValue("lock-current-view");
+    expectSingleAction(presenter, "lock-current-view");
 
     Rml::ElementFormControl* method =
         rmlui_dynamic_cast<Rml::ElementFormControl*>(
@@ -226,11 +336,29 @@ int main()
                methodActions.front().json.find("direction-change") !=
                    std::string::npos,
            "one method selection must dispatch exactly one method action");
-    expect(height(composer, "method-help-copy") == 0.0f,
+    expect(!visible(composer, "method-help-copy"),
            "method help must be collapsed before user interaction");
     click(*context, composer, "method-help");
-    expect(height(composer, "method-help-copy") > 1.0f,
+    expect(visible(composer, "method-help-copy"),
            "method help button does not reveal its explanation");
+    click(*context, composer, "method-help");
+    expect(!visible(composer, "method-help-copy"),
+           "method help button does not collapse its explanation");
+
+    click(*context, composer, "run-action");
+    const std::vector<ScienceWorkbenchQueuedAction> runActions =
+        drain(presenter);
+    if (runActions.size() != 2)
+    {
+        std::string detail = "an unlocked run queued " +
+            std::to_string(runActions.size()) + " actions:";
+        for (const ScienceWorkbenchQueuedAction& action : runActions)
+            detail += " " + action.name;
+        expect(false, detail);
+    }
+    expect(runActions[0].name == "lock-map-center" &&
+               runActions[1].name == "run",
+           "an unlocked run queued actions in the wrong order");
 
     presenter.publishActionError("simulated action rejection");
     presenter.onRmlFrame(*context);
@@ -243,6 +371,7 @@ int main()
                "\"action\":\"run\"}", error),
            error);
     presenter.onRmlFrame(*context);
+    context->Update();
     expect(drain(presenter).empty(),
            "opening an artifact must not dispatch a metric change recursively");
 
@@ -264,9 +393,49 @@ int main()
                !inner(report, "chart-x-mid").empty() &&
                !inner(report, "chart-x-last").empty(),
            "ready report must label first, middle and last chart years");
+    if (visible(composer, "unlocked-target-actions") ||
+        !visible(composer, "locked-target-actions"))
+    {
+        Rml::Element* unlocked =
+            composer->GetElementById("unlocked-target-actions");
+        Rml::Element* locked =
+            composer->GetElementById("locked-target-actions");
+        std::string detail =
+            "a locked result must expose target update and focus controls";
+        detail += "; target-status=" + inner(composer, "target-status");
+        detail += "; unlocked-visible=" +
+            std::to_string(unlocked && unlocked->IsVisible(true));
+        detail += "; locked-visible=" +
+            std::to_string(locked && locked->IsVisible(true));
+        expect(false, detail);
+    }
+    Rml::ElementFormControl* lockedTargetAction =
+        rmlui_dynamic_cast<Rml::ElementFormControl*>(
+            composer->GetElementById("locked-target-action"));
+    expect(lockedTargetAction != nullptr,
+           "locked target action menu must exist");
+    lockedTargetAction->SetValue("lock-map-center");
+    expectSingleAction(presenter, "lock-map-center");
+    presenter.onRmlFrame(*context);
+    context->Update();
+    lockedTargetAction->SetValue("focus-target");
+    expectSingleAction(presenter, "focus-target");
+
+    click(*context, report, "report-focus-target");
+    expectSingleAction(presenter, "focus-target");
     click(*context, report, "tab-trends");
     expect(visible(report, "trends") && !visible(report, "overview"),
            "real report tab click does not switch to time trends");
+    Rml::ElementFormControl* metric =
+        rmlui_dynamic_cast<Rml::ElementFormControl*>(
+            report->GetElementById("report-metric-select"));
+    expect(metric != nullptr, "report metric select must exist");
+    metric->SetValue("embedding-similarity");
+    expectSingleAction(
+        presenter, "select-metric", "embedding-similarity");
+    expect(inner(report, "chart-title").find("similarity") !=
+               std::string::npos,
+           "metric selection does not update the plotted metric title");
     click(*context, report, "tab-spatial-range");
     expect(visible(report, "spatial-range") &&
                !visible(report, "trends"),
@@ -279,6 +448,64 @@ int main()
     expect(visible(report, "overview") &&
                !visible(report, "methods-evidence"),
            "real report tab click does not return to overview");
+
+    click(*context, report, "tab-methods-evidence");
+    const std::string firstArtifactId =
+        inner(report, "report-artifact-id");
+    expect(firstArtifactId == "alphaearth-test-artifact-1",
+           "first generated artifact must have a stable unique ID");
+    click(*context, report, "copy-artifact-id");
+    expect(system.clipboard == firstArtifactId,
+           "copy result ID does not reach the Rml system clipboard");
+    expect(inner(report, "copy-artifact-status").find("已复制") !=
+               std::string::npos,
+           "copy result ID does not provide visible feedback");
+
+    click(*context, report, "report-overflow");
+    expect(visible(report, "delete-confirmation"),
+           "report more menu does not reveal its destructive confirmation");
+    click(*context, report, "report-delete-cancel");
+    expect(!visible(report, "delete-confirmation"),
+           "report delete cancellation does not close the confirmation");
+
+    click(*context, report, "report-minimize");
+    expect(!visible(report, "science-report") &&
+               visible(report, "report-shelf") &&
+               visible(report, "shelf-0"),
+           "report minimize does not move the result to the shelf");
+    expectSingleAction(presenter, "minimize-report");
+    click(*context, report, "shelf-0");
+    expect(visible(report, "science-report"),
+           "shelf result does not reopen the minimized report");
+    expectSingleAction(presenter, "open-report", firstArtifactId);
+
+    click(*context, report, "report-close");
+    expect(!visible(report, "science-report"),
+           "report close leaves the report visible");
+    expectSingleAction(presenter, "close-report");
+
+    expect(runtime.dispatchWorkbenchAction(
+               "{\"schema\":\"science-workbench-action-v1\","
+               "\"action\":\"run\"}", error),
+           error);
+    presenter.onRmlFrame(*context);
+    context->Update();
+    expect(drain(presenter).empty(),
+           "opening a second artifact must not dispatch recursively");
+    const std::string secondArtifactId =
+        inner(report, "report-artifact-id");
+    expect(secondArtifactId == "alphaearth-test-artifact-2" &&
+               secondArtifactId != firstArtifactId,
+           "a second run must open a distinct formal report");
+    expect(visible(report, "science-report"),
+           "a newly completed run must open its report");
+    click(*context, report, "report-overflow");
+    expect(visible(report, "delete-confirmation"),
+           "second report does not expose the delete confirmation");
+    click(*context, report, "report-delete");
+    expect(!visible(report, "science-report"),
+           "permanent deletion leaves the removed report visible");
+    expectSingleAction(presenter, "remove-artifact", secondArtifactId);
 
     Rml::RemoveContext(context->GetName());
     Rml::Shutdown();

@@ -208,7 +208,8 @@ IF(APPLE)
         OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
         OSGSOL_UI_EVIDENCE_DIR="${CMAKE_BINARY_DIR}/ui-evidence"
         OSGSOL_BUILD_SCIENCE=0
-        OSGSOL_BUILD_RMLUI_PRODUCT_UI=0)
+        OSGSOL_BUILD_RMLUI_PRODUCT_UI=0
+        OSGSOL_UI_AUDIT_HOOKS=1)
     TARGET_LINK_LIBRARIES(osgVerse_Test_EarthProductUiGlRuntime
                           "-framework OpenGL")
 ENDIF()

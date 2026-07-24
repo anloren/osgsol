@@ -188,6 +188,7 @@ bool ScienceReportWindowModel::selectMetric(
 {
     auto found = _windows.find(artifactId);
     if (found == _windows.end() || metricId.empty()) return false;
+    if (found->second.selectedMetric == metricId) return false;
     found->second.selectedMetric = metricId;
     return true;
 }

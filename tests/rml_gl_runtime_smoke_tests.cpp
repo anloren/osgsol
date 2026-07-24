@@ -979,8 +979,9 @@ int main()
     expect(client.width("source-chevron") >= 24.0f &&
                client.height("source-chevron") >= 24.0f,
            "analysis selector has no visible dropdown chevron");
-    expect(client.width("lock-map-center") > 120.0f,
-           "target action buttons are visually collapsed");
+    expect(client.width("unlocked-target-action") > 260.0f &&
+               client.height("unlocked-target-action") >= 30.0f,
+           "target action menu is visually collapsed");
     expect(client.width("first-year") > 56.0f,
            "year inputs are visually collapsed");
     expect(client.height("analysis-summary") > 28.0f,
