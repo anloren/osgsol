@@ -14,12 +14,12 @@ before it can be tagged or synchronized as accepted.
 - Version: 0.6.1
 - ScienceEarth phase: G3.1
 - Channel: ui-ux-goal-candidate
-- Source commit: `aa0e1dae8af230ad750d2e5d3da66791ac3782f6`
+- Source commit: `a22ecb9f43f445a5cc979056f556bfe4c519fff6`
 - Provenance: recorded in `Contents/Info.plist` and
   `Contents/Resources/package-audit.env`
 - Automated gates: package contract, bundle closure, provenance, data manifest,
   staging strict/deep signature, G0-v2 bundle audit, Rml document parsing, and
-  81/81 offline regression suite and 43/43 bundle-audit unit suite
+  82/82 offline regression suite and 43/43 bundle-audit unit suite
 - Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle.
   A FileProvider-restored old `osgSol Earth 2.app` was archived outside Desktop
   without launching or altering either package.

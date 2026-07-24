@@ -4,7 +4,7 @@
 
 ## 已冻结基线
 
-- 当前候选代码提交：`aa0e1da test(ui): add full-shell pixel regression`
+- 当前候选代码提交：`a22ecb9 fix(ui): verify production shell geometry`
 - 分支：`codex/scienceearth-agro-climate-v1`
 - 正式 App：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前截图：`/Users/USER/Desktop/Screenshot 2026-07-24 at 11.21.07 AM.png`
@@ -49,7 +49,8 @@
 - [x] 全产品正式表面完成性矩阵与证据等级；
 - [x] 1024×576、1440×900、2048×1152 自动边界测试；
 - [x] 原生壳层八模块真实 GL 像素回归；
-- [x] 81/81 离线全回归；
+- [x] 真实生产入口八模块 × 三视口 GL 像素、边界与双向滚动回归；
+- [x] 82/82 离线全回归；
 - [x] 签名和包体审计、唯一桌面候选更新；
 - [ ] 用户正式包可视与 Quit 验收。
 
@@ -57,9 +58,12 @@
 
 - 构建树：`build/science_g3_release`
 - 安装树：`build/science_g3_release/sdk`
-- 离线回归：81/81 通过，0 失败
+- 离线回归：82/82 通过，0 失败
 - 原生 GL 像素回归：八个主模块在 1440×900 使用生产 CJK 字体和壳层组件，
   证明无透明缝、无大块白底、无整块覆盖地图；上下文托盘和洞察透镜正文完整
+- 生产入口回归：直接运行正式 `EarthControlUI::runInternal`、`AIChatUI::draw`、
+  图层目录和实体详情，在 1024×576、1440×900、2048×1152 生成 24 个画面；
+  窄屏 AI 双行、水平溢出、抽屉到底和返回顶部均进入门禁
 - UI 运行时：八个主模块、三档视口、科学菜单、滚轮双向、分析提交、
   报告关闭边界和图表坐标均通过；八模块使用真实鼠标事件，不再直接写状态
 - 窗口缩放：科学工作台在 1024×576 与 1440×900 之间往返，RmlUi
@@ -69,7 +73,8 @@
   Copernicus DEM、ERA5-Land 均通过
 - 地图与退出保护：地形科学融合合同、3D Tiles、相机、正常退出守卫均通过
 - 正式打包契约：通过
-- G0-v2 桌面包审计：PASS，根因 0、未解析依赖 0、四项包体门槛均 PASS
+- G0-v2 桌面包审计：PASS，新增发现 0、违规 0、未解析依赖 0、
+  四项包体门槛均 PASS；保留一项既有 OSG 运行时编译路径基线债务
 - 暂存包严格深度签名：PASS
 - 桌面可执行文件普通签名与字节校验：PASS；macOS Desktop FileProvider 随后在
   App 内容附加 `com.apple.FinderInfo`，因此桌面路径的 `codesign --strict`
@@ -77,15 +82,15 @@
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前桌面候选：`0.6.1` / `G3.1`，来源提交
-  `aa0e1dae8af230ad750d2e5d3da66791ac3782f6`，channel
+  `a22ecb9f43f445a5cc979056f556bfe4c519fff6`，channel
   `ui-ux-goal-candidate`
 - 桌面/严格暂存包可执行文件 SHA-256：
-  `53eb11e444c3d2b5252afaf3cec83d60ddba05b0e9d1b44d05664fbbdb22cc8c`
+  `8637bc000e59d59293f4c6a7eedf8bf8a103514282712f110ff6cdf1db75e152`
 - 桌面包与严格暂存包逐文件一致：371 个普通文件、37 个符号链接；
   桌面进程 0、同名 App 1 个、最新异常报告仍为
   `osgSol_Earth-2026-07-23-222801.ips`
 - 上一桌面候选备份：
-  `build/desktop-backups/pre-ui-shell-pixel-20260724-170700-aa0e1da/osgSol Earth.previous.app`
+  `build/desktop-backups/pre-ui-product-entry-20260724-174208-a22ecb9/osgSol Earth.previous.app`
 - 本次替换后没有出现 FileProvider 恢复的第二个 App；桌面仍只保留一个正式 App。
 - 自动化没有启动、前置或操作桌面候选
 
