@@ -49,7 +49,11 @@
 - 地图与退出保护：地形科学融合合同、3D Tiles、相机、正常退出守卫均通过
 - 正式打包契约：通过
 - G0-v2 桌面包审计：PASS，根因 0、未解析依赖 0、四项包体门槛均 PASS
-- 严格深度签名：PASS
+- 暂存包严格深度签名：PASS
+- 桌面可执行文件普通签名与字节校验：PASS；macOS Desktop FileProvider 随后在
+  App 内容附加 `com.apple.FinderInfo`，因此桌面路径的 `codesign --strict`
+  会报告外部元数据。
+  遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
 - 候选版本：`0.6.1`，阶段 `G3.1`，来源提交
   `7ff1263816713e3005aea98c3280ce6b94b98551`

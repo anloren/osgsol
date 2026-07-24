@@ -18,10 +18,14 @@ before it can be tagged or synchronized as accepted.
 - Provenance: recorded in `Contents/Info.plist` and
   `Contents/Resources/package-audit.env`
 - Automated gates: package contract, bundle closure, provenance, data manifest,
-  strict/deep signature, G0-v2 bundle audit, Rml document parsing, and 80/80
-  offline regression suite
+  staging strict/deep signature, G0-v2 bundle audit, Rml document parsing, and
+  80/80 offline regression suite
 - Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle
 - Automated launch count: zero
+- Desktop executable bytes and normal signature verification: valid. Desktop
+  FileProvider subsequently adds `com.apple.FinderInfo` inside the App, so the
+  Desktop-path strict check reports that external metadata. No xattr, security
+  setting, or signature was modified to hide it.
 
 ## Visual and interaction matrix
 
