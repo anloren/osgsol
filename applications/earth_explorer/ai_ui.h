@@ -29,13 +29,32 @@ public:
     {
         AuditRect historyButton;
         AuditRect templateButton;
+        AuditRect templatePrimaryAction;
         AuditRect input;
         AuditRect sendButton;
         AuditRect photoButton;
         AuditRect videoButton;
+        AuditRect videoCancelButton;
+        AuditRect videoConfirmButton;
+        AuditRect videoModalCancelButton;
         bool historyExpanded = false;
         bool templatePopupVisible = false;
         bool videoModalVisible = false;
+        bool photoEnabled = false;
+    };
+    enum AuditVideoState
+    {
+        AUDIT_VIDEO_IDLE = 0,
+        AUDIT_VIDEO_WAIT_B,
+        AUDIT_VIDEO_CONFIRM
+    };
+    enum AuditAction
+    {
+        AUDIT_ACTION_PHOTO = 1u << 0,
+        AUDIT_ACTION_VIDEO_BEGIN = 1u << 1,
+        AUDIT_ACTION_VIDEO_END = 1u << 2,
+        AUDIT_ACTION_VIDEO_CONFIRM = 1u << 3,
+        AUDIT_ACTION_VIDEO_CANCEL = 1u << 4
     };
 #endif
 
@@ -61,8 +80,19 @@ public:
     const AuditSnapshot& auditSnapshot() const { return _auditSnapshot; }
     void auditSetVideoConfirm(bool enabled)
     {
-        _auditVideoConfirm = enabled;
+        _auditVideoState = enabled
+            ? AUDIT_VIDEO_CONFIRM : AUDIT_VIDEO_IDLE;
     }
+    void auditSetVideoState(AuditVideoState state)
+    {
+        _auditVideoState = state;
+    }
+    void auditSetMediaControlsEnabled(bool enabled)
+    {
+        _auditMediaControlsEnabled = enabled;
+    }
+    unsigned int auditActionMask() const { return _auditActionMask; }
+    void auditClearActions() { _auditActionMask = 0u; }
 #endif
 
 private:
@@ -73,7 +103,9 @@ private:
     AICardPanel _cards;
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
     AuditSnapshot _auditSnapshot;
-    bool _auditVideoConfirm = false;
+    AuditVideoState _auditVideoState = AUDIT_VIDEO_IDLE;
+    bool _auditMediaControlsEnabled = false;
+    unsigned int _auditActionMask = 0u;
 #endif
 };
 #endif

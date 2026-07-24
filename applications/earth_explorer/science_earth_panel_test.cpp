@@ -72,6 +72,12 @@ int main()
                   "structured science progress must not silently become a slider value");
 
     ScienceEarthPanel panel;
+    // The legacy ImGui panel is a fault-path surface used only when the
+    // formal RmlUi workbench cannot attach. Missing plugin/session
+    // dependencies must therefore degrade to no UI, never dereference a
+    // partial runtime during startup or shutdown.
+    panel.drawOperations(nullptr, nullptr, nullptr, nullptr);
+    panel.drawResults(nullptr, nullptr, nullptr);
     const SciencePanelState& defaults = panel.state();
     CHECK(defaults.mode == SciencePanelMode::Preview);
     CHECK(defaults.sourceId == "alphaearth-foundations");

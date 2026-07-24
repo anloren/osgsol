@@ -3,6 +3,7 @@
 #include <OpenGL/OpenGL.h>
 
 #include "EarthControlUI.h"
+#include "ai_prompts.h"
 #include "ui_evidence_io.h"
 
 #include <imgui/imgui.h>
@@ -28,6 +29,7 @@
 namespace earthai
 {
 bool g_productUiBusy = false;
+std::vector<std::string> g_productUiSubmissions;
 std::vector<ChatEntry> g_productUiTranscript = {
     {ChatEntry::USER, u8"比较当前区域的农业气候与地表变化。"},
     {ChatEntry::ASSISTANT, u8"已准备数据源与空间范围，等待提交。"}};
@@ -44,7 +46,10 @@ bool AIChatCore::busy() const
     return g_productUiBusy;
 }
 
-void AIChatCore::submit(const std::string&) {}
+void AIChatCore::submit(const std::string& text)
+{
+    g_productUiSubmissions.push_back(text);
+}
 
 std::vector<ChatEntry> AIChatCore::transcript() const
 {
@@ -870,6 +875,25 @@ int main()
     const auto clickEarthControl = [&](const std::string& key) {
         clickEarthControlAt(key, 0.5f);
     };
+    const auto replaceFocusedInput = [&](const char* value) {
+        io.AddKeyEvent(ImGuiMod_Ctrl, true);
+        io.AddKeyEvent(ImGuiKey_A, true);
+        renderAuditFrame();
+        io.AddKeyEvent(ImGuiKey_A, false);
+        io.AddKeyEvent(ImGuiMod_Ctrl, false);
+        renderAuditFrame();
+        io.AddInputCharactersUTF8(value);
+        renderAuditFrame();
+        io.AddKeyEvent(ImGuiKey_Enter, true);
+        renderAuditFrame();
+        io.AddKeyEvent(ImGuiKey_Enter, false);
+        renderAuditFrame();
+    };
+    const auto replaceEarthInput =
+        [&](const std::string& key, const char* value) {
+        clickEarthControl(key);
+        replaceFocusedInput(value);
+    };
     const auto saveAuditFrame = [&](const char* name) {
         std::vector<unsigned char> rgba(
             static_cast<std::size_t>(auditWidth) * auditHeight * 4);
@@ -920,6 +944,47 @@ int main()
     expect(!productUi._realTimeSun,
            "formal real-time Sun checkbox could not be turned off");
 
+    const float sunAzimuthBefore = productUi._sunAz;
+    clickEarthControlAt("explore-sun-azimuth", 0.82f);
+    expect(std::fabs(productUi._sunAz - sunAzimuthBefore) > 1.0f,
+           "formal Sun azimuth slider did not change product state");
+    const float sunElevationBefore = productUi._sunEl;
+    clickEarthControlAt("explore-sun-elevation", 0.72f);
+    expect(std::fabs(productUi._sunEl - sunElevationBefore) > 1.0f,
+           "formal Sun elevation slider did not change product state");
+    manipulator->setByEye(
+        osg::DegreesToRadians(12.3456),
+        osg::DegreesToRadians(78.9012), 420000.0);
+    renderAuditFrame();
+    clickEarthControl("explore-sun-align");
+    expect(std::fabs(productUi._sunAz - 78.9012f) < 0.05f &&
+               std::fabs(productUi._sunEl - 12.3456f) < 0.05f,
+           "formal align-Sun action did not use the current camera");
+
+    clickEarthControl("explore-realtime-sun");
+    expect(productUi._realTimeSun,
+           "real-time Sun did not reopen its conditional controls");
+    clickEarthControl("explore-follow-clock");
+    expect(!productUi._followClock,
+           "formal follow-clock checkbox did not expose manual time");
+    expect(findVisibleEarthControl("explore-sun-year") != nullptr &&
+               findVisibleEarthControl("explore-sun-month") != nullptr &&
+               findVisibleEarthControl("explore-sun-day") != nullptr,
+           "manual Sun date inputs are not visibly reachable");
+    replaceEarthInput("explore-sun-year", "2025");
+    replaceEarthInput("explore-sun-month", "9");
+    replaceEarthInput("explore-sun-day", "17");
+    expect(productUi._year == 2025 && productUi._month == 9 &&
+               productUi._day == 17,
+           "manual Sun date inputs did not accept keyboard edits");
+    const float utcBefore = productUi._utcHour;
+    clickEarthControlAt("explore-utc-hour", 0.22f);
+    expect(std::fabs(productUi._utcHour - utcBefore) > 0.5f,
+           "formal UTC-hour slider did not change product state");
+    clickEarthControl("explore-realtime-sun");
+    expect(!productUi._realTimeSun,
+           "real-time Sun could not be closed after manual-time audit");
+
     const bool oceanBefore = productUi._ocean;
     clickEarthControl("explore-ocean");
     expect(productUi._ocean != oceanBefore,
@@ -928,15 +993,24 @@ int main()
     clickEarthControl("explore-exposure-auto");
     expect(productUi._exposureAuto != exposureAutoBefore,
            "formal auto-exposure checkbox did not change product state");
+    if (productUi._exposureAuto)
+        clickEarthControl("explore-exposure-auto");
+    const float exposureBefore = productUi._exposure;
+    clickEarthControlAt("explore-exposure", 0.78f);
+    expect(std::fabs(productUi._exposure - exposureBefore) > 0.05f,
+           "formal Exposure slider did not change product state");
     const float atmosphereBefore = productUi._globalOpaque;
     clickEarthControlAt("explore-atmosphere", 0.25f);
     expect(std::fabs(productUi._globalOpaque - atmosphereBefore) > 0.05f,
            "formal Atmosphere slider did not change product state");
 
-    productUi._gotoLat = 31.2304f;
-    productUi._gotoLon = 121.4737f;
-    productUi._gotoAltKm = 125.0f;
-    renderAuditFrame();
+    replaceEarthInput("explore-goto-latitude", "31.2304");
+    replaceEarthInput("explore-goto-longitude", "121.4737");
+    replaceEarthInput("explore-goto-altitude", "125.0");
+    expect(std::fabs(productUi._gotoLat - 31.2304f) < 0.001f &&
+               std::fabs(productUi._gotoLon - 121.4737f) < 0.001f &&
+               std::fabs(productUi._gotoAltKm - 125.0f) < 0.01f,
+           "formal Go To inputs did not accept keyboard edits");
     clickEarthControl("explore-goto-submit");
     osg::Vec3d flownTo = manipulator->computeEyeLatLonHeight();
     expect(std::fabs(osg::RadiansToDegrees(flownTo[0]) - 31.2304) < 0.05 &&
@@ -982,10 +1056,14 @@ int main()
     expect(std::string(productUi._layerFilter).find('x') !=
                std::string::npos,
            "formal layer-search field did not accept text input");
-    clickEarthControl(u8"layers-preset:干净");
-    layers.drainPending();
-    expect(layers.lastAppliedPreset() == u8"干净",
-           "formal layer preset did not reach LayerManager");
+    for (const Preset& preset : layers.presetsSnapshot())
+    {
+        clickEarthControl("layers-preset:" + preset.name);
+        layers.drainPending();
+        expect(layers.lastAppliedPreset() == preset.name,
+               "formal layer preset did not reach LayerManager: " +
+                   preset.name);
+    }
     ImGui::ClearActiveID();
     productUi._layerFilter[0] = '\0';
     renderAuditFrame();
@@ -1022,9 +1100,24 @@ int main()
         productUi._uiV2.activeModule = routed.first;
         productUi._uiV2.drawerOpen = true;
         for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
-        expect(findVisibleEarthControl(routed.second) != nullptr,
+        const EarthControlUI::AuditItem* routedControl =
+            findVisibleEarthControl(routed.second);
+        expect(routedControl != nullptr,
                std::string("module-routed layer control is absent: ") +
                    routed.second);
+        const std::string layerId =
+            routed.second.substr(std::string("layer-enabled:").size());
+        bool routedBefore = false;
+        for (const OverlayLayer& layer : layers.layersSnapshot())
+            if (layer.id == layerId) routedBefore = layer.enabled;
+        clickEarthControl(routed.second);
+        layers.drainPending();
+        bool routedAfter = routedBefore;
+        for (const OverlayLayer& layer : layers.layersSnapshot())
+            if (layer.id == layerId) routedAfter = layer.enabled;
+        expect(routedAfter != routedBefore,
+               std::string("module-routed layer control did not change ") +
+                   "LayerManager state: " + routed.second);
     }
 
     productUi._uiV2.activeModule = earthui::EarthUiModule::Tasks;
@@ -1047,19 +1140,27 @@ int main()
     std::deque<earthcfg::Param>& auditSettings = earthcfg::params();
     expect(!auditSettings.empty(),
            "settings registry is empty during formal control audit");
-    const double settingBefore = auditSettings.front().value.load();
-    clickEarthControlAt(
-        "settings-value:" + auditSettings.front().id, 0.75f);
-    expect(std::fabs(
-               auditSettings.front().value.load() - settingBefore) >
-               0.0001,
-           "formal settings slider did not update the registry");
-    clickEarthControl(
-        "settings-reset:" + auditSettings.front().id);
-    expect(std::fabs(
-               auditSettings.front().value.load() -
-               auditSettings.front().defVal) < 0.0001,
-           "formal settings Reset action did not restore the default");
+    for (earthcfg::Param& setting : auditSettings)
+    {
+        const double settingBefore = setting.value.load();
+        const double span = setting.maxVal - setting.minVal;
+        const double normalized = span > 0.0
+            ? (settingBefore - setting.minVal) / span : 0.0;
+        if (setting.kind == earthcfg::PK_BOOL)
+            clickEarthControl("settings-value:" + setting.id);
+        else
+            clickEarthControlAt(
+                "settings-value:" + setting.id,
+                normalized > 0.5 ? 0.2f : 0.8f);
+        expect(std::fabs(setting.value.load() - settingBefore) > 0.0001,
+               "formal setting did not update the registry: " +
+                   setting.id);
+        clickEarthControl("settings-reset:" + setting.id);
+        expect(std::fabs(
+                   setting.value.load() - setting.defVal) < 0.0001,
+               "formal setting Reset did not restore the default: " +
+                   setting.id);
+    }
     earthexit::QuitRequest auditQuit;
     productUi._quitRequest = &auditQuit;
     clickEarthControl("settings-quit");
@@ -1080,6 +1181,23 @@ int main()
     expectRectInside(compactAi.sendButton, aiCommand, "send button");
     expectRectInside(compactAi.photoButton, aiCommand, "photo button");
     expectRectInside(compactAi.videoButton, aiCommand, "video button");
+
+    // Type into the real production input and submit through its actual
+    // button. This proves keyboard input, enabled-state calculation and the
+    // command handoff instead of treating a visible row as operable.
+    clickAuditRect(compactAi.input);
+    io.AddInputCharactersUTF8(
+        u8"比较昆明 2017–2025 年农业气候与地表变化");
+    renderAuditFrame();
+    expect(command.auditSnapshot().sendButton.valid,
+           "typing into the AI input did not keep the Send target visible");
+    const std::size_t submittedBefore =
+        earthai::g_productUiSubmissions.size();
+    clickAuditRect(command.auditSnapshot().sendButton);
+    expect(earthai::g_productUiSubmissions.size() == submittedBefore + 1 &&
+               earthai::g_productUiSubmissions.back() ==
+                   u8"比较昆明 2017–2025 年农业气候与地表变化",
+           "real AI Send click did not submit the typed command");
 
     clickAuditRect(compactAi.historyButton);
     renderAuditFrame();
@@ -1119,6 +1237,83 @@ int main()
     renderAuditFrame();
     expect(!command.auditSnapshot().templatePopupVisible,
            "clicking outside did not close the analysis-template gallery");
+
+    // Open the gallery again and choose its real first action. The production
+    // handler must fill the prompt and relocate the camera before Send.
+    clickAuditRect(command.auditSnapshot().templateButton);
+    renderAuditFrame();
+    renderAuditFrame();
+    expect(command.auditSnapshot().templatePrimaryAction.valid,
+           "analysis-template gallery has no reachable primary action");
+    const earthai::ScienceEarthPromptExample& firstTemplate =
+        earthai::scienceEarthPromptExamples().front();
+    clickAuditRect(command.auditSnapshot().templatePrimaryAction);
+    renderAuditFrame();
+    expect(!command.auditSnapshot().templatePopupVisible,
+           "using an analysis template did not close the gallery");
+    const osg::Vec3d templateEye =
+        manipulator->computeEyeLatLonHeight();
+    expect(std::fabs(
+               osg::RadiansToDegrees(templateEye[0]) -
+               firstTemplate.latitudeDeg) < 0.001 &&
+               std::fabs(
+                   osg::RadiansToDegrees(templateEye[1]) -
+                   firstTemplate.longitudeDeg) < 0.001,
+           "analysis template did not move the camera to its declared place");
+    const std::size_t templateSubmitBefore =
+        earthai::g_productUiSubmissions.size();
+    clickAuditRect(command.auditSnapshot().sendButton);
+    expect(
+        earthai::g_productUiSubmissions.size() ==
+            templateSubmitBefore + 1 &&
+        earthai::g_productUiSubmissions.back() == firstTemplate.prompt,
+        "template primary action did not prepare its exact prompt for Send");
+
+    // Media requests are intercepted only in this audit build. No network,
+    // file viewer, camera capture or packaged Desktop app is touched; the
+    // real button hit paths and request semantics are still exercised.
+    command.auditSetMediaControlsEnabled(true);
+    for (int frame = 0; frame < 4; ++frame) renderAuditFrame();
+    expect(command.auditSnapshot().photoEnabled,
+           "audit media mode did not enable the Photo action");
+    saveAuditFrame("1440x900-ai-command-actions.ppm");
+    const std::size_t photoSubmitBefore =
+        earthai::g_productUiSubmissions.size();
+    command.auditClearActions();
+    clickAuditRect(command.auditSnapshot().photoButton);
+    expect(command.auditActionMask() & AIChatUI::AUDIT_ACTION_PHOTO,
+           "real Photo click did not activate the production button");
+    expect(
+        earthai::g_productUiSubmissions.size() == photoSubmitBefore + 1 &&
+        earthai::g_productUiSubmissions.back() ==
+            u8"生成一张当前视角的实景照片",
+        "real Photo click did not submit the current-view request");
+    command.auditClearActions();
+    clickAuditRect(command.auditSnapshot().videoButton);
+    expect(
+        command.auditActionMask() & AIChatUI::AUDIT_ACTION_VIDEO_BEGIN,
+        "real Video click did not publish the begin request");
+    command.auditClearActions();
+    command.auditSetVideoState(AIChatUI::AUDIT_VIDEO_WAIT_B);
+    renderAuditFrame();
+    renderAuditFrame();
+    expectRectInside(
+        command.auditSnapshot().videoButton,
+        ImGui::FindWindowByName(u8"AI 对话条"), "finish-B button");
+    expectRectInside(
+        command.auditSnapshot().videoCancelButton,
+        ImGui::FindWindowByName(u8"AI 对话条"), "video cancel button");
+    clickAuditRect(command.auditSnapshot().videoButton);
+    expect(
+        command.auditActionMask() & AIChatUI::AUDIT_ACTION_VIDEO_END,
+        "real Finish-B click did not publish the end request");
+    command.auditClearActions();
+    clickAuditRect(command.auditSnapshot().videoCancelButton);
+    expect(
+        command.auditActionMask() & AIChatUI::AUDIT_ACTION_VIDEO_CANCEL,
+        "real inline video Cancel click did not publish cancel");
+    command.auditSetVideoState(AIChatUI::AUDIT_VIDEO_IDLE);
+    command.auditClearActions();
 
     // AI-generated chart cards are formal product surfaces. Render the real
     // AICardPanel implementation rather than a test stub so the shared
@@ -1385,7 +1580,20 @@ int main()
     inspectProductionWindows(
         auditWidth, auditHeight, earthui::EarthUiModule::Science);
     saveAuditFrame("1440x900-ai-video-confirm.ppm");
+    expect(command.auditSnapshot().videoConfirmButton.valid &&
+               command.auditSnapshot().videoModalCancelButton.valid,
+           "video modal actions are not both reachable");
+    clickAuditRect(command.auditSnapshot().videoConfirmButton);
+    expect(
+        command.auditActionMask() & AIChatUI::AUDIT_ACTION_VIDEO_CONFIRM,
+        "real video Confirm click did not publish confirmation");
+    command.auditClearActions();
+    clickAuditRect(command.auditSnapshot().videoModalCancelButton);
+    expect(
+        command.auditActionMask() & AIChatUI::AUDIT_ACTION_VIDEO_CANCEL,
+        "real video modal Cancel click did not publish cancel");
     command.auditSetVideoConfirm(false);
+    command.auditSetMediaControlsEnabled(false);
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui::DestroyContext(context);

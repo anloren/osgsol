@@ -89,7 +89,11 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
     earthai::MediaManager::VideoUiSnapshot video = media
         ? media->videoUiSnapshot() : earthai::MediaManager::VideoUiSnapshot();
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
-    if (_auditVideoConfirm)
+    if (_auditVideoState == AUDIT_VIDEO_WAIT_B)
+    {
+        video.phase = earthai::VIDEO_WAIT_B;
+    }
+    else if (_auditVideoState == AUDIT_VIDEO_CONFIRM)
     {
         video.phase = earthai::VIDEO_AWAIT_CONFIRM;
         video.pending.ready = true;
@@ -300,6 +304,11 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                             ImGui::CloseCurrentPopup();
                         }
                     }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                    if (index == 0)
+                        _auditSnapshot.templatePrimaryAction =
+                            auditLastItemRect();
+#endif
                     if (needsManipulator) ImGui::EndDisabled();
                     if (needsManipulator &&
                         ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -384,8 +393,19 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             // 因此用文字标签"照片"/"视频"代替。
             ImGui::SameLine();
             bool photoEnabled = (core && media && !busy);
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+            photoEnabled = photoEnabled ||
+                (core && _auditMediaControlsEnabled && !busy);
+            _auditSnapshot.photoEnabled = photoEnabled;
+#endif
             if (!photoEnabled) ImGui::BeginDisabled();
-            if (ImGui::Button(u8"照片", ImVec2(52.0f, 0.0f))) photoSubmit = true;
+            if (ImGui::Button(u8"照片", ImVec2(52.0f, 0.0f)))
+            {
+                photoSubmit = true;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                _auditActionMask |= AUDIT_ACTION_PHOTO;
+#endif
+            }
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
             _auditSnapshot.photoButton = auditLastItemRect();
 #endif
@@ -401,6 +421,12 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             // 🎬 三态：空闲"视频" -> 已录 A"完成B点"(+取消) -> 两点都录完:自动弹确认 Modal。
             bool videoEnabled = (core && media && mani && !busy
                                  && (vphase == earthai::VIDEO_IDLE || vphase == earthai::VIDEO_WAIT_B));
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+            videoEnabled = videoEnabled ||
+                (core && _auditMediaControlsEnabled && mani && !busy &&
+                 (vphase == earthai::VIDEO_IDLE ||
+                  vphase == earthai::VIDEO_WAIT_B));
+#endif
             ImGui::SameLine();
             if (vphase == earthai::VIDEO_WAIT_B)
             {
@@ -411,7 +437,11 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                     earthai::VideoUiRequest request;
                     request.kind = earthai::VideoUiRequest::CaptureEnd;
                     request.lla = llaB;
-                    media->enqueueVideoRequest(request);
+                    if (media) media->enqueueVideoRequest(request);
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                    else if (_auditMediaControlsEnabled)
+                        _auditActionMask |= AUDIT_ACTION_VIDEO_END;
+#endif
                 }
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
                 _auditSnapshot.videoButton = auditLastItemRect();
@@ -424,10 +454,23 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                     request.kind = earthai::VideoUiRequest::Cancel;
                     media->enqueueVideoRequest(request);
                 }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                else if (ImGui::IsItemActivated() &&
+                         _auditMediaControlsEnabled)
+                {
+                    _auditActionMask |= AUDIT_ACTION_VIDEO_CANCEL;
+                }
+                _auditSnapshot.videoCancelButton = auditLastItemRect();
+#endif
             }
             else
             {
                 bool idleEnabled = (core && media && mani && !busy && vphase == earthai::VIDEO_IDLE);
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                idleEnabled = idleEnabled ||
+                    (core && _auditMediaControlsEnabled && mani && !busy &&
+                     vphase == earthai::VIDEO_IDLE);
+#endif
                 if (!idleEnabled) ImGui::BeginDisabled();
                 if (ImGui::Button(u8"视频", ImVec2(52.0f, 0.0f)) && mani)
                 {
@@ -435,7 +478,11 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                     earthai::VideoUiRequest request;
                     request.kind = earthai::VideoUiRequest::Begin;
                     request.lla = llaA;
-                    media->enqueueVideoRequest(request);
+                    if (media) media->enqueueVideoRequest(request);
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                    else if (_auditMediaControlsEnabled)
+                        _auditActionMask |= AUDIT_ACTION_VIDEO_BEGIN;
+#endif
                 }
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
                 _auditSnapshot.videoButton = auditLastItemRect();
@@ -475,7 +522,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
     // 放在 AI 对话条窗口 Begin/End 之外(Modal 是独立的顶层窗口,不依赖对话条是否展开)。
     bool videoUiAvailable = media != nullptr;
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
-    videoUiAvailable = videoUiAvailable || _auditVideoConfirm;
+    videoUiAvailable = videoUiAvailable ||
+        _auditVideoState == AUDIT_VIDEO_CONFIRM;
 #endif
     if (videoUiAvailable)
     {
@@ -542,7 +590,14 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                         request.kind = earthai::VideoUiRequest::Confirm;
                         media->enqueueVideoRequest(request);
                     }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                    else if (_auditMediaControlsEnabled)
+                        _auditActionMask |= AUDIT_ACTION_VIDEO_CONFIRM;
+#endif
                 }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                _auditSnapshot.videoConfirmButton = auditLastItemRect();
+#endif
                 ImGui::PopStyleColor(4);
                 ImGui::SameLine();
                 if (ImGui::Button(
@@ -555,8 +610,15 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                         request.kind = earthai::VideoUiRequest::Cancel;
                         media->enqueueVideoRequest(request);
                     }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                    else if (_auditMediaControlsEnabled)
+                        _auditActionMask |= AUDIT_ACTION_VIDEO_CANCEL;
+#endif
                     ImGui::CloseCurrentPopup();
                 }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                _auditSnapshot.videoModalCancelButton = auditLastItemRect();
+#endif
                 if (!video.commandError.empty())
                 {
                     ImGui::PushStyleColor(
