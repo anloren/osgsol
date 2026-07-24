@@ -85,10 +85,6 @@ inline EarthUiShellLayout computeEarthUiShellLayout(float viewportWidth,
     // the second row with the production CJK font at common 900/1080 px
     // window heights, so treat 58 px as the real content minimum.
     layout.contextHeight = std::clamp(height * 0.052f, 58.0f, 64.0f);
-    layout.commandHeight = std::clamp(height * 0.082f, 72.0f, 90.0f);
-
-    const float bottomStack = layout.statusHeight + layout.contextHeight +
-        layout.commandHeight + layout.outerGap * 3.0f;
     // The module rail and its drawer form one docked instrument. Gaps here
     // expose a meaningless strip of the map and make the scrollbar look
     // detached from its panel.
@@ -96,13 +92,9 @@ inline EarthUiShellLayout computeEarthUiShellLayout(float viewportWidth,
     layout.drawerY = layout.topBarHeight;
     layout.drawerWidth = drawerOpen
         ? std::clamp(width * 0.245f, 310.0f, 372.0f) : 0.0f;
-    layout.drawerHeight = std::max(
-        1.0f, height - layout.drawerY - bottomStack);
 
     layout.insightWidth = std::clamp(width * 0.245f, 330.0f, 390.0f);
     layout.insightTop = layout.topBarHeight + layout.outerGap;
-    layout.insightHeight = std::max(
-        1.0f, height - layout.insightTop - bottomStack);
 
     // The AI command deck belongs to the visible map corridor. When a drawer
     // is open, start after the wider of the native drawer and the 340 px
@@ -117,6 +109,21 @@ inline EarthUiShellLayout computeEarthUiShellLayout(float viewportWidth,
     layout.commandWidth = std::min(900.0f, availableCommandWidth);
     layout.commandX = mapLeft +
         std::max(0.0f, (availableCommandWidth - layout.commandWidth) * 0.5f);
+
+    // At compact widths the AI action buttons move to a second row. Its real
+    // production height then exceeds the old fixed 72 px reservation and
+    // visibly overlaps both the drawer and Insight Lens. Reserve the wrapped
+    // form before calculating either vertical track.
+    const bool commandActionsWrap = layout.commandWidth < 380.0f;
+    layout.commandHeight = commandActionsWrap
+        ? std::clamp(height * 0.16f, 104.0f, 118.0f)
+        : std::clamp(height * 0.082f, 72.0f, 90.0f);
+    const float bottomStack = layout.statusHeight + layout.contextHeight +
+        layout.commandHeight + layout.outerGap * 3.0f;
+    layout.drawerHeight = std::max(
+        1.0f, height - layout.drawerY - bottomStack);
+    layout.insightHeight = std::max(
+        1.0f, height - layout.insightTop - bottomStack);
     layout.commandY = height - layout.statusHeight - layout.contextHeight -
         layout.commandHeight - layout.outerGap * 2.0f;
 
@@ -201,7 +208,11 @@ inline AiCommandRowLayout computeAiCommandRowLayout(
     layout.actionsOnNextLine =
         hasActions && safeWidth < layout.actionWidth + 180.0f;
     layout.inputWidth = layout.actionsOnNextLine
-        ? safeWidth : std::max(140.0f, safeWidth - layout.actionWidth);
+        ? safeWidth
+        : std::max(
+            140.0f,
+            safeWidth - layout.actionWidth -
+                (hasActions ? std::max(0.0f, itemSpacing) : 0.0f));
     return layout;
 }
 

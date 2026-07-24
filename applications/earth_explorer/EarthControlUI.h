@@ -659,7 +659,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     ImGui::Text(u8"高度: %.1f km", fi.altM / 1000.0);
                     ImGui::Text(u8"速度: %.0f km/h", fi.velMS * 3.6);
                     ImGui::Text(u8"航向: %.0f°", fi.headingDeg);
-                    ImGui::Text(u8"经纬度: %.3f, %.3f", fi.lat, fi.lon);
+                    ImGui::TextWrapped(
+                        u8"经纬度: %.3f, %.3f", fi.lat, fi.lon);
                 };
                 card.onClose = [this]() { _flight->clearSelected(); };
                 _cardStack.upsert(card);
@@ -684,7 +685,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     ImGui::Text("MMSI: %lld", si.mmsi);
                     ImGui::Text(u8"对地航速 (SOG): %.1f kn", si.sogKn);
                     ImGui::Text(u8"对地航向 (COG): %.0f°", si.cogDeg);
-                    ImGui::Text(u8"经纬度: %.3f, %.3f", si.lat, si.lon);
+                    ImGui::TextWrapped(
+                        u8"经纬度: %.3f, %.3f", si.lat, si.lon);
                     ImGui::Text(u8"数据时延: %.0f s", si.ageSec);
                 };
                 card.onClose = [this]() { _ships->clearSelected(); };
@@ -718,7 +720,8 @@ struct EarthControlUI : public osgVerse::ImGuiContentHandler
                     ImGui::Text(u8"类别: %s", catName);
                     ImGui::Text(u8"高度: %.1f km", si.altKm);
                     ImGui::Text(u8"速度: %.2f km/s", si.speedKmS);
-                    ImGui::Text(u8"经纬度: %.3f, %.3f", si.latDeg, si.lonDeg);
+                    ImGui::TextWrapped(
+                        u8"经纬度: %.3f, %.3f", si.latDeg, si.lonDeg);
                 };
                 card.onClose = [this]() { _satellites->clearSelected(); };
                 _cardStack.upsert(card);

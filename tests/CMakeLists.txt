@@ -194,6 +194,23 @@ IF(APPLE)
         OSGSOL_UI_EVIDENCE_DIR="${CMAKE_BINARY_DIR}/ui-evidence")
     TARGET_LINK_LIBRARIES(osgVerse_Test_EarthUiGlRuntimeSmoke
                           "-framework OpenGL")
+    NEW_CTEST(osgVerse_Test_EarthProductUiGlRuntime
+              earth_product_ui_gl_runtime_tests.cpp "offline;ui;gl" 60)
+    TARGET_SOURCES(osgVerse_Test_EarthProductUiGlRuntime PRIVATE
+                   "${CMAKE_SOURCE_DIR}/applications/earth_explorer/earth_ui_v2.cpp"
+                   "${CMAKE_SOURCE_DIR}/applications/earth_explorer/marker_style.cpp"
+                   "${CMAKE_SOURCE_DIR}/applications/earth_explorer/earth_config.cpp"
+                   "${CMAKE_SOURCE_DIR}/applications/earth_explorer/ai_ui.cpp")
+    TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_EarthProductUiGlRuntime PRIVATE
+                               "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
+    TARGET_COMPILE_FEATURES(osgVerse_Test_EarthProductUiGlRuntime PRIVATE cxx_std_17)
+    TARGET_COMPILE_DEFINITIONS(osgVerse_Test_EarthProductUiGlRuntime PRIVATE
+        OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        OSGSOL_UI_EVIDENCE_DIR="${CMAKE_BINARY_DIR}/ui-evidence"
+        OSGSOL_BUILD_SCIENCE=0
+        OSGSOL_BUILD_RMLUI_PRODUCT_UI=0)
+    TARGET_LINK_LIBRARIES(osgVerse_Test_EarthProductUiGlRuntime
+                          "-framework OpenGL")
 ENDIF()
 NEW_CTEST(osgVerse_Test_McpSafety mcp_safety_tests.cpp offline 30)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_McpSafety PRIVATE

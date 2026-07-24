@@ -385,7 +385,11 @@ void drawEarthUiModuleRail(const EarthUiShellLayout& layout,
                     ImGui::ColorConvertFloat4ToU32(kCyan));
                 ImGui::PushStyleColor(ImGuiCol_Button, kOxblood);
             }
-            const ImVec2 buttonSize(layout.navigationWidth - 18.0f, 48.0f);
+            // Use the real content width. Subtracting a fixed 18 px ignored
+            // the window's left and right padding (24 px in the product
+            // theme), creating a hidden horizontal scroll range in the rail.
+            const ImVec2 buttonSize(
+                std::max(1.0f, ImGui::GetContentRegionAvail().x), 48.0f);
             if (ImGui::Button("##module", buttonSize))
                 activateEarthUiModule(state, visual.module);
             if (active) ImGui::PopStyleColor();

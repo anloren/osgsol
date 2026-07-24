@@ -55,12 +55,15 @@ int main()
           shell.drawerX + shell.drawerWidth + shell.outerGap);
     CHECK(shell.commandX + shell.commandWidth <=
           insightLeft - shell.outerGap);
+    CHECK(shell.commandWidth < 380.0f);
+    CHECK(shell.commandHeight >= 104.0f);
 
     const earthui::EarthUiShellLayout shellClosed =
         earthui::computeEarthUiShellLayout(1024.0f, 576.0f, false);
     CHECK(nearlyEqual(shellClosed.drawerWidth, 0.0f));
     CHECK(shellClosed.commandX < shell.commandX);
     CHECK(shellClosed.commandWidth > shell.commandWidth);
+    CHECK(shellClosed.commandHeight < shell.commandHeight);
     CHECK(nearlyEqual(shellClosed.contextY, shell.contextY));
 
     CHECK(earthui::contextKindForModule(earthui::EarthUiModule::Explore) ==
@@ -110,7 +113,8 @@ int main()
             720.0f, 8.0f, 42.0f, true, false);
     CHECK(!normalCommand.actionsOnNextLine);
     CHECK(normalCommand.actionWidth > 140.0f);
-    CHECK(normalCommand.inputWidth + normalCommand.actionWidth <= 720.01f);
+    CHECK(normalCommand.inputWidth + normalCommand.actionWidth + 8.0f <=
+          720.01f);
     const earthui::AiCommandRowLayout videoCommand =
         earthui::computeAiCommandRowLayout(
             330.0f, 8.0f, 42.0f, true, true);
