@@ -207,22 +207,26 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
         IF(APPLE)
             ADD_EXECUTABLE(osgSol_Test_RmlGlRuntimeSmoke
                 "${CMAKE_SOURCE_DIR}/tests/rml_gl_runtime_smoke_tests.cpp"
+                earth_ui_v2.cpp
+                marker_style.cpp
                 product_ui/rml_input_bridge.cpp
                 product_ui/rml_osg_renderer.cpp
                 product_ui/rml_ui_runtime.cpp
                 science_ui/rml_science_chart.cpp
                 science_ui/science_chart_model.cpp
+                science_ui/science_report_window.cpp
                 "${OSGSOL_RMLUI_GL3_PATCH_DIR}/RmlUi_Renderer_GL3.cpp")
             TARGET_COMPILE_FEATURES(osgSol_Test_RmlGlRuntimeSmoke PRIVATE
                 cxx_std_17)
             TARGET_COMPILE_DEFINITIONS(osgSol_Test_RmlGlRuntimeSmoke PRIVATE
-                OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+                OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+                OSGSOL_UI_EVIDENCE_DIR="${CMAKE_BINARY_DIR}/ui-evidence")
             TARGET_INCLUDE_DIRECTORIES(osgSol_Test_RmlGlRuntimeSmoke PRIVATE
                 "${CMAKE_CURRENT_SOURCE_DIR}"
                 "${OSGSOL_RMLUI_GL3_PATCH_DIR}"
                 "${OSGSOL_RMLUI_SOURCE_DIR}/Backends")
             TARGET_LINK_LIBRARIES(osgSol_Test_RmlGlRuntimeSmoke
-                osgVersePipeline RmlUi::RmlUi ${CMAKE_DL_LIBS}
+                osgVerseUI osgVersePipeline RmlUi::RmlUi ${CMAKE_DL_LIBS}
                 "-framework OpenGL")
             LINK_OSG_LIBRARY(osgSol_Test_RmlGlRuntimeSmoke
                 OpenThreads osg osgGA osgViewer)

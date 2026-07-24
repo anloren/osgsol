@@ -25,6 +25,7 @@
 | 洞察透镜 | ImGui | 单一轨道；多来源标签；实测高度；滚到底并返回；瞬时空标签帧不再压缩正式正文 | 航班/卫星/地点真实长详情 |
 | 上下文托盘 | ImGui | 按模块映射 View/Layer/Data/Live/Orbit/Object/Task/None；58–64 px 完整显示两行；无伪滚动范围 | 信息密度与真实选择变化 |
 | 弹窗与确认 | ImGui/RmlUi | 视口钳制；按钮边缘可达；Escape 事件成对传递；ImGui 全局 Tab 导航启用并实测推进 | macOS 输入法、真实焦点与关闭手感 |
+| 跨引擎产品组合 | ImGui + RmlUi | 同一 CGL 帧按正式层次顺序合成；1024×576、1280×720、1440×900 检查左侧无透明缝、工作台不压 AI 栏；1440×900 继续检查报告不压顶部/左侧/底部，并真实操作菜单、年份、滚轮、分析按钮和趋势图 | Retina 合成观感、窗口拖动与真实在线结果 |
 | 正常退出 | macOS/OSG | 静态退出守卫、包体与依赖门禁 | 应用内 Quit 后无警告、无新 `.ips` |
 
 ## 跨表面不可回退门禁
@@ -55,7 +56,9 @@
 `build/science_g3_release/ui-evidence/imgui-shell/png/earth-ui-*.png`
 中的八模块 1440×900 原生壳层、
 `build/science_g3_release/ui-evidence/product-shell/png/*.png`
-中的 8 个真实生产入口 × 3 档视口，以及 `/tmp/osgsol_rml_*.png` 中的科学菜单、
-运行、概览和趋势报告。生产入口证据使用真实 `EarthControlUI`、`AIChatUI`、
-图层目录、业务长文与实体卡；网络和媒体所有者仍为安全离线替身，真实在线内容
-属于 M 级真机验收。
+中的 8 个真实生产入口 × 3 档视口，以及
+`build/science_g3_release/ui-evidence/science-composite/*.png`
+中的跨引擎同帧科学菜单、运行、概览和趋势报告。生产入口证据使用真实
+`EarthControlUI`、`AIChatUI`、图层目录、业务长文与实体卡；组合证据使用
+正式 Shell 布局与正式 RmlUi 工作台/报告，并按产品层次顺序合成。网络和媒体
+所有者仍为安全离线替身，真实在线内容属于 M 级真机验收。

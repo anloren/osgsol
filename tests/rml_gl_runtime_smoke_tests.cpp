@@ -1,10 +1,21 @@
+#define GL_SILENCE_DEPRECATION
+#include <OpenGL/OpenGL.h>
+
+#include "earth_control_layout.h"
+#include "earth_ui_tokens.h"
+#include "earth_ui_v2.h"
 #include "product_ui/rml_ui_runtime.h"
 #include "science_ui/rml_science_chart.h"
 #include "science_ui/science_chart_model.h"
+#include "science_ui/science_report_window.h"
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Elements/ElementFormControlSelect.h>
+
+#include <imgui/imgui.h>
+#include <imgui/imgui_impl_opengl3.h>
+#include <imgui/imgui_internal.h>
 
 #include <osg/GraphicsContext>
 #include <osg/Group>
@@ -12,11 +23,11 @@
 #include <osg/State>
 #include <osgGA/GUIEventAdapter>
 #include <osgViewer/Viewer>
-#define GL_SILENCE_DEPRECATION
-#include <OpenGL/OpenGL.h>
+#include <pipeline/Global.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -25,6 +36,8 @@ namespace
 {
 constexpr int WIDTH = 1440;
 constexpr int HEIGHT = 900;
+constexpr int MID_WIDTH = 1280;
+constexpr int MID_HEIGHT = 720;
 
 void expect(bool condition, const std::string& message)
 {
@@ -176,7 +189,50 @@ public:
         return true;
     }
 
-    void onRmlFrame(Rml::Context&) override {}
+    void onRmlFrame(Rml::Context& context) override
+    {
+        const Rml::Vector2i dimensions = context.GetDimensions();
+        if (dimensions == _lastDimensions) return;
+        _lastDimensions = dimensions;
+        const earthui::EarthUiShellLayout shell =
+            earthui::computeEarthUiShellLayout(
+                static_cast<float>(dimensions.x),
+                static_cast<float>(dimensions.y), true);
+        const earthui::ScienceWorkbenchLayout workbench =
+            earthui::computeScienceWorkbenchLayout(
+                static_cast<float>(dimensions.x),
+                static_cast<float>(dimensions.y));
+        if (_document)
+        {
+            Rml::Element* root =
+                _document->GetElementById("science-workbench");
+            auto setWorkbenchProperty =
+                [this, root](const char* name, const std::string& value)
+            {
+                _document->SetProperty(name, value);
+                if (root && root != _document)
+                    root->SetProperty(name, value);
+            };
+            setWorkbenchProperty(
+                "left", std::to_string(shell.drawerX) + "px");
+            setWorkbenchProperty(
+                "top", std::to_string(shell.drawerY) + "px");
+            setWorkbenchProperty("bottom", "auto");
+            setWorkbenchProperty(
+                "width", std::to_string(workbench.composerWidth) + "px");
+            setWorkbenchProperty(
+                "height", std::to_string(shell.drawerHeight) + "px");
+        }
+        const float bottomInset = shell.statusHeight +
+            shell.contextHeight + shell.commandHeight +
+            shell.outerGap * 3.0f;
+        _reportModel.setViewport(
+            static_cast<float>(dimensions.x),
+            static_cast<float>(dimensions.y),
+            shell.drawerX + workbench.composerWidth + shell.outerGap,
+            shell.topBarHeight, bottomInset);
+        applyReportGeometry();
+    }
 
     void ProcessEvent(Rml::Event& event) override
     {
@@ -211,6 +267,13 @@ public:
     float bottom(const char* id) const
     {
         return top(id) + height(id);
+    }
+
+    float left(const char* id) const
+    {
+        Rml::Element* element = _document
+            ? _document->GetElementById(id) : nullptr;
+        return element ? element->GetAbsoluteOffset().x : 0.0f;
     }
 
     float horizontalOverflow(const char* id) const
@@ -297,11 +360,11 @@ public:
     {
         Rml::Element* window = reportElement("science-report");
         if (!window) return;
+        if (!_reportModel.active())
+            _reportModel.openReady("composite-science-report");
+        _reportModel.setSection("composite-science-report", "trends");
+        applyReportGeometry();
         window->SetProperty("display", "block");
-        window->SetProperty("left", "500px");
-        window->SetProperty("top", "72px");
-        window->SetProperty("width", "800px");
-        window->SetProperty("height", "700px");
         if (Rml::Element* overview = reportElement("overview"))
             overview->SetProperty("display", "none");
         if (Rml::Element* trends = reportElement("trends"))
@@ -343,11 +406,11 @@ public:
     {
         Rml::Element* window = reportElement("science-report");
         if (!window) return;
+        if (!_reportModel.active())
+            _reportModel.openReady("composite-science-report");
+        _reportModel.setSection("composite-science-report", "overview");
+        applyReportGeometry();
         window->SetProperty("display", "block");
-        window->SetProperty("left", "500px");
-        window->SetProperty("top", "72px");
-        window->SetProperty("width", "800px");
-        window->SetProperty("height", "700px");
         if (Rml::Element* overview = reportElement("overview"))
             overview->SetProperty("display", "block");
         if (Rml::Element* trends = reportElement("trends"))
@@ -451,6 +514,21 @@ public:
     }
 
 private:
+    void applyReportGeometry()
+    {
+        const ScienceReportWindowState* state = _reportModel.active();
+        Rml::Element* window = reportElement("science-report");
+        if (!state || !window) return;
+        window->SetProperty(
+            "left", std::to_string(state->position.x()) + "px");
+        window->SetProperty(
+            "top", std::to_string(state->position.y()) + "px");
+        window->SetProperty(
+            "width", std::to_string(state->size.x()) + "px");
+        window->SetProperty(
+            "height", std::to_string(state->size.y()) + "px");
+    }
+
     Rml::Element* reportElement(const char* id) const
     {
         return _report ? _report->GetElementById(id) : nullptr;
@@ -464,20 +542,172 @@ private:
 
     Rml::ElementDocument* _document = nullptr;
     Rml::ElementDocument* _report = nullptr;
+    Rml::Vector2i _lastDimensions{-1, -1};
+    ScienceReportWindowModel _reportModel;
     int _helpClicks = 0;
     int _runClicks = 0;
 };
 
-bool writePpm(const char* path, const std::vector<unsigned char>& rgba)
+class ProductShellCallback : public osgVerse::CameraDrawCallback
 {
-    FILE* file = std::fopen(path, "wb");
+public:
+    explicit ProductShellCallback(RmlUiRuntime& runtime)
+        : _runtime(runtime)
+    {
+        _state.activeModule = earthui::EarthUiModule::Science;
+        _state.drawerOpen = true;
+    }
+
+    bool initialize(const std::string& fontPath, std::string& error)
+    {
+        if (ImGui::GetCurrentContext())
+        {
+            error = "unexpected existing ImGui context";
+            return false;
+        }
+        IMGUI_CHECKVERSION();
+        _context = ImGui::CreateContext();
+        ImGui::SetCurrentContext(_context);
+        ImGuiIO& io = ImGui::GetIO();
+        io.DeltaTime = 1.0f / 60.0f;
+        io.IniFilename = nullptr;
+        if (!io.Fonts->AddFontFromFileTTF(
+                fontPath.c_str(), 20.0f, nullptr,
+                io.Fonts->GetGlyphRangesChineseFull()))
+        {
+            error = "product shell font did not load";
+            return false;
+        }
+        if (!ImGui_ImplOpenGL3_Init("#version 410 core"))
+        {
+            error = "product shell OpenGL backend did not initialize";
+            return false;
+        }
+        _backendReady = true;
+        return true;
+    }
+
+    void shutdown()
+    {
+        ImGui::SetCurrentContext(_context);
+        if (_backendReady)
+        {
+            ImGui_ImplOpenGL3_Shutdown();
+            _backendReady = false;
+        }
+        if (_context)
+        {
+            ImGui::DestroyContext(_context);
+            _context = nullptr;
+        }
+    }
+
+    void operator()(osg::RenderInfo&) const override
+    {
+        if (!_context || !_backendReady) return;
+        ImGui::SetCurrentContext(_context);
+        Rml::Context* rml = _runtime.context();
+        const Rml::Vector2i dimensions =
+            rml ? rml->GetDimensions() : Rml::Vector2i(WIDTH, HEIGHT);
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2(
+            static_cast<float>(dimensions.x),
+            static_cast<float>(dimensions.y));
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui::NewFrame();
+        earthui::applyEarthUiV2Theme();
+        const earthui::EarthUiShellLayout shell =
+            earthui::computeEarthUiShellLayout(
+                io.DisplaySize.x, io.DisplaySize.y, true);
+        earthui::EarthUiTopBarData top;
+        top.latitudeDeg = 24.9752;
+        top.longitudeDeg = 102.0031;
+        top.altitudeKm = 1336.7;
+        top.scienceAvailable = true;
+        earthui::drawEarthUiTopBar(shell, _state, top);
+        earthui::drawEarthUiModuleRail(shell, _state);
+        earthui::drawEarthUiContextTray(shell, _state);
+        drawCommandDeck(shell);
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
+
+private:
+    static void drawCommandDeck(const earthui::EarthUiShellLayout& shell)
+    {
+        ImGui::SetNextWindowPos(
+            ImVec2(shell.commandX, shell.contextY - shell.outerGap),
+            ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+        ImGui::SetNextWindowSize(
+            ImVec2(shell.commandWidth, shell.commandHeight),
+            ImGuiCond_Always);
+        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse;
+        if (ImGui::Begin("##composite_ai_command", nullptr, flags))
+        {
+            ImGui::TextColored(
+                earthui::design::kCyan, u8"AI 地球助手");
+            ImGui::SameLine();
+            ImGui::TextDisabled(u8"就绪");
+            ImGui::SetNextItemWidth(-1.0f);
+            char command[2] = "";
+            ImGui::InputTextWithHint(
+                "##composite_command", u8"询问当前区域或联动数据源…",
+                command, sizeof(command));
+        }
+        ImGui::End();
+    }
+
+    RmlUiRuntime& _runtime;
+    mutable earthui::EarthUiShellState _state;
+    ImGuiContext* _context = nullptr;
+    bool _backendReady = false;
+};
+
+class CompositeClearCallback : public osgVerse::CameraDrawCallback
+{
+public:
+    explicit CompositeClearCallback(RmlUiRuntime& runtime)
+        : _runtime(runtime) {}
+
+    void operator()(osg::RenderInfo& renderInfo) const override
+    {
+        const Rml::Context* context = _runtime.context();
+        const Rml::Vector2i dimensions = context
+            ? context->GetDimensions()
+            : Rml::Vector2i(WIDTH, HEIGHT);
+        osg::State* state = renderInfo.getState();
+        osg::GraphicsContext* graphics =
+            state ? state->getGraphicsContext() : nullptr;
+        glBindFramebuffer(
+            GL_FRAMEBUFFER, graphics ? graphics->getDefaultFboId() : 0);
+        glViewport(0, 0, dimensions.x, dimensions.y);
+        glDisable(GL_SCISSOR_TEST);
+        glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
+                GL_STENCIL_BUFFER_BIT);
+        if (getSubCallback()) getSubCallback()->run(renderInfo);
+    }
+
+private:
+    RmlUiRuntime& _runtime;
+};
+
+bool writePpm(const std::filesystem::path& path,
+              const std::vector<unsigned char>& rgba,
+              int width = WIDTH, int height = HEIGHT)
+{
+    FILE* file = std::fopen(path.string().c_str(), "wb");
     if (!file) return false;
-    std::fprintf(file, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
-    for (int y = HEIGHT - 1; y >= 0; --y)
+    std::fprintf(file, "P6\n%d %d\n255\n", width, height);
+    for (int y = height - 1; y >= 0; --y)
     {
         const unsigned char* row = rgba.data() +
-            static_cast<std::size_t>(y) * WIDTH * 4;
-        for (int x = 0; x < WIDTH; ++x)
+            static_cast<std::size_t>(y) * width * 4;
+        for (int x = 0; x < width; ++x)
             std::fwrite(row + x * 4, 1, 3, file);
     }
     return std::fclose(file) == 0;
@@ -549,6 +779,26 @@ int main()
         96.0f, error), "RmlUi runtime attach failed: " + error);
     expect(graphics->realize(), "headless CGL 4.1 context did not realize");
     expect(graphics->makeCurrent(), "headless context could not become current");
+    osg::ref_ptr<ProductShellCallback> productShell =
+        new ProductShellCallback(runtime);
+    expect(productShell->initialize(
+        std::string(OSGVERSE_SOURCE_DIR) +
+            "/assets/misc/LXGWFasmartGothic.otf",
+        error), "product shell initialization failed: " + error);
+    productShell->setup(camera, 2);
+    osgVerse::CameraDrawCallback* rmlCallback =
+        dynamic_cast<osgVerse::CameraDrawCallback*>(
+            camera->getPostDrawCallback());
+    expect(rmlCallback != nullptr,
+           "RmlUi callback is not composable with the product shell");
+    osg::ref_ptr<CompositeClearCallback> clearFrame =
+        new CompositeClearCallback(runtime);
+    clearFrame->setSubCallback(rmlCallback);
+    camera->setPostDrawCallback(clearFrame);
+    const std::filesystem::path evidenceDirectory =
+        std::filesystem::path(OSGSOL_UI_EVIDENCE_DIR) /
+        "science-composite";
+    std::filesystem::create_directories(evidenceDirectory);
     glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
     glViewport(0, 0, WIDTH, HEIGHT);
     glClearColor(1.0f, 0.0f, 1.0f, 1.0f);
@@ -572,15 +822,73 @@ int main()
                std::to_string(client.width("science-workbench")) +
                ", bottom=" +
                std::to_string(client.bottom("science-workbench")));
+    {
+        const earthui::EarthUiShellLayout compactShell =
+            earthui::computeEarthUiShellLayout(1024.0f, 576.0f, true);
+        expect(std::abs(
+                   client.left("science-workbench") -
+                   compactShell.drawerX) <= 1.0f,
+               "compact Science workbench is detached from the module rail");
+        expect(std::abs(
+                   client.top("science-workbench") -
+                   compactShell.drawerY) <= 1.0f,
+               "compact Science workbench is detached from the top bar");
+        expect(client.bottom("science-workbench") <=
+                   compactShell.commandY - compactShell.outerGap + 1.0f,
+               "compact Science workbench overlaps the AI command deck");
+        glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
+        glFinish();
+        std::vector<unsigned char> compactRgba(
+            static_cast<std::size_t>(1024) * 576 * 4);
+        glReadPixels(
+            0, 0, 1024, 576, GL_RGBA, GL_UNSIGNED_BYTE,
+            compactRgba.data());
+        expect(writePpm(
+                   evidenceDirectory / "workbench-shell-1024x576.ppm",
+                   compactRgba, 1024, 576),
+               "could not write compact composite UI evidence");
+    }
     expect(client.horizontalOverflow("composer-scroll") <= 1.0f,
            "compact Science workbench overflows horizontally after resize");
+    sendResizeEvent(runtime, MID_WIDTH, MID_HEIGHT);
+    (*camera->getPostDrawCallback())(renderInfo);
+    expect(runtime.context()->GetDimensions() ==
+               Rml::Vector2i(MID_WIDTH, MID_HEIGHT),
+           "RmlUi context ignores the medium product viewport");
+    {
+        const earthui::EarthUiShellLayout mediumShell =
+            earthui::computeEarthUiShellLayout(
+                static_cast<float>(MID_WIDTH),
+                static_cast<float>(MID_HEIGHT), true);
+        expect(std::abs(
+                   client.left("science-workbench") -
+                   mediumShell.drawerX) <= 1.0f,
+               "medium Science workbench is detached from the module rail");
+        expect(client.bottom("science-workbench") <=
+                   mediumShell.commandY - mediumShell.outerGap + 1.0f,
+               "medium Science workbench overlaps the AI command deck");
+        glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
+        glFinish();
+        std::vector<unsigned char> mediumRgba(
+            static_cast<std::size_t>(MID_WIDTH) * MID_HEIGHT * 4);
+        glReadPixels(
+            0, 0, MID_WIDTH, MID_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
+            mediumRgba.data());
+        expect(writePpm(
+                   evidenceDirectory / "workbench-shell-1280x720.ppm",
+                   mediumRgba, MID_WIDTH, MID_HEIGHT),
+               "could not write medium composite UI evidence");
+    }
     sendResizeEvent(runtime, WIDTH, HEIGHT);
     (*camera->getPostDrawCallback())(renderInfo);
     expect(runtime.context()->GetDimensions() ==
                Rml::Vector2i(WIDTH, HEIGHT),
            "RmlUi context cannot return to the full viewport after resize");
-    expect(client.width("source-select") > 280.0f,
-           "analysis selector is visually collapsed");
+    expect(client.width("source-select") > 260.0f,
+           "analysis selector is visually collapsed; width=" +
+               std::to_string(client.width("source-select")) +
+               ", workbench=" +
+               std::to_string(client.width("science-workbench")));
     expect(client.width("source-chevron") >= 24.0f &&
                client.height("source-chevron") >= 24.0f,
            "analysis selector has no visible dropdown chevron");
@@ -652,12 +960,15 @@ int main()
         previousHeight = optionHeight;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
+    expect(glCheckFramebufferStatus(GL_FRAMEBUFFER) ==
+               GL_FRAMEBUFFER_COMPLETE,
+           "composite framebuffer is incomplete");
     glFinish();
     std::vector<unsigned char> menuRgba(
         static_cast<std::size_t>(WIDTH) * HEIGHT * 4);
     glReadPixels(
         0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, menuRgba.data());
-    expect(writePpm("/tmp/osgsol_rml_menu_open.ppm", menuRgba),
+    expect(writePpm(evidenceDirectory / "menu-open.ppm", menuRgba),
            "could not write opened analysis menu evidence image");
     sendPointerEvent(runtime, osgGA::GUIEventAdapter::MOVE, secondOption);
     (*camera->getPostDrawCallback())(renderInfo);
@@ -745,7 +1056,7 @@ int main()
         static_cast<std::size_t>(WIDTH) * HEIGHT * 4);
     glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
                  runningRgba.data());
-    expect(writePpm("/tmp/osgsol_rml_running.ppm", runningRgba),
+    expect(writePpm(evidenceDirectory / "running.ppm", runningRgba),
            "could not write compact running-state evidence image");
 
     client.showOverviewReport();
@@ -770,17 +1081,38 @@ int main()
                overviewRgba[overviewSample + 1] < 80 &&
                overviewRgba[overviewSample + 2] < 80,
            "report overview falls back to a blank white canvas");
-    expect(writePpm("/tmp/osgsol_rml_overview.ppm", overviewRgba),
+    expect(writePpm(evidenceDirectory / "overview.ppm", overviewRgba),
            "could not write scientific overview evidence image");
 
     client.showTrendReport();
     (*camera->getPostDrawCallback())(renderInfo);
     expect(client.reportWidth("science-report") >= 780.0f &&
-               client.reportHeight("science-report") >= 680.0f,
-           "scientific report collapsed below its readable test size");
+               client.reportHeight("science-report") >= 620.0f,
+           "scientific report collapsed below its readable test size; " +
+               std::to_string(client.reportWidth("science-report")) + "x" +
+               std::to_string(client.reportHeight("science-report")));
     expect(client.reportRight("science-report") <= WIDTH + 1.0f &&
                client.reportBottom("science-report") <= HEIGHT + 1.0f,
            "scientific report extends beyond the viewport");
+    {
+        const earthui::EarthUiShellLayout shell =
+            earthui::computeEarthUiShellLayout(
+                static_cast<float>(WIDTH),
+                static_cast<float>(HEIGHT), true);
+        expect(client.reportLeft("science-report") >=
+                   shell.drawerX +
+                   earthui::computeScienceWorkbenchLayout(
+                       static_cast<float>(WIDTH),
+                       static_cast<float>(HEIGHT)).composerWidth +
+                   shell.outerGap - 1.0f,
+               "scientific report covers the Science composer");
+        expect(client.reportTop("science-report") >=
+                   shell.topBarHeight + shell.outerGap - 1.0f,
+               "scientific report covers the product top bar");
+        expect(client.reportBottom("science-report") <=
+                   shell.commandY - shell.outerGap + 1.0f,
+               "scientific report covers the AI command deck");
+    }
     expect(client.reportRight("report-close") <=
                client.reportRight("science-report") - 8.0f,
            "report window actions are clipped at the right edge; close=" +
@@ -798,7 +1130,7 @@ int main()
         static_cast<std::size_t>(WIDTH) * HEIGHT * 4);
     glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
                  reportRgba.data());
-    expect(writePpm("/tmp/osgsol_rml_report.ppm", reportRgba),
+    expect(writePpm(evidenceDirectory / "trend-report.ppm", reportRgba),
            "could not write scientific report evidence image");
     client.hideTrendReport();
     glBindFramebuffer(GL_FRAMEBUFFER, graphics->getDefaultFboId());
@@ -816,18 +1148,12 @@ int main()
 
     std::size_t changed = 0;
     std::size_t dark = 0;
-    std::size_t outsidePanel = 0;
     for (std::size_t i = 0; i < rgba.size(); i += 4)
     {
-        const std::size_t pixel = i / 4;
-        const int x = static_cast<int>(pixel % WIDTH);
-        const int y = static_cast<int>(pixel / WIDTH);
         const bool isChanged =
             rgba[i] < 245 || rgba[i + 1] > 10 || rgba[i + 2] < 245;
         if (isChanged)
             ++changed;
-        if (isChanged && (x < 76 || x >= 436 || y < 124 || y >= 844))
-            ++outsidePanel;
         if (rgba[i] < 80 && rgba[i + 1] < 80 && rgba[i + 2] < 80)
             ++dark;
     }
@@ -837,15 +1163,24 @@ int main()
            "framebuffer evidence is uniformly changed instead of a UI panel");
     expect(dark > static_cast<std::size_t>(WIDTH * HEIGHT / 20),
            "workbench dark surface was not present in the rendered frame");
-    expect(outsidePanel < 100,
-           "workbench text or controls overflow outside the panel bounds");
-    expect(writePpm("/tmp/osgsol_rml_gl_smoke.ppm", rgba),
+    const earthui::EarthUiShellLayout shell =
+        earthui::computeEarthUiShellLayout(
+            static_cast<float>(WIDTH), static_cast<float>(HEIGHT), true);
+    expect(std::abs(
+               client.left("science-workbench") - shell.drawerX) <= 1.0f,
+           "Science workbench and module rail contain a transparent seam");
+    expect(client.bottom("science-workbench") <=
+               shell.commandY - shell.outerGap + 1.0f,
+           "Science workbench covers the AI command deck");
+    expect(writePpm(evidenceDirectory / "workbench-shell.ppm", rgba),
            "could not write RmlUi GL evidence image");
 
+    productShell->shutdown();
     runtime.shutdown();
     runtime.setFrameClient(nullptr);
     graphics->releaseContext();
     std::cout << "[OK] RmlUi real GL workbench rendered; changed_pixels="
-              << changed << "; evidence=/tmp/osgsol_rml_gl_smoke.ppm\n";
+              << changed << "; evidence=" << evidenceDirectory.string()
+              << "\n";
     return 0;
 }

@@ -19,7 +19,12 @@ before it can be tagged or synchronized as accepted.
   `Contents/Resources/package-audit.env`
 - Automated gates: package contract, bundle closure, provenance, data manifest,
   staging strict/deep signature, G0-v2 bundle audit, Rml document parsing, and
-  82/82 offline regression suite and 43/43 bundle-audit unit suite
+  82/82 offline regression suite and 43/43 bundle-audit unit suite. The UI gate
+  also composes the production ImGui shell with the real RmlUi Science
+  workbench/report in the same offscreen frame at 1024×576, 1280×720, and
+  1440×900, verifies the shared workbench/Shell safe regions at all three sizes,
+  then at 1440×900 exercises the menu, year input, bidirectional wheel
+  scrolling, run action, report safe region, and axis-bearing trend report.
 - Desktop inventory: exactly one `osgSol Earth.app`; no hidden staging bundle.
   A FileProvider-restored old `osgSol Earth 2.app` was archived outside Desktop
   without launching or altering either package.
