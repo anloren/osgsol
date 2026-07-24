@@ -42,6 +42,8 @@
 10. 自动化不得启动或前置桌面候选，最终可见观感和正常 Quit 由用户手测确认。
 11. 当前 OSG/Cocoa 保持 1 点=1 像素；不得只改 plist 强开 Retina backing，
     除非同时迁移 viewport、地图拾取、ImGui、RmlUi、鼠标和输入法坐标。
+12. Tab 的活动样式必须与当前内容一致；视觉证据必须由本次测试直接生成，
+    不能使用旧 PPM 的历史 PNG 转换图。
 
 ## 证据等级
 
@@ -53,9 +55,9 @@
 全产品交付至少需要 A+B+C 全绿；Goal 只有在 M 也通过后才能结束并进入 Tag/同步。
 
 当前 A 级视觉证据包括
-`build/science_g3_release/ui-evidence/imgui-shell/png/earth-ui-*.png`
+`build/science_g3_release/ui-evidence/imgui-shell/earth-ui-*.png`
 中的八模块 1440×900 原生壳层、
-`build/science_g3_release/ui-evidence/product-shell/png/*.png`
+`build/science_g3_release/ui-evidence/product-shell/*.png`
 中的 8 个真实生产入口 × 3 档视口，以及 AI 历史、分析模板、视频确认、
 四类图表、照片/视频结果、生成进度、事件流/状态带、最高细节提示和模块帮助等
 条件交互状态，
@@ -64,3 +66,4 @@
 `EarthControlUI`、`AIChatUI`、图层目录、业务长文与实体卡；组合证据使用
 正式 Shell 布局与正式 RmlUi 工作台/报告，并按产品层次顺序合成。网络和媒体
 所有者仍为安全离线替身，真实在线内容属于 M 级真机验收。
+上述 PPM 与 PNG 由同一次 GL 门禁同步写入；测试失败时不会把旧 PNG 当作新证据。

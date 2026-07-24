@@ -83,6 +83,13 @@ bool visible(Rml::ElementDocument* document, const char* id)
     return element && element->IsVisible(true);
 }
 
+bool hasClass(Rml::ElementDocument* document, const char* id,
+              const char* className)
+{
+    Rml::Element* element = document ? document->GetElementById(id) : nullptr;
+    return element && element->IsClassSet(className);
+}
+
 void click(Rml::Context& context, Rml::ElementDocument* document,
            const char* id)
 {
@@ -426,6 +433,9 @@ int main()
     click(*context, report, "tab-trends");
     expect(visible(report, "trends") && !visible(report, "overview"),
            "real report tab click does not switch to time trends");
+    expect(hasClass(report, "tab-trends", "selected") &&
+               !hasClass(report, "tab-overview", "selected"),
+           "time-trend content and selected report tab disagree");
     Rml::ElementFormControl* metric =
         rmlui_dynamic_cast<Rml::ElementFormControl*>(
             report->GetElementById("report-metric-select"));
@@ -440,14 +450,23 @@ int main()
     expect(visible(report, "spatial-range") &&
                !visible(report, "trends"),
            "real report tab click does not switch to spatial evidence");
+    expect(hasClass(report, "tab-spatial-range", "selected") &&
+               !hasClass(report, "tab-trends", "selected"),
+           "spatial content and selected report tab disagree");
     click(*context, report, "tab-methods-evidence");
     expect(visible(report, "methods-evidence") &&
                !visible(report, "spatial-range"),
            "real report tab click does not switch to methods and evidence");
+    expect(hasClass(report, "tab-methods-evidence", "selected") &&
+               !hasClass(report, "tab-spatial-range", "selected"),
+           "method content and selected report tab disagree");
     click(*context, report, "tab-overview");
     expect(visible(report, "overview") &&
                !visible(report, "methods-evidence"),
            "real report tab click does not return to overview");
+    expect(hasClass(report, "tab-overview", "selected") &&
+               !hasClass(report, "tab-methods-evidence", "selected"),
+           "overview content and selected report tab disagree");
 
     click(*context, report, "tab-methods-evidence");
     const std::string firstArtifactId =

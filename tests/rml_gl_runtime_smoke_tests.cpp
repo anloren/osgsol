@@ -11,6 +11,7 @@
 #include "science_ui/rml_science_chart.h"
 #include "science_ui/science_chart_model.h"
 #include "science_ui/science_report_window.h"
+#include "ui_evidence_io.h"
 #include "ui_card.h"
 
 #include <RmlUi/Core.h>
@@ -404,6 +405,21 @@ public:
     int helpClicks() const { return _helpClicks; }
     int runClicks() const { return _runClicks; }
 
+    void setReportSection(const char* selected)
+    {
+        const char* sections[] = {
+            "overview", "trends", "spatial-range", "methods-evidence"};
+        for (const char* section : sections)
+        {
+            const bool active = std::string(section) == selected;
+            if (Rml::Element* content = reportElement(section))
+                content->SetProperty("display", active ? "block" : "none");
+            const std::string tabId = std::string("tab-") + section;
+            if (Rml::Element* tab = reportElement(tabId.c_str()))
+                tab->SetClass("selected", active);
+        }
+    }
+
     void showTrendReport()
     {
         Rml::Element* window = reportElement("science-report");
@@ -413,10 +429,7 @@ public:
         _reportModel.setSection("composite-science-report", "trends");
         applyReportGeometry();
         window->SetProperty("display", "block");
-        if (Rml::Element* overview = reportElement("overview"))
-            overview->SetProperty("display", "none");
-        if (Rml::Element* trends = reportElement("trends"))
-            trends->SetProperty("display", "block");
+        setReportSection("trends");
         setReportText("report-title", "ERA5 Agricultural Climate");
         setReportText("chart-title", "2 米平均气温");
         setReportText("chart-aggregation", "年度平均 · 每年一个结果值");
@@ -459,10 +472,7 @@ public:
         _reportModel.setSection("composite-science-report", "overview");
         applyReportGeometry();
         window->SetProperty("display", "block");
-        if (Rml::Element* overview = reportElement("overview"))
-            overview->SetProperty("display", "block");
-        if (Rml::Element* trends = reportElement("trends"))
-            trends->SetProperty("display", "none");
+        setReportSection("overview");
         setReportText("report-title", "ERA5 Agricultural Climate");
         setReportText(
             "context-placeholder",
@@ -769,7 +779,9 @@ bool writePpm(const std::filesystem::path& path,
         for (int x = 0; x < width; ++x)
             std::fwrite(row + x * 4, 1, 3, file);
     }
-    return std::fclose(file) == 0;
+    const bool ppmWritten = std::fclose(file) == 0;
+    return ppmWritten &&
+        ui_evidence::writePngSibling(path, rgba, width, height);
 }
 
 void sendPointerEvent(RmlUiRuntime& runtime,

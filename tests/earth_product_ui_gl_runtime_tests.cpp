@@ -3,6 +3,7 @@
 #include <OpenGL/OpenGL.h>
 
 #include "EarthControlUI.h"
+#include "ui_evidence_io.h"
 
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_opengl3.h>
@@ -500,7 +501,9 @@ bool writePpm(const std::filesystem::path& path,
             std::fwrite(rgb, 1, sizeof(rgb), file);
         }
     }
-    return std::fclose(file) == 0;
+    const bool ppmWritten = std::fclose(file) == 0;
+    return ppmWritten &&
+        ui_evidence::writePngSibling(path, rgba, width, height);
 }
 
 std::array<unsigned char, 3> screenPixel(

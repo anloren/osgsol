@@ -4,6 +4,7 @@
 
 #include "earth_ui_components.h"
 #include "earth_ui_v2.h"
+#include "ui_evidence_io.h"
 #include "ui_card.h"
 
 #include <imgui/imgui.h>
@@ -242,7 +243,9 @@ bool writePpm(const std::filesystem::path& path,
             std::fwrite(rgb, 1, sizeof(rgb), file);
         }
     }
-    return std::fclose(file) == 0;
+    const bool ppmWritten = std::fclose(file) == 0;
+    return ppmWritten &&
+        ui_evidence::writePngSibling(path, rgba, WIDTH, HEIGHT);
 }
 
 std::array<unsigned char, 3> screenPixel(

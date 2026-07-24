@@ -72,6 +72,8 @@ before it can be tagged or synchronized as accepted.
 - [ ] Time Trends shows one main chart. Metric changes replace that chart; units
   are not mixed; missing years break the line; values use normal formatting;
   `ET₀`, `MJ/m²`, and Chinese text render correctly.
+- [ ] The highlighted report tab always matches the visible Overview, Time
+  Trends, Spatial Range, or Methods & Evidence content.
 - [ ] Clicking a chart year pins that year and shows its value or `数据缺测`.
 - [ ] Spatial Range clearly distinguishes the requested point/area from actual
   provider coverage and never describes a grid-cell point series as a regional
