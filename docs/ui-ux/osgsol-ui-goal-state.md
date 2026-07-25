@@ -4,8 +4,8 @@
 
 ## 已冻结基线
 
-- 当前桌面候选来源提交：`85c97ce docs(ui): record final interaction audit`
-- 后续审计证据提交：`0e3b834 test(ui): audit remaining command actions`
+- 当前桌面候选来源提交：`e9232ac test(ui): prove remaining external actions`
+- 前序审计证据提交：`0e3b834 test(ui): audit remaining command actions`
 - 完成性复核提交：`46926af test(ui): close remaining interaction evidence gaps`
 - 分支：`codex/scienceearth-agro-climate-v1`
 - 正式 App：`/Users/USER/Desktop/osgSol Earth.app`
@@ -121,8 +121,13 @@
 - 地图与退出保护：地形科学融合合同、3D Tiles、相机、正常退出守卫均通过
 - 正式打包契约：通过
 - 包审计单元测试：77/77 通过
-- G0-v2 候选包审计：PASS，新增发现 0、违规 0、未解析依赖 0、四项包体门槛
-  均 PASS；仍记录 1 个受 reference/ratchet 约束的历史编译路径根因，本次未新增
+- G0-v2 候选包审计：PASS，新增发现 0、违规 0、未解析依赖 0、根因 0，
+  四项包体门槛均 PASS；总包体 667,480,623 B，运行时增量 37,703,063 B，
+  已验证科学数据 87,183,360 B，合计增量 124,886,423 B，科学闭包
+  32,156,560 B
+- G0-v2 审计报告：
+  `build/ui-ux-goal-candidate-e9232ac/audit.json` 与
+  `build/ui-ux-goal-candidate-e9232ac/audit.txt`
 - 暂存包严格深度签名：PASS
 - 桌面包文件字节、模式与暂存包完全一致，内嵌 ad-hoc CodeDirectory 可读；
   macOS Desktop FileProvider 随后在 App 内容附加 `com.apple.FinderInfo`，
@@ -130,19 +135,22 @@
   遵守本 Goal 边界，没有清理 xattr、重签或修改 macOS 设置；代码和数据清单未变。
 - 唯一桌面候选：`/Users/USER/Desktop/osgSol Earth.app`
 - 当前桌面候选：`0.6.1` / `G3.1`，来源提交
-  `85c97cef8af9a40e8e44ef7b8a5189bdd74ab813`，channel
+  `e9232ac79f092ec3c17280f1f4e43264cdaa7223`，channel
   `ui-ux-goal-candidate`
-- `0e3b834` 和 `46926af` 只增加测试与 `OSGSOL_UI_AUDIT_HOOKS` 条件下的
-  审计截获；正常生产构建不包含审计字段。生产目标已重新构建，完整回归
-  82/82，并由通过 G0-v2 的严格暂存包更新唯一桌面候选
+- `e9232ac` 为回到全球、新闻来源/摘要、照片/视频文件动作补齐真实点击证据；
+  外部浏览器和系统文件查看器只在 `OSGSOL_UI_AUDIT_HOOKS` 条件下被截获，
+  正常生产行为保持不变。生产目标已重新构建，完整回归 82/82，并由通过
+  G0-v2 的严格暂存包更新唯一桌面候选
 - 桌面/严格暂存包可执行文件 SHA-256：
-  `531079dadb1405686835ac15e148cd2812a1939956af8d73c49fd4ca44650615`
+  `e15115b0c988fbbca14499d6837d144f9f0af052e7fc04febaceae5aa411c7d4`
 - 桌面/严格暂存包整包内容与模式指纹：
-  `a8054a291462b512bc449ef8841cb10df4cc7b5f7384451f0afe866f7887ff6f`
+  `1d86c696f0e995ce72e9772ee9ca0c978a16028d89baee6656118c98cce7a4b4`
 - 桌面包与严格暂存包逐文件一致：371 个普通文件、37 个符号链接；
   桌面进程 0、同名 App 1 个、最新异常报告仍为
   `osgSol_Earth-2026-07-23-222801.ips`
-- 上一桌面候选备份：
+- 本次替换前桌面候选备份：
+  `build/desktop-backups/pre-ui-external-actions-20260725-e9232ac/osgSol Earth.previous.app`
+- 更早桌面候选备份：
   `build/desktop-backups/pre-ui-final-interactions-20260724-232335-9f8f64a/osgSol Earth.previous.app`
 - 本次替换后没有出现 FileProvider 恢复的第二个 App；桌面仍只保留一个正式 App。
 - 自动化没有启动、前置或操作桌面候选
