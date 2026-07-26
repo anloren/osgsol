@@ -44,6 +44,23 @@ struct ScienceTargetOverlayInput
     std::string label;
 };
 
+struct ScienceTargetSupportDisplay
+{
+    ScienceOverlayGeometry geometry;
+    bool estimatedGridCell = false;
+    std::string label;
+};
+
+// Point-query climate sources return one provider grid cell. Before a result
+// supplies the exact returned cell, show the planned source-grid support around
+// the requested point instead of an easy-to-miss generic marker. Other point
+// sources stay points: native pixel resolution is not the same as an analysis
+// footprint and must not be presented as one.
+ScienceTargetSupportDisplay scienceTargetSupportDisplay(
+    const ScienceOverlayGeometry& requested,
+    const std::string& sourceId,
+    double nativeResolutionMeters);
+
 struct ScienceOverlayVertex
 {
     float x = 0.0f;

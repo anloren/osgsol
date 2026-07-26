@@ -36,6 +36,7 @@ struct SourceView
     std::string healthMessage;
     int firstYear = 0;
     int lastYear = 0;
+    double nativeResolutionMeters = 0.0;
     bool supportsBounds = false;
     bool supportsTimeSeries = false;
     bool supportsAnalysis = false;
@@ -308,6 +309,8 @@ bool parseSnapshot(const std::string& json, SnapshotView& output,
             item.healthMessage = stringField(source, "healthMessage");
             item.firstYear = static_cast<int>(numberField(source, "firstYear"));
             item.lastYear = static_cast<int>(numberField(source, "lastYear"));
+            item.nativeResolutionMeters =
+                numberField(source, "nativeResolutionMeters");
             if (const picojson::value* capabilitiesValue =
                     field(source, "capabilities");
                 capabilitiesValue && capabilitiesValue->is<picojson::object>())
@@ -1608,14 +1611,24 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
     }
 
     ScienceTargetOverlayInput target;
-    target.requested = view.requested;
+    const ScienceTargetSupportDisplay support =
+        scienceTargetSupportDisplay(
+            view.requested,
+            selected ? selected->id : view.sourceId,
+            selected ? selected->nativeResolutionMeters : 0.0);
+    target.requested = support.geometry;
     target.actual = view.actual;
     target.requestedVisible = view.locked;
     target.actualVisible = view.locked && view.hasActual;
-    target.label = selected ? selected->name : "科学分析范围";
+    target.label = active ? "正在分析 · " : "分析范围 · ";
+    target.label += selected ? selected->name : "科学数据";
     if (view.firstYear > 0)
         target.label += " · " + std::to_string(view.firstYear) + "–" +
             std::to_string(view.lastYear);
+    if (support.estimatedGridCell)
+        target.label += " · " + support.label + " · 青色=计划范围";
+    if (target.actualVisible)
+        target.label += " · 金色=数据实际覆盖";
     {
         std::lock_guard<std::mutex> guard(_impl->targetMutex);
         _impl->target = std::move(target);

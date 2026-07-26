@@ -311,9 +311,9 @@ select selectbox option.disabled {
 
 .report-layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; margin: 0; color: #e5e4df; background: transparent; font-family: LXGW Fasmart Gothic; font-size: 15px; pointer-events: none; }
 .live-target-overlay { display: none; position: absolute; pointer-events: none; z-index: 1; }
-.live-target-requested { border: 2px #38c3df; }
-.live-target-actual { border: 2px #e1bd62; }
-.live-target-label { display: none; position: absolute; max-width: 260px; margin: 10px; padding: 5px 8px; color: #e5e4df; background: #07090acc; border-left: 3px #38c3df; border-radius: 3px; pointer-events: none; z-index: 2; }
+.live-target-requested { background: #38c3df26; border: 3px #38c3df; }
+.live-target-actual { background: #e1bd621a; border: 3px #e1bd62; }
+.live-target-label { display: none; position: absolute; max-width: 360px; margin: 12px; padding: 7px 10px; color: #f1f3f2; background: #07090aeb; border-left: 4px #38c3df; border-radius: 3px; font-weight: 600; pointer-events: none; z-index: 2; }
 .science-report { display: none; position: absolute; width: 900px; height: 680px; min-width: 720px; min-height: 520px; max-width: 1200px; max-height: 900px; color: #e5e4df; background: #0d1011; border: 1px #3b302e; border-radius: 6px; overflow: hidden; pointer-events: auto; z-index: 10; }
 .report-titlebar { height: 64px; display: flex; align-items: center; justify-content: space-between; background: #07090a; border-bottom: 1px #3b302e; }
 .report-move-handle { display: block; flex: 1; min-width: 0; height: 64px; padding: 11px 16px; cursor: move; overflow: hidden; }

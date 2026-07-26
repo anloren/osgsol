@@ -227,6 +227,40 @@ ProjectedPoint appendGeometry(const ScienceOverlayGeometry& geometry,
 }
 }
 
+ScienceTargetSupportDisplay scienceTargetSupportDisplay(
+    const ScienceOverlayGeometry& requested,
+    const std::string& sourceId,
+    double nativeResolutionMeters)
+{
+    ScienceTargetSupportDisplay output;
+    output.geometry = requested;
+    if (requested.kind != ScienceOverlayGeometryKind::Point) return output;
+
+    double cellDegrees = 0.0;
+    if (sourceId == "era5-agricultural-climate")
+        cellDegrees = 0.25;
+    else if (sourceId == "era5-land-surface-history")
+        cellDegrees = 0.1;
+    else
+        return output;
+
+    const double halfCell = cellDegrees * 0.5;
+    output.geometry.kind = ScienceOverlayGeometryKind::Bounds;
+    output.geometry.bounds = {
+        wrapLongitude(requested.point.longitude - halfCell),
+        std::max(-90.0, requested.point.latitude - halfCell),
+        wrapLongitude(requested.point.longitude + halfCell),
+        std::min(90.0, requested.point.latitude + halfCell)};
+    output.estimatedGridCell = true;
+    if (cellDegrees == 0.25)
+        output.label = u8"计划分析网格约 0.25° / 25–28 km";
+    else
+        output.label = u8"计划分析网格约 0.1° / 11 km";
+    if (nativeResolutionMeters <= 0.0)
+        output.label += u8"（分辨率元数据待返回）";
+    return output;
+}
+
 ScienceTargetOverlayFrame projectScienceTarget(
     const ScienceTargetOverlayInput& input,
     const osg::Matrixd& view,

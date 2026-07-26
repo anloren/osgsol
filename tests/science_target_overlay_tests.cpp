@@ -126,6 +126,51 @@ void testAntimeridianBoundsProjectWithoutLongChord()
                    "projected vertices must be viewport clipped");
         }
 }
+
+void testEra5PointShowsPlannedSourceGridBeforeResultsArrive()
+{
+    ScienceOverlayGeometry requested;
+    requested.kind = ScienceOverlayGeometryKind::Point;
+    requested.point = {22.5, 114.0};
+
+    const ScienceTargetSupportDisplay climate =
+        scienceTargetSupportDisplay(
+            requested, "era5-agricultural-climate", 27800.0);
+    expect(climate.geometry.kind == ScienceOverlayGeometryKind::Bounds,
+           "ERA5 climate point must display its planned 0.25 degree cell");
+    expect(std::abs(climate.geometry.bounds.west - 113.875) < 1e-9 &&
+               std::abs(climate.geometry.bounds.south - 22.375) < 1e-9 &&
+               std::abs(climate.geometry.bounds.east - 114.125) < 1e-9 &&
+               std::abs(climate.geometry.bounds.north - 22.625) < 1e-9,
+           "ERA5 climate planned cell must be centered on the requested point");
+    expect(climate.estimatedGridCell,
+           "pre-result ERA5 support must remain explicitly estimated");
+    expect(climate.label.find("0.25") != std::string::npos &&
+               climate.label.find("25") != std::string::npos,
+           "ERA5 climate support label must expose degree and kilometre scale");
+
+    const ScienceTargetSupportDisplay land =
+        scienceTargetSupportDisplay(
+            requested, "era5-land-surface-history", 11100.0);
+    expect(land.geometry.kind == ScienceOverlayGeometryKind::Bounds &&
+               std::abs(land.geometry.bounds.west - 113.95) < 1e-9 &&
+               std::abs(land.geometry.bounds.east - 114.05) < 1e-9,
+           "ERA5-Land point must display its planned 0.1 degree cell");
+}
+
+void testNonGridPointKeepsHonestPointMarker()
+{
+    ScienceOverlayGeometry requested;
+    requested.kind = ScienceOverlayGeometryKind::Point;
+    requested.point = {22.5, 114.0};
+    const ScienceTargetSupportDisplay display =
+        scienceTargetSupportDisplay(
+            requested, "alphaearth-foundations", 10.0);
+    expect(display.geometry.kind == ScienceOverlayGeometryKind::Point,
+           "native pixel resolution must not be invented as analysis coverage");
+    expect(!display.estimatedGridCell && display.label.empty(),
+           "non-grid point sources must not claim an estimated grid cell");
+}
 }
 
 int main()
@@ -134,6 +179,8 @@ int main()
     testBacksidePointIsRejected();
     testRequestedAndActualCoverageRemainDistinct();
     testAntimeridianBoundsProjectWithoutLongChord();
+    testEra5PointShowsPlannedSourceGridBeforeResultsArrive();
+    testNonGridPointKeepsHonestPointMarker();
     std::cout << "ScienceTargetOverlay tests passed" << std::endl;
     return 0;
 }
