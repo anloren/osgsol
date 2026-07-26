@@ -166,6 +166,27 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
     earthai::AIChatCore* aiCore = nullptr;
     std::shared_ptr<earthai::PhotoViewGate> photoViewGate(new earthai::PhotoViewGate);
     runtime.tools = aiRegistry;   // 无条件暴露:FeedLayer 等调用方不需要关心 aiCore 是否创建
+    runtime.context = std::make_shared<earthai::EarthContextHub>();
+    aiRegistry->add(earthai::makeEarthContextTool(runtime.context));
+    earthai::ToolRegistry* capabilityRegistry = aiRegistry;
+    runtime.context->upsertSection(
+        "capabilities", "backend_capabilities", 70,
+        [capabilityRegistry]()
+        {
+            picojson::array tools;
+            for (const earthai::Tool& tool : capabilityRegistry->tools())
+            {
+                picojson::object item;
+                item["name"] = picojson::value(tool.name);
+                item["description"] = picojson::value(tool.description);
+                tools.push_back(picojson::value(item));
+            }
+            picojson::object result;
+            result["toolCount"] =
+                picojson::value(static_cast<double>(tools.size()));
+            result["tools"] = picojson::value(tools);
+            return picojson::value(result);
+        });
 
     // MediaManager(Task 8 快照+生图管线)先于 aiRegistry 构造完:generate_photo/generate_video
     // 工具的 execute 需要捕获它的指针。EARTH_AI_KEY 在这里先读一次(下面 aiCore 构造再读一次
@@ -548,6 +569,15 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
     }
     if (aiCore)
     {
+        const std::shared_ptr<earthai::EarthContextHub> earthContext =
+            runtime.context;
+        aiCore->setContextProvider([earthContext]()
+        {
+            // Stay below AIChatCore's 128 KiB automatic envelope limit.
+            // Larger individual sections remain available through
+            // get_earth_context(section=...).
+            return earthContext->snapshotJson(120u * 1024u);
+        });
         aiCore->setSubmitAcceptedCallback(
             [photoViewGate](const std::string& text) { photoViewGate->beginUserTurn(text); });
         // v0.15-vision 收尾修复:MediaManager 早于 aiCore 构造(见上面 mediaMgr 构造处注释——

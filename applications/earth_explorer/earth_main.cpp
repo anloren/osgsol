@@ -84,6 +84,7 @@
 #include <atomic>
 #include <vector>
 #include <memory>
+#include <stdexcept>
 
 #ifdef OSG_LIBRARY_STATIC
 USE_OSG_PLUGINS()
@@ -1614,6 +1615,30 @@ int main(int argc, char** argv)
 #if OSGSOL_BUILD_SCIENCE
     scienceRuntime.registerAiTools(aiRuntime.tools, &layerMgr,
                                    earthManipulator.get());
+    if (aiRuntime.context && scienceRuntime.supportsWorkbenchUi())
+    {
+        SciencePluginRuntime* contextScienceRuntime = &scienceRuntime;
+        aiRuntime.context->upsertSection(
+            "scienceWorkbench", "report_and_science_sources", 95,
+            [contextScienceRuntime]()
+            {
+                std::string snapshot, error;
+                if (!contextScienceRuntime->copyWorkbenchSnapshot(
+                        snapshot, error))
+                    throw std::runtime_error(error.empty()
+                        ? "ScienceEarth workbench snapshot unavailable"
+                        : error);
+                picojson::value value;
+                const std::string parseError =
+                    picojson::parse(value, snapshot);
+                if (!parseError.empty() ||
+                    !value.is<picojson::object>())
+                    throw std::runtime_error(
+                        "ScienceEarth workbench snapshot is invalid: " +
+                        parseError);
+                return value;
+            });
+    }
 #endif
 
     if (aiRuntime.tools && shipLayer)
@@ -1766,6 +1791,185 @@ int main(int argc, char** argv)
         };
     }
 #endif
+
+    if (aiRuntime.context)
+    {
+        EarthControlUI* contextUi = ctrlUI;
+        LayerManager* contextLayers = &layerMgr;
+        osgVerse::EarthManipulator* contextManipulator =
+            earthManipulator.get();
+        FlightLayer* contextFlights = flightLayer;
+        ShipLayer* contextShips = shipLayer;
+        SatelliteLayer* contextSatellites = satelliteLayer;
+        aiRuntime.context->upsertSection(
+            "workspace", "front_end_and_map_state", 100,
+            [contextUi, contextLayers, contextManipulator, contextFlights,
+             contextShips, contextSatellites]()
+            {
+                picojson::object result;
+
+                picojson::object shell;
+                shell["activeModule"] = picojson::value(
+                    earthui::moduleLabel(
+                        contextUi->_uiV2.activeModule));
+                shell["drawerOpen"] =
+                    picojson::value(contextUi->_uiV2.drawerOpen);
+                shell["aboutOpen"] =
+                    picojson::value(contextUi->_uiV2.aboutOpen);
+#if OSGSOL_BUILD_SCIENCE
+                shell["scienceSurfaceVisible"] = picojson::value(
+                    earthui::productScienceSurfaceVisible(
+                        contextUi->_uiV2,
+                        contextUi->_scienceProductUiReady &&
+                            contextUi->_scienceProductUiReady()));
+#else
+                shell["scienceSurfaceVisible"] = picojson::value(false);
+#endif
+                result["shell"] = picojson::value(shell);
+
+                picojson::object camera;
+                const osg::Vec3d eye =
+                    contextManipulator->computeEyeLatLonHeight();
+                const osg::Vec3d target =
+                    contextManipulator->computeViewPointLatLonHeight();
+                camera["eyeLatitudeDeg"] = picojson::value(
+                    osg::RadiansToDegrees(eye[0]));
+                camera["eyeLongitudeDeg"] = picojson::value(
+                    osg::RadiansToDegrees(eye[1]));
+                camera["eyeAltitudeKm"] =
+                    picojson::value(eye[2] / 1000.0);
+                camera["targetLatitudeDeg"] = picojson::value(
+                    osg::RadiansToDegrees(target[0]));
+                camera["targetLongitudeDeg"] = picojson::value(
+                    osg::RadiansToDegrees(target[1]));
+                camera["targetAltitudeKm"] =
+                    picojson::value(target[2] / 1000.0);
+                result["camera"] = picojson::value(camera);
+
+                picojson::object rendering;
+                rendering["oceanEnabled"] =
+                    picojson::value(contextUi->_ocean);
+                rendering["autoExposure"] =
+                    picojson::value(contextUi->_exposureAuto);
+                rendering["exposure"] =
+                    picojson::value(contextUi->_exposure);
+                rendering["atmosphere"] =
+                    picojson::value(contextUi->_globalOpaque);
+                rendering["alwaysDay"] =
+                    picojson::value(contextUi->_alwaysDay);
+                rendering["realTimeSun"] =
+                    picojson::value(contextUi->_realTimeSun);
+                result["rendering"] = picojson::value(rendering);
+
+                picojson::array layers;
+                for (const OverlayLayer& layer :
+                     contextLayers->layersSnapshot())
+                {
+                    picojson::object item;
+                    item["id"] = picojson::value(layer.id);
+                    item["displayName"] =
+                        picojson::value(layer.displayName);
+                    item["group"] = picojson::value(layer.group);
+                    item["subtitle"] = picojson::value(layer.subtitle);
+                    item["enabled"] = picojson::value(layer.enabled);
+                    item["hasOpacity"] =
+                        picojson::value(layer.hasOpacity);
+                    if (layer.hasOpacity)
+                        item["opacity"] =
+                            picojson::value(layer.opacity);
+                    item["requiresKey"] =
+                        picojson::value(layer.needsKey);
+                    layers.push_back(picojson::value(item));
+                }
+                result["layers"] = picojson::value(layers);
+                result["activePreset"] = picojson::value(
+                    contextLayers->lastAppliedPreset());
+
+                picojson::object selection;
+                if (contextFlights)
+                {
+                    const FlightInfo flight =
+                        contextFlights->getSelected();
+                    if (flight.valid)
+                    {
+                        picojson::object value;
+                        value["callsign"] =
+                            picojson::value(flight.callsign);
+                        value["country"] =
+                            picojson::value(flight.country);
+                        value["latitudeDeg"] =
+                            picojson::value(flight.lat);
+                        value["longitudeDeg"] =
+                            picojson::value(flight.lon);
+                        value["altitudeKm"] =
+                            picojson::value(flight.altM / 1000.0);
+                        value["speedKmh"] =
+                            picojson::value(flight.velMS * 3.6);
+                        value["headingDeg"] =
+                            picojson::value(flight.headingDeg);
+                        selection["flight"] = picojson::value(value);
+                    }
+                }
+                if (contextShips)
+                {
+                    const ShipInfo ship = contextShips->getSelected();
+                    if (ship.valid)
+                    {
+                        picojson::object value;
+                        value["name"] = picojson::value(ship.name);
+                        value["mmsi"] = picojson::value(
+                            static_cast<double>(ship.mmsi));
+                        value["latitudeDeg"] =
+                            picojson::value(ship.lat);
+                        value["longitudeDeg"] =
+                            picojson::value(ship.lon);
+                        value["speedKnots"] =
+                            picojson::value(ship.sogKn);
+                        value["courseDeg"] =
+                            picojson::value(ship.cogDeg);
+                        selection["ship"] = picojson::value(value);
+                    }
+                }
+                if (contextSatellites)
+                {
+                    const SatelliteInfo satellite =
+                        contextSatellites->getSelected();
+                    if (satellite.valid)
+                    {
+                        picojson::object value;
+                        value["name"] =
+                            picojson::value(satellite.name);
+                        value["noradId"] = picojson::value(
+                            static_cast<double>(satellite.noradId));
+                        value["latitudeDeg"] =
+                            picojson::value(satellite.latDeg);
+                        value["longitudeDeg"] =
+                            picojson::value(satellite.lonDeg);
+                        value["altitudeKm"] =
+                            picojson::value(satellite.altKm);
+                        value["speedKmS"] =
+                            picojson::value(satellite.speedKmS);
+                        selection["satellite"] =
+                            picojson::value(value);
+                    }
+                }
+                const earthfeed::FeedSelection feed =
+                    earthfeed::currentFeedSelection();
+                if (feed.valid)
+                {
+                    picojson::object value;
+                    value["sourceId"] =
+                        picojson::value(feed.sourceId);
+                    value["title"] = picojson::value(feed.title);
+                    value["detail"] = picojson::value(feed.detail);
+                    value["url"] = picojson::value(feed.url);
+                    selection["feedFeature"] =
+                        picojson::value(value);
+                }
+                result["selection"] = picojson::value(selection);
+                return picojson::value(result);
+            });
+    }
 #endif
 
 #if OSGSOL_BUILD_RMLUI_PRODUCT_UI

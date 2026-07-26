@@ -117,6 +117,15 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         ImGui::PopStyleColor();
         ImGui::SameLine();
         ImGui::TextDisabled(busy ? u8"正在执行…" : u8"就绪");
+        ImGui::SameLine();
+        ImGui::TextColored(
+            earthui::design::kSuccess, u8"上下文已连接");
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                u8"AI 会读取当前模块、地图状态、图层、选中对象和科学报告的"
+                u8"结构化数据；不读取屏幕像素，也不会把来源文字当作指令。");
+        }
 
         // ---- 历史抽屉（默认折叠；只有用户主动打开时占用地图空间）----
         // 默认态把标题、历史和模板组织成一个响应式工具头：宽屏同一行，

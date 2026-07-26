@@ -54,6 +54,28 @@ MACRO(NEW_CTEST EXECUTABLE_NAME SOURCE_FILE TEST_LABEL TEST_TIMEOUT)
     ENDIF()
 ENDMACRO(NEW_CTEST)
 
+# Source-level unit tests must not inherit the complete renderer/plugin link
+# closure. On macOS that closure loads Cocoa/LaunchServices before main(), which
+# can produce an unrelated abnormal-exit warning in restricted/headless test
+# sessions. These targets link only what their translation unit actually uses.
+MACRO(NEW_LIGHTWEIGHT_CTEST EXECUTABLE_NAME SOURCE_FILE TEST_LABEL TEST_TIMEOUT)
+    ADD_EXECUTABLE(${EXECUTABLE_NAME} ${SOURCE_FILE})
+    TARGET_COMPILE_OPTIONS(${EXECUTABLE_NAME} PUBLIC -D_SCL_SECURE_NO_WARNINGS)
+    TARGET_INCLUDE_DIRECTORIES(${EXECUTABLE_NAME} PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/3rdparty"
+        "${CMAKE_SOURCE_DIR}/3rdparty/libhv"
+        "${CMAKE_SOURCE_DIR}/3rdparty/libhv/all")
+    SET_PROPERTY(TARGET ${EXECUTABLE_NAME} PROPERTY FOLDER "TESTS")
+    IF(BUILD_TESTING)
+        ADD_TEST(NAME ${EXECUTABLE_NAME} COMMAND $<TARGET_FILE:${EXECUTABLE_NAME}>)
+        SET_TESTS_PROPERTIES(${EXECUTABLE_NAME} PROPERTIES
+            WORKING_DIRECTORY "${PROJECT_BINARY_DIR}/bin"
+            LABELS "${TEST_LABEL}"
+            TIMEOUT "${TEST_TIMEOUT}")
+    ENDIF()
+ENDMACRO(NEW_LIGHTWEIGHT_CTEST)
+
 MACRO(NEW_EXAMPLE EXECUTABLE_NAME SOURCE_FILE)
     NEW_SIMPLE_EXECUTABLE(${EXECUTABLE_NAME} FALSE ${SOURCE_FILE})
     SET_PROPERTY(TARGET ${EXECUTABLE_NAME} PROPERTY FOLDER "EXAMPLES")
@@ -136,7 +158,13 @@ IF(NOT VERSE_USE_EXTERNAL_GLES)
     ENDIF(VERSE_SUPPORT_CPP17)
 ENDIF(NOT VERSE_USE_EXTERNAL_GLES)
 
-NEW_CTEST(osgVerse_Test_Ai_Chat ai_chat_tests.cpp offline 120)  # AI Chat tool registry / job manager unit tests
+NEW_LIGHTWEIGHT_CTEST(osgVerse_Test_Ai_Chat ai_chat_tests.cpp offline 120)
+ADD_DEPENDENCIES(osgVerse_Test_Ai_Chat osgVerseDependency)
+TARGET_LINK_LIBRARIES(osgVerse_Test_Ai_Chat PRIVATE
+                      "$<TARGET_FILE:osgVerseDependency>"
+                      OpenThreads osg ${CMAKE_DL_LIBS})
+NEW_LIGHTWEIGHT_CTEST(osgVerse_Test_Earth_Context earth_context_tests.cpp
+                      offline 120)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Ai_Chat PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_Feeds feed_layer_tests.cpp offline 120)  # FeedLayer framework / geo primitives / LayerManager unit tests
@@ -168,7 +196,8 @@ TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Ais PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_WorldTools world_tools_tests.cpp offline 120)  # P4 world-query tools: async fetcher / tool dispatch offline tests
 NEW_CTEST(osgVerse_Test_ImGuiSettings imgui_settings_tests.cpp offline 30)
-NEW_CTEST(osgVerse_Test_EarthControlLayout earth_control_layout_tests.cpp offline 30)
+NEW_LIGHTWEIGHT_CTEST(osgVerse_Test_EarthControlLayout
+                      earth_control_layout_tests.cpp offline 30)
 TARGET_INCLUDE_DIRECTORIES(osgVerse_Test_EarthControlLayout PRIVATE
                            "${CMAKE_SOURCE_DIR}/applications/earth_explorer")
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_EarthControlLayout PRIVATE

@@ -4,6 +4,7 @@
 import os
 import shutil
 import stat
+import subprocess
 import tempfile
 import unittest
 import importlib.util
@@ -86,6 +87,13 @@ class RuntimePrefixRelocationTests(unittest.TestCase):
         path = self.root / "libfontconfig.1.dylib"
         shutil.copyfile("/usr/bin/true", path)
         os.chmod(path, 0o755)
+        # A copied Apple platform binary can retain an embedded signature yet
+        # fail strict verification outside its sealed system location on newer
+        # macOS releases. Re-sign the disposable fixture ad hoc so the test
+        # exercises the relocator's signed-input guard, not platform trust.
+        subprocess.run(
+            ["codesign", "--force", "--sign", "-", str(path)],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         with self.assertRaisesRegex(RelocationError, "signed"):
             relocate_binary(path)
 

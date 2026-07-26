@@ -365,6 +365,10 @@ int main()
     CHECK(aiInput.good() || aiInput.eof());
     CHECK(aiUi.find("_historyCollapsed(true)") != std::string::npos);
     CHECK(aiUi.find(u8"AI 地球助手") != std::string::npos);
+    CHECK(aiUi.find(u8"上下文已连接") != std::string::npos);
+    CHECK(aiUi.find(u8"当前模块、地图状态、图层、选中对象和科学报告") !=
+          std::string::npos);
+    CHECK(aiUi.find(u8"不读取屏幕像素") != std::string::npos);
     CHECK(aiUi.find(u8"AI COMMAND /") == std::string::npos);
     CHECK(aiUi.find(u8"发送") != std::string::npos);
     CHECK(aiUi.find(u8"已准备：") != std::string::npos);
@@ -388,6 +392,26 @@ int main()
         "const float contentWidth = ImGui::GetContentRegionAvail().x;") !=
           std::string::npos);
     CHECK(aiUi.find("actionsOnNextLine") != std::string::npos);
+
+    std::ifstream aiSetupInput(std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/ai_setup.cpp");
+    std::ostringstream aiSetupBuffer;
+    aiSetupBuffer << aiSetupInput.rdbuf();
+    const std::string aiSetup = aiSetupBuffer.str();
+    CHECK(aiSetupInput.good() || aiSetupInput.eof());
+    CHECK(aiSetup.find("makeEarthContextTool") != std::string::npos);
+    CHECK(aiSetup.find("setContextProvider") != std::string::npos);
+    CHECK(aiSetup.find("\"capabilities\"") != std::string::npos);
+
+    std::ifstream earthMainInput(std::string(OSGVERSE_SOURCE_DIR) +
+        "/applications/earth_explorer/earth_main.cpp");
+    std::ostringstream earthMainBuffer;
+    earthMainBuffer << earthMainInput.rdbuf();
+    const std::string earthMain = earthMainBuffer.str();
+    CHECK(earthMainInput.good() || earthMainInput.eof());
+    CHECK(earthMain.find("\"workspace\"") != std::string::npos);
+    CHECK(earthMain.find("\"scienceWorkbench\"") != std::string::npos);
+    CHECK(earthMain.find("copyWorkbenchSnapshot") != std::string::npos);
     CHECK(aiUi.find("computeAiCommandRowLayout") != std::string::npos);
     CHECK(aiUi.find(
         "const earthui::EarthUiShellLayout& shell") !=

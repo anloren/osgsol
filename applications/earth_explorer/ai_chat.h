@@ -94,6 +94,11 @@ namespace earthai
         // 成功接受一条新用户指令时调用；busy 而被拒绝的 submit 不触发。照片两阶段门控
         // 用它区分“同一指令里刚飞到就立刻拍”和“用户看过画面后再次确认拍摄”。
         void setSubmitAcceptedCallback(const std::function<void(const std::string&)>& callback);
+        // 每次成功接受用户指令后、启动 worker 前，在主线程读取一次完整 Earth 工作区
+        // 快照。返回值必须是 JSON；AIChatCore 会把它包装成带信任边界的结构化证据，
+        // 与该轮用户原文一起发送给模型，但 transcript 仍只显示用户原文。这样报告、
+        // 图表、当前模块和后台数据源状态每轮都会刷新，不需要截图 OCR。
+        void setContextProvider(const std::function<std::string()>& provider);
         // 仅测试用:导出当前 _history 序列化后的 Gemini contents JSON,
         // 供单测校验 functionCall/functionResponse 严格配对;业务代码不要调用
         std::string historyContentsForTest() const;
@@ -122,6 +127,7 @@ namespace earthai
         // 纪律,仍在 _mutex 保护下读写(见 ai_chat.cpp)。
         bool _forceNoTools = false;
         std::function<void(const std::string&)> _submitAcceptedCallback;
+        std::function<std::string()> _contextProvider;
 
         // 工作线程产出,主线程 drain 时消费
         std::vector<ChatEntry> _pendingEntries;

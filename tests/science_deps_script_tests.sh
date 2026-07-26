@@ -476,7 +476,7 @@ cleanup_path_tests()
     fi
 }
 trap cleanup_path_tests EXIT
-safe_candidate="$repo_root/build/science-deps-contract-$$"
+safe_candidate=$(mktemp -d "${TMPDIR:-/tmp}/science-deps-safe-contract.XXXXXX")
 canary="$dangerous_root/canary"
 printf 'do not delete\n' >"$canary"
 

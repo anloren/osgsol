@@ -3,6 +3,7 @@
 #include <osgViewer/Viewer>
 #include "ai_tools.h"
 #include "ai_chat.h"
+#include "earth_context.h"
 #include "LayerManager.h"
 class FlightLayer;
 class AIChatUI;
@@ -28,6 +29,9 @@ struct AIChatRuntime
 {
     earthai::AIChatCore* core = nullptr;    // 无 EARTH_AI_KEY/EARTH_AI_FAKE 时为 null=零影响
     earthai::MediaManager* media = nullptr; // 无 EARTH_AI_KEY/EARTH_AI_FAKE 时为 null
+    // 统一工作区上下文总线。无 AI key 时也存在，便于各模块在固定启动顺序内注册；
+    // 真正提交模型请求或调用 get_earth_context 时才读取各 section。
+    std::shared_ptr<earthai::EarthContextHub> context;
     // registry 与 aiCore 是否创建无关(configureAIChat 内部无条件 new 一份),因此这里
     // 总是非空;FeedLayer(见 feed_layer.h::registerFeedLayer)用它注册 get_<id>_summary
     // 工具——即便用户没配 EARTH_AI_KEY/EARTH_AI_FAKE,工具注册本身也是零成本的(只有真的

@@ -1180,5 +1180,116 @@ int main(int, char**)
         std::cout << "AIChatCore::addErrorNote appends ERR entry OK\n";
     }
 
+    // ---- 每条用户请求必须自动携带当下 Earth 工作区上下文 ----
+    {
+        struct ContextCaptureProvider : public LLMProvider
+        {
+            std::vector<std::string> contents;
+            virtual LLMTurn chat(
+                const std::string& contentsJson, const std::string&)
+            {
+                contents.push_back(contentsJson);
+                LLMTurn turn;
+                turn.text = u8"已读取当前报告";
+                return turn;
+            }
+        } provider;
+        ToolRegistry registry;
+        AIChatCore core(&provider, &registry);
+        int revision = 7;
+        core.setContextProvider([&revision]() {
+            return std::string("{\"schema\":\"earth-context-v1\",")
+                + "\"workspace\":{\"activeModule\":\"science\"},"
+                + "\"scienceWorkbench\":{\"revision\":"
+                + std::to_string(revision)
+                + ",\"activeArtifact\":{\"artifactId\":\"era5-report-3\","
+                  "\"series\":[{\"variableId\":\"temperature_2m_mean\","
+                  "\"unit\":\"C\",\"years\":[2024,2025],"
+                  "\"values\":[22.7,22.589]}]}}}";
+        });
+
+        core.submit(u8"解读当下报告");
+        for (int i = 0; i < 500 && core.busy(); ++i)
+        { core.drainMainThread(); usleep(10000); }
+        core.drainMainThread();
+        CHECK(provider.contents.size() == 1);
+        picojson::value firstContents;
+        CHECK(picojson::parse(firstContents, provider.contents[0]).empty());
+        const std::string firstText = firstContents.get<picojson::array>()[0]
+            .get("parts").get<picojson::array>()[0].get("text").to_str();
+        CHECK(firstText.find("EARTH_CONTEXT_V1") != std::string::npos);
+        CHECK(firstText.find("\"activeModule\":\"science\"") !=
+              std::string::npos);
+        CHECK(firstText.find("\"artifactId\":\"era5-report-3\"") !=
+              std::string::npos);
+        CHECK(firstText.find("\"unit\":\"C\"") != std::string::npos);
+        CHECK(firstText.find(u8"解读当下报告") != std::string::npos);
+        CHECK(core.transcript()[0].text == u8"解读当下报告");
+
+        revision = 8;
+        core.submit(u8"再按当前状态解释一次");
+        for (int i = 0; i < 500 && core.busy(); ++i)
+        { core.drainMainThread(); usleep(10000); }
+        core.drainMainThread();
+        CHECK(provider.contents.size() == 2);
+        picojson::value secondContents;
+        CHECK(picojson::parse(secondContents, provider.contents[1]).empty());
+        const picojson::array& secondTurns =
+            secondContents.get<picojson::array>();
+        const std::string secondText = secondTurns.back()
+            .get("parts").get<picojson::array>()[0].get("text").to_str();
+        CHECK(secondText.find("\"revision\":8") != std::string::npos);
+        const std::string previousUserText = secondTurns.front()
+            .get("parts").get<picojson::array>()[0].get("text").to_str();
+        CHECK(previousUserText == u8"解读当下报告");
+        std::cout << "AIChatCore live Earth context injection OK\n";
+    }
+
+    // ---- 上下文采集失败或过大时聊天仍可继续，且不会把提示塞爆请求 ----
+    {
+        struct ContextFailureProvider : public LLMProvider
+        {
+            std::string contents;
+            virtual LLMTurn chat(
+                const std::string& contentsJson, const std::string&)
+            {
+                contents = contentsJson;
+                LLMTurn turn;
+                turn.text = u8"上下文不可用，但请求仍已处理";
+                return turn;
+            }
+        } provider;
+        ToolRegistry registry;
+        AIChatCore core(&provider, &registry);
+        core.setContextProvider([]() -> std::string {
+            throw std::runtime_error("panel snapshot unavailable");
+        });
+        core.submit(u8"继续普通对话");
+        for (int i = 0; i < 500 && core.busy(); ++i)
+        { core.drainMainThread(); usleep(10000); }
+        core.drainMainThread();
+        CHECK(provider.contents.find(u8"继续普通对话") != std::string::npos);
+        CHECK(provider.contents.find("context_unavailable") !=
+              std::string::npos);
+        CHECK(!core.busy());
+
+        ContextFailureProvider oversizedProvider;
+        AIChatCore oversizedCore(&oversizedProvider, &registry);
+        oversizedCore.setContextProvider([]() {
+            return std::string("{\"payload\":\"") +
+                std::string(600 * 1024, 'x') + "\"}";
+        });
+        oversizedCore.submit(u8"读取当前状态");
+        for (int i = 0; i < 500 && oversizedCore.busy(); ++i)
+        { oversizedCore.drainMainThread(); usleep(10000); }
+        oversizedCore.drainMainThread();
+        CHECK(oversizedProvider.contents.size() < 160 * 1024);
+        CHECK(oversizedProvider.contents.find("context_oversize") !=
+              std::string::npos);
+        CHECK(oversizedProvider.contents.find(u8"读取当前状态") !=
+              std::string::npos);
+        std::cout << "AIChatCore Earth context failure boundaries OK\n";
+    }
+
     return 0;
 }
