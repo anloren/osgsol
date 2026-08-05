@@ -1080,7 +1080,8 @@ int main(int, char**)
             earthai::MediaRouteCapabilities omniCapabilities;
             omniCapabilities.hasRealMediaKey = true;
             omniCapabilities.hasProviderSession = true;
-            omniCapabilities.lastFrameVideoModel = false;
+            omniCapabilities.videoProvider =
+                earthai::CINEMATIC_VIDEO_PROVIDER_OMNI;
             omniCapabilities.deterministicLocalEncoder = true;
             CHECK(omniCapabilities.canGenerateImage());
             CHECK(omniCapabilities.canGenerateProviderVideo());
@@ -1091,7 +1092,8 @@ int main(int, char**)
                 providerVideo, omniCapabilities));
 
             earthai::MediaRouteCapabilities veoCapabilities = omniCapabilities;
-            veoCapabilities.lastFrameVideoModel = true;
+            veoCapabilities.videoProvider =
+                earthai::CINEMATIC_VIDEO_PROVIDER_VEO;
             CHECK(veoCapabilities.canGeneratePointToPoint());
             CHECK(earthai::cinematicSubmissionCanStart(
                 pointToPoint, veoCapabilities));
@@ -1099,7 +1101,8 @@ int main(int, char**)
             earthai::MediaRouteCapabilities fakeOnly;
             fakeOnly.hasFakeImage = true;
             fakeOnly.hasFakeMp4 = true;
-            fakeOnly.lastFrameVideoModel = true;
+            fakeOnly.videoProvider =
+                earthai::CINEMATIC_VIDEO_PROVIDER_VEO;
             fakeOnly.deterministicLocalEncoder = true;
             CHECK(!fakeOnly.canGenerateImage());
             CHECK(!fakeOnly.canGenerateProviderVideo());
@@ -1115,6 +1118,18 @@ int main(int, char**)
                 "veo-3.1-fast-generate-preview"));
             CHECK(!earthai::cinematicVideoModelSupportsLastFrame(
                 "gemini-omni-flash-preview"));
+            // Provider routing must have one fail-closed identity decision.  A name that
+            // happens to mention Veo must still remain Omni when it contains omni.
+            CHECK(!earthai::cinematicVideoModelSupportsLastFrame(
+                "gemini-omni-veo-preview"));
+            CHECK(earthai::classifyCinematicVideoProvider(
+                "gemini-omni-veo-preview") ==
+                earthai::CINEMATIC_VIDEO_PROVIDER_OMNI);
+            CHECK(earthai::classifyCinematicVideoProvider(
+                "veo-3.1-generate-preview") ==
+                earthai::CINEMATIC_VIDEO_PROVIDER_VEO);
+            CHECK(earthai::classifyCinematicVideoProvider("veo-unlisted") ==
+                earthai::CINEMATIC_VIDEO_PROVIDER_UNKNOWN);
 
             earthai::PhotoCaptureRequest recaptured = capture;
             recaptured.camera.cameraEyeLla[2] += 300.0;
@@ -1137,20 +1152,59 @@ int main(int, char**)
 
             earthai::PhotoCameraContext changedA = capture.camera;
             changedA.viewportWidth = 1280;
+            changedA.viewTargetLla[1] += 0.02;
+            changedA.visibleViewMatrix(3, 0) += 1.0;
             CHECK(earthai::cinematicVideoCaptureNeedsRearm(capture, changedA));
-            const earthai::PhotoCaptureRequest rebuiltA =
-                earthai::rebuildCinematicVideoCapture(capture, changedA);
-            CHECK(rebuiltA.targetLla == capture.targetLla);
+            earthai::PhotoCaptureRequest rebuiltA;
+            CHECK(earthai::rebuildCinematicVideoCapture(
+                capture, changedA, rebuiltA));
+            CHECK(rebuiltA.targetLla == changedA.viewTargetLla);
             CHECK(rebuiltA.requestId == capture.requestId);
             CHECK(rebuiltA.camera.viewportWidth == 1280);
+            earthai::PhotoCameraContext invalidCompletedA = changedA;
+            invalidCompletedA.viewTargetValid = false;
+            earthai::PhotoCaptureRequest rejectedRearm;
+            CHECK(!earthai::rebuildCinematicVideoCapture(
+                capture, invalidCompletedA, rejectedRearm));
+
+            // The local orbit is planned from the accepted final A capture.  Its first
+            // matrix must be the same visible camera matrix that passed the re-arm gate.
+            earthai::PhotoCaptureRequest finalAcceptedA = rebuiltA;
+            finalAcceptedA.camera.cameraEyeLla = finalAcceptedA.targetLla;
+            finalAcceptedA.camera.cameraEyeLla[1] += 0.01;
+            finalAcceptedA.camera.cameraEyeLla[2] = 1200.0;
+            const osg::Vec3d finalEye = earthai::photoLlaToEcef(
+                finalAcceptedA.camera.cameraEyeLla);
+            const osg::Vec3d finalTarget = earthai::photoLlaToEcef(
+                finalAcceptedA.targetLla);
+            osg::Vec3d finalUp = finalTarget;
+            finalUp.normalize();
+            finalAcceptedA.camera.visibleViewMatrix = osg::Matrixd::lookAt(
+                finalEye, finalTarget, finalUp);
+            earthai::OneTakeOrbitPlan acceptedOrbit;
+            CHECK(earthai::makeCinematicOneTakeOrbitPlan(
+                finalAcceptedA, 8, acceptedOrbit));
+            osg::Vec3d acceptedEye, acceptedTarget, acceptedUp;
+            finalAcceptedA.camera.visibleViewMatrix.getLookAt(
+                acceptedEye, acceptedTarget, acceptedUp, 1.0);
+            CHECK((acceptedOrbit.frames.front().eye - acceptedEye).length() <
+                1.0e-2);
+            CHECK((acceptedOrbit.frames.front().target - acceptedTarget).length() <
+                1.0e-2);
+            CHECK((acceptedOrbit.frames.front().cameraUp - acceptedUp).length() <
+                1.0e-10);
 
             earthai::PhotoCaptureRequest endCapture = capture;
             endCapture.targetLla[1] += 0.01;
             earthai::PhotoCameraContext changedB = endCapture.camera;
             changedB.viewportHeight = 720;
+            changedB.viewTargetLla[0] -= 0.01;
+            changedB.visibleViewMatrix(3, 1) += 1.0;
             CHECK(earthai::cinematicVideoCaptureNeedsRearm(endCapture, changedB));
-            const earthai::PhotoCaptureRequest rebuiltB =
-                earthai::rebuildCinematicVideoCapture(endCapture, changedB);
+            earthai::PhotoCaptureRequest rebuiltB;
+            CHECK(earthai::rebuildCinematicVideoCapture(
+                endCapture, changedB, rebuiltB));
+            CHECK(rebuiltB.targetLla == changedB.viewTargetLla);
             earthai::CinematicGenerationRequest beforeB =
                 earthai::cinematicRequestUnchecked(capture, pointToPoint);
             beforeB.endAnchor = endCapture;

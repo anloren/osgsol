@@ -645,8 +645,9 @@ namespace earthai
     // 视频模型名:EARTH_AI_VIDEO_MODEL 覆盖。默认 Omni Flash(Interactions API,同步、快、
     // 支持对话式编辑;但官方明确不支持首尾帧插值——B 点只进运动提示词)。要严格的
     // 首尾帧穿越效果请设 EARTH_AI_VIDEO_MODEL=veo-3.1-fast-generate-preview(或去掉 fast
-    // 的高画质版;真机 key 实测 2026-07 无 -001 GA 名)。模型名含 "omni" 走 Interactions,
-    // 否则走 Veo predictLongRunning(见 confirmVideo 分支)。
+    // 的高画质版;真机 key 实测 2026-07 无 -001 GA 名)。具体路由始终由
+    // classifyCinematicVideoProvider() 的严格 allowlist 决定：任意包含 omni 的名称走
+    // Interactions，只有列出的 Veo ID 才走 predictLongRunning；其余名称拒绝提交。
     static std::string videoModel()
     {
         const char* env = getenv("EARTH_AI_VIDEO_MODEL");
@@ -738,8 +739,8 @@ namespace earthai
         _routeCapabilities.hasRealMediaKey = !_apiKey.empty();
         _routeCapabilities.hasFakeImage = fakeImgPath(ignored);
         _routeCapabilities.hasFakeMp4 = fakeMp4Path(ignored);
-        _routeCapabilities.lastFrameVideoModel =
-            cinematicVideoModelSupportsLastFrame(_videoModel);
+        _routeCapabilities.videoProvider =
+            classifyCinematicVideoProvider(_videoModel);
 #if defined(__APPLE__)
         _routeCapabilities.deterministicLocalEncoder = true;
 #endif
@@ -1284,6 +1285,13 @@ namespace earthai
             applyVideoOwnerCommandResult(false);
             return false;
         }
+        // The ordinary two-point tool has no cinematic local route.  Reject before
+        // capturing A when the selected model cannot consume an end frame.
+        if (!frozenCapture && !_routeCapabilities.canGeneratePointToPoint())
+        {
+            applyVideoOwnerCommandResult(false);
+            return false;
+        }
 
         long long epoch = (long long)time(nullptr);
         std::string dir = outDir();
@@ -1339,7 +1347,6 @@ namespace earthai
         const PhotoCaptureRequest capture = makePhotoCaptureRequest(
             input, camera, requestId);
 
-        OneTakeOrbitPlan orbitPlan;
         if (cinematicMotionUsesDeterministicLocalRenderer(
                 normalizedSettings.motion))
         {
@@ -1351,26 +1358,6 @@ namespace earthai
             if (normalizedSettings.durationSeconds <
                     cinematicMinimumDurationSeconds(normalizedSettings.motion) ||
                 normalizedSettings.durationSeconds > 30)
-                return false;
-            osg::Vec3d eyeWorld, lookAtWorld, cameraUp;
-            camera.visibleViewMatrix.getLookAt(
-                eyeWorld, lookAtWorld, cameraUp, 1.0);
-            const osg::Vec3d eyeEcef = photoLlaToEcef(camera.cameraEyeLla);
-            const osg::Vec3d worldOffset = eyeWorld - eyeEcef;
-            osg::Vec3d targetLla = capture.targetLla;
-            const osg::Vec3d targetWorld = photoLlaToEcef(targetLla) + worldOffset;
-            const double latitude = targetLla[0];
-            const double longitude = targetLla[1];
-            OneTakeOrbitSeed seed;
-            seed.eye = eyeWorld;
-            seed.target = targetWorld;
-            seed.orbitAxis.set(
-                std::cos(latitude) * std::cos(longitude),
-                std::cos(latitude) * std::sin(longitude),
-                std::sin(latitude));
-            seed.cameraUp = cameraUp;
-            if (!makeOneTakeOrbitPlan(
-                    seed, normalizedSettings.durationSeconds, 24, orbitPlan))
                 return false;
         }
         else
@@ -1388,7 +1375,6 @@ namespace earthai
         _video->singleAnchor =
             !cinematicMotionNeedsEndFrame(normalizedSettings.motion);
         _video->cinematicSettings = normalizedSettings;
-        _video->orbitPlan = orbitPlan;
         return true;
     }
 
@@ -1417,14 +1403,21 @@ namespace earthai
         long long epoch = (long long)time(nullptr);
         std::string dir = outDir();
         _video->llaB = llaB;
-        const PhotoCameraContext camera = currentPhotoCameraContext();
-        PhotoRequest input;
-        input.lla = camera.viewTargetValid ? camera.viewTargetLla : llaB;
-        input.lla[2] = 0.0;
-        input.style = _video->style;
-        _video->endCapture = makePhotoCaptureRequest(
-            input, camera, static_cast<long long>(time(NULL)) * 100000LL +
-                (++_cinematicRequestSerial % 100000LL));
+        if (_video->cinematic)
+        {
+            const PhotoCameraContext camera = currentPhotoCameraContext();
+            if (!camera.viewTargetValid)
+            {
+                applyVideoOwnerCommandResult(false);
+                return false;
+            }
+            PhotoRequest input;
+            input.lla = camera.viewTargetLla;
+            input.style = _video->style;
+            _video->endCapture = makePhotoCaptureRequest(
+                input, camera, static_cast<long long>(time(NULL)) * 100000LL +
+                    (++_cinematicRequestSerial % 100000LL));
+        }
         _video->snapPathB = dir + "/tourB_" + std::to_string(epoch) + ".png";
         // 用户反馈 1:B 点抓帧同样要隐藏 HUD——hudRestore() 在 updateVideoInternal() 的
         // CAPTURING_B 分支里,该点快照 ready()/超时判定出结果的那一刻立即调用。
@@ -1591,12 +1584,14 @@ namespace earthai
             }
             std::string apiKey = _apiKey;
             std::string model = _videoModel;
+            const CinematicVideoProviderKind providerKind =
+                _routeCapabilities.videoProvider;
             int jobId = _video->jobId;
             JobManager* jobsPtr = &_jobs;
             std::string dir = outDir();
             long long frameEpoch = epoch;
 
-            bool useOmni = (model.find("omni") != std::string::npos);
+            const bool useOmni = providerKind == CINEMATIC_VIDEO_PROVIDER_OMNI;
             std::string mp4Path = _video->mp4Path;
 
             // EARTH_AI_FAKE_IMG:离线自测钩子——即使不是 EARTH_AI_FAKE_MP4 整链路跳过,视频
@@ -1792,11 +1787,26 @@ namespace earthai
             // A 点快照已稳定:抓帧已完成,立即恢复 HUD(不必等到 B 点/确认/生成全部结束)。
             hudRestore();
             const PhotoCameraContext completedFrameCamera = currentPhotoCameraContext();
-            if (cinematicVideoCaptureNeedsRearm(
+            if (v.cinematic && !completedFrameCamera.viewTargetValid)
+            {
+                OSG_WARN << "[AIChat] cinematic A capture has no visible target"
+                         << std::endl;
+                resetVideo();
+                return;
+            }
+            if (v.cinematic && cinematicVideoCaptureNeedsRearm(
                     v.anchorCapture, completedFrameCamera))
             {
-                v.anchorCapture = rebuildCinematicVideoCapture(
-                    v.anchorCapture, completedFrameCamera);
+                PhotoCaptureRequest rebuilt;
+                if (!rebuildCinematicVideoCapture(
+                        v.anchorCapture, completedFrameCamera, rebuilt))
+                {
+                    OSG_WARN << "[AIChat] cinematic A capture lost its visible target"
+                             << std::endl;
+                    resetVideo();
+                    return;
+                }
+                v.anchorCapture = rebuilt;
                 hudHide();
                 _videoGrabber.grab(v.snapPathA);
                 v.waitSnapshotTicks = 0;
@@ -1807,9 +1817,17 @@ namespace earthai
             {
                 v.llaB = v.llaA;
                 v.snapPathB.clear();
-                if (v.cinematicSettings.motion == CINEMATIC_MOTION_ORBIT_360 &&
-                    !v.orbitPlan.frames.empty())
+                if (v.cinematicSettings.motion == CINEMATIC_MOTION_ORBIT_360)
                 {
+                    if (!makeCinematicOneTakeOrbitPlan(
+                            v.anchorCapture,
+                            v.cinematicSettings.durationSeconds, v.orbitPlan))
+                    {
+                        OSG_WARN << "[AIChat] accepted orbit capture cannot form a plan"
+                                 << std::endl;
+                        resetVideo();
+                        return;
+                    }
                     std::ostringstream contract;
                     contract << u8"本地确定性 360° 一镜到底：固定当前画面中心，"
                              << v.orbitPlan.frames.size() << u8" 个连续渲染帧，"
@@ -1850,11 +1868,26 @@ namespace earthai
             // B 点快照就绪:抓帧已完成,立即恢复 HUD。
             hudRestore();
             const PhotoCameraContext completedFrameCamera = currentPhotoCameraContext();
-            if (cinematicVideoCaptureNeedsRearm(
+            if (v.cinematic && !completedFrameCamera.viewTargetValid)
+            {
+                OSG_WARN << "[AIChat] cinematic B capture has no visible target"
+                         << std::endl;
+                resetVideo();
+                return;
+            }
+            if (v.cinematic && cinematicVideoCaptureNeedsRearm(
                     v.endCapture, completedFrameCamera))
             {
-                v.endCapture = rebuildCinematicVideoCapture(
-                    v.endCapture, completedFrameCamera);
+                PhotoCaptureRequest rebuilt;
+                if (!rebuildCinematicVideoCapture(
+                        v.endCapture, completedFrameCamera, rebuilt))
+                {
+                    OSG_WARN << "[AIChat] cinematic B capture lost its visible target"
+                             << std::endl;
+                    resetVideo();
+                    return;
+                }
+                v.endCapture = rebuilt;
                 hudHide();
                 _videoGrabber.grab(v.snapPathB);
                 v.waitSnapshotTicks = 0;

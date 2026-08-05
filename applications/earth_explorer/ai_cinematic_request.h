@@ -4,6 +4,7 @@
 // 时空影像工作台的纯值类型合同。这里只描述一次生成“是什么”，不访问相机、不改操纵器、
 // 不做网络请求。正式请求必须携带快门边界冻结的 PhotoCaptureRequest，worker 随后只复制
 // 这个值，避免 UI、相机或上一张生成结果在异步执行期间串入本次任务。
+#include "ai_orbit_trajectory.h"
 #include "ai_photo_request.h"
 #include <array>
 #include <cctype>
@@ -101,22 +102,55 @@ namespace earthai
     };
 
     // A completed framebuffer may have been rendered after a drag, resize, or projection
-    // update. Keep the target/style/request identity but replace its camera context before
-    // arming another snapshot; neither branch moves the live manipulator.
+    // update. Re-arm only from that completed frame: its valid visible target is part of the
+    // frame contract, so retaining the previous target would bind pixels to stale geography.
     inline bool cinematicVideoCaptureNeedsRearm(
         const PhotoCaptureRequest& frozen, const PhotoCameraContext& completedFrame)
     {
         return !photoCameraContextsMatchFrame(frozen.camera, completedFrame);
     }
 
-    inline PhotoCaptureRequest rebuildCinematicVideoCapture(
-        const PhotoCaptureRequest& frozen, const PhotoCameraContext& completedFrame)
+    inline bool rebuildCinematicVideoCapture(
+        const PhotoCaptureRequest& frozen, const PhotoCameraContext& completedFrame,
+        PhotoCaptureRequest& rebuilt)
     {
+        if (!completedFrame.viewTargetValid) return false;
         PhotoRequest input;
-        input.lla = frozen.targetLla;
+        input.lla = completedFrame.viewTargetLla;
         input.style = frozen.style;
         input.showCameraPlatform = frozen.showCameraPlatform;
-        return makePhotoCaptureRequest(input, completedFrame, frozen.requestId);
+        rebuilt = makePhotoCaptureRequest(input, completedFrame, frozen.requestId);
+        return true;
+    }
+
+    // Build only after the accepted A capture is stable.  This pure helper guarantees the
+    // first recorded camera matrix comes from the final accepted capture, never the pre-grab
+    // UI state that may have been invalidated by a re-arm.
+    inline bool makeCinematicOneTakeOrbitPlan(
+        const PhotoCaptureRequest& acceptedCapture, int durationSeconds,
+        OneTakeOrbitPlan& plan)
+    {
+        plan = OneTakeOrbitPlan();
+        if (!acceptedCapture.camera.viewTargetValid || durationSeconds <= 0)
+            return false;
+
+        osg::Vec3d eyeWorld, targetWorld, cameraUp;
+        acceptedCapture.camera.visibleViewMatrix.getLookAt(
+            eyeWorld, targetWorld, cameraUp, 1.0);
+        // Preserve the matrix's exact visible target so the first planned frame is the
+        // accepted A frame.  The geodetic target below supplies the local orbit axis.
+        const osg::Vec3d targetLla = acceptedCapture.targetLla;
+        const double latitude = targetLla[0];
+        const double longitude = targetLla[1];
+        OneTakeOrbitSeed seed;
+        seed.eye = eyeWorld;
+        seed.target = targetWorld;
+        seed.orbitAxis.set(
+            std::cos(latitude) * std::cos(longitude),
+            std::cos(latitude) * std::sin(longitude),
+            std::sin(latitude));
+        seed.cameraUp = cameraUp;
+        return makeOneTakeOrbitPlan(seed, durationSeconds, 24, plan);
     }
 
     inline CinematicGenerationSettings defaultImageCinematicSettings()
@@ -177,15 +211,35 @@ namespace earthai
         return motion != CINEMATIC_MOTION_ORBIT_360;
     }
 
-    inline bool cinematicVideoModelSupportsLastFrame(const std::string& model)
+    enum CinematicVideoProviderKind
+    {
+        CINEMATIC_VIDEO_PROVIDER_UNKNOWN = 0,
+        CINEMATIC_VIDEO_PROVIDER_OMNI,
+        CINEMATIC_VIDEO_PROVIDER_VEO
+    };
+
+    inline CinematicVideoProviderKind classifyCinematicVideoProvider(
+        const std::string& model)
     {
         std::string normalized = model;
         for (size_t i = 0; i < normalized.size(); ++i)
             normalized[i] = static_cast<char>(std::tolower(
                 static_cast<unsigned char>(normalized[i])));
-        // The only implemented provider with a supplied last-frame payload is Veo. Do not
-        // promote an arbitrary model name merely because it claims a similar capability.
-        return normalized.find("veo") != std::string::npos;
+        // Omni routing wins even for a deliberately misleading model name.  Veo accepts
+        // only the concrete IDs implemented by VeoVideoProvider; all unknown names fail
+        // closed instead of selecting a transport or claiming last-frame support.
+        if (normalized.find("omni") != std::string::npos)
+            return CINEMATIC_VIDEO_PROVIDER_OMNI;
+        if (normalized == "veo-3.1-fast-generate-preview" ||
+            normalized == "veo-3.1-generate-preview")
+            return CINEMATIC_VIDEO_PROVIDER_VEO;
+        return CINEMATIC_VIDEO_PROVIDER_UNKNOWN;
+    }
+
+    inline bool cinematicVideoModelSupportsLastFrame(const std::string& model)
+    {
+        return classifyCinematicVideoProvider(model) ==
+            CINEMATIC_VIDEO_PROVIDER_VEO;
     }
 
     struct MediaRouteCapabilities
@@ -194,7 +248,8 @@ namespace earthai
         bool hasFakeImage = false;
         bool hasFakeMp4 = false;
         bool hasProviderSession = false;
-        bool lastFrameVideoModel = false;
+        CinematicVideoProviderKind videoProvider =
+            CINEMATIC_VIDEO_PROVIDER_UNKNOWN;
         bool deterministicLocalEncoder = false;
 
         bool canGenerateImage() const
@@ -204,12 +259,18 @@ namespace earthai
 
         bool canGenerateProviderVideo() const
         {
-            return hasProviderSession && (hasRealMediaKey || hasFakeMp4);
+            return videoProvider != CINEMATIC_VIDEO_PROVIDER_UNKNOWN &&
+                hasProviderSession && (hasRealMediaKey || hasFakeMp4);
+        }
+
+        bool supportsLastFrameVideo() const
+        {
+            return videoProvider == CINEMATIC_VIDEO_PROVIDER_VEO;
         }
 
         bool canGeneratePointToPoint() const
         {
-            return canGenerateProviderVideo() && lastFrameVideoModel;
+            return canGenerateProviderVideo() && supportsLastFrameVideo();
         }
 
         bool canRenderLocalOrbit() const

@@ -102,7 +102,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         // route eligibility from the audit flag or from pointer presence.
         routeCapabilities.hasRealMediaKey = true;
         routeCapabilities.hasProviderSession = true;
-        routeCapabilities.lastFrameVideoModel = true;
+        routeCapabilities.videoProvider =
+            earthai::CINEMATIC_VIDEO_PROVIDER_VEO;
         routeCapabilities.deterministicLocalEncoder = true;
         mediaControlsVisible = true;
     }
@@ -838,7 +839,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             if (_cinematicMotion == earthai::CINEMATIC_MOTION_POINT_TO_POINT)
             {
                 if (routeCapabilities.canGenerateProviderVideo() &&
-                    !routeCapabilities.lastFrameVideoModel)
+                    !routeCapabilities.supportsLastFrameVideo())
                 {
                     ImGui::TextWrapped(
                         u8"当前 Omni 模型不支持首尾帧穿越。请先配置 Veo 首尾帧模型，再记录 A/B 点。");
@@ -1079,6 +1080,40 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 }
                 ImGui::PopStyleColor();
 
+                const bool canConfirmVideo = localDeterministicOrbit
+                    ? routeCapabilities.canRenderLocalOrbit()
+                    : (singleAnchor
+                        ? routeCapabilities.canGenerateProviderVideo()
+                        : routeCapabilities.canGeneratePointToPoint());
+                if (!canConfirmVideo)
+                {
+                    ImGui::PushStyleColor(
+                        ImGuiCol_Text, earthui::design::kDanger);
+                    if (!singleAnchor &&
+                        routeCapabilities.videoProvider ==
+                            earthai::CINEMATIC_VIDEO_PROVIDER_OMNI)
+                    {
+                        ImGui::TextWrapped(
+                            u8"当前 Omni 模型不支持首尾帧穿越；请切换到受支持的 Veo 模型后重新记录 A/B 点。");
+                    }
+                    else if (localDeterministicOrbit)
+                    {
+                        ImGui::TextWrapped(
+                            u8"本地 360° 录制编码器不可用，无法开始录制。");
+                    }
+                    else if (!singleAnchor)
+                    {
+                        ImGui::TextWrapped(
+                            u8"两点穿越需要受支持的 Veo 首尾帧模型，当前路由不可用。");
+                    }
+                    else
+                    {
+                        ImGui::TextWrapped(
+                            u8"当前视频 provider 路由不可用，无法提交生成。");
+                    }
+                    ImGui::PopStyleColor();
+                }
+
                 const float actionGap = ImGui::GetStyle().ItemSpacing.x;
                 const float actionWidth = std::max(
                     96.0f,
@@ -1091,6 +1126,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                     ImGuiCol_ButtonActive, earthui::design::kMeasure);
                 ImGui::PushStyleColor(
                     ImGuiCol_Text, earthui::design::kCarbon);
+                if (!canConfirmVideo) ImGui::BeginDisabled();
                 if (ImGui::Button(
                         localDeterministicOrbit ? u8"开始本地录制" : u8"确认生成",
                         ImVec2(actionWidth, 0.0f)))
@@ -1109,6 +1145,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
                 _auditSnapshot.videoConfirmButton = auditLastItemRect();
 #endif
+                if (!canConfirmVideo) ImGui::EndDisabled();
                 ImGui::PopStyleColor(4);
                 ImGui::SameLine();
                 if (ImGui::Button(

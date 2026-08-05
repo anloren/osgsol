@@ -303,14 +303,17 @@ int main()
     // Direct owner methods explicitly preserve errors on failure and clear them on success.
     CHECK(ownerResult.find("_videoCommandError = reduceVideoOwnerCommandError(") !=
           std::string::npos);
-    CHECK(countOccurrences(beginVideo, "applyVideoOwnerCommandResult(false);") == 1);
+    CHECK(countOccurrences(beginVideo, "applyVideoOwnerCommandResult(false);") == 2);
     CHECK(countOccurrences(beginVideo, "applyVideoOwnerCommandResult(true);") == 1);
+    CHECK(beginVideo.find(
+        "!frozenCapture && !_routeCapabilities.canGeneratePointToPoint()") !=
+          std::string::npos);
     CHECK(beginVideo.find("applyVideoOwnerCommandResult(false);") <
           beginVideo.find("return false;"));
     CHECK(beginVideo.rfind("applyVideoOwnerCommandResult(true);") <
           beginVideo.rfind("return true;"));
 
-    CHECK(countOccurrences(captureEnd, "applyVideoOwnerCommandResult(false);") == 1);
+    CHECK(countOccurrences(captureEnd, "applyVideoOwnerCommandResult(false);") == 2);
     CHECK(countOccurrences(captureEnd, "applyVideoOwnerCommandResult(true);") == 1);
     CHECK(captureEnd.find("applyVideoOwnerCommandResult(false);") <
           captureEnd.find("return false;"));
@@ -336,6 +339,13 @@ int main()
     CHECK(secondConfirmReturn < thirdConfirmFailure &&
           thirdConfirmFailure < thirdConfirmReturn);
     CHECK(thirdConfirmReturn < confirmSuccess && confirmSuccess < confirmSuccessReturn);
+
+    // Re-arming belongs only to the immutable cinematic capture contract.  Ordinary
+    // generate_video keeps its legacy A/B capture path, while local orbit planning waits
+    // for the final accepted A frame.
+    CHECK(countOccurrences(updateVideo,
+        "v.cinematic && cinematicVideoCaptureNeedsRearm(") == 2);
+    CHECK(updateVideo.find("makeCinematicOneTakeOrbitPlan(") != std::string::npos);
 
     CHECK(countOccurrences(cancelVideo, "applyVideoOwnerCommandResult(true);") == 1);
     CHECK(cancelVideo.find("applyVideoOwnerCommandResult(true);") <
