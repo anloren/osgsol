@@ -1,5 +1,6 @@
 #ifndef EARTH_AI_SETUP_H
 #define EARTH_AI_SETUP_H
+#include <osg/Camera>
 #include <osgViewer/Viewer>
 #include "ai_tools.h"
 #include "ai_chat.h"
@@ -17,6 +18,9 @@ namespace earthai { class MediaManager; }
 struct AIChatDeps
 {
     osgViewer::Viewer* viewer = nullptr;
+    // The fully composed output camera (Earth's cameras[3]), not viewer.getCamera().
+    // Media capture installs its stable final-draw dispatcher here before viewer.run().
+    osg::Camera* captureCamera = nullptr;
     osgVerse::EarthManipulator* mani = nullptr;
     LayerManager* layers = nullptr;
     // 地震(quakes)不再是本结构体的字段:get_quakes_summary 已随 T2 迁移到 FeedLayer 框架,

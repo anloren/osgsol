@@ -173,8 +173,15 @@ namespace earthai
     // or revoke immutable shared generations through the C++14 shared_ptr atomic operations.
     struct SnapshotGrabber::GenerationDispatcher : public osg::Camera::DrawCallback
     {
+        explicit GenerationDispatcher(osg::Camera::DrawCallback* previousCallback)
+            : _previousCallback(previousCallback) {}
+
         virtual void operator()(osg::RenderInfo& renderInfo) const
         {
+            // The final callback we replaced at the initialization boundary remains part of
+            // the final composition. It must run before readback so the generation sees the
+            // same completed framebuffer it would have seen without the dispatcher.
+            if (_previousCallback.valid()) (*_previousCallback)(renderInfo);
             const std::shared_ptr<CaptureGeneration> generation =
                 std::atomic_load_explicit(&_generation, std::memory_order_acquire);
             if (generation) generation->invoke(renderInfo);
@@ -194,19 +201,21 @@ namespace earthai
         }
 
     private:
+        osg::ref_ptr<osg::Camera::DrawCallback> _previousCallback;
         mutable std::shared_ptr<CaptureGeneration> _generation;
     };
 
-    SnapshotGrabber::SnapshotGrabber(osgViewer::Viewer* viewer)
-        : _viewer(viewer), _dispatcher(new GenerationDispatcher)
+    SnapshotGrabber::SnapshotGrabber(osg::Camera* captureCamera)
     {
-        // configureAIChat constructs MediaManager before it registers its FRAME handlers, and
-        // earth_main calls configureAIChat before viewer.realize()/viewer.run(). This is the
-        // one safe installation boundary; no runtime path mutates Camera's callback pointer.
-        osg::Camera* camera = _viewer ? _viewer->getCamera() : 0;
-        if (camera && _dispatcher.valid())
+        // configureAIChat receives Earth's final composition camera (cameras[3]), constructs
+        // MediaManager before registering FRAME handlers, and is called before viewer.run().
+        // This is the sole Camera callback mutation boundary; runtime paths only publish or
+        // revoke a generation through the dispatcher atomic shared_ptr.
+        if (captureCamera)
         {
-            camera->setFinalDrawCallback(_dispatcher.get());
+            _dispatcher = new GenerationDispatcher(
+                captureCamera->getFinalDrawCallback());
+            captureCamera->setFinalDrawCallback(_dispatcher.get());
             _dispatcherInstalled = true;
         }
         else
@@ -279,11 +288,11 @@ namespace earthai
         if (!capture->retireIfNotStarted()) return;
         if (_activeGeneration && _activeGeneration->token == capture)
         {
-            // retireIfNotStarted won before dispatcher entry. OSG may already have read the
-            // dispatcher raw pointer but not yet atomically acquired its generation, so retain
-            // this revoked generation for the grabber lifetime.
+            // The dispatcher shared_ptr protects a render traversal that had already loaded
+            // this generation. Keep only an active invocation; otherwise release it now.
             _dispatcher->revoke(_activeGeneration);
-            _timeoutRetainedGenerations.push_back(_activeGeneration);
+            if (!_activeGeneration->quiescent())
+                _reapableGenerations.push_back(_activeGeneration);
             _activeGeneration.reset();
         }
         reapTerminalGeneration();
@@ -922,10 +931,11 @@ namespace earthai
 
     MediaManager::MediaManager(osgViewer::Viewer* viewer, AICardPanel* cards,
                                const std::string& apiKeyOrEmpty,
-                               osgVerse::EarthManipulator* photoManipulator)
+                               osgVerse::EarthManipulator* photoManipulator,
+                               osg::Camera* captureCamera)
         : _viewer(viewer), _photoManipulator(photoManipulator), _cards(cards),
           _apiKey(apiKeyOrEmpty), _imageModel(resolvedCinematicImageModel()),
-          _videoModel(videoModel()), _grabber(viewer),
+          _videoModel(videoModel()), _grabber(captureCamera),
           _state(IDLE), _jobId(0), _photoRequestId(0), _workerJoinable(false),
           _viewRenderUpdateTicks(0),
           _waitSnapshotTicks(0),

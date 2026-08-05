@@ -349,7 +349,7 @@ int main()
     // looking handlers that can replace each other's pending operation.
     CHECK(countOccurrences(mediaHeader, "SnapshotGrabber _grabber;") == 1);
     CHECK(mediaHeader.find("_videoGrabber") == std::string::npos);
-    CHECK(countOccurrences(media, "_grabber(viewer)") == 1);
+    CHECK(countOccurrences(media, "_grabber(captureCamera)") == 1);
     CHECK(countOccurrences(media, "new GenerationScreenCaptureHandler(") == 1);
     CHECK(media.find("snapCaptureTokenA") != std::string::npos);
     CHECK(media.find("snapCaptureTokenB") != std::string::npos);
@@ -365,7 +365,7 @@ int main()
     const std::string snapshotGrab = extractFunctionBody(
         media, "std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::grab(");
     const std::string snapshotConstructor = extractFunctionBody(
-        media, "SnapshotGrabber::SnapshotGrabber(osgViewer::Viewer* viewer)");
+        media, "SnapshotGrabber::SnapshotGrabber(osg::Camera* captureCamera)");
     const std::string dispatcherDraw = extractFunctionBody(
         media, "virtual void operator()(osg::RenderInfo& renderInfo) const");
     CHECK(snapshotReady.find("capture->completedSuccessfully()") !=
@@ -381,23 +381,28 @@ int main()
     CHECK(mediaHeader.find("CaptureGeneration") != std::string::npos);
     CHECK(mediaHeader.find("GenerationDispatcher") != std::string::npos);
     CHECK(mediaHeader.find("_dispatcherInstalled") != std::string::npos);
-    CHECK(mediaHeader.find("_timeoutRetainedGenerations") != std::string::npos);
+    CHECK(mediaHeader.find("_timeoutRetainedGenerations") == std::string::npos);
     CHECK(mediaHeader.find("_reapableGenerations") != std::string::npos);
     CHECK(countOccurrences(media, "setFinalDrawCallback(") == 1);
-    CHECK(media.find("getFinalDrawCallback") == std::string::npos);
-    CHECK(snapshotConstructor.find("camera->setFinalDrawCallback(_dispatcher.get())") !=
+    CHECK(countOccurrences(media, "getFinalDrawCallback(") == 1);
+    CHECK(snapshotConstructor.find("captureCamera->setFinalDrawCallback(_dispatcher.get())") !=
+          std::string::npos);
+    CHECK(snapshotConstructor.find("captureCamera->getFinalDrawCallback()") !=
           std::string::npos);
     CHECK(snapshotConstructor.find("_dispatcherInstalled = true") != std::string::npos);
+    CHECK(snapshotConstructor.find("_viewer->getCamera") == std::string::npos);
     CHECK(snapshotRetire.find("_dispatcher->revoke(_activeGeneration)") !=
           std::string::npos);
     CHECK(snapshotRetire.find("removeCallbackFromViewer") == std::string::npos);
     CHECK(snapshotGrab.find("new GenerationScreenCaptureHandler(") !=
           std::string::npos);
-    // Completed one-shot captures are replaced, not retained: a local 8 s / 24 fps orbit must
-    // not preserve 192 WindowCaptureCallback ContextData image buffers.
+    // Completed one-shot captures and timeout generations are released once no invocation is
+    // active. A render traversal that loaded before revoke owns its own shared_ptr, so a local
+    // 8 s / 24 fps orbit cannot retain 192 WindowCaptureCallback ContextData buffers forever.
     CHECK(snapshotGrab.find("_timeoutRetainedGenerations.push_back(_activeGeneration)") ==
           std::string::npos);
-    CHECK(snapshotRetire.find("_timeoutRetainedGenerations.push_back(_activeGeneration)") !=
+    CHECK(snapshotRetire.find("_timeoutRetainedGenerations") == std::string::npos);
+    CHECK(snapshotRetire.find("_reapableGenerations.push_back(_activeGeneration)") !=
           std::string::npos);
     CHECK(snapshotGrab.find("setCaptureOperation") == std::string::npos);
     CHECK(snapshotGrab.find("captureNextFrame") == std::string::npos);
@@ -416,15 +421,15 @@ int main()
     CHECK(snapshotReady.find("capture->terminal()") != std::string::npos);
     CHECK(snapshotReady.find("reapTerminalGeneration()") != std::string::npos);
     CHECK(snapshotGrab.find("reapTerminalGeneration()") != std::string::npos);
-    // A failed dispatcher install does not start a token and cannot consume permanent retention.
+    // A failed dispatcher install does not start a token and cannot leave stale retention.
     CHECK(snapshotGrab.find("_timeoutRetainedGenerations.push_back(generation)") ==
           std::string::npos);
     CHECK(snapshotGrab.find("_dispatcher->publish(generation)") != std::string::npos);
     CHECK(snapshotGrab.find("setFinalDrawCallback") == std::string::npos);
     CHECK(snapshotGrab.find("getFinalDrawCallback") == std::string::npos);
     // A callback that was claimed before timeout can complete after the media job resets. The
-    // unconditional FRAME reaper revokes its generation and drops normal generations only once
-    // the render invocation is quiescent; timeout winners retain their own generation forever.
+    // unconditional FRAME reaper revokes its generation and drops timeout and normal
+    // generations only once the render invocation is quiescent.
     CHECK(mediaHeader.find("void reapTerminalGeneration()") != std::string::npos);
     CHECK(snapshotTerminalReaper.find("_activeGeneration->token->terminal()") !=
           std::string::npos);
@@ -445,6 +450,10 @@ int main()
           std::string::npos);
     CHECK(dispatcherDraw.find("std::atomic_load_explicit(&_generation") !=
           std::string::npos);
+    size_t chainedFinalCallback = dispatcherDraw.find("_previousCallback");
+    size_t generationLoad = dispatcherDraw.find("std::atomic_load_explicit(&_generation");
+    CHECK(chainedFinalCallback != std::string::npos);
+    CHECK(chainedFinalCallback < generationLoad);
     CHECK(dispatcherDraw.find("getFinalDrawCallback") == std::string::npos);
     CHECK(dispatcherDraw.find("setFinalDrawCallback") == std::string::npos);
 
@@ -574,6 +583,8 @@ int main()
     CHECK(mediaManagerConstruction < frameHandlerRegistration);
     CHECK(configureAI != std::string::npos && viewerRun != std::string::npos);
     CHECK(configureAI < viewerRun);
+    CHECK(setup.find("deps.captureCamera") != std::string::npos);
+    CHECK(earthMain.find("aiDeps.captureCamera = cameras[3]") != std::string::npos);
     CHECK(beginVideo.find("_video->artifactId") != std::string::npos);
     CHECK(beginVideo.find("++_cinematicRequestSerial") != std::string::npos);
     CHECK(confirmVideo.find("generatedFramePathA") != std::string::npos);

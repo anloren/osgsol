@@ -215,7 +215,7 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
     // only provider requests consult the key or fake-provider configuration.
     std::string aiKeyForMedia = earthcfg::resolveKey("EARTH_AI_KEY");
     earthai::MediaManager* mediaMgr = new earthai::MediaManager(
-        &viewer, ui ? ui->cards() : nullptr, aiKeyForMedia, mani);
+        &viewer, ui ? ui->cards() : nullptr, aiKeyForMedia, mani, deps.captureCamera);
     runtime.media = mediaMgr;
 
     {

@@ -1650,7 +1650,8 @@ int main(int argc, char** argv)
     // 才能把图表 spec 推进右上角卡片队列（同一个实例后面又挂到 ctrlUI->_aiUI 供 draw() 用）。
     AIChatUI* aiUI = new AIChatUI;
     AIChatDeps aiDeps;
-    aiDeps.viewer = &viewer; aiDeps.mani = earthManipulator.get(); aiDeps.layers = &layerMgr;
+    aiDeps.viewer = &viewer; aiDeps.captureCamera = cameras[3];
+    aiDeps.mani = earthManipulator.get(); aiDeps.layers = &layerMgr;
     aiDeps.flights = flightLayer; aiDeps.ui = aiUI;
     AIChatRuntime aiRuntime = configureAIChat(aiDeps);
     earthproject::registerProjectCommandContext(

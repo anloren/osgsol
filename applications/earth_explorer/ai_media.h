@@ -151,7 +151,7 @@ namespace earthai
     class SnapshotGrabber
     {
     public:
-        explicit SnapshotGrabber(osgViewer::Viewer* viewer);
+        explicit SnapshotGrabber(osg::Camera* captureCamera);
         ~SnapshotGrabber();
         // Returns this request's controller, or null when any earlier callback has not reached
         // terminal state. Callers retain their own token and must never cancel the grabber's
@@ -185,15 +185,13 @@ namespace earthai
     private:
         struct CaptureGeneration;
         struct GenerationDispatcher;
-        osgViewer::Viewer* _viewer;
         SnapshotCaptureSlot _slot;
         osg::ref_ptr<GenerationDispatcher> _dispatcher;
         bool _dispatcherInstalled = false;
         std::shared_ptr<CaptureGeneration> _activeGeneration;
-        // A timeout that wins before generation invocation keeps its generation for this
-        // grabber's lifetime. Normal terminal generations use the separate reapable list and
-        // drop only after the render invocation is quiescent.
-        std::vector<std::shared_ptr<CaptureGeneration>> _timeoutRetainedGenerations;
+        // Any terminal generation whose render invocation is still in flight is kept here
+        // until quiescent. The dispatcher shared_ptr keeps a generation safe even when a
+        // RenderStage had already loaded it before FRAME revoked publication.
         std::vector<std::shared_ptr<CaptureGeneration>> _reapableGenerations;
         int _contentW = 0, _contentH = 0;   // 裁剪矩形(左下原点),0=未设置
     };
@@ -449,7 +447,8 @@ namespace earthai
         // NewFrame/Render(由 ImGuiNewFrameCallback/ImGuiRenderCallback 负责,与本类无关)。
         MediaManager(osgViewer::Viewer* viewer, AICardPanel* cards,
                      const std::string& apiKeyOrEmpty,
-                     osgVerse::EarthManipulator* photoManipulator);
+                     osgVerse::EarthManipulator* photoManipulator,
+                     osg::Camera* captureCamera);
         ~MediaManager();
 
         JobManager* jobs() { return &_jobs; }
