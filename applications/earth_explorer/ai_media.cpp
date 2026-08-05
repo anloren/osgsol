@@ -226,10 +226,10 @@ namespace earthai
             OSG_WARN << "[AIChat] cannot arm snapshot camera: " << pngPath << std::endl;
             return std::shared_ptr<SnapshotCaptureController>();
         }
-        // Never mutate or reuse an armed handler/callback. Retain old generations through this
-        // grabber's lifetime, including normal completions, because OSG can still unwind an old
-        // draw callback after it has made the token terminal.
-        if (_activeGeneration) _retainedGenerations.push_back(_activeGeneration);
+        // A normal one-shot callback removes itself from the camera. The following FRAME-side
+        // grab can drop its generation, so a 192-frame orbit does not retain 192 full-size
+        // WindowCaptureCallback ContextData image buffers. Timeout-retired/uncertain entries
+        // take the separate retained path in retire()/arm failure only.
         _activeGeneration = generation;
         OSG_NOTICE << "[AIChat] snapshot grab -> " << pngPath << std::endl;
         return token;

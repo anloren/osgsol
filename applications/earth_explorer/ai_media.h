@@ -181,9 +181,9 @@ namespace earthai
         osgViewer::Viewer* _viewer;
         SnapshotCaptureSlot _slot;
         std::shared_ptr<CaptureGeneration> _activeGeneration;
-        // Includes completed and timeout-retired generations. Retention is intentional: OSG may
-        // still return through a callback after its token reached terminal, and no generation is
-        // ever reused or mutated after it has been armed.
+        // Timeout-retired/uncertain generations only. A normally completed callback removes
+        // itself and is dropped on the next FRAME-side grab, keeping 24 fps orbit capture
+        // bounded instead of retaining every full-size OSG ContextData image buffer.
         std::vector<std::shared_ptr<CaptureGeneration>> _retainedGenerations;
         int _contentW = 0, _contentH = 0;   // 裁剪矩形(左下原点),0=未设置
     };

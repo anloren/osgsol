@@ -379,6 +379,12 @@ int main()
     CHECK(snapshotRetire.find("removeCallbackFromViewer") == std::string::npos);
     CHECK(snapshotGrab.find("new GenerationScreenCaptureHandler(") !=
           std::string::npos);
+    // Completed one-shot captures are replaced, not retained: a local 8 s / 24 fps orbit must
+    // not preserve 192 WindowCaptureCallback ContextData image buffers.
+    CHECK(snapshotGrab.find("_retainedGenerations.push_back(_activeGeneration)") ==
+          std::string::npos);
+    CHECK(snapshotRetire.find("_retainedGenerations.push_back(_activeGeneration)") !=
+          std::string::npos);
     CHECK(snapshotGrab.find("setCaptureOperation") == std::string::npos);
     CHECK(snapshotGrab.find("captureNextFrame") == std::string::npos);
     CHECK(snapshotGrab.find("addEventHandler") == std::string::npos);
