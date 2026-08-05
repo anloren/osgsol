@@ -299,6 +299,10 @@ namespace earthai
 
         void update();   // 主线程每帧调:轮询抓帧就绪 → 起工作线程生图/生视频 → 完成后推卡片/收尾 Job
 
+        // viewer.updateTraversal() 之后、renderingTraversals() 之前调用。只有本地确定性
+        // 环拍正在逐帧采集时才覆盖本帧主相机，返回 true；其它时刻零副作用。
+        bool applyDeterministicVideoCamera();
+
         // ---- 视频生成流程:当前视角运镜或 A/B 两点穿越 -> 确认 -> 提交 -> 完成 ----
         // 状态机见 .cpp VideoPhase 注释。一键航拍、环拍、俯冲等只冻结当前首帧；仅
         // POINT_TO_POINT 继续采集 B 点。两种流程都必须经过确认，不能绕过计费边界。
@@ -368,12 +372,16 @@ namespace earthai
         // hudHide()/hudRestore() 由 FRAME owner 写，isHudHidden() 由 draw traversal 读；原子
         // 计数既消除数据竞争，也让 hudRestore() 可以用 CAS 保证永不下溢。
         std::atomic<int> _hudHideCount;
+        // 只有照片/AI 参考帧需要临时补光和隐藏地图标注。本地确定性环拍必须保留用户
+        // 当前所见的太阳、时间与图层，所以它只增加 _hudHideCount，不增加此计数。
+        // 两个计数拆开后，即使照片抓帧与环拍短暂重叠，也能各自对称恢复。
+        std::atomic<int> _captureSceneAdjustmentCount;
         osgVerse::EarthAtmosphereOcean* _earth = nullptr;   // 快门补光用(可空)
         osg::Vec3 _savedSunDir;                              // 补光前的太阳方向(恢复用)
         float _savedLabelOpacity = 1.0f;                     // 快门前的标注层透明度(恢复用)
         bool _sunDirSaved = false;
-        void hudHide();      // 第一次调用(count 0->1):isHudHidden() 从此开始返回 true
-        void hudRestore();   // 最后一次调用(count 1->0):isHudHidden() 恢复返回 false
+        void hudHide(bool adjustScene = true);
+        void hudRestore(bool adjustScene = true);
 
         // 单个 pending 照片任务的状态机(见类注释:同一时刻只支持一个)。
         PendingState _state;

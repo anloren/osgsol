@@ -87,6 +87,7 @@
 #include <vector>
 #include <memory>
 #include <stdexcept>
+#include <functional>
 
 #ifdef OSG_LIBRARY_STATIC
 USE_OSG_PLUGINS()
@@ -96,6 +97,40 @@ USE_SERIALIZER_WRAPPER(DracoGeometry)
 
 #define EARTH_INTERSECTION_MASK 0xf0000000
 #define SIMPLE_VERSION 1
+
+// Keep Viewer::run() and all of its realization/thread lifecycle behavior, but expose the
+// only safe point for a deterministic rendered-camera override: after the manipulator has
+// completed updateTraversal(), before any camera is culled or drawn.  A FRAME event handler
+// is too early (the manipulator overwrites it), while a draw callback is too late (culling
+// already used the previous matrix).
+class EarthViewer : public osgViewer::Viewer
+{
+public:
+    void setBeforeRenderingCallback(const std::function<void()>& callback)
+    { _beforeRendering = callback; }
+
+    void frame(double simulationTime = USE_REFERENCE_TIME) override
+    {
+        // Preserve osgViewer::ViewerBase::frame() lifecycle exactly.  In particular, run()
+        // relies on the first frame to initialize and realize an unrealized viewer, and a
+        // requested shutdown must not execute another event/update/render traversal.
+        if (_done) return;
+        if (_firstFrame)
+        {
+            viewerInit();
+            if (!isRealized()) realize();
+            _firstFrame = false;
+        }
+        advance(simulationTime);
+        eventTraversal();
+        updateTraversal();
+        if (_beforeRendering) _beforeRendering();
+        renderingTraversals();
+    }
+
+private:
+    std::function<void()> _beforeRendering;
+};
 
 #if defined(__APPLE__)
 // EARTH_OFFSCREEN 测试基建(macOS):纯 CGL 无头 GL 4.1 Core 上下文。
@@ -1075,7 +1110,7 @@ int main(int argc, char** argv)
         hlog_disable();
 
     earthexit::QuitRequest quitRequest;
-    osgViewer::Viewer viewer;
+    EarthViewer viewer;
 #if OSGSOL_BUILD_RMLUI_PRODUCT_UI
     RmlUiRuntime productUiRuntime;
     bool productUiRequested = false;
@@ -1622,6 +1657,18 @@ int main(int argc, char** argv)
         aiRuntime.context, projectCommandBus);
     earthai::AIChatCore* aiCore = aiRuntime.core;
     earthai::MediaManager* aiMedia = aiRuntime.media;
+    viewer.setBeforeRenderingCallback(
+        [aiMedia, &viewer, &earthRenderingUtils]()
+        {
+            if (aiMedia && aiMedia->applyDeterministicVideoCamera())
+            {
+                // Ocean/atmosphere normally update during FRAME event traversal. The
+                // deterministic camera is intentionally applied later, so refresh these
+                // camera-derived uniforms once with the actual orbit pose used to render.
+                earthRenderingUtils.update(viewer.getCamera());
+                earthRenderingUtils.updateOcean(viewer.getCamera());
+            }
+        });
     if (aiMedia) aiMedia->setEarthUniforms(&earthRenderingUtils);   // 快门补光需要 WorldSunDir
     if (aiMedia) aiMedia->setContentSize(w, h);   // 快照按渲染内容区裁剪(去掉整窗多余底色边条)
 

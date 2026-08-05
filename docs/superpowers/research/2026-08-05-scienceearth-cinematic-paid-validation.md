@@ -214,3 +214,41 @@ The earlier pass statement was incorrect and is withdrawn. The production preset
 temporarily unavailable and blocked before paid submission. It can return only after a
 deterministic continuous-camera pipeline passes full-speed review. Evidence is retained under the
 ignored directory `build/media_paid_validation_round3_20260805/`.
+
+## Deterministic one-take implementation checkpoint
+
+The failed provider result is no longer being addressed with stronger prompt wording. A separate,
+application-owned path now plans and renders the camera motion itself:
+
+- The target visible at the centre of the current view is frozen in world coordinates.
+- The original camera eye and up vector are rotated around that one fixed target and its local
+  geodetic vertical. An 8-second request produces exactly 192 ordered poses at 24 fps.
+- Every planned pose keeps the same target and radius, advances by one strictly positive angular
+  step, visits one continuous 0–360-degree path, and closes exactly at the starting pose.
+- The Earth manipulator is never mutated. Each planned view matrix is applied after the normal
+  manipulator update and immediately before cull/draw, then the user's normal view resumes when
+  capture ends.
+- Each pose is rendered by osgSol. The ordered PNG sequence is encoded locally to H.264 MP4 with
+  macOS AVFoundation; the image-to-video provider does not own, synthesize, interpolate or edit
+  this motion, and this local path does not require or consume an AI API request.
+- Recording hides application UI but preserves the currently visible sun, time and map-label
+  state. Photo-reference fill light remains a separate, reference-counted capture mode.
+
+Automated evidence at this checkpoint:
+
+- Pure trajectory tests verify 192 frames, the four quadrants, stable target/radius, monotonic
+  angular steps and exact closure.
+- A native encoder test creates ordered fixture frames, writes H.264 MP4, verifies one video track
+  and verifies the expected duration.
+- A source/lifecycle contract verifies the camera override occurs after `updateTraversal()` and
+  before `renderingTraversals()`, while preserving OSG's first-frame `viewerInit()/realize()` and
+  shutdown guard.
+- The complete EarthExplorer target compiles. No application window was launched for this
+  checkpoint.
+
+This is an implementation checkpoint, not visual acceptance. The 360 preset remains blocked in
+the production UI until a user-run, full-speed render confirms all of the following together:
+one view throughout, no cut or transition, correct direction, all four quadrants, exact return,
+no vertical inversion, stable terrain/3D-tile LOD and restoration of the original camera. The
+local renderer also does not yet provide historical/anime video restyling; those settings must
+remain unavailable for this path until a temporally stable, motion-locked styling stage is proven.

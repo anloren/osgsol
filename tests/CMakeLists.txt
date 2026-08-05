@@ -163,6 +163,31 @@ ADD_DEPENDENCIES(osgVerse_Test_Ai_Chat osgVerseDependency)
 TARGET_LINK_LIBRARIES(osgVerse_Test_Ai_Chat PRIVATE
                       "$<TARGET_FILE:osgVerseDependency>"
                       OpenThreads osg ${CMAKE_DL_LIBS})
+IF(APPLE)
+    ADD_EXECUTABLE(osgSol_Test_CinematicVideoEncoder
+        cinematic_video_encoder_tests.mm
+        "${CMAKE_SOURCE_DIR}/applications/earth_explorer/cinematic_video_encoder.mm")
+    SET_SOURCE_FILES_PROPERTIES(
+        cinematic_video_encoder_tests.mm
+        "${CMAKE_SOURCE_DIR}/applications/earth_explorer/cinematic_video_encoder.mm"
+        PROPERTIES
+        LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_CinematicVideoEncoder PRIVATE
+        "${CMAKE_SOURCE_DIR}")
+    TARGET_LINK_LIBRARIES(osgSol_Test_CinematicVideoEncoder PRIVATE
+        "-framework Foundation"
+        "-framework CoreFoundation"
+        "-framework AVFoundation"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
+        "-framework CoreGraphics"
+        "-framework ImageIO")
+    ADD_TEST(NAME osgSol_Test_CinematicVideoEncoder
+             COMMAND $<TARGET_FILE:osgSol_Test_CinematicVideoEncoder>)
+    SET_TESTS_PROPERTIES(osgSol_Test_CinematicVideoEncoder PROPERTIES
+        LABELS "offline;media"
+        TIMEOUT 30)
+ENDIF()
 NEW_LIGHTWEIGHT_CTEST(osgVerse_Test_Earth_Context earth_context_tests.cpp
                       offline 120)
 NEW_LIGHTWEIGHT_CTEST(osgSol_Test_EarthProject earth_project_tests.cpp

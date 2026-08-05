@@ -103,13 +103,19 @@ IF(APPLE)
     # 编译 + "-x objective-c++" 强制 clang 走 ObjC++ 前端,零全局影响。
     SET_SOURCE_FILES_PROPERTIES(ime_bridge.mm PROPERTIES
                                 LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
-    SET(EXECUTABLE_FILES ${EXECUTABLE_FILES} ime_bridge.mm)
+    SET_SOURCE_FILES_PROPERTIES(cinematic_video_encoder.mm PROPERTIES
+                                LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
+    SET(EXECUTABLE_FILES ${EXECUTABLE_FILES} ime_bridge.mm
+                         cinematic_video_encoder.mm cinematic_video_encoder.h)
     IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)
         SET_SOURCE_FILES_PROPERTIES(product_ui/rml_macos_ime.mm PROPERTIES
                                     LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
         LIST(APPEND EXECUTABLE_FILES
              product_ui/rml_macos_ime.mm product_ui/rml_macos_ime.h)
     ENDIF()
+ELSE()
+    LIST(APPEND EXECUTABLE_FILES
+         cinematic_video_encoder.cpp cinematic_video_encoder.h)
 ENDIF(APPLE)
 
 # 静态战略数据集(P1 T7):vendored JSON 随构建拷到 <install>/models/Earth/strategic/,
@@ -149,7 +155,15 @@ ENDIF()
 LINK_OSG_LIBRARY(${EXE_NAME} OpenThreads osg osgDB osgUtil osgGA osgText osgSim osgTerrain osgViewer)
 TARGET_COMPILE_OPTIONS(${EXE_NAME} PUBLIC -D_SCL_SECURE_NO_WARNINGS)
 IF(APPLE)
-    TARGET_LINK_LIBRARIES(${EXE_NAME} "-framework Cocoa")   # ime_bridge.mm 的 AppKit 依赖
+    TARGET_LINK_LIBRARIES(${EXE_NAME}
+        "-framework Cocoa"   # ime_bridge.mm 的 AppKit 依赖
+        "-framework Foundation"
+        "-framework CoreFoundation"
+        "-framework AVFoundation"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
+        "-framework CoreGraphics"
+        "-framework ImageIO")
 ENDIF(APPLE)
 
 IF(APPLE AND OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)

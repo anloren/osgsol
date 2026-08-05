@@ -185,8 +185,10 @@ int main()
     const std::string media = readSourceFile("applications/earth_explorer/ai_media.cpp");
     const std::string mediaHeader = readSourceFile("applications/earth_explorer/ai_media.h");
     const std::string setup = readSourceFile("applications/earth_explorer/ai_setup.cpp");
+    const std::string earthMain = readSourceFile(
+        "applications/earth_explorer/earth_main.cpp");
     CHECK(!ui.empty() && !uiHeader.empty() && !media.empty() && !mediaHeader.empty());
-    CHECK(!setup.empty());
+    CHECK(!setup.empty() && !earthMain.empty());
 
     const std::string videoPoll = extractFunctionBody(
         media, "void VeoVideoProvider::poll(");
@@ -221,8 +223,10 @@ int main()
     const std::string update = extractFunctionBody(media, "void MediaManager::update()");
     const std::string snapshotGetter = extractFunctionBody(
         media, "MediaManager::VideoUiSnapshot MediaManager::videoUiSnapshot() const");
-    const std::string hudHide = extractFunctionBody(media, "void MediaManager::hudHide()");
-    const std::string hudRestore = extractFunctionBody(media, "void MediaManager::hudRestore()");
+    const std::string hudHide = extractFunctionBody(
+        media, "void MediaManager::hudHide(bool adjustScene)");
+    const std::string hudRestore = extractFunctionBody(
+        media, "void MediaManager::hudRestore(bool adjustScene)");
     const std::string isHudHidden = extractFunctionBody(mediaHeader, "bool isHudHidden() const");
     const std::string draw = extractFunctionBody(ui, "void AIChatUI::draw(");
     const std::string beginVideo = extractFunctionBody(
@@ -233,13 +237,18 @@ int main()
         media, "picojson::value MediaManager::confirmVideo()");
     const std::string cancelVideo = extractFunctionBody(
         media, "void MediaManager::cancelVideo()");
+    const std::string updateVideo = extractFunctionBody(
+        media, "void MediaManager::updateVideoInternal()");
     const std::string ownerResult = extractFunctionBody(
         media, "void MediaManager::applyVideoOwnerCommandResult(bool succeeded)");
     const std::string frameHandle = extractFunctionBody(setup, "virtual bool handle(");
+    const std::string viewerFrame = extractFunctionBody(
+        earthMain, "void frame(double simulationTime = USE_REFERENCE_TIME) override");
     CHECK(!update.empty() && !snapshotGetter.empty() && !hudHide.empty());
     CHECK(!hudRestore.empty() && !isHudHidden.empty() && !draw.empty());
     CHECK(!beginVideo.empty() && !captureEnd.empty() && !confirmVideo.empty());
-    CHECK(!cancelVideo.empty() && !ownerResult.empty() && !frameHandle.empty());
+    CHECK(!cancelVideo.empty() && !updateVideo.empty() && !ownerResult.empty());
+    CHECK(!frameHandle.empty() && !viewerFrame.empty());
 
     // Runtime structure: request dispatch and both state machines reach exactly one publication
     // epilogue, which copies the FRAME-owned persistent command error.
@@ -308,7 +317,7 @@ int main()
     CHECK(captureEnd.rfind("applyVideoOwnerCommandResult(true);") <
           captureEnd.rfind("return true;"));
 
-    CHECK(countOccurrences(confirmVideo, "applyVideoOwnerCommandResult(false);") == 2);
+    CHECK(countOccurrences(confirmVideo, "applyVideoOwnerCommandResult(false);") == 3);
     CHECK(countOccurrences(confirmVideo, "applyVideoOwnerCommandResult(true);") == 1);
     size_t firstConfirmFailure = confirmVideo.find("applyVideoOwnerCommandResult(false);");
     size_t firstConfirmReturn = confirmVideo.find("return picojson::value(err);");
@@ -316,23 +325,69 @@ int main()
         "applyVideoOwnerCommandResult(false);", firstConfirmFailure + 1);
     size_t secondConfirmReturn = confirmVideo.find(
         "return picojson::value(err);", firstConfirmReturn + 1);
+    size_t thirdConfirmFailure = confirmVideo.find(
+        "applyVideoOwnerCommandResult(false);", secondConfirmFailure + 1);
+    size_t thirdConfirmReturn = confirmVideo.find(
+        "return picojson::value(err);", secondConfirmReturn + 1);
     size_t confirmSuccess = confirmVideo.find("applyVideoOwnerCommandResult(true);");
     size_t confirmSuccessReturn = confirmVideo.rfind("return picojson::value(r);");
     CHECK(firstConfirmFailure < firstConfirmReturn);
     CHECK(firstConfirmReturn < secondConfirmFailure && secondConfirmFailure < secondConfirmReturn);
-    CHECK(secondConfirmReturn < confirmSuccess && confirmSuccess < confirmSuccessReturn);
+    CHECK(secondConfirmReturn < thirdConfirmFailure &&
+          thirdConfirmFailure < thirdConfirmReturn);
+    CHECK(thirdConfirmReturn < confirmSuccess && confirmSuccess < confirmSuccessReturn);
 
     CHECK(countOccurrences(cancelVideo, "applyVideoOwnerCommandResult(true);") == 1);
     CHECK(cancelVideo.find("applyVideoOwnerCommandResult(true);") <
           cancelVideo.find("if (_video->phase == VideoJob::IDLE) return;"));
 
-    // Draw/FRAME HUD sharing uses only the atomic paths and cannot decrement below zero.
+    // Draw/FRAME HUD sharing uses atomic paths and cannot decrement below zero.  Scene
+    // adjustment has a separate reference count: deterministic local recording hides only UI,
+    // preserving the exact visible sun/time/labels while photo reference captures keep their
+    // established fill-light behavior.
     CHECK(mediaHeader.find("std::atomic<int> _hudHideCount;") != std::string::npos);
+    CHECK(mediaHeader.find(
+        "std::atomic<int> _captureSceneAdjustmentCount;") != std::string::npos);
     CHECK(isHudHidden.find("_hudHideCount.load()") != std::string::npos);
     CHECK(hudHide.find("_hudHideCount.fetch_add(") != std::string::npos);
+    CHECK(hudHide.find("if (!adjustScene) return;") != std::string::npos);
+    CHECK(hudHide.find("if (!adjustScene) return;") <
+          hudHide.find("_captureSceneAdjustmentCount.fetch_add("));
     CHECK(hudRestore.find("_hudHideCount.compare_exchange_") != std::string::npos);
+    CHECK(hudRestore.find("if (!adjustScene) return;") != std::string::npos);
+    CHECK(hudRestore.find("if (!adjustScene) return;") <
+          hudRestore.find("_captureSceneAdjustmentCount.compare_exchange_"));
     CHECK(hudRestore.find("--_hudHideCount") == std::string::npos);
     CHECK(hudRestore.find("_hudHideCount--") == std::string::npos);
+    CHECK(update.find("_captureSceneAdjustmentCount.load() > 0") !=
+          std::string::npos);
+    CHECK(update.find("_hudHideCount.load() > 0) applyFillLight()") ==
+          std::string::npos);
+    CHECK(confirmVideo.find("hudHide(false);") != std::string::npos);
+    CHECK(cancelVideo.find("hudRestore(false);") != std::string::npos);
+    CHECK(countOccurrences(updateVideo, "hudRestore(false);") >= 3);
+
+    // The application owns the orbit pose after manipulator update and before cull/draw.  This
+    // ordering is the invariant that prevents the manipulator from overwriting a planned frame
+    // and prevents culling from using the previous camera matrix.
+    const size_t advance = viewerFrame.find("advance(simulationTime)");
+    const size_t event = viewerFrame.find("eventTraversal()");
+    const size_t traversalUpdate = viewerFrame.find("updateTraversal()");
+    const size_t cameraOverride = viewerFrame.find("_beforeRendering()");
+    const size_t rendering = viewerFrame.find("renderingTraversals()");
+    const size_t doneGuard = viewerFrame.find("if (_done) return;");
+    const size_t firstFrame = viewerFrame.find("if (_firstFrame)");
+    const size_t viewerInit = viewerFrame.find("viewerInit()");
+    const size_t realize = viewerFrame.find("realize()");
+    const size_t finishFirstFrame = viewerFrame.find("_firstFrame = false");
+    CHECK(doneGuard != std::string::npos);
+    CHECK(doneGuard < firstFrame && firstFrame < viewerInit);
+    CHECK(viewerInit < realize && realize < finishFirstFrame);
+    CHECK(finishFirstFrame < advance);
+    CHECK(advance < event && event < traversalUpdate);
+    CHECK(traversalUpdate < cameraOverride && cameraOverride < rendering);
+    CHECK(earthMain.find("aiMedia->applyDeterministicVideoCamera()") !=
+          std::string::npos);
 
     CHECK(uiHeader.find("_videoConfirmError") == std::string::npos);
     std::cout << "[OK] media UI reducer, request queue, and publication wiring\n";

@@ -5,6 +5,8 @@
 #include "ai_photo_request.h"
 #include "ai_cards.h"
 #include "ai_chat.h"   // AIChatCore 完整定义(ai_media.h 只前置声明):addErrorNote() 调用需要
+#include "ai_orbit_trajectory.h"
+#include "cinematic_video_encoder.h"
 #include "earth_config.h"
 #include <readerwriter/EarthManipulator.h>
 #include "3rdparty/libhv/all/client/requests.h"
@@ -20,8 +22,13 @@
 #include <fstream>
 #include <memory>
 #include <sstream>
+#include <iomanip>
 #include <cstdlib>
 #include <ctime>
+#include <cstdio>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 namespace earthai
 {
@@ -668,7 +675,9 @@ namespace earthai
             AWAIT_CONFIRM,      // A/B 都就绪,等待用户在确认 Modal 里点「确认」
             SUBMITTING,         // 已确认,worker 线程正在提交 Veo predictLongRunning 请求
             POLLING,            // 已拿到 operation 名字,worker 线程在轮询直到 done
-            DOWNLOADING_FAKE    // EARTH_AI_FAKE_MP4 路径的"模拟延迟"阶段(见 update() 里的 tick 判断)
+            DOWNLOADING_FAKE,   // EARTH_AI_FAKE_MP4 路径的"模拟延迟"阶段(见 update() 里的 tick 判断)
+            CAPTURING_ORBIT,    // 应用控制同一台相机逐帧走完整 360° 轨迹
+            ENCODING_ORBIT      // 原生 AVFoundation 把已渲染 PNG 帧编码为 H.264 MP4
             // review:曾有 DONE_HANDLED 收尾态,但 phase 从未被赋成它——DONE/FAILED/超时
             // 三条路径都是"处理完直接 resetVideo() 回 IDLE"(见 POLLING 分支与
             // DOWNLOADING_FAKE 分支),不存在"下一帧再回 IDLE"这一步,枚举值和对应分支都是
@@ -688,6 +697,10 @@ namespace earthai
         CinematicGenerationSettings cinematicSettings;
         PhotoCaptureRequest anchorCapture;
         PhotoCaptureRequest endCapture;
+        OneTakeOrbitPlan orbitPlan;
+        std::size_t orbitFrameIndex = 0;
+        std::vector<std::string> orbitFramePaths;
+        std::string orbitCaptureDir;
 
         std::thread worker;
         bool workerJoinable = false;
@@ -718,7 +731,7 @@ namespace earthai
           _state(IDLE), _jobId(0), _photoRequestId(0), _workerJoinable(false),
           _viewRenderUpdateTicks(0),
           _waitSnapshotTicks(0),
-          _hudHideCount(0),
+          _hudHideCount(0), _captureSceneAdjustmentCount(0),
           _video(new VideoJob), _videoGrabber(viewer)
     {}
 
@@ -772,9 +785,12 @@ namespace earthai
     // 均在主线程(渲染线程的 FRAME 回调)执行,与 SnapshotGrabber 本身的线程约束一致。
     // 不碰任何相机 NodeMask(见 ai_media.h 构造函数注释的踩坑记录)——只是个计数器,真正的
     // "跳过 ImGui 内容"发生在 EarthControlUI::runInternal() 读 isHudHidden() 的地方。
-    void MediaManager::hudHide()
+    void MediaManager::hudHide(bool adjustScene)
     {
-        const int previousCount = _hudHideCount.fetch_add(1);
+        _hudHideCount.fetch_add(1);
+        if (!adjustScene) return;
+
+        const int previousCount = _captureSceneAdjustmentCount.fetch_add(1);
         // 快门补光:第一次进入快门态时保存当前太阳方向,并把太阳对准相机——保证夜面/背光
         // 视角的快照也是亮的(构图参考不能是黑图)。恢复在 hudRestore() 计数归零时。
         // 注意:若用户开了"真实时间太阳",EarthControlUI 每帧会重写 WorldSunDir,可能在
@@ -802,12 +818,21 @@ namespace earthai
         _earth->commonUniforms["WorldSunDir"]->set(dir);
     }
 
-    void MediaManager::hudRestore()
+    void MediaManager::hudRestore(bool adjustScene)
     {
-        int count = _hudHideCount.load();
-        while (count > 0 && !_hudHideCount.compare_exchange_weak(count, count - 1)) {}
-        if (count <= 0) return;   // 防御:不应发生,但 CAS 保证计数不会下溢
-        if (count == 1 && _sunDirSaved && _earth && _earth->commonUniforms.count("WorldSunDir"))
+        int hudCount = _hudHideCount.load();
+        while (hudCount > 0 &&
+               !_hudHideCount.compare_exchange_weak(hudCount, hudCount - 1)) {}
+        if (hudCount <= 0) return;   // 防御:没有对应 hide 时不触碰任何计数/场景状态
+        if (!adjustScene) return;
+
+        int sceneCount = _captureSceneAdjustmentCount.load();
+        while (sceneCount > 0 &&
+               !_captureSceneAdjustmentCount.compare_exchange_weak(
+                   sceneCount, sceneCount - 1)) {}
+        if (sceneCount <= 0) return;   // 防御:不应发生,但 CAS 保证计数不会下溢
+        if (sceneCount == 1 && _sunDirSaved && _earth &&
+            _earth->commonUniforms.count("WorldSunDir"))
         {
             _earth->commonUniforms["WorldSunDir"]->set(_savedSunDir);   // 快门结束:恢复原太阳
             if (_earth->commonUniforms.count("LabelOpacity"))
@@ -971,7 +996,7 @@ namespace earthai
         }
 
         // 快门期间每 tick 重申补光(对抗"真实时间太阳"每帧重写,见 hudHide 注释)
-        if (_hudHideCount.load() > 0) applyFillLight();
+        if (_captureSceneAdjustmentCount.load() > 0) applyFillLight();
         updateVideoInternal();
         updatePhotoInternal();
 
@@ -1268,9 +1293,45 @@ namespace earthai
             (++_cinematicRequestSerial % 100000LL);
         const PhotoCaptureRequest capture = makePhotoCaptureRequest(
             input, camera, requestId);
-        CinematicGenerationRequest validation;
-        if (!makeCinematicGenerationRequest(capture, settings, validation))
-            return false;
+
+        OneTakeOrbitPlan orbitPlan;
+        if (settings.motion == CINEMATIC_MOTION_ORBIT_360)
+        {
+            // This path is deliberately local: no image-to-video provider is allowed to
+            // invent the camera motion.  Preserve the exact world-space camera eye/up,
+            // freeze the visible ground target, and rotate both around that target's
+            // geodetic vertical.  The provider-based production gate remains false until
+            // a manual visual pass approves this rendered-frame path.
+            if (settings.durationSeconds < cinematicMinimumDurationSeconds(
+                    settings.motion) || settings.durationSeconds > 30)
+                return false;
+            osg::Vec3d eyeWorld, lookAtWorld, cameraUp;
+            camera.visibleViewMatrix.getLookAt(
+                eyeWorld, lookAtWorld, cameraUp, 1.0);
+            const osg::Vec3d eyeEcef = photoLlaToEcef(camera.cameraEyeLla);
+            const osg::Vec3d worldOffset = eyeWorld - eyeEcef;
+            osg::Vec3d targetLla = capture.targetLla;
+            const osg::Vec3d targetWorld = photoLlaToEcef(targetLla) + worldOffset;
+            const double latitude = targetLla[0];
+            const double longitude = targetLla[1];
+            OneTakeOrbitSeed seed;
+            seed.eye = eyeWorld;
+            seed.target = targetWorld;
+            seed.orbitAxis.set(
+                std::cos(latitude) * std::cos(longitude),
+                std::cos(latitude) * std::sin(longitude),
+                std::sin(latitude));
+            seed.cameraUp = cameraUp;
+            if (!makeOneTakeOrbitPlan(
+                    seed, settings.durationSeconds, 24, orbitPlan))
+                return false;
+        }
+        else
+        {
+            CinematicGenerationRequest validation;
+            if (!makeCinematicGenerationRequest(capture, settings, validation))
+                return false;
+        }
 
         if (!beginVideoCapture(camera.cameraEyeLla, std::string()))
             return false;
@@ -1278,6 +1339,18 @@ namespace earthai
         _video->singleAnchor = !cinematicMotionNeedsEndFrame(settings.motion);
         _video->cinematicSettings = settings;
         _video->anchorCapture = capture;
+        _video->orbitPlan = orbitPlan;
+        return true;
+    }
+
+    bool MediaManager::applyDeterministicVideoCamera()
+    {
+        if (!_viewer || !_viewer->getCamera() ||
+            _video->phase != VideoJob::CAPTURING_ORBIT ||
+            _video->orbitFrameIndex >= _video->orbitPlan.frames.size())
+            return false;
+        _viewer->getCamera()->setViewMatrix(
+            _video->orbitPlan.frames[_video->orbitFrameIndex].viewMatrix);
         return true;
     }
 
@@ -1363,7 +1436,10 @@ namespace earthai
 
         std::string fakeMp4;
         bool hasFake = fakeMp4Path(fakeMp4);
-        if (_apiKey.empty() && !hasFake)
+        const bool deterministicOrbit = _video->cinematic &&
+            _video->cinematicSettings.motion == CINEMATIC_MOTION_ORBIT_360 &&
+            !_video->orbitPlan.frames.empty();
+        if (_apiKey.empty() && !hasFake && !deterministicOrbit)
         {
             picojson::object err;
             err["error"] = picojson::value(std::string("no EARTH_AI_KEY and no EARTH_AI_FAKE_MP4 configured"));
@@ -1377,7 +1453,40 @@ namespace earthai
         _jobs.update(_video->jobId, AIJob::RUNNING, 0.2f, "", "");
         if (_cards) _cards->pushJob(&_jobs, _video->jobId, u8"生成巡航视频");
 
-        if (hasFake)
+        if (deterministicOrbit)
+        {
+            _video->orbitCaptureDir = outDir() + "/orbit_frames_" +
+                std::to_string(epoch) + "_" +
+                std::to_string(_video->anchorCapture.requestId);
+            if (!osgDB::makeDirectory(_video->orbitCaptureDir))
+            {
+                _jobs.update(_video->jobId, AIJob::FAILED, 1.0f, "",
+                             "cannot create deterministic orbit frame directory");
+                if (_cards) _cards->removeJob(_video->jobId);
+                resetVideo();
+                picojson::object err;
+                err["error"] = picojson::value(std::string(
+                    "cannot create deterministic orbit frame directory"));
+                applyVideoOwnerCommandResult(false);
+                return picojson::value(err);
+            }
+            _video->orbitFrameIndex = 0;
+            _video->orbitFramePaths.clear();
+            std::ostringstream frameName;
+            frameName << _video->orbitCaptureDir << "/frame_"
+                      << std::setw(6) << std::setfill('0')
+                      << _video->orbitFrameIndex << ".png";
+            // 本地确定性环拍必须逐帧保留用户正在看的太阳、时间与标注状态；这里只隐藏
+            // 应用 UI，不能套用 AI 参考图的补光/去标注处理。
+            hudHide(false);
+            _videoGrabber.grab(frameName.str());
+            _video->orbitFramePaths.push_back(capturedPath(frameName.str()));
+            _video->waitSnapshotTicks = 0;
+            _video->phase = VideoJob::CAPTURING_ORBIT;
+            OSG_NOTICE << "[AIChat] deterministic orbit capture started frames="
+                       << _video->orbitPlan.frames.size() << std::endl;
+        }
+        else if (hasFake)
         {
             // 离线 E2E:跳过网络,模拟一个短延迟(~100 ticks,见类头 spec)后直接"完成"。
             _video->fakeDelayTicks = 0;
@@ -1582,7 +1691,10 @@ namespace earthai
         // 阶段 hudRestore() 已经在对应快照 ready() 时调用过(计数已归零),这里再调用一次
         // hudHide()/hudRestore() 不对称的话会有下溢风险——用 videoPhase() 精确判断是否
         // "抓帧中"来决定要不要补这一次 restore。
-        if (_video->phase == VideoJob::WAIT_A || _video->phase == VideoJob::CAPTURING_B)
+        if (_video->phase == VideoJob::CAPTURING_ORBIT)
+            hudRestore(false);
+        else if (_video->phase == VideoJob::WAIT_A ||
+                 _video->phase == VideoJob::CAPTURING_B)
             hudRestore();
         // 取消发生在"确认之前"(WAIT_A/WAIT_B/CAPTURING_B/AWAIT_CONFIRM),此时还没建 Job、
         // 没花任何网络请求成本,直接清零状态即可,无需处理 job(它此时还不存在)——
@@ -1599,6 +1711,12 @@ namespace earthai
     void MediaManager::resetVideo()
     {
         if (_video->workerJoinable && _video->worker.joinable()) _video->worker.join();
+        for (std::size_t index = 0; index < _video->orbitFramePaths.size(); ++index)
+            std::remove(_video->orbitFramePaths[index].c_str());
+#if !defined(_WIN32)
+        if (!_video->orbitCaptureDir.empty())
+            ::rmdir(_video->orbitCaptureDir.c_str());
+#endif
         *_video = VideoJob();
     }
 
@@ -1624,11 +1742,24 @@ namespace earthai
             _videoGrabber.cropToViewport(v.snapPathA);   // 裁掉未渲染边条
             if (v.cinematic && v.singleAnchor)
             {
-                CinematicGenerationRequest request = cinematicRequestUnchecked(
-                    v.anchorCapture, v.cinematicSettings);
                 v.llaB = v.llaA;
                 v.snapPathB.clear();
-                v.motionPrompt = buildCinematicVideoPrompt(request);
+                if (v.cinematicSettings.motion == CINEMATIC_MOTION_ORBIT_360 &&
+                    !v.orbitPlan.frames.empty())
+                {
+                    std::ostringstream contract;
+                    contract << u8"本地确定性 360° 一镜到底：固定当前画面中心，"
+                             << v.orbitPlan.frames.size() << u8" 个连续渲染帧，"
+                             << v.orbitPlan.framesPerSecond << u8" fps；"
+                             << u8"不调用生成模型编造运镜，不允许切镜或重置机位。";
+                    v.motionPrompt = contract.str();
+                }
+                else
+                {
+                    CinematicGenerationRequest request = cinematicRequestUnchecked(
+                        v.anchorCapture, v.cinematicSettings);
+                    v.motionPrompt = buildCinematicVideoPrompt(request);
+                }
                 v.phase = VideoJob::AWAIT_CONFIRM;
                 OSG_NOTICE << "[AIChat] cinematic single-anchor video awaiting confirm"
                            << std::endl;
@@ -1671,6 +1802,117 @@ namespace earthai
                 v.motionPrompt = buildVideoPrompt(v.llaA, v.llaB, v.style);
             v.phase = VideoJob::AWAIT_CONFIRM;
             OSG_NOTICE << "[AIChat] generate_video awaiting confirm, prompt=" << v.motionPrompt << std::endl;
+            return;
+        }
+
+        if (v.phase == VideoJob::CAPTURING_ORBIT)
+        {
+            if (v.orbitFrameIndex >= v.orbitPlan.frames.size() ||
+                v.orbitFramePaths.size() != v.orbitFrameIndex + 1)
+            {
+                hudRestore(false);
+                _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "",
+                             "deterministic orbit frame state is inconsistent");
+                if (_cards) _cards->removeJob(v.jobId);
+                if (_chatCore) _chatCore->addErrorNote(
+                    u8"环拍失败：逐帧状态不一致");
+                resetVideo();
+                return;
+            }
+
+            std::ostringstream currentName;
+            currentName << v.orbitCaptureDir << "/frame_"
+                        << std::setw(6) << std::setfill('0')
+                        << v.orbitFrameIndex << ".png";
+            const std::string currentRequestPath = currentName.str();
+            if (!_videoGrabber.ready(currentRequestPath))
+            {
+                if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
+                {
+                    hudRestore(false);
+                    _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "",
+                                 "deterministic orbit frame capture timeout");
+                    if (_cards) _cards->removeJob(v.jobId);
+                    if (_chatCore) _chatCore->addErrorNote(
+                        u8"环拍失败：逐帧截图超时");
+                    resetVideo();
+                }
+                return;
+            }
+
+            _videoGrabber.cropToViewport(currentRequestPath);
+            ++v.orbitFrameIndex;
+            const float capturedProgress = static_cast<float>(
+                v.orbitFrameIndex) / static_cast<float>(v.orbitPlan.frames.size());
+            _jobs.update(v.jobId, AIJob::RUNNING,
+                         0.1f + 0.75f * capturedProgress, "", "");
+            if (v.orbitFrameIndex < v.orbitPlan.frames.size())
+            {
+                std::ostringstream nextName;
+                nextName << v.orbitCaptureDir << "/frame_"
+                         << std::setw(6) << std::setfill('0')
+                         << v.orbitFrameIndex << ".png";
+                _videoGrabber.grab(nextName.str());
+                v.orbitFramePaths.push_back(capturedPath(nextName.str()));
+                v.waitSnapshotTicks = 0;
+                return;
+            }
+
+            // Camera override ends before encoding. The original EarthManipulator was
+            // never mutated, so the next normal frame restores the user's exact view.
+            hudRestore(false);
+            const std::vector<std::string> frames = v.orbitFramePaths;
+            const int fps = v.orbitPlan.framesPerSecond;
+            const std::string output = v.mp4Path;
+            const int jobId = v.jobId;
+            JobManager* jobs = &_jobs;
+            if (v.workerJoinable && v.worker.joinable()) v.worker.join();
+            v.worker = std::thread([frames, fps, output, jobId, jobs]()
+            {
+                std::string error;
+                if (!encodePngSequenceToH264Mp4(frames, fps, output, error))
+                {
+                    jobs->update(jobId, AIJob::FAILED, 1.0f, "",
+                        error.empty() ? "native orbit encoder failed" : error);
+                    return;
+                }
+                jobs->update(jobId, AIJob::DONE, 1.0f, output, "");
+            });
+            v.workerJoinable = true;
+            v.phase = VideoJob::ENCODING_ORBIT;
+            OSG_NOTICE << "[AIChat] deterministic orbit encoding started -> "
+                       << output << std::endl;
+            return;
+        }
+
+        if (v.phase == VideoJob::ENCODING_ORBIT)
+        {
+            AIJob snap;
+            if (!_jobs.get(v.jobId, snap)) { resetVideo(); return; }
+            if (snap.status == AIJob::RUNNING)
+            {
+                _jobs.creepProgress(v.jobId,
+                    std::min(0.97f, snap.progress + 0.0008f));
+                return;
+            }
+            if (v.workerJoinable && v.worker.joinable()) v.worker.join();
+            v.workerJoinable = false;
+            if (_cards) _cards->removeJob(v.jobId);
+            if (snap.status == AIJob::DONE)
+            {
+                if (_cards) _cards->pushPhoto(
+                    snap.resultPath, u8"360° 一镜到底环拍", true);
+                OSG_NOTICE << "[AIChat] deterministic orbit done -> "
+                           << snap.resultPath << std::endl;
+            }
+            else
+            {
+                if (_chatCore) _chatCore->addErrorNote(
+                    u8"环拍编码失败：" + snap.error);
+                OSG_WARN << "[AIChat] deterministic orbit encoding failed: "
+                         << snap.error << std::endl;
+            }
+            resetVideo();
             return;
         }
 

@@ -26,6 +26,7 @@
 // 直接 include 到测试翻译单元。
 #include "../applications/earth_explorer/ai_prompts.h"
 #include "../applications/earth_explorer/ai_cinematic_request.h"
+#include "../applications/earth_explorer/ai_orbit_trajectory.h"
 #if __has_include("../applications/earth_explorer/ai_photo_request.h")
 #include "../applications/earth_explorer/ai_photo_request.h"
 #define OSGSOL_HAS_PHOTO_REQUEST 1
@@ -990,6 +991,41 @@ int main(int, char**)
             CHECK(earthai::cinematicMinimumDurationSeconds(video.motion) == 8);
             CHECK(earthai::cinematicMotionRequiresClosureReview(video.motion));
             CHECK(!earthai::cinematicMotionProductionReady(video.motion));
+            {
+                // A genuine one-take orbit is an application-owned camera path, not a
+                // model prompt.  Sample a simple tilted camera at the four quadrants
+                // and require exact closure with one stable target and radius.
+                earthai::OneTakeOrbitSeed seed;
+                seed.eye.set(10.0, 0.0, 5.0);
+                seed.target.set(0.0, 0.0, 0.0);
+                seed.orbitAxis.set(0.0, 0.0, 1.0);
+                seed.cameraUp.set(0.0, 0.0, 1.0);
+
+                earthai::OneTakeOrbitPlan orbit;
+                CHECK(earthai::makeOneTakeOrbitPlan(seed, 8, 24, orbit));
+                CHECK(orbit.frames.size() == 192);
+                CHECK(orbit.durationSeconds == 8);
+                CHECK(orbit.framesPerSecond == 24);
+                CHECK(earthai::oneTakeOrbitPlanIsContinuous(orbit, 1.0e-10));
+
+                const earthai::OneTakeOrbitFrame start =
+                    earthai::sampleOneTakeOrbit(seed, 0.0);
+                const earthai::OneTakeOrbitFrame right =
+                    earthai::sampleOneTakeOrbit(seed, 0.25);
+                const earthai::OneTakeOrbitFrame rear =
+                    earthai::sampleOneTakeOrbit(seed, 0.5);
+                const earthai::OneTakeOrbitFrame left =
+                    earthai::sampleOneTakeOrbit(seed, 0.75);
+                const earthai::OneTakeOrbitFrame closed =
+                    earthai::sampleOneTakeOrbit(seed, 1.0);
+                CHECK((start.eye - osg::Vec3d(10.0, 0.0, 5.0)).length() < 1.0e-10);
+                CHECK((right.eye - osg::Vec3d(0.0, 10.0, 5.0)).length() < 1.0e-10);
+                CHECK((rear.eye - osg::Vec3d(-10.0, 0.0, 5.0)).length() < 1.0e-10);
+                CHECK((left.eye - osg::Vec3d(0.0, -10.0, 5.0)).length() < 1.0e-10);
+                CHECK((closed.eye - start.eye).length() < 1.0e-10);
+                CHECK((closed.target - start.target).length() < 1.0e-10);
+                CHECK(std::fabs(closed.azimuthRadians - 2.0 * osg::PI) < 1.0e-12);
+            }
             CHECK(earthai::buildCinematicVideoPrompt(
                 earthai::cinematicRequestUnchecked(capture, video)).find(
                     "360-degree orbit") != std::string::npos);
