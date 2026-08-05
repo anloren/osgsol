@@ -364,6 +364,8 @@ int main()
         media, "void SnapshotGrabber::reapTerminalGeneration()");
     const std::string snapshotGrab = extractFunctionBody(
         media, "std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::grab(");
+    const std::string outerDraw = extractFunctionBody(
+        media, "virtual void operator()(osg::RenderInfo& renderInfo) const");
     CHECK(snapshotReady.find("capture->completedSuccessfully()") !=
           std::string::npos);
     CHECK(snapshotReady.find("capture->requestedPath() != pngPath") !=
@@ -429,8 +431,10 @@ int main()
           std::string::npos);
     CHECK(snapshotTerminalReaper.find("_timeoutRetainedGenerations") ==
           std::string::npos);
-    CHECK(media.find("camera->getFinalDrawCallback() == callback") !=
-          std::string::npos);
+    // The render thread only publishes wrapper quiescence. All camera callback reads/writes
+    // stay on the FRAME owner; an ExitGuard check-then-clear is a TOCTOU against re-arm.
+    CHECK(outerDraw.find("getFinalDrawCallback") == std::string::npos);
+    CHECK(outerDraw.find("setFinalDrawCallback") == std::string::npos);
 
     // Architectural regression guard: a live worker cancellation only transitions to async
     // reaping. resetVideo checks workerDone before its sole join, so FRAME/ESC never waits for

@@ -159,16 +159,11 @@ namespace earthai
             struct ExitGuard
             {
                 const GenerationDrawCallback* callback;
-                osg::Camera* camera;
                 ~ExitGuard()
                 {
-                    // An old raw callback may begin after main-thread retirement. It must only
-                    // clear itself, never a newer generation installed on the same camera.
-                    if (camera && camera->getFinalDrawCallback() == callback)
-                        camera->setFinalDrawCallback(0);
                     callback->_inFlight.fetch_sub(1, std::memory_order_acq_rel);
                 }
-            } guard { this, renderInfo.getCurrentCamera() };
+            } guard { this };
             if (_inner.valid()) (*_inner)(renderInfo);
         }
 

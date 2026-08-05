@@ -124,6 +124,6 @@
 
 ### Task 6B outer-callback and timeout-ownership correction (2026-08-06)
 
-- 安装到 camera 的是 generation 自己的外层 `DrawCallback`，它包住不可变的 OSG `WindowCaptureCallback` 并覆盖完整 enter/exit。外层退出时只在 camera 仍持有它自身 identity 时清除 callback；因此主线程替换为新 generation 后，迟到旧 callback 绝不可能清掉新 callback。
+- 安装到 camera 的是 generation 自己的外层 `DrawCallback`，它包住不可变的 OSG `WindowCaptureCallback` 并覆盖完整 enter/exit。外层 render-thread 退出只发布 in-flight 归零，绝不读写 camera；所有 arm 和按 identity 摘除都由 FRAME owner 串行完成，消除 ExitGuard check-then-clear 与新 generation 重 arm 的 TOCTOU。
 - 正常终态 generation 仅在外层回调已 quiescent 且不再挂在 camera 时释放；仍在 flight 的正常 generation 进入可回收列表。timeout 在外层 entry 前获胜则永久保留该 generation（OSG 可能已拿到 raw pointer 而尚未计入 in-flight），与正常可回收列表严格分离。
 - 照片、视频 A/B 和当前 360° 环拍帧的 timeout 都在 reset 前记录 token、所有可晚到 PNG、既有环拍帧和目录到统一延迟清理队列。若 `retire` 输给已开始写入，清理器等待 token 终态后删除；环拍 timeout 使用 `resetVideo(false)`，不再让即时目录删除与迟到写入竞争。
