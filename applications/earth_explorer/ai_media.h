@@ -81,11 +81,13 @@ namespace earthai
     class SnapshotCaptureSlot
     {
     public:
-        bool begin(const std::string& requestedPath)
+        std::shared_ptr<SnapshotCaptureController> begin(
+            const std::string& requestedPath)
         {
-            if (_active && !_active->terminal()) return false;
+            if (_active && !_active->terminal())
+                return std::shared_ptr<SnapshotCaptureController>();
             _active = std::make_shared<SnapshotCaptureController>(requestedPath);
-            return true;
+            return _active;
         }
 
         void cancel()
@@ -108,11 +110,10 @@ namespace earthai
     {
     public:
         explicit SnapshotGrabber(osgViewer::Viewer* viewer);
-        // Returns false when a previous cancelled callback has not reached terminal state yet.
-        bool grab(const std::string& pngPath);   // 触发一次抓帧(覆盖写);同时重置跨帧稳定性状态
-        // Cancellation is non-blocking. The returned controller remains valid for deferred
-        // cleanup; its terminal() flag becomes true after a skipped or completed callback.
-        std::shared_ptr<SnapshotCaptureController> cancelActiveCapture();
+        // Returns this request's controller, or null when any earlier callback has not reached
+        // terminal state. Callers retain their own token and must never cancel the grabber's
+        // current slot on behalf of an older request.
+        std::shared_ptr<SnapshotCaptureController> grab(const std::string& pngPath);
 
         // 真正的跨帧稳定性判断:调用方(MediaManager::update())每帧调一次 ready()。
         // 本次看到的文件大小与"上一次调用 ready() 时"记录的大小相比——只有连续两次不同的
@@ -418,7 +419,7 @@ namespace earthai
         void setContentSize(int w, int h)
         {
             _contentW = w; _contentH = h;
-            _grabber.setContentSize(w, h); _videoGrabber.setContentSize(w, h);
+            _grabber.setContentSize(w, h);
         }
         void applyFillLight();   // 内部:把太阳对准相机(快门补光)
 
@@ -509,7 +510,10 @@ namespace earthai
         std::string _imageModel;
         std::string _videoModel;
         MediaRouteCapabilities _routeCapabilities;
+        // One shared ScreenCaptureHandler serializes photo and video requests against the
+        // camera's final-draw callback. Per-request tokens preserve ownership after a job resets.
         SnapshotGrabber _grabber;
+        std::shared_ptr<SnapshotCaptureController> _photoCaptureToken;
         JobManager _jobs;
         // v0.15-vision 收尾修复:异步生图/生视频 FAILED 时把错误呈现到聊天记录(见 setChatCore
         // 注释)。可空——每处使用前必须 null 检查。
@@ -597,11 +601,6 @@ namespace earthai
         mutable std::mutex _videoSnapshotMutex;
         VideoUiSnapshot _videoSnapshot;
 
-        // 独立的第二个 SnapshotGrabber:照片流程的 _grabber 与视频的 A/B 快照都可能同时
-        // "在等待稳定"(用户点了视频 A 点又几乎同时点了照片按钮),共用一个 SnapshotGrabber
-        // 会导致 grab() 互相覆盖对方的捕获目标。两条流程完全独立、开销可忽略(只是一个
-        // ScreenCaptureHandler),分开更安全。
-        SnapshotGrabber _videoGrabber;
         long long _cinematicRequestSerial = 0;
 
         picojson::value startCinematicImageJob(

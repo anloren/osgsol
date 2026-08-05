@@ -134,6 +134,34 @@ int main()
     CHECK(firstCapture->terminal());
     CHECK(captureSlot.begin("second.png"));
 
+    // Photo and video share one render callback. A cancelled video request keeps the shared
+    // slot reserved until its no-op callback is terminal; the video token, not the slot's
+    // later active request, is what a deferred video cleanup may cancel.
+    SnapshotCaptureSlot sharedCaptureSlot;
+    CHECK(sharedCaptureSlot.begin("video-a.png"));
+    std::shared_ptr<SnapshotCaptureController> videoToken = sharedCaptureSlot.active();
+    videoToken->cancel();
+    CHECK(!sharedCaptureSlot.begin("photo-after-video-cancel.png"));
+    CHECK(videoToken->beginCallback() == SNAPSHOT_CAPTURE_SKIP_CANCELLED);
+    CHECK(videoToken->terminal());
+    CHECK(sharedCaptureSlot.begin("photo-after-video-terminal.png"));
+
+    SnapshotCaptureSlot photoFirstSlot;
+    CHECK(photoFirstSlot.begin("photo-active.png"));
+    CHECK(!photoFirstSlot.begin("video-while-photo-active.png"));
+
+    SnapshotCaptureSlot terminalVideoThenPhotoSlot;
+    CHECK(terminalVideoThenPhotoSlot.begin("video-terminal.png"));
+    std::shared_ptr<SnapshotCaptureController> terminalVideoToken =
+        terminalVideoThenPhotoSlot.active();
+    CHECK(terminalVideoToken->beginCallback() == SNAPSHOT_CAPTURE_WRITE_DELEGATE);
+    terminalVideoToken->completeCallback();
+    CHECK(terminalVideoThenPhotoSlot.begin("newer-photo.png"));
+    std::shared_ptr<SnapshotCaptureController> newerPhotoToken =
+        terminalVideoThenPhotoSlot.active();
+    terminalVideoToken->cancel();
+    CHECK(!newerPhotoToken->cancelled());
+
     VideoUiRequestQueue queue;
     VideoUiRequest first; first.kind = VideoUiRequest::Begin;
     first.lla = osg::Vec3d(1.0, 2.0, 3.0);
@@ -249,6 +277,17 @@ int main()
         "applications/earth_explorer/earth_main.cpp");
     CHECK(!ui.empty() && !uiHeader.empty() && !media.empty() && !mediaHeader.empty());
     CHECK(!setup.empty() && !earthMain.empty());
+
+    // The final draw callback is shared by photo and video. MediaManager therefore owns one
+    // SnapshotGrabber/ScreenCaptureHandler coordinator, rather than two independently safe-
+    // looking handlers that can replace each other's pending operation.
+    CHECK(countOccurrences(mediaHeader, "SnapshotGrabber _grabber;") == 1);
+    CHECK(mediaHeader.find("_videoGrabber") == std::string::npos);
+    CHECK(countOccurrences(media, "_grabber(viewer)") == 1);
+    CHECK(countOccurrences(media, "new osgViewer::ScreenCaptureHandler(") == 1);
+    CHECK(media.find("snapCaptureTokenA") != std::string::npos);
+    CHECK(media.find("snapCaptureTokenB") != std::string::npos);
+    CHECK(media.find("orbitCaptureToken") != std::string::npos);
 
     // Architectural regression guard: a live worker cancellation only transitions to async
     // reaping. resetVideo checks workerDone before its sole join, so FRAME/ESC never waits for
@@ -426,7 +465,7 @@ int main()
     CHECK(captureEnd.rfind("applyVideoOwnerCommandResult(true);") <
           captureEnd.rfind("return true;"));
 
-    CHECK(countOccurrences(confirmVideo, "applyVideoOwnerCommandResult(false);") == 3);
+    CHECK(countOccurrences(confirmVideo, "applyVideoOwnerCommandResult(false);") == 4);
     CHECK(countOccurrences(confirmVideo, "applyVideoOwnerCommandResult(true);") == 1);
     size_t firstConfirmFailure = confirmVideo.find("applyVideoOwnerCommandResult(false);");
     size_t firstConfirmReturn = confirmVideo.find("return picojson::value(err);");

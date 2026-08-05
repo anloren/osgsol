@@ -97,3 +97,9 @@
 - 视频取消立即恢复 HUD、卡片和视频状态机；A/B 快照、局部 MP4、360 环拍帧及帧目录转为独立的延迟清理记录。FRAME 只轮询终态，绝不等待截图回调、网络或编码器；删除失败会留下可重试记录并显示具体路径错误，ENOENT 视为已清理。
 - 已通过无窗口 `osgVerse_Test_MediaThreading`（含取消前/写入中/正常接受/禁止覆盖状态合同）、`osgVerse_Test_Ai_Chat`、`osgSol_Test_CinematicVideoEncoder`；`osgVerse_EarthExplorer` 与 `osgVerse_Test_EarthProductUiGlRuntime` 仅完成编译。
 - 债务/人工验收：没有启动 EarthExplorer、GL 审计或桌面 App，因此真实渲染回调的取消时序、迟到 PNG 的实际删除与环拍画面连续性仍须在获准的人工 macOS 手测中确认；这里不能把编译和纯状态测试表述为运行时视觉验收。
+
+### Task 6B shared-capture coordinator correction (2026-08-06)
+
+- 复审确认照片与视频虽然原先各有 `ScreenCaptureHandler`，但都挂在同一相机最终绘制回调；两个 handler 不能并行视为安全。现已收敛为 `MediaManager` 的唯一 `SnapshotGrabber`，因此任一未终态截图都会明确拒绝另一条照片/视频路线，而不会覆盖旧回调。
+- `grab()` 返回请求自己的 token。视频 `VideoJob` 分别保存 A、B 与当前环拍帧 token；取消/延迟回收只操作这个保存的 token，绝不对共享 grabber 的“当前”请求猜测性取消，因而不会误取消后发照片。
+- 照片路线在共享槽繁忙时立即恢复 HUD、失败并移除作业卡；不会转入等待一个从未预约的文件路径。纯无窗口测试覆盖视频取消→照片拒绝→视频终态后照片接受、照片活跃时视频拒绝，以及终态视频取消不影响更新照片。

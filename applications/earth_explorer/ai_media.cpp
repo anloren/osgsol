@@ -148,13 +148,15 @@ namespace earthai
         _viewer->addEventHandler(_capturer.get());
     }
 
-    bool SnapshotGrabber::grab(const std::string& pngPath)
+    std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::grab(
+        const std::string& pngPath)
     {
-        if (!_slot.begin(pngPath))
+        const std::shared_ptr<SnapshotCaptureController> token = _slot.begin(pngPath);
+        if (!token)
         {
             OSG_WARN << "[AIChat] snapshot request still awaits cancelled callback: "
                      << pngPath << std::endl;
-            return false;
+            return std::shared_ptr<SnapshotCaptureController>();
         }
 
         // pngPath 末尾去掉 ".png" 作为 WriteToFile 的前缀(它自己会拼回 "_0.png")。
@@ -169,19 +171,13 @@ namespace earthai
             new osgViewer::ScreenCaptureHandler::WriteToFile(
                 prefix, "png", osgViewer::ScreenCaptureHandler::WriteToFile::OVERWRITE);
         osg::ref_ptr<CancellableCaptureOperation> operation =
-            new CancellableCaptureOperation(writer.get(), _slot.active());
+            new CancellableCaptureOperation(writer.get(), token);
         _capturer->setCaptureOperation(operation.get());
         _capturer->setFramesToCapture(1);
         _capturer->captureNextFrame(*_viewer);
         _lastSize = 0;   // 新一轮抓帧:清掉上一轮遗留的大小记录,避免 ready() 首次调用就误判稳定
         OSG_NOTICE << "[AIChat] snapshot grab -> " << pngPath << std::endl;
-        return true;
-    }
-
-    std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::cancelActiveCapture()
-    {
-        _slot.cancel();
-        return _slot.active();
+        return token;
     }
 
     bool SnapshotGrabber::ready(const std::string& pngPath)
@@ -751,6 +747,11 @@ namespace earthai
         OneTakeOrbitPlan orbitPlan;
         std::size_t orbitFrameIndex = 0;
         std::vector<std::string> orbitFramePaths;
+        // Each route retains its own capture token. A cancellation must never infer ownership
+        // from the shared grabber's currently active request, which could already be a photo.
+        std::shared_ptr<SnapshotCaptureController> snapCaptureTokenA;
+        std::shared_ptr<SnapshotCaptureController> snapCaptureTokenB;
+        std::shared_ptr<SnapshotCaptureController> orbitCaptureToken;
         std::string orbitCaptureDir;
         bool hudHidden = false;
         bool hudAdjustScene = true;
@@ -790,7 +791,7 @@ namespace earthai
           _viewRenderUpdateTicks(0),
           _waitSnapshotTicks(0),
           _hudHideCount(0), _captureSceneAdjustmentCount(0),
-          _video(new VideoJob), _videoGrabber(viewer)
+          _video(new VideoJob)
     {
         std::string ignored;
         _routeCapabilities.hasRealMediaKey = !_apiKey.empty();
@@ -1154,7 +1155,20 @@ namespace earthai
                 return;
             }
             hudHide();
-            _grabber.grab(_snapPath);
+            _photoCaptureToken = _grabber.grab(_snapPath);
+            if (!_photoCaptureToken)
+            {
+                hudRestore();
+                _jobs.update(_jobId, AIJob::FAILED, 1.0f, "",
+                             "photo capture busy: previous capture is still draining");
+                if (_cards) _cards->removeJob(_jobId);
+                if (_chatCore)
+                    _chatCore->addErrorNote(
+                        u8"照片生成失败：前一截图仍在回收");
+                OSG_WARN << "[AIChat] photo capture refused: shared snapshot busy" << std::endl;
+                _state = IDLE;
+                return;
+            }
             _state = WAITING_SNAPSHOT;
             _waitSnapshotTicks = 0;
             return;
@@ -1170,6 +1184,7 @@ namespace earthai
                 if (++_waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore();   // 超时收尾:即便快照没成功,HUD 也必须复原,不能永久隐藏
+                    if (_photoCaptureToken) _photoCaptureToken->cancel();
                     _jobs.update(_jobId, AIJob::FAILED, 1.0f, "", "snapshot timeout");
                     if (_cards) _cards->removeJob(_jobId);
                     if (_chatCore) _chatCore->addErrorNote(u8"照片生成失败：snapshot timeout");
@@ -1204,7 +1219,19 @@ namespace earthai
                     _state = IDLE;
                     return;
                 }
-                _grabber.grab(_snapPath);
+                _photoCaptureToken = _grabber.grab(_snapPath);
+                if (!_photoCaptureToken)
+                {
+                    hudRestore();
+                    _jobs.update(_jobId, AIJob::FAILED, 1.0f, "",
+                                 "photo recapture busy: previous capture is still draining");
+                    if (_cards) _cards->removeJob(_jobId);
+                    if (_chatCore)
+                        _chatCore->addErrorNote(
+                            u8"照片生成失败：前一截图仍在回收");
+                    _state = IDLE;
+                    return;
+                }
                 _waitSnapshotTicks = 0;
                 return;
             }
@@ -1408,7 +1435,8 @@ namespace earthai
         hudHide();
         _video->hudHidden = true;
         _video->hudAdjustScene = true;
-        if (!_videoGrabber.grab(_video->snapPathA))
+        _video->snapCaptureTokenA = _grabber.grab(_video->snapPathA);
+        if (!_video->snapCaptureTokenA)
         {
             hudRestore();
             _video->hudHidden = false;
@@ -1530,7 +1558,8 @@ namespace earthai
         hudHide();
         _video->hudHidden = true;
         _video->hudAdjustScene = true;
-        if (!_videoGrabber.grab(_video->snapPathB))
+        _video->snapCaptureTokenB = _grabber.grab(_video->snapPathB);
+        if (!_video->snapCaptureTokenB)
         {
             hudRestore();
             _video->hudHidden = false;
@@ -1645,7 +1674,21 @@ namespace earthai
             hudHide(false);
             _video->hudHidden = true;
             _video->hudAdjustScene = false;
-            _videoGrabber.grab(frameName.str());
+            _video->orbitCaptureToken = _grabber.grab(frameName.str());
+            if (!_video->orbitCaptureToken)
+            {
+                hudRestore(false); _video->hudHidden = false;
+                _jobs.update(_video->jobId, AIJob::FAILED, 1.0f, "",
+                             "deterministic orbit capture busy");
+                if (_cards) _cards->removeJob(_video->jobId);
+                publishVideoFailure("deterministic orbit capture busy");
+                resetVideo();
+                picojson::object err;
+                err["error"] = picojson::value(std::string(
+                    "deterministic orbit capture busy"));
+                applyVideoOwnerCommandResult(false);
+                return picojson::value(err);
+            }
             _video->orbitFramePaths.push_back(capturedPath(frameName.str()));
             _video->waitSnapshotTicks = 0;
             _video->phase = VideoJob::CAPTURING_ORBIT;
@@ -1903,7 +1946,17 @@ namespace earthai
     {
         VideoJob& v = *_video;
         DeferredCaptureCleanup cleanup;
-        cleanup.capture = _videoGrabber.cancelActiveCapture();
+        if (v.phase == VideoJob::WAIT_A)
+            cleanup.capture = v.snapCaptureTokenA;
+        else if (v.phase == VideoJob::CAPTURING_B)
+            cleanup.capture = v.snapCaptureTokenB;
+        else if (v.phase == VideoJob::CAPTURING_ORBIT)
+            cleanup.capture = v.orbitCaptureToken;
+        else if (v.snapCaptureTokenB)
+            cleanup.capture = v.snapCaptureTokenB;
+        else
+            cleanup.capture = v.snapCaptureTokenA;
+        if (cleanup.capture) cleanup.capture->cancel();
         if (!v.snapPathA.empty()) cleanup.paths.push_back(capturedPath(v.snapPathA));
         if (!v.snapPathB.empty()) cleanup.paths.push_back(capturedPath(v.snapPathB));
         if (!v.mp4Path.empty()) cleanup.paths.push_back(v.mp4Path);
@@ -2001,7 +2054,7 @@ namespace earthai
 
         if (v.phase == VideoJob::WAIT_A)
         {
-            if (!_videoGrabber.ready(v.snapPathA))
+            if (!_grabber.ready(v.snapPathA))
             {
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
@@ -2033,11 +2086,18 @@ namespace earthai
                 }
                 v.anchorCapture = rebuilt;
                 hudHide(); v.hudHidden = true; v.hudAdjustScene = true;
-                _videoGrabber.grab(v.snapPathA);
+                v.snapCaptureTokenA = _grabber.grab(v.snapPathA);
+                if (!v.snapCaptureTokenA)
+                {
+                    hudRestore(); v.hudHidden = false;
+                    publishVideoFailure("A-point recapture busy");
+                    resetVideo();
+                    return;
+                }
                 v.waitSnapshotTicks = 0;
                 return;
             }
-            _videoGrabber.cropToViewport(v.snapPathA);   // 裁掉未渲染边条
+            _grabber.cropToViewport(v.snapPathA);   // 裁掉未渲染边条
             if (v.cinematic && v.singleAnchor)
             {
                 v.llaB = v.llaA;
@@ -2079,7 +2139,7 @@ namespace earthai
 
         if (v.phase == VideoJob::CAPTURING_B)
         {
-            if (!_videoGrabber.ready(v.snapPathB))
+            if (!_grabber.ready(v.snapPathB))
             {
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
@@ -2111,11 +2171,18 @@ namespace earthai
                 }
                 v.endCapture = rebuilt;
                 hudHide(); v.hudHidden = true; v.hudAdjustScene = true;
-                _videoGrabber.grab(v.snapPathB);
+                v.snapCaptureTokenB = _grabber.grab(v.snapPathB);
+                if (!v.snapCaptureTokenB)
+                {
+                    hudRestore(); v.hudHidden = false;
+                    publishVideoFailure("B-point recapture busy");
+                    resetVideo();
+                    return;
+                }
                 v.waitSnapshotTicks = 0;
                 return;
             }
-            _videoGrabber.cropToViewport(v.snapPathB);   // 裁掉未渲染边条
+            _grabber.cropToViewport(v.snapPathB);   // 裁掉未渲染边条
             // 生成视频提示词预览(用户反馈 3:改用 buildVideoPrompt——geo 上下文 + A->B 轨迹 +
             // 电影运镜语言,取代旧的纯 buildMotionPrompt 轨迹句子;buildVideoPrompt 内部仍会
             // 调 buildMotionPrompt 拼轨迹描述,不重复实现)。
@@ -2153,7 +2220,7 @@ namespace earthai
                         << std::setw(6) << std::setfill('0')
                         << v.orbitFrameIndex << ".png";
             const std::string currentRequestPath = currentName.str();
-            if (!_videoGrabber.ready(currentRequestPath))
+            if (!_grabber.ready(currentRequestPath))
             {
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
@@ -2167,7 +2234,7 @@ namespace earthai
                 return;
             }
 
-            _videoGrabber.cropToViewport(currentRequestPath);
+            _grabber.cropToViewport(currentRequestPath);
             ++v.orbitFrameIndex;
             const float capturedProgress = static_cast<float>(
                 v.orbitFrameIndex) / static_cast<float>(v.orbitPlan.frames.size());
@@ -2179,7 +2246,17 @@ namespace earthai
                 nextName << v.orbitCaptureDir << "/frame_"
                          << std::setw(6) << std::setfill('0')
                          << v.orbitFrameIndex << ".png";
-                _videoGrabber.grab(nextName.str());
+                v.orbitCaptureToken = _grabber.grab(nextName.str());
+                if (!v.orbitCaptureToken)
+                {
+                    hudRestore(false); v.hudHidden = false;
+                    _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "",
+                                 "deterministic orbit capture busy");
+                    if (_cards) _cards->removeJob(v.jobId);
+                    publishVideoFailure("deterministic orbit capture busy");
+                    resetVideo();
+                    return;
+                }
                 v.orbitFramePaths.push_back(capturedPath(nextName.str()));
                 v.waitSnapshotTicks = 0;
                 return;
