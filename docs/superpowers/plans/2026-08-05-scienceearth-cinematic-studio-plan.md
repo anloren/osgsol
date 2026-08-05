@@ -90,3 +90,10 @@
 - Science ON 非窗口离线回归：82/82；Science OFF 非窗口离线回归：33/33；`git diff --check` 通过。
 - 未启动或聚焦桌面 App，未创建监听端口，未改 macOS 设置，未打包、签名、打 tag 或推送。
 - 尚未用真实云端额度生成历史照片或视频样片；画面科学性、运动连续性、真实费用与时延必须在后续真机手测包中验收。
+
+### Task 6B runtime-capture cancellation follow-up (2026-08-06)
+
+- `ScreenCaptureHandler` 的每次单帧请求现在都有独立、可取消的终态控制器。取消发生在回调前时不调用 `WriteToFile`；写入已开始时保留该写入，并在回调终态后才允许回收文件。
+- 视频取消立即恢复 HUD、卡片和视频状态机；A/B 快照、局部 MP4、360 环拍帧及帧目录转为独立的延迟清理记录。FRAME 只轮询终态，绝不等待截图回调、网络或编码器；删除失败会留下可重试记录并显示具体路径错误，ENOENT 视为已清理。
+- 已通过无窗口 `osgVerse_Test_MediaThreading`（含取消前/写入中/正常接受/禁止覆盖状态合同）、`osgVerse_Test_Ai_Chat`、`osgSol_Test_CinematicVideoEncoder`；`osgVerse_EarthExplorer` 与 `osgVerse_Test_EarthProductUiGlRuntime` 仅完成编译。
+- 债务/人工验收：没有启动 EarthExplorer、GL 审计或桌面 App，因此真实渲染回调的取消时序、迟到 PNG 的实际删除与环拍画面连续性仍须在获准的人工 macOS 手测中确认；这里不能把编译和纯状态测试表述为运行时视觉验收。

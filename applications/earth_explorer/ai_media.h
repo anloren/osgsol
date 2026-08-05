@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <deque>
 #include <ios>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -32,6 +33,72 @@ namespace earthai
     const std::string& resolvedCinematicImageModel();
     class AIChatCore;   // 前置声明:MediaManager 只持有裸指针(setChatCore 注入),不需要完整定义
 
+    // One ScreenCaptureHandler request is asynchronous with respect to the caller.  Keep its
+    // cancellation/terminal state separate from MediaManager::VideoJob so a cancelled video can
+    // return its UI to IDLE immediately while a late render callback is still made harmless.
+    enum SnapshotCaptureCallbackResult
+    {
+        SNAPSHOT_CAPTURE_SKIP_CANCELLED,
+        SNAPSHOT_CAPTURE_WRITE_DELEGATE
+    };
+
+    class SnapshotCaptureController
+    {
+    public:
+        explicit SnapshotCaptureController(const std::string& requestedPath)
+            : _requestedPath(requestedPath) {}
+
+        const std::string& requestedPath() const { return _requestedPath; }
+        void cancel() { _cancelled.store(true); }
+        bool cancelled() const { return _cancelled.load(); }
+        bool delegateStarted() const { return _delegateStarted.load(); }
+        bool terminal() const { return _terminal.load(); }
+
+        SnapshotCaptureCallbackResult beginCallback()
+        {
+            if (_cancelled.load())
+            {
+                _terminal.store(true);
+                return SNAPSHOT_CAPTURE_SKIP_CANCELLED;
+            }
+            // From this point the callback owns the delegate invocation. A subsequent cancel
+            // asks for deferred cleanup after completeCallback(), rather than racing a write.
+            _delegateStarted.store(true);
+            return SNAPSHOT_CAPTURE_WRITE_DELEGATE;
+        }
+
+        void completeCallback() { _terminal.store(true); }
+
+    private:
+        std::string _requestedPath;
+        std::atomic<bool> _cancelled { false };
+        std::atomic<bool> _delegateStarted { false };
+        std::atomic<bool> _terminal { false };
+    };
+
+    // Main-thread owner for the currently installed one-shot OSG operation. It intentionally
+    // refuses replacement until a cancelled operation's callback reaches terminal state.
+    class SnapshotCaptureSlot
+    {
+    public:
+        bool begin(const std::string& requestedPath)
+        {
+            if (_active && !_active->terminal()) return false;
+            _active = std::make_shared<SnapshotCaptureController>(requestedPath);
+            return true;
+        }
+
+        void cancel()
+        {
+            if (_active) _active->cancel();
+        }
+
+        std::shared_ptr<SnapshotCaptureController> active() const { return _active; }
+
+    private:
+        std::shared_ptr<SnapshotCaptureController> _active;
+    };
+
     // 抓当前帧到 PNG 文件。基于 osgViewer::ScreenCaptureHandler(EARTH_AUTOCAP 同款),
     // 挂到 viewer 上按需触发单帧捕获;写盘由捕获回调在渲染后完成(异步:调用 grab() 之后
     // 要过几帧文件才会出现,ready() 供轮询)。
@@ -41,7 +108,11 @@ namespace earthai
     {
     public:
         explicit SnapshotGrabber(osgViewer::Viewer* viewer);
-        void grab(const std::string& pngPath);   // 触发一次抓帧(覆盖写);同时重置跨帧稳定性状态
+        // Returns false when a previous cancelled callback has not reached terminal state yet.
+        bool grab(const std::string& pngPath);   // 触发一次抓帧(覆盖写);同时重置跨帧稳定性状态
+        // Cancellation is non-blocking. The returned controller remains valid for deferred
+        // cleanup; its terminal() flag becomes true after a skipped or completed callback.
+        std::shared_ptr<SnapshotCaptureController> cancelActiveCapture();
 
         // 真正的跨帧稳定性判断:调用方(MediaManager::update())每帧调一次 ready()。
         // 本次看到的文件大小与"上一次调用 ready() 时"记录的大小相比——只有连续两次不同的
@@ -62,6 +133,7 @@ namespace earthai
     private:
         osgViewer::Viewer* _viewer;
         osg::ref_ptr<osgViewer::ScreenCaptureHandler> _capturer;  // 唯一实例,构造时创建并挂一次
+        SnapshotCaptureSlot _slot;
         std::streamsize _lastSize;   // 上一次 ready() 调用时测到的文件大小,0=尚未测到/已重置
         int _contentW = 0, _contentH = 0;   // 裁剪矩形(左下原点),0=未设置
     };
@@ -492,12 +564,26 @@ namespace earthai
         void clearVideoStatusBanner();
         void finalizeVideoCancellation();
 
+        struct DeferredCaptureCleanup
+        {
+            std::vector<std::string> paths;
+            std::string directory;
+            std::shared_ptr<SnapshotCaptureController> capture;
+            bool failureReported = false;
+        };
+        // A cancellation returns the visible job to IDLE immediately, but its one-shot screen
+        // capture may still receive a render callback. Reap only after that controller is
+        // terminal, then remove the late artifacts without blocking FRAME.
+        void deferCancelledVideoCaptureCleanup();
+        void reapDeferredCaptureCleanups();
+        std::vector<DeferredCaptureCleanup> _deferredCaptureCleanups;
+
         // 安全地把 *_video 重置为初始状态:先 join 掉可能还 joinable 的 worker 线程,
         // 再做 *_video = VideoJob()(move-assign)。std::thread 的 move 赋值要求目标线程
         // 对象此刻不 joinable,否则直接 std::terminate——本函数是 updateVideoInternal()/
         // cancelVideo() 里所有"重置视频状态"的唯一入口,不再各处手写裸的
         // "*_video = VideoJob()",避免遗漏 join 埋雷。
-        void resetVideo();
+        void resetVideo(bool removeOrbitArtifacts = true);
 
         // ---- 视频状态机内部实现(.cpp 里定义完整 enum VideoPhase,这里只前置声明用到的类型)----
         struct VideoJob;   // .cpp 内定义:review 建议的 PendingJob 提取,视频专用(字段与照片不同,

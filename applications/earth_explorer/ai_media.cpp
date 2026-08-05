@@ -88,6 +88,35 @@ namespace earthai
         return prefix + "_0.png";
     }
 
+    // ScreenCaptureHandler invokes its operation after a future render traversal.  The wrapper
+    // keeps cancellation state with that individual invocation, so changing the handler's next
+    // operation can never turn an old cancelled callback into an untracked late file write.
+    class CancellableCaptureOperation : public osgViewer::ScreenCaptureHandler::CaptureOperation
+    {
+    public:
+        CancellableCaptureOperation(
+            osgViewer::ScreenCaptureHandler::WriteToFile* delegate,
+            const std::shared_ptr<SnapshotCaptureController>& controller)
+            : _delegate(delegate), _controller(controller) {}
+
+        virtual void operator()(const osg::Image& image, const unsigned int contextId)
+        {
+            if (!_controller ||
+                _controller->beginCallback() == SNAPSHOT_CAPTURE_SKIP_CANCELLED)
+                return;
+            struct TerminalSetter
+            {
+                std::shared_ptr<SnapshotCaptureController> controller;
+                ~TerminalSetter() { controller->completeCallback(); }
+            } terminal { _controller };
+            (*_delegate)(image, contextId);
+        }
+
+    private:
+        osg::ref_ptr<osgViewer::ScreenCaptureHandler::WriteToFile> _delegate;
+        std::shared_ptr<SnapshotCaptureController> _controller;
+    };
+
     static bool writeFileBytes(const std::string& path, const std::string& bytes)
     {
         std::ofstream ofs(path.c_str(), std::ios::binary | std::ios::trunc);
@@ -119,8 +148,15 @@ namespace earthai
         _viewer->addEventHandler(_capturer.get());
     }
 
-    void SnapshotGrabber::grab(const std::string& pngPath)
+    bool SnapshotGrabber::grab(const std::string& pngPath)
     {
+        if (!_slot.begin(pngPath))
+        {
+            OSG_WARN << "[AIChat] snapshot request still awaits cancelled callback: "
+                     << pngPath << std::endl;
+            return false;
+        }
+
         // pngPath 末尾去掉 ".png" 作为 WriteToFile 的前缀(它自己会拼回 "_0.png")。
         std::string prefix = pngPath;
         const std::string ext = ".png";
@@ -132,11 +168,20 @@ namespace earthai
         osg::ref_ptr<osgViewer::ScreenCaptureHandler::WriteToFile> writer =
             new osgViewer::ScreenCaptureHandler::WriteToFile(
                 prefix, "png", osgViewer::ScreenCaptureHandler::WriteToFile::OVERWRITE);
-        _capturer->setCaptureOperation(writer.get());
+        osg::ref_ptr<CancellableCaptureOperation> operation =
+            new CancellableCaptureOperation(writer.get(), _slot.active());
+        _capturer->setCaptureOperation(operation.get());
         _capturer->setFramesToCapture(1);
         _capturer->captureNextFrame(*_viewer);
         _lastSize = 0;   // 新一轮抓帧:清掉上一轮遗留的大小记录,避免 ready() 首次调用就误判稳定
         OSG_NOTICE << "[AIChat] snapshot grab -> " << pngPath << std::endl;
+        return true;
+    }
+
+    std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::cancelActiveCapture()
+    {
+        _slot.cancel();
+        return _slot.active();
     }
 
     bool SnapshotGrabber::ready(const std::string& pngPath)
@@ -1059,6 +1104,7 @@ namespace earthai
         if (_captureSceneAdjustmentCount.load() > 0) applyFillLight();
         updateVideoInternal();
         updatePhotoInternal();
+        reapDeferredCaptureCleanups();
 
         VideoUiSnapshot snapshot;
         snapshot.phase = videoPhase();
@@ -1362,7 +1408,15 @@ namespace earthai
         hudHide();
         _video->hudHidden = true;
         _video->hudAdjustScene = true;
-        _videoGrabber.grab(_video->snapPathA);
+        if (!_videoGrabber.grab(_video->snapPathA))
+        {
+            hudRestore();
+            _video->hudHidden = false;
+            *_video = VideoJob();
+            publishVideoFailure("previous cancelled snapshot is still draining");
+            applyVideoOwnerCommandResult(false);
+            return false;
+        }
         _video->phase = VideoJob::WAIT_A;
         _video->waitSnapshotTicks = 0;
 
@@ -1476,7 +1530,15 @@ namespace earthai
         hudHide();
         _video->hudHidden = true;
         _video->hudAdjustScene = true;
-        _videoGrabber.grab(_video->snapPathB);
+        if (!_videoGrabber.grab(_video->snapPathB))
+        {
+            hudRestore();
+            _video->hudHidden = false;
+            _video->phase = VideoJob::WAIT_B;
+            publishVideoFailure("previous cancelled snapshot is still draining");
+            applyVideoOwnerCommandResult(false);
+            return false;
+        }
         _video->phase = VideoJob::CAPTURING_B;
         _video->waitSnapshotTicks = 0;
 
@@ -1833,16 +1895,72 @@ namespace earthai
                 _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "", "cancelled");
             if (_cards) _cards->removeJob(v.jobId);
         }
-        if (!v.snapPathA.empty()) std::remove(capturedPath(v.snapPathA).c_str());
-        if (!v.snapPathB.empty()) std::remove(capturedPath(v.snapPathB).c_str());
-        if (!v.mp4Path.empty()) std::remove(v.mp4Path.c_str());
-        resetVideo();
+        deferCancelledVideoCaptureCleanup();
+        resetVideo(false);
+    }
+
+    void MediaManager::deferCancelledVideoCaptureCleanup()
+    {
+        VideoJob& v = *_video;
+        DeferredCaptureCleanup cleanup;
+        cleanup.capture = _videoGrabber.cancelActiveCapture();
+        if (!v.snapPathA.empty()) cleanup.paths.push_back(capturedPath(v.snapPathA));
+        if (!v.snapPathB.empty()) cleanup.paths.push_back(capturedPath(v.snapPathB));
+        if (!v.mp4Path.empty()) cleanup.paths.push_back(v.mp4Path);
+        cleanup.paths.insert(cleanup.paths.end(), v.orbitFramePaths.begin(),
+                             v.orbitFramePaths.end());
+        cleanup.directory = v.orbitCaptureDir;
+        if (!cleanup.paths.empty() || !cleanup.directory.empty())
+            _deferredCaptureCleanups.push_back(cleanup);
+    }
+
+    void MediaManager::reapDeferredCaptureCleanups()
+    {
+        for (std::size_t index = 0; index < _deferredCaptureCleanups.size(); )
+        {
+            DeferredCaptureCleanup& cleanup = _deferredCaptureCleanups[index];
+            if (cleanup.capture && !cleanup.capture->terminal())
+            {
+                ++index;
+                continue;
+            }
+
+            std::string failedPath;
+            for (std::size_t pathIndex = 0; pathIndex < cleanup.paths.size(); ++pathIndex)
+            {
+                const std::string& path = cleanup.paths[pathIndex];
+                if (!osgDB::fileExists(path)) continue;  // ENOENT is already clean.
+                if (std::remove(path.c_str()) != 0 && osgDB::fileExists(path))
+                {
+                    failedPath = path;
+                    break;
+                }
+            }
+#if !defined(_WIN32)
+            if (failedPath.empty() && !cleanup.directory.empty() &&
+                osgDB::fileExists(cleanup.directory) &&
+                ::rmdir(cleanup.directory.c_str()) != 0 &&
+                osgDB::fileExists(cleanup.directory))
+                failedPath = cleanup.directory;
+#endif
+            if (!failedPath.empty())
+            {
+                if (!cleanup.failureReported)
+                {
+                    cleanup.failureReported = true;
+                    publishVideoFailure("cancelled capture cleanup failed: " + failedPath);
+                }
+                ++index;  // Keep retrying later without hiding a persistent failure.
+                continue;
+            }
+            _deferredCaptureCleanups.erase(_deferredCaptureCleanups.begin() + index);
+        }
     }
 
     // std::thread 的 move 赋值要求目标对象此刻不 joinable,否则直接 std::terminate——
     // FRAME 永远不得 join 活 worker。若有未终态 worker，转换为 CANCELLING，由后续
     // FRAME tick 在 workerDone 发布后收割；这让 Esc/按钮取消始终即时。
-    void MediaManager::resetVideo()
+    void MediaManager::resetVideo(bool removeOrbitArtifacts)
     {
         if (_video->workerJoinable && _video->worker.joinable())
         {
@@ -1855,12 +1973,15 @@ namespace earthai
             _video->worker.join();
             _video->workerJoinable = false;
         }
-        for (std::size_t index = 0; index < _video->orbitFramePaths.size(); ++index)
-            std::remove(_video->orbitFramePaths[index].c_str());
+        if (removeOrbitArtifacts)
+        {
+            for (std::size_t index = 0; index < _video->orbitFramePaths.size(); ++index)
+                std::remove(_video->orbitFramePaths[index].c_str());
 #if !defined(_WIN32)
-        if (!_video->orbitCaptureDir.empty())
-            ::rmdir(_video->orbitCaptureDir.c_str());
+            if (!_video->orbitCaptureDir.empty())
+                ::rmdir(_video->orbitCaptureDir.c_str());
 #endif
+        }
         *_video = VideoJob();
     }
 

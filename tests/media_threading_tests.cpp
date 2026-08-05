@@ -97,6 +97,43 @@ int main()
     CHECK(classifyVideoPollHttp(true, 401) == VIDEO_POLL_TERMINAL_ERROR);
     CHECK(classifyVideoPollHttp(true, 200) == VIDEO_POLL_PARSE_BODY);
 
+    // A screenshot request remains independently observable after a video job has been
+    // cancelled.  Cancelling before the render callback must make that callback a no-op;
+    // cancelling after the callback has begun permits the in-flight write to finish, then
+    // exposes a terminal state for deferred cleanup.
+    SnapshotCaptureController cancelledBeforeCallback("before.png");
+    cancelledBeforeCallback.cancel();
+    CHECK(cancelledBeforeCallback.beginCallback() == SNAPSHOT_CAPTURE_SKIP_CANCELLED);
+    CHECK(cancelledBeforeCallback.terminal());
+    CHECK(!cancelledBeforeCallback.delegateStarted());
+
+    SnapshotCaptureController cancelledDuringWrite("during.png");
+    CHECK(cancelledDuringWrite.beginCallback() == SNAPSHOT_CAPTURE_WRITE_DELEGATE);
+    CHECK(cancelledDuringWrite.delegateStarted());
+    cancelledDuringWrite.cancel();
+    CHECK(!cancelledDuringWrite.terminal());
+    cancelledDuringWrite.completeCallback();
+    CHECK(cancelledDuringWrite.terminal());
+    CHECK(cancelledDuringWrite.cancelled());
+
+    SnapshotCaptureController accepted("accepted.png");
+    CHECK(accepted.beginCallback() == SNAPSHOT_CAPTURE_WRITE_DELEGATE);
+    accepted.completeCallback();
+    CHECK(accepted.terminal());
+    CHECK(!accepted.cancelled());
+
+    // SnapshotGrabber must not replace a cancelled request while the one-shot OSG callback
+    // still owns it; otherwise the old callback can write a late file to a now-untracked path.
+    SnapshotCaptureSlot captureSlot;
+    CHECK(captureSlot.begin("first.png"));
+    captureSlot.cancel();
+    CHECK(!captureSlot.begin("second.png"));
+    std::shared_ptr<SnapshotCaptureController> firstCapture = captureSlot.active();
+    CHECK(firstCapture.get() != NULL);
+    CHECK(firstCapture->beginCallback() == SNAPSHOT_CAPTURE_SKIP_CANCELLED);
+    CHECK(firstCapture->terminal());
+    CHECK(captureSlot.begin("second.png"));
+
     VideoUiRequestQueue queue;
     VideoUiRequest first; first.kind = VideoUiRequest::Begin;
     first.lla = osg::Vec3d(1.0, 2.0, 3.0);
@@ -219,7 +256,7 @@ int main()
     const std::string cancelVideoAsync = extractFunctionBody(
         media, "void MediaManager::cancelVideo()");
     const std::string resetVideo = extractFunctionBody(
-        media, "void MediaManager::resetVideo()");
+        media, "void MediaManager::resetVideo(bool removeOrbitArtifacts)");
     CHECK(cancelVideoAsync.find("VIDEO_CANCEL_ASYNC_REAP") != std::string::npos);
     CHECK(cancelVideoAsync.find("VideoJob::CANCELLING") != std::string::npos);
     CHECK(resetVideo.find("if (!_video->workerDone->load())") != std::string::npos);
@@ -249,8 +286,14 @@ int main()
     CHECK(ui.find("CINEMATIC_MOTION_ORBIT_360") != std::string::npos);
     const std::string finalizer = extractFunctionBody(
         media, "void MediaManager::finalizeVideoCancellation()");
+    const std::string deferredReaper = extractFunctionBody(
+        media, "void MediaManager::reapDeferredCaptureCleanups()");
     CHECK(finalizer.find("existing.status == AIJob::RUNNING") != std::string::npos);
     CHECK(finalizer.find("\"cancelled\"") != std::string::npos);
+    CHECK(finalizer.find("deferCancelledVideoCaptureCleanup()") != std::string::npos);
+    CHECK(finalizer.find("resetVideo(false)") != std::string::npos);
+    CHECK(deferredReaper.find("!cleanup.capture->terminal()") != std::string::npos);
+    CHECK(deferredReaper.find("cancelled capture cleanup failed: ") != std::string::npos);
 
     const std::string videoPoll = extractFunctionBody(
         media, "void VeoVideoProvider::poll(");
@@ -330,6 +373,7 @@ int main()
     size_t photoUpdate = update.find("updatePhotoInternal()");
     size_t publication = update.find("_videoSnapshot = snapshot;");
     CHECK(videoUpdate < photoUpdate && photoUpdate < publication);
+    CHECK(update.find("reapDeferredCaptureCleanups()") != std::string::npos);
 
     // Getter must return only the locked published value, never derive from live VideoJob state.
     CHECK(snapshotGetter.find("return _videoSnapshot;") != std::string::npos);
@@ -365,7 +409,7 @@ int main()
     // Direct owner methods explicitly preserve errors on failure and clear them on success.
     CHECK(ownerResult.find("_videoCommandError = reduceVideoOwnerCommandError(") !=
           std::string::npos);
-    CHECK(countOccurrences(beginVideo, "applyVideoOwnerCommandResult(false);") == 2);
+    CHECK(countOccurrences(beginVideo, "applyVideoOwnerCommandResult(false);") == 3);
     CHECK(countOccurrences(beginVideo, "applyVideoOwnerCommandResult(true);") == 1);
     CHECK(beginVideo.find(
         "!frozenCapture && !_routeCapabilities.canGeneratePointToPoint()") !=
@@ -375,7 +419,7 @@ int main()
     CHECK(beginVideo.rfind("applyVideoOwnerCommandResult(true);") <
           beginVideo.rfind("return true;"));
 
-    CHECK(countOccurrences(captureEnd, "applyVideoOwnerCommandResult(false);") == 2);
+    CHECK(countOccurrences(captureEnd, "applyVideoOwnerCommandResult(false);") == 3);
     CHECK(countOccurrences(captureEnd, "applyVideoOwnerCommandResult(true);") == 1);
     CHECK(captureEnd.find("applyVideoOwnerCommandResult(false);") <
           captureEnd.find("return false;"));
