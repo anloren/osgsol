@@ -349,7 +349,7 @@ int main()
     // looking handlers that can replace each other's pending operation.
     CHECK(countOccurrences(mediaHeader, "SnapshotGrabber _grabber;") == 1);
     CHECK(mediaHeader.find("_videoGrabber") == std::string::npos);
-    CHECK(countOccurrences(media, "_grabber(captureCamera)") == 1);
+    CHECK(countOccurrences(media, "_grabber(captureCamera, captureImage)") == 1);
     CHECK(countOccurrences(media, "new GenerationScreenCaptureHandler(") == 1);
     CHECK(media.find("snapCaptureTokenA") != std::string::npos);
     CHECK(media.find("snapCaptureTokenB") != std::string::npos);
@@ -365,7 +365,7 @@ int main()
     const std::string snapshotGrab = extractFunctionBody(
         media, "std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::grab(");
     const std::string snapshotConstructor = extractFunctionBody(
-        media, "SnapshotGrabber::SnapshotGrabber(osg::Camera* captureCamera)");
+        media, "SnapshotGrabber::SnapshotGrabber(");
     const std::string dispatcherDraw = extractFunctionBody(
         media, "virtual void operator()(osg::RenderInfo& renderInfo) const");
     CHECK(snapshotReady.find("capture->completedSuccessfully()") !=
@@ -382,6 +382,8 @@ int main()
     CHECK(mediaHeader.find("GenerationDispatcher") != std::string::npos);
     CHECK(mediaHeader.find("_dispatcherInstalled") != std::string::npos);
     CHECK(mediaHeader.find("osg::observer_ptr<osg::Camera> _captureCamera") !=
+          std::string::npos);
+    CHECK(mediaHeader.find("osg::observer_ptr<osg::Image> _captureImage") !=
           std::string::npos);
     CHECK(mediaHeader.find("_timeoutRetainedGenerations") == std::string::npos);
     CHECK(mediaHeader.find("_reapableGenerations") != std::string::npos);
@@ -440,6 +442,10 @@ int main()
     CHECK(snapshotGrab.find("_timeoutRetainedGenerations.push_back(generation)") ==
           std::string::npos);
     CHECK(snapshotGrab.find("_dispatcher->publish(generation)") != std::string::npos);
+    CHECK(snapshotGrab.find("if (_captureImage.valid())") != std::string::npos);
+    CHECK(snapshotGrab.find("generation->sourceImage = _captureImage") !=
+          std::string::npos);
+    CHECK(media.find("(*operation)(*sourceImage, 0u)") != std::string::npos);
     CHECK(snapshotGrab.find("setFinalDrawCallback") == std::string::npos);
     CHECK(snapshotGrab.find("getFinalDrawCallback") == std::string::npos);
     const std::string cropToViewport = extractFunctionBody(
@@ -513,12 +519,43 @@ int main()
         media, "void MediaManager::finalizeVideoCancellation()");
     const std::string deferredReaper = extractFunctionBody(
         media, "void MediaManager::reapDeferredCaptureCleanups()");
+    const std::string deferredEnqueue = extractFunctionBody(
+        media, "void MediaManager::deferCaptureCleanup(");
     CHECK(finalizer.find("existing.status == AIJob::RUNNING") != std::string::npos);
     CHECK(finalizer.find("\"cancelled\"") != std::string::npos);
     CHECK(finalizer.find("deferCancelledVideoCaptureCleanup()") != std::string::npos);
     CHECK(finalizer.find("resetVideo(false)") != std::string::npos);
-    CHECK(deferredReaper.find("!cleanup.capture->terminal()") != std::string::npos);
-    CHECK(deferredReaper.find("cancelled capture cleanup failed: ") != std::string::npos);
+    CHECK(mediaHeader.find("std::vector<std::shared_ptr<SnapshotCaptureController>> captures") !=
+          std::string::npos);
+    CHECK(mediaHeader.find("std::vector<std::string> directories") != std::string::npos);
+    CHECK(mediaHeader.find("nextAttemptFrame") != std::string::npos);
+    CHECK(media.find("kMaxDeferredCaptureCleanups = 16u") != std::string::npos);
+    CHECK(media.find("kMaxDeferredCleanupAttempts = 5u") != std::string::npos);
+    CHECK(deferredEnqueue.find("appendUniqueString") != std::string::npos);
+    CHECK(deferredEnqueue.find("mergeCleanup") != std::string::npos);
+    CHECK(deferredEnqueue.find("kMaxDeferredCaptureCleanups") != std::string::npos);
+    CHECK(deferredEnqueue.find("cleanup queue reached bounded capacity") !=
+          std::string::npos);
+    CHECK(deferredEnqueue.find("releasing cleanup for: ") != std::string::npos);
+    CHECK(deferredEnqueue.find("coalesced cleanup for: ") != std::string::npos);
+    CHECK(deferredReaper.find("cleanup.captures") != std::string::npos);
+    CHECK(deferredReaper.find("cleanup.paths.erase") != std::string::npos);
+    CHECK(deferredReaper.find("cleanup.directories.erase") != std::string::npos);
+    CHECK(deferredReaper.find("removeEmptyDirectory(directory)") != std::string::npos);
+    const size_t artifactRetryBegin = deferredReaper.find("// Attempt every artifact");
+    const size_t artifactRetryEnd = deferredReaper.find(
+        "if (cleanup.paths.empty()", artifactRetryBegin);
+    CHECK(artifactRetryBegin != std::string::npos &&
+          artifactRetryEnd != std::string::npos);
+    const std::string artifactRetryBlock = deferredReaper.substr(
+        artifactRetryBegin, artifactRetryEnd - artifactRetryBegin);
+    CHECK(artifactRetryBlock.find("break;") == std::string::npos);
+    CHECK(deferredReaper.find("cleanup.nextAttemptFrame") != std::string::npos);
+    CHECK(deferredReaper.find("kDeferredCleanupBackoffFrames") != std::string::npos);
+    CHECK(deferredReaper.find("cleanup.attempts >= kMaxDeferredCleanupAttempts") !=
+          std::string::npos);
+    CHECK(deferredReaper.find("exhausted bounded retries") != std::string::npos);
+    CHECK(deferredReaper.find("failedPath") == std::string::npos);
     CHECK(finalizer.find("generatedFramePathA") == std::string::npos);
     const std::string deferredVideoCleanup = extractFunctionBody(
         media, "void MediaManager::deferVideoCaptureCleanup(");
@@ -601,6 +638,9 @@ int main()
     CHECK(configureAI < viewerRun);
     CHECK(setup.find("deps.captureCamera") != std::string::npos);
     CHECK(earthMain.find("aiDeps.captureCamera = cameras[3]") != std::string::npos);
+    CHECK(setup.find("deps.captureImage") != std::string::npos);
+    CHECK(earthMain.find("aiDeps.captureImage = autoCaptureImage.get()") !=
+          std::string::npos);
     // EARTH_AUTOCAP must use the final composition camera's FBO image in every mode. A window
     // capture event handler would replace the same final callback slot at runtime.
     size_t autoCaptureBegin = earthMain.find("const char* autoCap = getenv(\"EARTH_AUTOCAP\")");
@@ -612,6 +652,8 @@ int main()
           std::string::npos);
     CHECK(autoCaptureBlock.find("cameras[3]->attach(osg::Camera::COLOR_BUFFER0") !=
           std::string::npos);
+    CHECK(autoCaptureBegin < configureAI);
+    CHECK(earthMain.find("[Earth] offscreen capture saved to") != std::string::npos);
     CHECK(autoCaptureBlock.find("ScreenCaptureHandler") == std::string::npos);
     CHECK(autoCaptureBlock.find("captureNextFrame") == std::string::npos);
     CHECK(autoCaptureBlock.find("addEventHandler") == std::string::npos);

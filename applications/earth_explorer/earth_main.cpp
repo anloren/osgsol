@@ -1646,11 +1646,25 @@ int main(int argc, char** argv)
     std::shared_ptr<earthproject::EarthProjectCommandBus> projectCommandBus(
         new earthproject::EarthProjectCommandBus(initialEarthProject));
 
+    // EARTH_AUTOCAP is a regression-image mode. Attach its persistent source image before AI
+    // setup so media generations can consume the final camera's completed FBO readback instead
+    // of asking a WindowCaptureCallback to read GL_BACK from an FBO-rendered camera.
+    const char* autoCap = getenv("EARTH_AUTOCAP");
+    osg::ref_ptr<osg::Image> autoCaptureImage;
+    if (autoCap && autoCap[0])
+    {
+        autoCaptureImage = new osg::Image;
+        autoCaptureImage->allocateImage(w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+        cameras[3]->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
+        cameras[3]->attach(osg::Camera::COLOR_BUFFER0, autoCaptureImage.get());
+    }
+
     // AIChatUI 先于 configureAIChat 创建：show_chart 工具的 execute 需要拿到它的指针
     // 才能把图表 spec 推进右上角卡片队列（同一个实例后面又挂到 ctrlUI->_aiUI 供 draw() 用）。
     AIChatUI* aiUI = new AIChatUI;
     AIChatDeps aiDeps;
     aiDeps.viewer = &viewer; aiDeps.captureCamera = cameras[3];
+    aiDeps.captureImage = autoCaptureImage.get();
     aiDeps.mani = earthManipulator.get(); aiDeps.layers = &layerMgr;
     aiDeps.flights = flightLayer; aiDeps.ui = aiUI;
     AIChatRuntime aiRuntime = configureAIChat(aiDeps);
@@ -2161,17 +2175,13 @@ int main(int argc, char** argv)
     // Headless auto-capture: render a fixed number of frames (letting the database
     // pager stream tiles) then grab the GL framebuffer to a PNG. Used to verify the
     // earth renders without relying on OS screen-capture permissions.
-    const char* autoCap = getenv("EARTH_AUTOCAP");
     if (autoCap && autoCap[0])
     {
         // Use the final composition camera's FBO image readback in both windowed and offscreen
         // modes. This never changes its final-draw callback slot, so it cannot race the stable
         // AI snapshot dispatcher. ImGui is POST_DRAW and therefore intentionally absent from
         // this regression image, leaving a deterministic Earth-only composition.
-        osg::ref_ptr<osg::Image> capImage = new osg::Image;
-        capImage->allocateImage(w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE);
-        cameras[3]->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
-        cameras[3]->attach(osg::Camera::COLOR_BUFFER0, capImage.get());
+        osg::ref_ptr<osg::Image> capImage = autoCaptureImage;
 
         int total = atoi(autoCap); if (total < 100) total = 600;
         // Optional: aim the sun at the camera-facing hemisphere so the day side
@@ -2223,7 +2233,16 @@ int main(int argc, char** argv)
             }
             else if (osgDB::writeImageFile(*capImage, "/tmp/earth_capture_0.png"))
             {
-                OSG_NOTICE << "[Earth] autocap saved to /tmp/earth_capture_0.png" << std::endl;
+                if (offscreenOk)
+                {
+                    OSG_NOTICE << "[Earth] offscreen capture saved to "
+                               << "/tmp/earth_capture_0.png" << std::endl;
+                }
+                else
+                {
+                    OSG_NOTICE << "[Earth] autocap saved to "
+                               << "/tmp/earth_capture_0.png" << std::endl;
+                }
             }
             else
             {

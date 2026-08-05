@@ -1,6 +1,7 @@
 #ifndef EARTH_AI_SETUP_H
 #define EARTH_AI_SETUP_H
 #include <osg/Camera>
+#include <osg/Image>
 #include <osgViewer/Viewer>
 #include "ai_tools.h"
 #include "ai_chat.h"
@@ -21,6 +22,9 @@ struct AIChatDeps
     // The fully composed output camera (Earth's cameras[3]), not viewer.getCamera().
     // Media capture installs its stable final-draw dispatcher here before viewer.run().
     osg::Camera* captureCamera = nullptr;
+    // EARTH_AUTOCAP's persistent final-camera FBO image. When present, media generations
+    // consume this completed image instead of reading GL_BACK/default framebuffer.
+    osg::Image* captureImage = nullptr;
     osgVerse::EarthManipulator* mani = nullptr;
     LayerManager* layers = nullptr;
     // 地震(quakes)不再是本结构体的字段:get_quakes_summary 已随 T2 迁移到 FeedLayer 框架,

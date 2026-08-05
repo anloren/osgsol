@@ -10,6 +10,7 @@
 #include "ai_photo_request.h"
 #include "ai_cinematic_request.h"
 #include "ai_prompts.h"
+#include <osg/Image>
 #include <osg/Vec3d>
 #include <osg/observer_ptr>
 #include <osgViewer/Viewer>
@@ -142,9 +143,9 @@ namespace earthai
         std::shared_ptr<SnapshotCaptureController> _active;
     };
 
-    // 抓当前帧到 PNG 文件。基于 osgViewer::ScreenCaptureHandler(EARTH_AUTOCAP 同款),
-    // 挂到 viewer 上按需触发单帧捕获;写盘由捕获回调在渲染后完成(异步:调用 grab() 之后
-    // 要过几帧文件才会出现,ready() 供轮询)。
+    // 抓当前帧到 PNG 文件。正式窗口模式使用按请求生成的 ScreenCaptureHandler 回调；
+    // EARTH_AUTOCAP 则直接消费 final camera 的持久 FBO osg::Image。两条路径都由相机的
+    // final-draw dispatcher 在合成完成后异步写盘，ready() 跨帧轮询结果。
     // The camera owns one process-stable dispatcher installed during MediaManager construction,
     // before viewer.realize()/run(). Each request publishes an immutable capture generation
     // through the dispatcher; FRAME never replaces or clears Camera::finalDrawCallback while
@@ -152,7 +153,7 @@ namespace earthai
     class SnapshotGrabber
     {
     public:
-        explicit SnapshotGrabber(osg::Camera* captureCamera);
+        SnapshotGrabber(osg::Camera* captureCamera, osg::Image* captureImage);
         ~SnapshotGrabber();
         // Returns this request's controller, or null when any earlier callback has not reached
         // terminal state. Callers retain their own token and must never cancel the grabber's
@@ -174,7 +175,7 @@ namespace earthai
         // 也不会共享首次观测值。path 必须与 token 的请求路径完全一致。
         bool ready(const std::shared_ptr<SnapshotCaptureController>& capture,
                    const std::string& pngPath);
-        // 快照就绪后按当前相机视口裁剪(抓帧抓的是整个窗口帧缓冲,可能比渲染视口大,
+        // 快照就绪后按当前相机视口裁剪(抓帧源可能比渲染视口大,
         // 多出的边缘是未渲染的底色,会污染构图参考)。主线程调用(与 ready 同处),
         // 读图-裁剪-回写同一路径;失败静默保留原图(提示词有 no-borders 兜底)。
         void cropToViewport(const std::string& pngPath);
@@ -189,6 +190,7 @@ namespace earthai
         // The same final composition camera that permanently owns the dispatcher. It is
         // observer-only so shutdown cannot keep the scene graph alive through MediaManager.
         osg::observer_ptr<osg::Camera> _captureCamera;
+        osg::observer_ptr<osg::Image> _captureImage;
         SnapshotCaptureSlot _slot;
         osg::ref_ptr<GenerationDispatcher> _dispatcher;
         bool _dispatcherInstalled = false;
@@ -452,7 +454,7 @@ namespace earthai
         MediaManager(osgViewer::Viewer* viewer, AICardPanel* cards,
                      const std::string& apiKeyOrEmpty,
                      osgVerse::EarthManipulator* photoManipulator,
-                     osg::Camera* captureCamera);
+                     osg::Camera* captureCamera, osg::Image* captureImage);
         ~MediaManager();
 
         JobManager* jobs() { return &_jobs; }
@@ -632,14 +634,16 @@ namespace earthai
 
         struct DeferredCaptureCleanup
         {
+            std::vector<std::shared_ptr<SnapshotCaptureController>> captures;
             std::vector<std::string> paths;
-            std::string directory;
-            std::shared_ptr<SnapshotCaptureController> capture;
-            bool failureReported = false;
+            std::vector<std::string> directories;
+            unsigned int attempts = 0;
+            unsigned long long nextAttemptFrame = 0;
         };
-        // A cancellation returns the visible job to IDLE immediately, but its one-shot screen
-        // capture may still receive a render callback. Reap only after that controller is
-        // terminal, then remove the late artifacts without blocking FRAME.
+        // A cancellation returns the visible job to IDLE immediately, but its one-shot capture
+        // may still receive a render callback. Entries merge duplicate capture/path ownership,
+        // wait for every controller, then retry every remaining artifact with bounded backoff.
+        // The queue is capped; terminal/exhausted entries publish a visible failure and release.
         void deferCaptureCleanup(
             const std::shared_ptr<SnapshotCaptureController>& capture,
             const std::vector<std::string>& paths, const std::string& directory);
@@ -648,6 +652,7 @@ namespace earthai
         void deferCancelledVideoCaptureCleanup();
         void reapDeferredCaptureCleanups();
         std::vector<DeferredCaptureCleanup> _deferredCaptureCleanups;
+        unsigned long long _deferredCleanupFrame = 0;
 
         // 安全地把 *_video 重置为初始状态:先 join 掉可能还 joinable 的 worker 线程,
         // 再做 *_video = VideoJob()(move-assign)。std::thread 的 move 赋值要求目标线程

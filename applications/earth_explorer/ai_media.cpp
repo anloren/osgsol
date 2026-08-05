@@ -26,7 +26,9 @@
 #include <cstdlib>
 #include <ctime>
 #include <cstdio>
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#include <direct.h>
+#else
 #include <unistd.h>
 #endif
 
@@ -88,6 +90,21 @@ namespace earthai
         return prefix + "_0.png";
     }
 
+    static const std::size_t kMaxDeferredCaptureCleanups = 16u;
+    static const unsigned int kMaxDeferredCleanupAttempts = 5u;
+    static const unsigned int kDeferredCleanupBackoffFrames = 4u;
+
+    static bool removeEmptyDirectory(const std::string& path)
+    {
+        if (path.empty() || !osgDB::fileExists(path)) return true;
+#if defined(_WIN32)
+        const int result = ::_rmdir(path.c_str());
+#else
+        const int result = ::rmdir(path.c_str());
+#endif
+        return result == 0 || !osgDB::fileExists(path);
+    }
+
     // ScreenCaptureHandler invokes its operation after a future render traversal.  The wrapper
     // keeps cancellation state with that individual invocation, so changing the handler's next
     // operation can never turn an old cancelled callback into an untracked late file write.
@@ -146,6 +163,8 @@ namespace earthai
     struct SnapshotGrabber::CaptureGeneration
     {
         std::shared_ptr<SnapshotCaptureController> token;
+        osg::ref_ptr<CancellableCaptureOperation> operation;
+        osg::observer_ptr<osg::Image> sourceImage;
         osg::ref_ptr<GenerationScreenCaptureHandler> handler;
         osg::ref_ptr<osg::Camera::DrawCallback> callback;
         mutable std::atomic<unsigned int> _inFlight { 0 };
@@ -161,7 +180,14 @@ namespace earthai
                     generation->_inFlight.fetch_sub(1, std::memory_order_acq_rel);
                 }
             } guard { this };
-            if (callback.valid()) (*callback)(renderInfo);
+            if (sourceImage.valid() && operation.valid())
+            {
+                // EARTH_AUTOCAP owns one persistent image and capturedPath() intentionally
+                // resolves WriteToFile's single-context suffix as "_0.png".
+                (*operation)(*sourceImage, 0u);
+            }
+            else if (callback.valid())
+                (*callback)(renderInfo);
         }
 
         bool quiescent() const
@@ -197,8 +223,9 @@ namespace earthai
         mutable std::shared_ptr<CaptureGeneration> _generation;
     };
 
-    SnapshotGrabber::SnapshotGrabber(osg::Camera* captureCamera)
-        : _captureCamera(captureCamera)
+    SnapshotGrabber::SnapshotGrabber(
+        osg::Camera* captureCamera, osg::Image* captureImage)
+        : _captureCamera(captureCamera), _captureImage(captureImage)
     {
         // configureAIChat receives Earth's final composition camera (cameras[3]), constructs
         // MediaManager before registering FRAME handlers, and is called before viewer.run().
@@ -270,8 +297,14 @@ namespace earthai
         std::shared_ptr<CaptureGeneration> generation =
             std::make_shared<CaptureGeneration>();
         generation->token = token;
-        generation->handler = new GenerationScreenCaptureHandler(operation.get(), 0);
-        generation->callback = generation->handler->callbackIdentity();
+        generation->operation = operation;
+        if (_captureImage.valid())
+            generation->sourceImage = _captureImage;
+        else
+        {
+            generation->handler = new GenerationScreenCaptureHandler(operation.get(), 0);
+            generation->callback = generation->handler->callbackIdentity();
+        }
         // The dispatcher load in render obtains its own shared_ptr. FRAME only changes that
         // atomic publication, so a late RenderStage read can retain this immutable generation
         // without touching Camera::_finalDrawCallback.
@@ -932,10 +965,10 @@ namespace earthai
     MediaManager::MediaManager(osgViewer::Viewer* viewer, AICardPanel* cards,
                                const std::string& apiKeyOrEmpty,
                                osgVerse::EarthManipulator* photoManipulator,
-                               osg::Camera* captureCamera)
+                               osg::Camera* captureCamera, osg::Image* captureImage)
         : _viewer(viewer), _photoManipulator(photoManipulator), _cards(cards),
           _apiKey(apiKeyOrEmpty), _imageModel(resolvedCinematicImageModel()),
-          _videoModel(videoModel()), _grabber(captureCamera),
+          _videoModel(videoModel()), _grabber(captureCamera, captureImage),
           _state(IDLE), _jobId(0), _photoRequestId(0), _workerJoinable(false),
           _viewRenderUpdateTicks(0),
           _waitSnapshotTicks(0),
@@ -2105,13 +2138,98 @@ namespace earthai
         const std::shared_ptr<SnapshotCaptureController>& capture,
         const std::vector<std::string>& paths, const std::string& directory)
     {
+        _grabber.retire(capture);
+        if (paths.empty() && directory.empty()) return;
+
+        const auto appendUniqueString = [](std::vector<std::string>& values,
+                                           const std::string& value)
+        {
+            if (!value.empty() &&
+                std::find(values.begin(), values.end(), value) == values.end())
+                values.push_back(value);
+        };
+        const auto mergeCleanup = [&](DeferredCaptureCleanup& cleanup)
+        {
+            if (capture && std::find(cleanup.captures.begin(), cleanup.captures.end(),
+                                     capture) == cleanup.captures.end())
+                cleanup.captures.push_back(capture);
+            for (std::size_t index = 0; index < paths.size(); ++index)
+                appendUniqueString(cleanup.paths, paths[index]);
+            appendUniqueString(cleanup.directories, directory);
+        };
+        const auto firstArtifact = [](const DeferredCaptureCleanup& cleanup)
+        {
+            if (!cleanup.paths.empty()) return cleanup.paths.front();
+            if (!cleanup.directories.empty()) return cleanup.directories.front();
+            return std::string("<unknown capture artifact>");
+        };
+
+        // Merge the same controller or artifact into one gate. This prevents repeated timeout /
+        // cancellation paths from multiplying identical per-FRAME work.
+        for (std::size_t index = 0; index < _deferredCaptureCleanups.size(); ++index)
+        {
+            DeferredCaptureCleanup& cleanup = _deferredCaptureCleanups[index];
+            bool overlaps = (!capture && cleanup.captures.empty()) ||
+                (capture && std::find(cleanup.captures.begin(), cleanup.captures.end(),
+                                      capture) != cleanup.captures.end());
+            for (std::size_t pathIndex = 0; !overlaps && pathIndex < paths.size(); ++pathIndex)
+                overlaps = std::find(cleanup.paths.begin(), cleanup.paths.end(),
+                                     paths[pathIndex]) != cleanup.paths.end();
+            if (!overlaps && !directory.empty())
+                overlaps = std::find(cleanup.directories.begin(), cleanup.directories.end(),
+                                     directory) != cleanup.directories.end();
+            if (overlaps)
+            {
+                mergeCleanup(cleanup);
+                return;
+            }
+        }
+
+        if (_deferredCaptureCleanups.size() >= kMaxDeferredCaptureCleanups)
+        {
+            // A single SnapshotCaptureSlot means at most one unrelated controller can be
+            // nonterminal. Prefer releasing an already-terminal entry; if every entry is still
+            // gated, safely coalesce ownership so no live controller is dropped.
+            std::size_t releasable = _deferredCaptureCleanups.size();
+            for (std::size_t index = 0; index < _deferredCaptureCleanups.size(); ++index)
+            {
+                bool terminal = true;
+                const DeferredCaptureCleanup& cleanup = _deferredCaptureCleanups[index];
+                for (std::size_t captureIndex = 0;
+                     captureIndex < cleanup.captures.size(); ++captureIndex)
+                {
+                    if (cleanup.captures[captureIndex] &&
+                        !cleanup.captures[captureIndex]->terminal())
+                    {
+                        terminal = false;
+                        break;
+                    }
+                }
+                if (terminal) { releasable = index; break; }
+            }
+            if (releasable < _deferredCaptureCleanups.size())
+            {
+                publishVideoFailure(
+                    "cancelled capture cleanup queue reached bounded capacity; "
+                    "releasing cleanup for: " +
+                    firstArtifact(_deferredCaptureCleanups[releasable]));
+                _deferredCaptureCleanups.erase(
+                    _deferredCaptureCleanups.begin() + releasable);
+            }
+            else
+            {
+                mergeCleanup(_deferredCaptureCleanups.front());
+                publishVideoFailure(
+                    "cancelled capture cleanup queue reached bounded capacity; "
+                    "coalesced cleanup for: " +
+                    firstArtifact(_deferredCaptureCleanups.front()));
+                return;
+            }
+        }
+
         DeferredCaptureCleanup cleanup;
-        cleanup.capture = capture;
-        cleanup.paths = paths;
-        cleanup.directory = directory;
-        _grabber.retire(cleanup.capture);
-        if (!cleanup.paths.empty() || !cleanup.directory.empty())
-            _deferredCaptureCleanups.push_back(cleanup);
+        mergeCleanup(cleanup);
+        _deferredCaptureCleanups.push_back(cleanup);
     }
 
     void MediaManager::deferVideoCaptureCleanup(
@@ -2147,44 +2265,66 @@ namespace earthai
 
     void MediaManager::reapDeferredCaptureCleanups()
     {
+        ++_deferredCleanupFrame;
         for (std::size_t index = 0; index < _deferredCaptureCleanups.size(); )
         {
             DeferredCaptureCleanup& cleanup = _deferredCaptureCleanups[index];
-            if (cleanup.capture && !cleanup.capture->terminal())
+            bool capturesTerminal = true;
+            for (std::size_t captureIndex = 0;
+                 captureIndex < cleanup.captures.size(); ++captureIndex)
             {
-                ++index;
-                continue;
-            }
-
-            std::string failedPath;
-            for (std::size_t pathIndex = 0; pathIndex < cleanup.paths.size(); ++pathIndex)
-            {
-                const std::string& path = cleanup.paths[pathIndex];
-                if (!osgDB::fileExists(path)) continue;  // ENOENT is already clean.
-                if (std::remove(path.c_str()) != 0 && osgDB::fileExists(path))
+                if (cleanup.captures[captureIndex] &&
+                    !cleanup.captures[captureIndex]->terminal())
                 {
-                    failedPath = path;
+                    capturesTerminal = false;
                     break;
                 }
             }
-#if !defined(_WIN32)
-            if (failedPath.empty() && !cleanup.directory.empty() &&
-                osgDB::fileExists(cleanup.directory) &&
-                ::rmdir(cleanup.directory.c_str()) != 0 &&
-                osgDB::fileExists(cleanup.directory))
-                failedPath = cleanup.directory;
-#endif
-            if (!failedPath.empty())
+            if (!capturesTerminal || _deferredCleanupFrame < cleanup.nextAttemptFrame)
+            { ++index; continue; }
+
+            // Attempt every artifact. Successful and already-absent items are erased now, so a
+            // stubborn first path cannot block progress or make later retries permanently O(N).
+            for (std::size_t pathIndex = 0; pathIndex < cleanup.paths.size(); )
             {
-                if (!cleanup.failureReported)
-                {
-                    cleanup.failureReported = true;
-                    publishVideoFailure("cancelled capture cleanup failed: " + failedPath);
-                }
-                ++index;  // Keep retrying later without hiding a persistent failure.
+                const std::string& path = cleanup.paths[pathIndex];
+                if (path.empty() || !osgDB::fileExists(path) ||
+                    std::remove(path.c_str()) == 0 || !osgDB::fileExists(path))
+                    cleanup.paths.erase(cleanup.paths.begin() + pathIndex);
+                else
+                    ++pathIndex;
+            }
+            for (std::size_t directoryIndex = 0;
+                 directoryIndex < cleanup.directories.size(); )
+            {
+                const std::string& directory = cleanup.directories[directoryIndex];
+                if (removeEmptyDirectory(directory))
+                    cleanup.directories.erase(
+                        cleanup.directories.begin() + directoryIndex);
+                else
+                    ++directoryIndex;
+            }
+
+            if (cleanup.paths.empty() && cleanup.directories.empty())
+            {
+                _deferredCaptureCleanups.erase(_deferredCaptureCleanups.begin() + index);
                 continue;
             }
-            _deferredCaptureCleanups.erase(_deferredCaptureCleanups.begin() + index);
+            ++cleanup.attempts;
+            if (cleanup.attempts >= kMaxDeferredCleanupAttempts)
+            {
+                const std::string failedArtifact = !cleanup.paths.empty()
+                    ? cleanup.paths.front() : cleanup.directories.front();
+                publishVideoFailure(
+                    "cancelled capture cleanup exhausted bounded retries: " +
+                    failedArtifact);
+                _deferredCaptureCleanups.erase(_deferredCaptureCleanups.begin() + index);
+                continue;
+            }
+            const unsigned int backoff = kDeferredCleanupBackoffFrames <<
+                (cleanup.attempts - 1u);
+            cleanup.nextAttemptFrame = _deferredCleanupFrame + backoff;
+            ++index;
         }
     }
 
