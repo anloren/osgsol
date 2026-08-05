@@ -1167,8 +1167,9 @@ int main(int, char**)
             CHECK(!earthai::rebuildCinematicVideoCapture(
                 capture, invalidCompletedA, rejectedRearm));
 
-            // The local orbit is planned from the accepted final A capture.  Its first
-            // matrix must be the same visible camera matrix that passed the re-arm gate.
+            // The local orbit is planned from the accepted final A capture.  Its centre
+            // must remain the real geodetic target in the accepted camera's world frame,
+            // not getLookAt(..., 1.0)'s one-metre forward point.
             earthai::PhotoCaptureRequest finalAcceptedA = rebuiltA;
             finalAcceptedA.camera.cameraEyeLla = finalAcceptedA.targetLla;
             finalAcceptedA.camera.cameraEyeLla[1] += 0.01;
@@ -1184,15 +1185,34 @@ int main(int, char**)
             earthai::OneTakeOrbitPlan acceptedOrbit;
             CHECK(earthai::makeCinematicOneTakeOrbitPlan(
                 finalAcceptedA, 8, acceptedOrbit));
-            osg::Vec3d acceptedEye, acceptedTarget, acceptedUp;
+            osg::Vec3d acceptedEye, ignoredLookAt, acceptedUp;
             finalAcceptedA.camera.visibleViewMatrix.getLookAt(
-                acceptedEye, acceptedTarget, acceptedUp, 1.0);
-            CHECK((acceptedOrbit.frames.front().eye - acceptedEye).length() <
+                acceptedEye, ignoredLookAt, acceptedUp, 1.0);
+            const osg::Vec3d acceptedEyeEcef = earthai::photoLlaToEcef(
+                finalAcceptedA.camera.cameraEyeLla);
+            const osg::Vec3d acceptedWorldOffset =
+                acceptedEye - acceptedEyeEcef;
+            const osg::Vec3d acceptedTargetWorld = earthai::photoLlaToEcef(
+                finalAcceptedA.targetLla) + acceptedWorldOffset;
+            const earthai::OneTakeOrbitFrame& acceptedStart =
+                acceptedOrbit.frames.front();
+            const double acceptedRadius =
+                (acceptedEye - acceptedTargetWorld).length();
+            CHECK(acceptedRadius > 1.0);
+            CHECK((acceptedStart.eye - acceptedEye).length() <
                 1.0e-2);
-            CHECK((acceptedOrbit.frames.front().target - acceptedTarget).length() <
+            CHECK((acceptedStart.target - acceptedTargetWorld).length() <
                 1.0e-2);
-            CHECK((acceptedOrbit.frames.front().cameraUp - acceptedUp).length() <
+            CHECK((acceptedStart.cameraUp - acceptedUp).length() <
                 1.0e-10);
+            CHECK(std::abs((acceptedStart.eye - acceptedStart.target).length() -
+                acceptedRadius) < 1.0e-6);
+            const osg::Matrixd acceptedStartView = osg::Matrixd::lookAt(
+                acceptedEye, acceptedTargetWorld, acceptedUp);
+            for (int row = 0; row < 4; ++row)
+                for (int column = 0; column < 4; ++column)
+                    CHECK(std::abs(acceptedStart.viewMatrix(row, column) -
+                        acceptedStartView(row, column)) < 1.0e-10);
 
             earthai::PhotoCaptureRequest endCapture = capture;
             endCapture.targetLla[1] += 0.01;

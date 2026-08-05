@@ -134,12 +134,16 @@ namespace earthai
         if (!acceptedCapture.camera.viewTargetValid || durationSeconds <= 0)
             return false;
 
-        osg::Vec3d eyeWorld, targetWorld, cameraUp;
+        osg::Vec3d eyeWorld, ignoredLookAt, cameraUp;
         acceptedCapture.camera.visibleViewMatrix.getLookAt(
-            eyeWorld, targetWorld, cameraUp, 1.0);
-        // Preserve the matrix's exact visible target so the first planned frame is the
-        // accepted A frame.  The geodetic target below supplies the local orbit axis.
+            eyeWorld, ignoredLookAt, cameraUp, 1.0);
+        // getLookAt(..., 1.0) reports a point one metre forward, not the Earth target.
+        // Reconstruct that target in the accepted camera's world frame instead.
+        const osg::Vec3d eyeEcef = photoLlaToEcef(
+            acceptedCapture.camera.cameraEyeLla);
+        const osg::Vec3d worldOffset = eyeWorld - eyeEcef;
         const osg::Vec3d targetLla = acceptedCapture.targetLla;
+        const osg::Vec3d targetWorld = photoLlaToEcef(targetLla) + worldOffset;
         const double latitude = targetLla[0];
         const double longitude = targetLla[1];
         OneTakeOrbitSeed seed;
