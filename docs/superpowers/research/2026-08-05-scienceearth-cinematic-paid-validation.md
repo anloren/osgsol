@@ -157,21 +157,20 @@ verified.
 
 All five outputs are 1280x720 H.264 at 24 fps with AAC audio and an 8.000-second container
 duration. Contact sheets sampled each second. A scene-change probe at threshold 0.30 found zero
-hard-cut candidates in all five outputs; that supports, but does not by itself prove, continuous
-camera motion.
+hard-cut candidates in all five outputs. Later full-speed playback proved that this threshold and
+sparse sampling can miss shot replacement, so neither is valid evidence of one-take continuity.
 
 | # | Scenario | Continuity | Advertised motion acceptance |
 |---:|---|---|---|
 | 1 | Victoria Harbour one-take aerial | Pass | Pass: continuous path from first to last frame, without cut, camera replacement or altitude jump. |
 | 2 | Sydney full-360 clockwise | Pass | Fail 360: it pushed in and covered only a partial arc; the final view did not return to the start. |
-| 3 | Sydney full-360 counterclockwise | Pass | Conditional pass: traversed the four sides and returned close to the start, with some radius/geometry drift. |
+| 3 | Sydney full-360 counterclockwise | Not validated | Fail as one-take evidence: sparse samples showed four sides but could not exclude intermediate shot replacement. |
 | 4 | Chengjiang Cambrian one-take aerial | Pass | Pass as an uncertainty-labelled reconstruction: continuous high-altitude translation, no modern scene cut. |
-| 5 | Sydney animated full-360 clockwise | Pass | Conditional pass: completed the loop and returned close to the start, but landmark geometry morphed mildly. |
+| 5 | Sydney animated full-360 clockwise | Not validated | Fail as one-take evidence: apparent closure and SSIM cannot establish a continuous physical camera path. |
 
-Diagnostic first/last full-frame SSIM for the three orbit outputs was 0.281 (failed clockwise),
-0.553 (conditional counterclockwise) and 0.685 (conditional animated orbit). SSIM is not the
-acceptance test by itself: the sampled sequence must also visibly pass the front, right, rear and
-left quadrants without a hidden cut or world rotation.
+Diagnostic first/last full-frame SSIM for the three orbit outputs was 0.281, 0.553 and 0.685.
+These values only compare endpoints. They do not prove continuous travel between the endpoints
+and must never be used to accept a one-take result.
 
 ### Product rules derived from round two
 
@@ -184,8 +183,8 @@ left quadrants without a hidden cut or world rotation.
    and returns to the initial azimuth.
 4. Historical UI copy no longer implies that prompting can guarantee anachronism removal. It
    requires external source checking before publication or analysis.
-5. Full-360 remains probabilistic with this image-to-video provider: two of three 8-second tests
-   closed, and only conditionally because geometric drift remained.
+5. Full-360 one-take is not validated with this image-to-video provider. The preset must not be
+   sold as available until a deterministic continuous-trajectory path passes full-speed review.
 
 Round-two evidence is retained under the ignored directory
 `build/media_paid_validation_round2_20260805/`; it is not a redistributable application asset.
@@ -199,16 +198,19 @@ clockwise physical camera path through 0/90/180/270/360 degrees, forbidding cuts
 crossfades, hidden transitions, camera resets, teleports and world rotation.
 
 - Provider/media: completed; 1280x720 H.264, 24 fps, 192 frames, AAC audio, 8.000 seconds.
-- One-take continuity: pass. Half-second sampling showed one progressive camera path; no camera
-  replacement or edit point was visible.
-- Automated discontinuity probe: pass. The maximum full-sequence scene score was 0.193424 and
-  there were zero frames above the 0.30 hard-cut threshold.
-- Full orbit: pass. Samples at 0/2/4/6/7.9 seconds showed the camera passing the four sides and
-  returning to a view near the starting azimuth.
-- Geometric stability: conditional only. Orbit radius tightened and widened noticeably, and
-  small generated landmark drift remained. First/last full-frame SSIM was 0.344, so the return
-  was directionally closed rather than pixel-identical.
+- One-take continuity: **fail**. Full-speed user playback identified four visible shot/viewpoint
+  changes. The video is a sequence of generated views, not one physical camera path.
+- Automated discontinuity probe: **invalid acceptance method**. Its maximum scene score was
+  0.193424, so the fixed 0.30 threshold returned zero candidates and missed the visible changes.
+  A subsequent adjacent-frame motion-residual check found strong discontinuities near 2.208,
+  5.125 and 7.333 seconds; a slower transition remained easier to see in playback than as one
+  high-scoring frame.
+- Full orbit: **fail**. Showing the nominal 0/90/180/270/360 views is not an orbit when the model
+  switches between shots to reach them.
+- Endpoint similarity: not evidence. First/last SSIM 0.344 says nothing about the path between
+  those frames.
 
-The accepted product statement is therefore “one continuous full orbit with post-generation
-closure review”, not “survey-stable or geometrically exact 360 capture”. Evidence is retained
-under the ignored directory `build/media_paid_validation_round3_20260805/`.
+The earlier pass statement was incorrect and is withdrawn. The production preset is now marked
+temporarily unavailable and blocked before paid submission. It can return only after a
+deterministic continuous-camera pipeline passes full-speed review. Evidence is retained under the
+ignored directory `build/media_paid_validation_round3_20260805/`.

@@ -142,6 +142,15 @@ namespace earthai
         return motion == CINEMATIC_MOTION_ORBIT_360;
     }
 
+    inline bool cinematicMotionProductionReady(CinematicCameraMotion motion)
+    {
+        // A strict paid playback review on 2026-08-05 found multiple shot changes in an
+        // Omni-generated "360 orbit" even though the request explicitly prohibited cuts.
+        // Do not sell or report this as one-take until a deterministic continuous camera
+        // trajectory pipeline is available and runtime-validated.
+        return motion != CINEMATIC_MOTION_ORBIT_360;
+    }
+
     inline std::string cinematicImageModelName(const char* configuredModel)
     {
         return (configuredModel && *configuredModel)
@@ -257,6 +266,9 @@ namespace earthai
         if (settings.mediaKind == CINEMATIC_IMAGE &&
             settings.motion != CINEMATIC_MOTION_STATIC)
             return false;
+        if (settings.mediaKind == CINEMATIC_VIDEO &&
+            !cinematicMotionProductionReady(settings.motion))
+            return false;
         if (settings.durationSeconds <
                 cinematicMinimumDurationSeconds(settings.motion) ||
             settings.durationSeconds > 30)
@@ -325,7 +337,7 @@ namespace earthai
         {
         case CINEMATIC_MOTION_STATIC: return u8"静态图像";
         case CINEMATIC_MOTION_AERIAL_TOUR: return u8"一镜到底航拍";
-        case CINEMATIC_MOTION_ORBIT_360: return u8"360° 一镜到底环拍";
+        case CINEMATIC_MOTION_ORBIT_360: return u8"360° 一镜到底环拍（暂不可用）";
         case CINEMATIC_MOTION_DIVE: return u8"俯冲拍摄";
         case CINEMATIC_MOTION_CRANE_REVEAL: return u8"升降揭示";
         case CINEMATIC_MOTION_TRUCK: return u8"平行横移";

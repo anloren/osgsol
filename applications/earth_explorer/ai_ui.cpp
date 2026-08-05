@@ -770,10 +770,10 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                          static_cast<earthai::CinematicCameraMotion>(_cinematicMotion)))
             {
                 ImGui::TextWrapped(
-                    u8"整段必须是同一个连续物理镜头，禁止切镜、转场、循环或重置机位。"
-                    u8"单个当前首帧即可，固定使用至少 8 秒。"
-                    u8"返回“生成完成”不等于闭环通过；成片必须依次经过前、右、后、左"
-                    u8"四个方位并回到起始方位，否则按失败处理。");
+                    u8"严格要求整段属于同一个连续物理镜头。当前视频提供商实测仍会产生"
+                    u8"多次切镜或视角替换，因此已暂停售费提交；待确定性连续轨迹管线接入后恢复。"
+                    u8"任何未来成片仍必须经过前、右、后、左并回到起点，且不得切镜、转场、"
+                    u8"循环或重置机位。");
             }
             else
             {
@@ -815,6 +815,12 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         canGenerate = canGenerate || (_auditMediaControlsEnabled && mani &&
             customEraReady && customTimeReady && customStyleReady);
 #endif
+        // Audit hooks may bypass missing runtime services for layout testing, but must never
+        // re-enable a paid mode that failed its production media acceptance test.
+        if (_cinematicMediaKind == earthai::CINEMATIC_VIDEO &&
+            !earthai::cinematicMotionProductionReady(
+                static_cast<earthai::CinematicCameraMotion>(_cinematicMotion)))
+            canGenerate = false;
         const float actionGap = ImGui::GetStyle().ItemSpacing.x;
         const float actionWidth =
             (ImGui::GetContentRegionAvail().x - actionGap) * 0.5f;

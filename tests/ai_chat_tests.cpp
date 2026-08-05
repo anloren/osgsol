@@ -989,6 +989,7 @@ int main(int, char**)
             video.motion = earthai::CINEMATIC_MOTION_ORBIT_360;
             CHECK(earthai::cinematicMinimumDurationSeconds(video.motion) == 8);
             CHECK(earthai::cinematicMotionRequiresClosureReview(video.motion));
+            CHECK(!earthai::cinematicMotionProductionReady(video.motion));
             CHECK(earthai::buildCinematicVideoPrompt(
                 earthai::cinematicRequestUnchecked(capture, video)).find(
                     "360-degree orbit") != std::string::npos);
@@ -1002,17 +1003,18 @@ int main(int, char**)
                 earthai::cinematicRequestUnchecked(capture, video)).find(
                     "front, right, rear and left quadrants") != std::string::npos);
             CHECK(earthai::cinematicMotionLabel(video.motion) ==
-                  std::string(u8"360° 一镜到底环拍"));
+                  std::string(u8"360° 一镜到底环拍（暂不可用）"));
             earthai::CinematicGenerationSettings tooShortOrbit = video;
             tooShortOrbit.durationSeconds = 5;
             earthai::CinematicGenerationRequest rejectedOrbit;
             CHECK(!earthai::makeCinematicGenerationRequest(
                 capture, tooShortOrbit, rejectedOrbit));
-            CHECK(earthai::makeCinematicGenerationRequest(
+            CHECK(!earthai::makeCinematicGenerationRequest(
                 capture, video, rejectedOrbit));
             video.motion = earthai::CINEMATIC_MOTION_DIVE;
             CHECK(earthai::cinematicMinimumDurationSeconds(video.motion) == 4);
             CHECK(!earthai::cinematicMotionRequiresClosureReview(video.motion));
+            CHECK(earthai::cinematicMotionProductionReady(video.motion));
             CHECK(earthai::buildCinematicVideoPrompt(
                 earthai::cinematicRequestUnchecked(capture, video)).find(
                     "controlled dive") != std::string::npos);
