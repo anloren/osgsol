@@ -360,6 +360,8 @@ int main()
         media, "bool SnapshotGrabber::ready(");
     const std::string snapshotRetire = extractFunctionBody(
         media, "void SnapshotGrabber::retire(");
+    const std::string snapshotTerminalReaper = extractFunctionBody(
+        media, "void SnapshotGrabber::reapTerminalGeneration()");
     const std::string snapshotGrab = extractFunctionBody(
         media, "std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::grab(");
     CHECK(snapshotReady.find("capture->completedSuccessfully()") !=
@@ -407,6 +409,14 @@ int main()
     // An arm failure never attached a callback, so it must not consume permanent retention.
     CHECK(snapshotGrab.find("_retainedGenerations.push_back(generation)") ==
           std::string::npos);
+    // A callback that was claimed before timeout can complete after the media job resets. The
+    // unconditional FRAME reaper must exact-detach it while retaining one active generation
+    // until the next grab, so numFrames=0 cannot trigger continuous readback.
+    CHECK(mediaHeader.find("void reapTerminalGeneration()") != std::string::npos);
+    CHECK(snapshotTerminalReaper.find("_activeGeneration->token->terminal()") !=
+          std::string::npos);
+    CHECK(snapshotTerminalReaper.find("detachExactCallback()") != std::string::npos);
+    CHECK(snapshotTerminalReaper.find("_activeGeneration.reset()") == std::string::npos);
 
     // Architectural regression guard: a live worker cancellation only transitions to async
     // reaping. resetVideo checks workerDone before its sole join, so FRAME/ESC never waits for
@@ -546,6 +556,9 @@ int main()
     size_t publication = update.find("_videoSnapshot = snapshot;");
     CHECK(videoUpdate < photoUpdate && photoUpdate < publication);
     CHECK(update.find("reapDeferredCaptureCleanups()") != std::string::npos);
+    CHECK(update.find("_grabber.reapTerminalGeneration()") != std::string::npos);
+    CHECK(update.find("_grabber.reapTerminalGeneration()") <
+          update.find("reapDeferredCaptureCleanups()"));
 
     // Getter must return only the locked published value, never derive from live VideoJob state.
     CHECK(snapshotGetter.find("return _videoSnapshot;") != std::string::npos);

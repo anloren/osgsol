@@ -260,6 +260,13 @@ namespace earthai
         }
     }
 
+    void SnapshotGrabber::reapTerminalGeneration()
+    {
+        if (_activeGeneration && _activeGeneration->token &&
+            _activeGeneration->token->terminal())
+            _activeGeneration->detachExactCallback();
+    }
+
     bool SnapshotGrabber::ready(
         const std::shared_ptr<SnapshotCaptureController>& capture,
         const std::string& pngPath)
@@ -1193,6 +1200,7 @@ namespace earthai
         if (_captureSceneAdjustmentCount.load() > 0) applyFillLight();
         updateVideoInternal();
         updatePhotoInternal();
+        _grabber.reapTerminalGeneration();
         reapDeferredCaptureCleanups();
 
         VideoUiSnapshot snapshot;

@@ -158,6 +158,10 @@ namespace earthai
         // Remove a never-started draw callback synchronously; otherwise leave the in-flight
         // callback to publish its terminal state. This never waits for rendering.
         void retire(const std::shared_ptr<SnapshotCaptureController>& capture);
+        // FRAME-wide safety net for a callback that was claimed before its owning media job
+        // timed out/reset. Detaches the exact callback on terminality but keeps one active
+        // generation alive until the next grab can drop it safely.
+        void reapTerminalGeneration();
 
         // 真正的跨帧稳定性判断:调用方(MediaManager::update())每帧调一次 ready()。
         // 本次看到的文件大小与"上一次调用 ready() 时"记录的大小相比——只有连续两次不同的
