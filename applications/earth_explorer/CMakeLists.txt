@@ -8,6 +8,9 @@ SET(EXECUTABLE_FILES
     ai_chat.cpp ai_setup.cpp ai_ui.cpp ai_cards.cpp ai_media.cpp ai_query.cpp ai_world_tools.cpp
     earth_context.cpp earth_context.h
     project/earth_project.cpp project/earth_project.h
+    project/earth_project_command_bus.cpp project/earth_project_command_bus.h
+    project/earth_project_command_context.cpp
+    project/earth_project_command_context.h
     project/earth_project_layer_adapter.cpp
     project/earth_project_layer_adapter.h
     feed_layer.cpp feeds/gdacs_feed.cpp feeds/usgs_quakes_feed.cpp feeds/eonet_feed.cpp

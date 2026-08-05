@@ -47,10 +47,27 @@ model, isolated science plugin, or EarthContextHub.
 
 ## Slice 2: command history
 
-- [ ] Add one command envelope for user, AI, and automated workspace changes.
-- [ ] Add bounded undo/redo with coalescing for continuous opacity/time edits.
-- [ ] Preserve immutable science artifacts and record artifact associations.
-- [ ] Publish command history into the bounded AI context.
+- [x] Add one command envelope for user, AI, and automated workspace changes.
+- [x] Add bounded undo/redo with coalescing for continuous opacity/time edits.
+- [x] Preserve immutable science artifacts and record artifact associations.
+- [x] Publish command history into the bounded AI context.
+
+### Slice 2 verification record
+
+- A renderer-independent command bus now accepts user, AI, and automation
+  origins through the same validated envelope.
+- Undo/redo stores bounded per-command before/after scalar state rather than
+  copying the full project; command metadata is length-bounded. Consecutive
+  opacity and time edits coalesce only when origin, command kind, target, and
+  gesture key all match.
+- Artifact association commands change project references only. Undo never
+  calls or owns the science artifact store, and the artifact id remains in the
+  retained audit history.
+- `commandHistory` is registered in `EarthContextHub` with bounded entries,
+  bounded strings, an independent byte ceiling, and explicit applied/undone
+  arrays for AI reasoning.
+- Science-enabled and Science-disabled EarthExplorer targets both build; no
+  application window, listener, package, or Desktop copy was created.
 
 ## Slice 3: shared temporal contract
 

@@ -23,6 +23,8 @@
 #include <libhv/all/hlog.h>
 #include "EarthControlUI.h"
 #include "LayerManager.h"
+#include "project/earth_project_command_context.h"
+#include "project/earth_project_layer_adapter.h"
 #include "hk_elevation_filter.h"
 #include "input_gate.h"
 #include "earth_exit.h"
@@ -1600,6 +1602,15 @@ int main(int argc, char** argv)
         layerMgr.setEnabled("hk3d", t3->enabled);
     }
 
+    // Canonical project state is renderer-independent. The command bus starts
+    // from the already-registered layer catalog and publishes only bounded
+    // summaries into EarthContextHub; it does not invoke layer callbacks.
+    earthproject::EarthProject initialEarthProject;
+    initialEarthProject.layers =
+        earthproject::snapshotLayerDescriptors(layerMgr);
+    std::shared_ptr<earthproject::EarthProjectCommandBus> projectCommandBus(
+        new earthproject::EarthProjectCommandBus(initialEarthProject));
+
     // AIChatUI 先于 configureAIChat 创建：show_chart 工具的 execute 需要拿到它的指针
     // 才能把图表 spec 推进右上角卡片队列（同一个实例后面又挂到 ctrlUI->_aiUI 供 draw() 用）。
     AIChatUI* aiUI = new AIChatUI;
@@ -1607,6 +1618,8 @@ int main(int argc, char** argv)
     aiDeps.viewer = &viewer; aiDeps.mani = earthManipulator.get(); aiDeps.layers = &layerMgr;
     aiDeps.flights = flightLayer; aiDeps.ui = aiUI;
     AIChatRuntime aiRuntime = configureAIChat(aiDeps);
+    earthproject::registerProjectCommandContext(
+        aiRuntime.context, projectCommandBus);
     earthai::AIChatCore* aiCore = aiRuntime.core;
     earthai::MediaManager* aiMedia = aiRuntime.media;
     if (aiMedia) aiMedia->setEarthUniforms(&earthRenderingUtils);   // 快门补光需要 WorldSunDir

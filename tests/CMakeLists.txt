@@ -170,6 +170,12 @@ NEW_LIGHTWEIGHT_CTEST(osgSol_Test_EarthProject earth_project_tests.cpp
 NEW_LIGHTWEIGHT_CTEST(osgSol_Test_EarthProjectLayerAdapter
                       earth_project_layer_adapter_tests.cpp
                       "offline;scienceearth;project" 30)
+NEW_LIGHTWEIGHT_CTEST(osgSol_Test_EarthProjectCommandBus
+                      earth_project_command_bus_tests.cpp
+                      "offline;scienceearth;project" 30)
+NEW_LIGHTWEIGHT_CTEST(osgSol_Test_EarthProjectCommandContext
+                      earth_project_command_context_tests.cpp
+                      "offline;scienceearth;project" 30)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Ai_Chat PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_Feeds feed_layer_tests.cpp offline 120)  # FeedLayer framework / geo primitives / LayerManager unit tests
