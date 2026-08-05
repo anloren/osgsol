@@ -121,3 +121,9 @@
 - 已 arm 的 generation 不再调用 `setCaptureOperation` 或复用，也不使用 OSG `numFrames=1` 的回调后自移除（该 epilogue 可能清掉新 generation）。超时若赢得 token，旧 generation 留存到 `SnapshotGrabber` 生命周期结束；若 render callback 已经 claim token，仍等待终态而不旋转 generation。FRAME 在 token 成功或失败终态时按精确 identity 显式摘除 callback，下一次抓帧直接丢弃正常完成的 generation，避免 8 秒 24 fps 环拍保留 192 份全尺寸 ContextData 图像；这里不把 handler 注册为 viewer event handler，因此连续成功抓帧不会累积事件处理器。
 - 每次 arm 前删除预期的 `_0.png`；若现存文件无法删除则请求 fail-closed。这样 `WriteToFile` 不回传错误时，终态 token 与稳定文件也不能误接纳上一轮残留的 PNG。无窗口测试锁定精确 identity detach、generation 不复用/不注册 event handler，以及 stale-file 删除失败路径。
 - 若 timeout 发生在 render callback 已 claim token 之后，所属照片/视频任务可先 reset，而 callback 随后才变为终态。`MediaManager::update()` 无条件调用 `reapTerminalGeneration()`：它按精确 identity 摘除 callback，但保留一个 active generation 到下一次抓帧安全释放，避免 `numFrames=0` callback 在无主任务时持续 `readPixels`。
+
+### Task 6B outer-callback and timeout-ownership correction (2026-08-06)
+
+- 安装到 camera 的是 generation 自己的外层 `DrawCallback`，它包住不可变的 OSG `WindowCaptureCallback` 并覆盖完整 enter/exit。外层退出时只在 camera 仍持有它自身 identity 时清除 callback；因此主线程替换为新 generation 后，迟到旧 callback 绝不可能清掉新 callback。
+- 正常终态 generation 仅在外层回调已 quiescent 且不再挂在 camera 时释放；仍在 flight 的正常 generation 进入可回收列表。timeout 在外层 entry 前获胜则永久保留该 generation（OSG 可能已拿到 raw pointer 而尚未计入 in-flight），与正常可回收列表严格分离。
+- 照片、视频 A/B 和当前 360° 环拍帧的 timeout 都在 reset 前记录 token、所有可晚到 PNG、既有环拍帧和目录到统一延迟清理队列。若 `retire` 输给已开始写入，清理器等待 token 终态后删除；环拍 timeout 使用 `resetVideo(false)`，不再让即时目录删除与迟到写入竞争。

@@ -147,35 +147,81 @@ namespace earthai
 
     // ---------------- SnapshotGrabber ----------------
 
+    class GenerationDrawCallback : public osg::Camera::DrawCallback
+    {
+    public:
+        explicit GenerationDrawCallback(osg::Camera::DrawCallback* inner)
+            : _inner(inner) {}
+
+        virtual void operator()(osg::RenderInfo& renderInfo) const
+        {
+            _inFlight.fetch_add(1, std::memory_order_acq_rel);
+            struct ExitGuard
+            {
+                const GenerationDrawCallback* callback;
+                osg::Camera* camera;
+                ~ExitGuard()
+                {
+                    // An old raw callback may begin after main-thread retirement. It must only
+                    // clear itself, never a newer generation installed on the same camera.
+                    if (camera && camera->getFinalDrawCallback() == callback)
+                        camera->setFinalDrawCallback(0);
+                    callback->_inFlight.fetch_sub(1, std::memory_order_acq_rel);
+                }
+            } guard { this, renderInfo.getCurrentCamera() };
+            if (_inner.valid()) (*_inner)(renderInfo);
+        }
+
+        bool quiescent() const
+        { return _inFlight.load(std::memory_order_acquire) == 0; }
+
+    private:
+        osg::ref_ptr<osg::Camera::DrawCallback> _inner;
+        mutable std::atomic<unsigned int> _inFlight { 0 };
+    };
+
     struct SnapshotGrabber::CaptureGeneration
     {
         std::shared_ptr<SnapshotCaptureController> token;
         osg::ref_ptr<GenerationScreenCaptureHandler> handler;
         osg::observer_ptr<osg::Camera> armedCamera;
-        osg::ref_ptr<osg::Camera::DrawCallback> armedCallback;
+        osg::ref_ptr<GenerationDrawCallback> outerCallback;
+        bool detached = false;
 
         bool arm(osgViewer::ViewerBase& viewer)
         {
             osg::Camera* camera = handler.valid() ? handler->selectCamera(viewer) : 0;
-            osg::Camera::DrawCallback* callback =
-                handler.valid() ? handler->callbackIdentity() : 0;
-            if (!camera || !callback) return false;
+            if (!camera || !outerCallback.valid()) return false;
             armedCamera = camera;
-            armedCallback = callback;
             // Capture the exact camera/callback pairing once. Do not delegate to
             // captureNextFrame(), which recomputes the target later.
-            camera->setFinalDrawCallback(callback);
+            camera->setFinalDrawCallback(outerCallback.get());
             return true;
         }
 
         bool detachExactCallback()
         {
+            if (detached) return true;
             osg::Camera* camera = armedCamera.get();
-            if (!camera || !armedCallback.valid() ||
-                camera->getFinalDrawCallback() != armedCallback.get())
+            if (!camera || !outerCallback.valid() ||
+                camera->getFinalDrawCallback() != outerCallback.get())
+            {
+                detached = true;
                 return false;
+            }
             camera->setFinalDrawCallback(0);
+            detached = true;
             return true;
+        }
+
+        bool quiescent() const
+        { return outerCallback.valid() && outerCallback->quiescent(); }
+
+        bool attached() const
+        {
+            osg::Camera* camera = armedCamera.get();
+            return camera && outerCallback.valid() &&
+                camera->getFinalDrawCallback() == outerCallback.get();
         }
     };
 
@@ -192,15 +238,9 @@ namespace earthai
             return std::shared_ptr<SnapshotCaptureController>();
         }
 
-        // A normal callback has reached terminal on an earlier FRAME. Detach its exact
-        // generation before arming the next one: this is deliberately not OSG's numFrames
-        // self-removal, whose post-operation epilogue can otherwise clear a newer callback.
-        if (_activeGeneration && _activeGeneration->token &&
-            _activeGeneration->token->terminal())
-        {
-            _activeGeneration->detachExactCallback();
-            _activeGeneration.reset();
-        }
+        // A normal callback may have reached token terminal before its outer draw callback
+        // returns. Reap only after the generation wrapper proves quiescent.
+        reapTerminalGeneration();
 
         // WriteToFile does not expose writeImageFile() success. Remove any expected output
         // before arming so a completed token plus a stable old file can never look successful.
@@ -229,6 +269,8 @@ namespace earthai
             std::make_shared<CaptureGeneration>();
         generation->token = token;
         generation->handler = new GenerationScreenCaptureHandler(operation.get(), 0);
+        generation->outerCallback = new GenerationDrawCallback(
+            generation->handler->callbackIdentity());
         if (!_viewer || !generation->arm(*_viewer))
         {
             token->retireIfNotStarted();
@@ -255,16 +297,37 @@ namespace earthai
             // Never use the handler's generic removal API: it recomputes a camera and can
             // clear a newer/unrelated final callback.
             _activeGeneration->detachExactCallback();
-            _retainedGenerations.push_back(_activeGeneration);
+            // retireIfNotStarted won before wrapper entry; OSG may already hold a raw pointer
+            // that has not incremented _inFlight yet, so this generation is permanent.
+            _timeoutRetainedGenerations.push_back(_activeGeneration);
             _activeGeneration.reset();
         }
+        reapTerminalGeneration();
     }
 
     void SnapshotGrabber::reapTerminalGeneration()
     {
         if (_activeGeneration && _activeGeneration->token &&
             _activeGeneration->token->terminal())
+        {
             _activeGeneration->detachExactCallback();
+            if (_activeGeneration->quiescent() && !_activeGeneration->attached())
+                _activeGeneration.reset();
+            else
+            {
+                _reapableGenerations.push_back(_activeGeneration);
+                _activeGeneration.reset();
+            }
+        }
+        for (std::size_t index = 0; index < _reapableGenerations.size(); )
+        {
+            const std::shared_ptr<CaptureGeneration>& generation =
+                _reapableGenerations[index];
+            if (generation && generation->quiescent() && !generation->attached())
+                _reapableGenerations.erase(_reapableGenerations.begin() + index);
+            else
+                ++index;
+        }
     }
 
     bool SnapshotGrabber::ready(
@@ -275,9 +338,7 @@ namespace earthai
         // numFrames=0 prevents OSG's post-operation self-removal from clearing a newer
         // generation. The FRAME owner removes this exact callback for either terminal outcome
         // before checking success or polling the artifact.
-        if (capture->terminal() && _activeGeneration &&
-            _activeGeneration->token == capture)
-            _activeGeneration->detachExactCallback();
+        if (capture->terminal()) reapTerminalGeneration();
         if (!capture->completedSuccessfully()) return false;
         // WriteToFile 用 "_0" 后缀(单 GraphicsContext、OVERWRITE 策略)拼实际文件名,
         // 统一经 capturedPath() 计算,与提交侧读取路径保持一致。
@@ -1280,7 +1341,9 @@ namespace earthai
                 if (++_waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore();   // 超时收尾:即便快照没成功,HUD 也必须复原,不能永久隐藏
-                    _grabber.retire(_photoCaptureToken);
+                    std::vector<std::string> paths;
+                    if (!_snapPath.empty()) paths.push_back(capturedPath(_snapPath));
+                    deferCaptureCleanup(_photoCaptureToken, paths, std::string());
                     _jobs.update(_jobId, AIJob::FAILED, 1.0f, "", "snapshot timeout");
                     if (_cards) _cards->removeJob(_jobId);
                     if (_chatCore) _chatCore->addErrorNote(u8"照片生成失败：snapshot timeout");
@@ -2045,31 +2108,48 @@ namespace earthai
         resetVideo(false);
     }
 
+    void MediaManager::deferCaptureCleanup(
+        const std::shared_ptr<SnapshotCaptureController>& capture,
+        const std::vector<std::string>& paths, const std::string& directory)
+    {
+        DeferredCaptureCleanup cleanup;
+        cleanup.capture = capture;
+        cleanup.paths = paths;
+        cleanup.directory = directory;
+        _grabber.retire(cleanup.capture);
+        if (!cleanup.paths.empty() || !cleanup.directory.empty())
+            _deferredCaptureCleanups.push_back(cleanup);
+    }
+
+    void MediaManager::deferVideoCaptureCleanup(
+        const std::shared_ptr<SnapshotCaptureController>& capture)
+    {
+        VideoJob& v = *_video;
+        std::vector<std::string> paths;
+        if (!v.snapPathA.empty()) paths.push_back(capturedPath(v.snapPathA));
+        if (!v.snapPathB.empty()) paths.push_back(capturedPath(v.snapPathB));
+        if (!v.generatedFramePathA.empty()) paths.push_back(v.generatedFramePathA);
+        if (!v.generatedFramePathB.empty()) paths.push_back(v.generatedFramePathB);
+        if (!v.mp4Path.empty()) paths.push_back(v.mp4Path);
+        paths.insert(paths.end(), v.orbitFramePaths.begin(), v.orbitFramePaths.end());
+        deferCaptureCleanup(capture, paths, v.orbitCaptureDir);
+    }
+
     void MediaManager::deferCancelledVideoCaptureCleanup()
     {
         VideoJob& v = *_video;
-        DeferredCaptureCleanup cleanup;
+        std::shared_ptr<SnapshotCaptureController> capture;
         if (v.phase == VideoJob::WAIT_A)
-            cleanup.capture = v.snapCaptureTokenA;
+            capture = v.snapCaptureTokenA;
         else if (v.phase == VideoJob::CAPTURING_B)
-            cleanup.capture = v.snapCaptureTokenB;
+            capture = v.snapCaptureTokenB;
         else if (v.phase == VideoJob::CAPTURING_ORBIT)
-            cleanup.capture = v.orbitCaptureToken;
+            capture = v.orbitCaptureToken;
         else if (v.snapCaptureTokenB)
-            cleanup.capture = v.snapCaptureTokenB;
+            capture = v.snapCaptureTokenB;
         else
-            cleanup.capture = v.snapCaptureTokenA;
-        _grabber.retire(cleanup.capture);
-        if (!v.snapPathA.empty()) cleanup.paths.push_back(capturedPath(v.snapPathA));
-        if (!v.snapPathB.empty()) cleanup.paths.push_back(capturedPath(v.snapPathB));
-        if (!v.generatedFramePathA.empty()) cleanup.paths.push_back(v.generatedFramePathA);
-        if (!v.generatedFramePathB.empty()) cleanup.paths.push_back(v.generatedFramePathB);
-        if (!v.mp4Path.empty()) cleanup.paths.push_back(v.mp4Path);
-        cleanup.paths.insert(cleanup.paths.end(), v.orbitFramePaths.begin(),
-                             v.orbitFramePaths.end());
-        cleanup.directory = v.orbitCaptureDir;
-        if (!cleanup.paths.empty() || !cleanup.directory.empty())
-            _deferredCaptureCleanups.push_back(cleanup);
+            capture = v.snapCaptureTokenA;
+        deferVideoCaptureCleanup(capture);
     }
 
     void MediaManager::reapDeferredCaptureCleanups()
@@ -2178,7 +2258,7 @@ namespace earthai
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore(); v.hudHidden = false; // 超时:HUD 必须复原
-                    _grabber.retire(v.snapCaptureTokenA);
+                    deferVideoCaptureCleanup(v.snapCaptureTokenA);
                     publishVideoFailure("A-point snapshot timeout");
                     resetVideo();
                 }
@@ -2264,7 +2344,7 @@ namespace earthai
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore(); v.hudHidden = false; // 超时:HUD 必须复原
-                    _grabber.retire(v.snapCaptureTokenB);
+                    deferVideoCaptureCleanup(v.snapCaptureTokenB);
                     publishVideoFailure("B-point snapshot timeout");
                     resetVideo();
                 }
@@ -2346,12 +2426,12 @@ namespace earthai
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore(false); v.hudHidden = false;
-                    _grabber.retire(v.orbitCaptureToken);
+                    deferVideoCaptureCleanup(v.orbitCaptureToken);
                     _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "",
                                  "deterministic orbit frame capture timeout");
                     if (_cards) _cards->removeJob(v.jobId);
                     publishVideoFailure(u8"环拍失败：逐帧截图超时");
-                    resetVideo();
+                    resetVideo(false);
                 }
                 return;
             }

@@ -373,8 +373,9 @@ int main()
     // A timeout must detach only its recorded camera/callback pair. Fresh generations never
     // mutate a possibly in-flight WindowCaptureCallback or accumulate viewer event handlers.
     CHECK(mediaHeader.find("CaptureGeneration") != std::string::npos);
-    CHECK(mediaHeader.find("_retainedGenerations") != std::string::npos);
-    CHECK(media.find("camera->getFinalDrawCallback() != armedCallback.get()") !=
+    CHECK(mediaHeader.find("_timeoutRetainedGenerations") != std::string::npos);
+    CHECK(mediaHeader.find("_reapableGenerations") != std::string::npos);
+    CHECK(media.find("camera->getFinalDrawCallback() != outerCallback.get()") !=
           std::string::npos);
     CHECK(media.find("camera->setFinalDrawCallback(0)") != std::string::npos);
     CHECK(snapshotRetire.find("detachExactCallback()") != std::string::npos);
@@ -383,9 +384,9 @@ int main()
           std::string::npos);
     // Completed one-shot captures are replaced, not retained: a local 8 s / 24 fps orbit must
     // not preserve 192 WindowCaptureCallback ContextData image buffers.
-    CHECK(snapshotGrab.find("_retainedGenerations.push_back(_activeGeneration)") ==
+    CHECK(snapshotGrab.find("_timeoutRetainedGenerations.push_back(_activeGeneration)") ==
           std::string::npos);
-    CHECK(snapshotRetire.find("_retainedGenerations.push_back(_activeGeneration)") !=
+    CHECK(snapshotRetire.find("_timeoutRetainedGenerations.push_back(_activeGeneration)") !=
           std::string::npos);
     CHECK(snapshotGrab.find("setCaptureOperation") == std::string::npos);
     CHECK(snapshotGrab.find("captureNextFrame") == std::string::npos);
@@ -403,11 +404,10 @@ int main()
     CHECK(snapshotGrab.find("GenerationScreenCaptureHandler(operation.get(), 0)") !=
           std::string::npos);
     CHECK(snapshotReady.find("capture->terminal()") != std::string::npos);
-    CHECK(snapshotReady.find("detachExactCallback()") != std::string::npos);
-    CHECK(snapshotGrab.find("_activeGeneration->token->terminal()") !=
-          std::string::npos);
+    CHECK(snapshotReady.find("reapTerminalGeneration()") != std::string::npos);
+    CHECK(snapshotGrab.find("reapTerminalGeneration()") != std::string::npos);
     // An arm failure never attached a callback, so it must not consume permanent retention.
-    CHECK(snapshotGrab.find("_retainedGenerations.push_back(generation)") ==
+    CHECK(snapshotGrab.find("_timeoutRetainedGenerations.push_back(generation)") ==
           std::string::npos);
     // A callback that was claimed before timeout can complete after the media job resets. The
     // unconditional FRAME reaper must exact-detach it while retaining one active generation
@@ -416,7 +416,21 @@ int main()
     CHECK(snapshotTerminalReaper.find("_activeGeneration->token->terminal()") !=
           std::string::npos);
     CHECK(snapshotTerminalReaper.find("detachExactCallback()") != std::string::npos);
-    CHECK(snapshotTerminalReaper.find("_activeGeneration.reset()") == std::string::npos);
+    CHECK(snapshotTerminalReaper.find("_activeGeneration.reset()") != std::string::npos);
+    // Token terminal is published inside CaptureOperation, before OSG's outer draw callback
+    // returns. The installed callback therefore has its own full-invocation quiescence guard.
+    CHECK(media.find("class GenerationDrawCallback") != std::string::npos);
+    CHECK(media.find("std::atomic<unsigned int> _inFlight") != std::string::npos);
+    CHECK(media.find("outerCallback") != std::string::npos);
+    CHECK(media.find("camera->getFinalDrawCallback() != outerCallback.get()") !=
+          std::string::npos);
+    CHECK(snapshotTerminalReaper.find("quiescent()") != std::string::npos);
+    CHECK(snapshotTerminalReaper.find("_reapableGenerations.push_back") !=
+          std::string::npos);
+    CHECK(snapshotTerminalReaper.find("_timeoutRetainedGenerations") ==
+          std::string::npos);
+    CHECK(media.find("camera->getFinalDrawCallback() == callback") !=
+          std::string::npos);
 
     // Architectural regression guard: a live worker cancellation only transitions to async
     // reaping. resetVideo checks workerDone before its sole join, so FRAME/ESC never waits for
@@ -465,10 +479,10 @@ int main()
     CHECK(deferredReaper.find("!cleanup.capture->terminal()") != std::string::npos);
     CHECK(deferredReaper.find("cancelled capture cleanup failed: ") != std::string::npos);
     CHECK(finalizer.find("generatedFramePathA") == std::string::npos);
-    const std::string deferredCleanup = extractFunctionBody(
-        media, "void MediaManager::deferCancelledVideoCaptureCleanup()");
-    CHECK(deferredCleanup.find("generatedFramePathA") != std::string::npos);
-    CHECK(deferredCleanup.find("generatedFramePathB") != std::string::npos);
+    const std::string deferredVideoCleanup = extractFunctionBody(
+        media, "void MediaManager::deferVideoCaptureCleanup(");
+    CHECK(deferredVideoCleanup.find("generatedFramePathA") != std::string::npos);
+    CHECK(deferredVideoCleanup.find("generatedFramePathB") != std::string::npos);
     CHECK(resetVideo.find("existing.status == AIJob::DONE") != std::string::npos);
     CHECK(resetVideo.find("generatedFramePathA") != std::string::npos);
     CHECK(resetVideo.find("_video->mp4Path") != std::string::npos);
@@ -559,6 +573,19 @@ int main()
     CHECK(update.find("_grabber.reapTerminalGeneration()") != std::string::npos);
     CHECK(update.find("_grabber.reapTerminalGeneration()") <
           update.find("reapDeferredCaptureCleanups()"));
+    // Timeout cleanup must own the exact token and late artifact paths before state reset for
+    // photo, A, B, and orbit routes; deferred reaping waits for a claimed callback terminal.
+    const std::string photoUpdateBody = extractFunctionBody(
+        media, "void MediaManager::updatePhotoInternal()");
+    CHECK(mediaHeader.find("void deferCaptureCleanup(") != std::string::npos);
+    CHECK(photoUpdateBody.find("deferCaptureCleanup(_photoCaptureToken") !=
+          std::string::npos);
+    CHECK(updateVideo.find("deferVideoCaptureCleanup(v.snapCaptureTokenA)") !=
+          std::string::npos);
+    CHECK(updateVideo.find("deferVideoCaptureCleanup(v.snapCaptureTokenB)") !=
+          std::string::npos);
+    CHECK(updateVideo.find("deferVideoCaptureCleanup(v.orbitCaptureToken)") !=
+          std::string::npos);
 
     // Getter must return only the locked published value, never derive from live VideoJob state.
     CHECK(snapshotGetter.find("return _videoSnapshot;") != std::string::npos);

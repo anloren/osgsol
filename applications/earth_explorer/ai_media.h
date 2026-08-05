@@ -185,10 +185,11 @@ namespace earthai
         osgViewer::Viewer* _viewer;
         SnapshotCaptureSlot _slot;
         std::shared_ptr<CaptureGeneration> _activeGeneration;
-        // Timeout-retired/uncertain generations only. A normally completed callback removes
-        // itself and is dropped on the next FRAME-side grab, keeping 24 fps orbit capture
-        // bounded instead of retaining every full-size OSG ContextData image buffer.
-        std::vector<std::shared_ptr<CaptureGeneration>> _retainedGenerations;
+        // A timeout that wins before wrapper entry leaves OSG able to hold a raw callback
+        // pointer; retain that generation for this grabber's lifetime. Normal terminal
+        // generations use the separate reapable list and drop only after outer exit.
+        std::vector<std::shared_ptr<CaptureGeneration>> _timeoutRetainedGenerations;
+        std::vector<std::shared_ptr<CaptureGeneration>> _reapableGenerations;
         int _contentW = 0, _contentH = 0;   // 裁剪矩形(左下原点),0=未设置
     };
 
@@ -631,6 +632,11 @@ namespace earthai
         // A cancellation returns the visible job to IDLE immediately, but its one-shot screen
         // capture may still receive a render callback. Reap only after that controller is
         // terminal, then remove the late artifacts without blocking FRAME.
+        void deferCaptureCleanup(
+            const std::shared_ptr<SnapshotCaptureController>& capture,
+            const std::vector<std::string>& paths, const std::string& directory);
+        void deferVideoCaptureCleanup(
+            const std::shared_ptr<SnapshotCaptureController>& capture);
         void deferCancelledVideoCaptureCleanup();
         void reapDeferredCaptureCleanups();
         std::vector<DeferredCaptureCleanup> _deferredCaptureCleanups;
