@@ -127,6 +127,13 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         video.pending.motionPrompt =
             u8"从香港西九龙上空平滑推进至维多利亚港，保持地平线稳定并保留真实比例。";
     }
+    else if (_auditVideoState == AUDIT_VIDEO_RUNNING)
+        video.phase = earthai::VIDEO_RUNNING;
+    else if (_auditVideoState == AUDIT_VIDEO_FAILURE)
+    {
+        video.statusBanner.visible = true;
+        video.statusBanner.message = "audit persistent local failure";
+    }
 #endif
     if (ImGui::Begin(u8"AI 对话条", NULL, flags))
     {
@@ -563,12 +570,22 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             if (vphase == earthai::VIDEO_RUNNING)
             {
                 ImGui::SameLine();
-                if (ImGui::SmallButton(u8"停止视频") && media)
+                if (ImGui::SmallButton(u8"停止视频"))
                 {
-                    earthai::VideoUiRequest request;
-                    request.kind = earthai::VideoUiRequest::Cancel;
-                    media->enqueueVideoRequest(request);
+                    if (media)
+                    {
+                        earthai::VideoUiRequest request;
+                        request.kind = earthai::VideoUiRequest::Cancel;
+                        media->enqueueVideoRequest(request);
+                    }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                    else if (_auditMediaControlsEnabled)
+                        _auditActionMask |= AUDIT_ACTION_VIDEO_STOP;
+#endif
                 }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                _auditSnapshot.videoStopButton = auditLastItemRect();
+#endif
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip(u8"立即停止本地工作或后续轮询；远端已提交的 provider 费用可能无法撤销。");
             }
@@ -591,12 +608,22 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             ImGui::TextWrapped(u8"视频状态：%s", video.statusBanner.message.c_str());
             ImGui::PopStyleColor();
             ImGui::SameLine();
-            if (ImGui::SmallButton(u8"关闭提示") && media)
+            if (ImGui::SmallButton(u8"关闭提示"))
             {
-                earthai::VideoUiRequest request;
-                request.kind = earthai::VideoUiRequest::DismissStatus;
-                media->enqueueVideoRequest(request);
+                if (media)
+                {
+                    earthai::VideoUiRequest request;
+                    request.kind = earthai::VideoUiRequest::DismissStatus;
+                    media->enqueueVideoRequest(request);
+                }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                else if (_auditMediaControlsEnabled)
+                    _auditActionMask |= AUDIT_ACTION_VIDEO_STATUS_DISMISS;
+#endif
             }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+            _auditSnapshot.videoStatusDismissButton = auditLastItemRect();
+#endif
         }
     }
     ImGui::End();
@@ -988,6 +1015,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             if (media) media->enqueueCinematicRequest(request);
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
             _auditActionMask |= AUDIT_ACTION_CINEMATIC_SUBMIT;
+            if (localDeterministicOrbit)
+                _auditActionMask |= AUDIT_ACTION_LOCAL_360_START;
 #endif
             _cinematicStudioOpen = false;
             keepCinematicStudioOpen = false;

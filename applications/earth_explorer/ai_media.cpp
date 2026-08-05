@@ -1828,7 +1828,9 @@ namespace earthai
         }
         if (v.jobId > 0)
         {
-            _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "", "cancelled");
+            AIJob existing;
+            if (_jobs.get(v.jobId, existing) && existing.status == AIJob::RUNNING)
+                _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "", "cancelled");
             if (_cards) _cards->removeJob(v.jobId);
         }
         if (!v.snapPathA.empty()) std::remove(capturedPath(v.snapPathA).c_str());

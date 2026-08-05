@@ -240,6 +240,15 @@ int main()
     CHECK(media.find("const std::string& kImageModel = resolvedCinematicImageModel()") !=
           std::string::npos);
     CHECK(ui.find("media->imageModelLabel()") != std::string::npos);
+    CHECK(ui.find("AUDIT_VIDEO_RUNNING") != std::string::npos);
+    CHECK(ui.find("AUDIT_VIDEO_FAILURE") != std::string::npos);
+    CHECK(ui.find("AUDIT_ACTION_VIDEO_STOP") != std::string::npos);
+    CHECK(ui.find("AUDIT_ACTION_VIDEO_STATUS_DISMISS") != std::string::npos);
+    CHECK(ui.find("AUDIT_ACTION_LOCAL_360_START") != std::string::npos);
+    const std::string finalizer = extractFunctionBody(
+        media, "void MediaManager::finalizeVideoCancellation()");
+    CHECK(finalizer.find("existing.status == AIJob::RUNNING") != std::string::npos);
+    CHECK(finalizer.find("\"cancelled\"") != std::string::npos);
 
     const std::string videoPoll = extractFunctionBody(
         media, "void VeoVideoProvider::poll(");

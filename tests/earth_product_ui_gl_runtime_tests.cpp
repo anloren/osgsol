@@ -1851,6 +1851,20 @@ int main()
                          "paid image submit");
         ImGui::SetScrollY(studio, studio->ScrollMax.y);
         renderAuditFrame();
+        expectRectInside(command.auditSnapshot().cinematicSubmitButton, studio,
+                         "paid image submit after bottom scroll");
+        clickAuditRect(command.auditSnapshot().cinematicCancelButton);
+        renderAuditFrame();
+        command.auditClearActions();
+        clickAuditRect(command.auditSnapshot().videoButton);
+        renderAuditFrame();
+        studio = ImGui::FindWindowByName(u8"时空影像工作台");
+        expectRectInside(command.auditSnapshot().cinematicSubmitButton, studio,
+                         "provider video next action");
+        ImGui::SetScrollY(studio, studio->ScrollMax.y);
+        renderAuditFrame();
+        expectRectInside(command.auditSnapshot().cinematicSubmitButton, studio,
+                         "provider video action after bottom scroll");
         clickAuditRect(command.auditSnapshot().cinematicCancelButton);
         renderAuditFrame();
         command.auditSetVideoConfirm(true);
@@ -1871,8 +1885,37 @@ int main()
         studio = ImGui::FindWindowByName(u8"时空影像工作台");
         expectRectInside(command.auditSnapshot().cinematicSubmitButton, studio,
                          "local 360 start");
-        clickAuditRect(command.auditSnapshot().cinematicCancelButton);
+        command.auditClearActions();
+        clickAuditRect(command.auditSnapshot().cinematicSubmitButton);
+        expect(command.auditActionMask() & AIChatUI::AUDIT_ACTION_LOCAL_360_START,
+               "local 360 start did not publish typed local action");
         renderAuditFrame();
+        command.auditSetVideoConfirm(true);
+        renderAuditFrame();
+        confirm = ImGui::FindWindowByName(u8"确认生成巡航视频");
+        expectRectInside(command.auditSnapshot().videoConfirmButton, confirm,
+                         "local confirmation control");
+        expectRectInside(command.auditSnapshot().videoModalCancelButton, confirm,
+                         "local confirmation cancel");
+        clickAuditRect(command.auditSnapshot().videoModalCancelButton);
+        command.auditSetVideoConfirm(false);
+        command.auditSetVideoState(AIChatUI::AUDIT_VIDEO_RUNNING);
+        renderAuditFrame();
+        expectRectInside(command.auditSnapshot().videoStopButton, commandWindow,
+                         "running stop");
+        command.auditClearActions();
+        clickAuditRect(command.auditSnapshot().videoStopButton);
+        expect(command.auditActionMask() & AIChatUI::AUDIT_ACTION_VIDEO_STOP,
+               "running Stop did not publish cancel");
+        command.auditSetVideoState(AIChatUI::AUDIT_VIDEO_FAILURE);
+        renderAuditFrame();
+        expectRectInside(command.auditSnapshot().videoStatusDismissButton, commandWindow,
+                         "persistent error dismiss");
+        command.auditClearActions();
+        clickAuditRect(command.auditSnapshot().videoStatusDismissButton);
+        expect(command.auditActionMask() & AIChatUI::AUDIT_ACTION_VIDEO_STATUS_DISMISS,
+               "persistent error dismiss did not publish action");
+        command.auditSetVideoState(AIChatUI::AUDIT_VIDEO_IDLE);
         command.auditSetLocalOnly(false);
     }
     command.auditSetMediaControlsEnabled(false);

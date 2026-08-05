@@ -35,6 +35,8 @@ public:
         AuditRect photoButton;
         AuditRect videoButton;
         AuditRect local360Button;
+        AuditRect videoStopButton;
+        AuditRect videoStatusDismissButton;
         AuditRect videoCancelButton;
         AuditRect videoConfirmButton;
         AuditRect videoModalCancelButton;
@@ -55,7 +57,9 @@ public:
     {
         AUDIT_VIDEO_IDLE = 0,
         AUDIT_VIDEO_WAIT_B,
-        AUDIT_VIDEO_CONFIRM
+        AUDIT_VIDEO_CONFIRM,
+        AUDIT_VIDEO_RUNNING,
+        AUDIT_VIDEO_FAILURE
     };
     enum AuditAction
     {
@@ -65,7 +69,10 @@ public:
         AUDIT_ACTION_VIDEO_CONFIRM = 1u << 3,
         AUDIT_ACTION_VIDEO_CANCEL = 1u << 4,
         AUDIT_ACTION_CINEMATIC_SUBMIT = 1u << 5,
-        AUDIT_ACTION_CINEMATIC_CANCEL = 1u << 6
+        AUDIT_ACTION_CINEMATIC_CANCEL = 1u << 6,
+        AUDIT_ACTION_VIDEO_STOP = 1u << 7,
+        AUDIT_ACTION_VIDEO_STATUS_DISMISS = 1u << 8,
+        AUDIT_ACTION_LOCAL_360_START = 1u << 9
     };
 #endif
 
