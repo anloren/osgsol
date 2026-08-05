@@ -765,16 +765,21 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 ImGui::TextWrapped(
                     u8"先冻结当前起点；随后移动地球并点击“完成 B 点”，再确认生成。");
             }
-            else if (_cinematicMotion == earthai::CINEMATIC_MOTION_ORBIT_360)
+            else if (earthai::cinematicMotionRequiresClosureReview(
+                         static_cast<earthai::CinematicCameraMotion>(_cinematicMotion)))
             {
                 ImGui::TextWrapped(
-                    u8"单个当前首帧即可。完整 360° 环拍建议至少 8–10 秒；"
-                    u8"5 秒快速预览可能无法闭合。");
+                    u8"单个当前首帧即可，固定使用至少 8 秒。"
+                    u8"返回“生成完成”不等于闭环通过；成片必须依次经过前、右、后、左"
+                    u8"四个方位并回到起始方位，否则按失败处理。");
             }
             else
             {
                 ImGui::TextWrapped(
-                    u8"单个当前首帧即可；确认后由视频模型执行连续运镜。");
+                    _cinematicMotion == earthai::CINEMATIC_MOTION_AERIAL_TOUR
+                        ? u8"从当前首帧开始，到最后一帧保持同一个连续镜头："
+                          u8"不切镜、不跳高度、不换机位。"
+                        : u8"单个当前首帧即可；确认后由视频模型执行连续运镜。");
             }
             ImGui::PopStyleColor();
         }
@@ -786,7 +791,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             ImGui::TextWrapped(
                 _cinematicEra == earthai::CINEMATIC_ERA_CAMBRIAN_CHENGJIANG
                     ? u8"深时科学重建：现代位置只作镜头锚点；古地理、生态与外观存在显著不确定性。"
-                    : u8"历史重建：会执行时代错置检查；输出不是发现的档案照片或直接观测。 ");
+                    : u8"历史重建：输出不是发现的档案照片或直接观测；"
+                      u8"生成模型仍可能产生时代错置，"
+                      u8"发布或分析前必须对照可靠史料核验。 ");
             ImGui::PopStyleColor();
         }
         ImGui::EndChild();

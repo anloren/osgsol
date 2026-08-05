@@ -2,9 +2,10 @@
 
 ## Scope and safety boundary
 
-The user authorized at most 10 paid image requests and 5 paid video requests, with every
-video limited to 5 seconds. The ledger closed at exactly those limits: 10 image requests and
-5 video requests. No additional generation request is permitted for this validation run.
+The initial authorization covered at most 10 paid image requests and 5 paid video requests,
+with every video limited to 5 seconds. That ledger closed at exactly those limits: 10 image
+requests and 5 video requests. A separately authorized second round is recorded below and has
+its own closed 10-image / 5-video ledger.
 
 After the user prohibited foreground executable testing, no further osgSol or packaged app
 executable was launched. The remaining paid validation used direct Gemini API calls against
@@ -121,3 +122,68 @@ needs at least 8–10 seconds and that a 5-second preview may not close. The def
   appropriate after the user prohibited foreground/executable testing.
 - No application executable was run, no packaging or Desktop app replacement was performed,
   and no tag or remote push belongs to this validation change.
+
+## Second authorized round: one-take and full-orbit validation
+
+The user separately authorized another 10 image requests and 5 video requests, explicitly
+clarifying that “continuous aerial” means one unbroken take and requesting missing full-360
+orbit coverage. This second ledger also closed exactly at 10/10 images and 5/5 videos. No
+follow-up generation retries were issued after the ledger closed.
+
+All work remained direct-API and background-only. No osgSol application, packaged app, browser,
+or other foreground window was launched.
+
+### Round-two image ledger (10/10)
+
+| # | Scenario | Media result | Content acceptance |
+|---:|---|---|---|
+| 1 | Hong Kong present, guarded | Image | Fail: active-looking Kai Tak runway was still hallucinated despite an explicit prohibition. |
+| 2 | Hong Kong 1920, twilight | Image | Fail: camera coverage held, but the urban grid and airport-era geometry remained too modern. |
+| 3 | Hong Kong 1965 monsoon | Image | Fail: modern density and a large active-looking runway remained. |
+| 4 | Hong Kong present, night | Image | Fail: night treatment worked, but airport/runway geometry and map-like road lighting were unreliable. |
+| 5 | Chengjiang Cambrian | Image | Conditional pass: high-altitude, neutral shallow-marine reconstruction with no enlarged organisms; still inferential. |
+| 6 | Chengjiang Cambrian, dusk | Image | Conditional pass: coherent broad marine/tidal environment and no modern content; exact paleogeography is not asserted. |
+| 7 | Sydney present, oblique | Image | Pass for cinematic use: reference camera, harbour, bridge and Opera House remained coherent. |
+| 8 | Sydney animated sunset | Image | Pass for style use: camera and landmark composition held without Hong Kong contamination. |
+| 9 | Sydney 1920, 19:00 | Image | Conditional: bridge and Opera House were removed correctly, but remaining urban detail is speculative. |
+| 10 | Hong Kong present monsoon, fresh request | Image | Fail geographically: no Sydney carry-over, but the forbidden active-looking Kai Tak runway returned. |
+
+All ten calls returned image media. The repeated Hong Kong runway error proves that a negative
+prompt is not a geographic validator. Historical and present-day outputs that depend on exact
+infrastructure state need an evidence/vision check before they can be labelled geographically
+verified.
+
+### Round-two video ledger (5/5, each exactly 8 seconds)
+
+All five outputs are 1280x720 H.264 at 24 fps with AAC audio and an 8.000-second container
+duration. Contact sheets sampled each second. A scene-change probe at threshold 0.30 found zero
+hard-cut candidates in all five outputs; that supports, but does not by itself prove, continuous
+camera motion.
+
+| # | Scenario | Continuity | Advertised motion acceptance |
+|---:|---|---|---|
+| 1 | Victoria Harbour one-take aerial | Pass | Pass: continuous path from first to last frame, without cut, camera replacement or altitude jump. |
+| 2 | Sydney full-360 clockwise | Pass | Fail 360: it pushed in and covered only a partial arc; the final view did not return to the start. |
+| 3 | Sydney full-360 counterclockwise | Pass | Conditional pass: traversed the four sides and returned close to the start, with some radius/geometry drift. |
+| 4 | Chengjiang Cambrian one-take aerial | Pass | Pass as an uncertainty-labelled reconstruction: continuous high-altitude translation, no modern scene cut. |
+| 5 | Sydney animated full-360 clockwise | Pass | Conditional pass: completed the loop and returned close to the start, but landmark geometry morphed mildly. |
+
+Diagnostic first/last full-frame SSIM for the three orbit outputs was 0.281 (failed clockwise),
+0.553 (conditional counterclockwise) and 0.685 (conditional animated orbit). SSIM is not the
+acceptance test by itself: the sampled sequence must also visibly pass the front, right, rear and
+left quadrants without a hidden cut or world rotation.
+
+### Product rules derived from round two
+
+1. “Aerial tour” is now named “one-take aerial” and its prompt explicitly forbids every edit,
+   crossfade, hidden transition, altitude jump, camera reset and viewpoint replacement.
+2. A 360 orbit must be at least 8 seconds. Shorter requests are rejected before network use.
+3. Provider completion is not orbit completion. The UI now says that a returned 360 video only
+   passes after it visibly traverses all four quadrants and returns to the initial azimuth.
+4. Historical UI copy no longer implies that prompting can guarantee anachronism removal. It
+   requires external source checking before publication or analysis.
+5. Full-360 remains probabilistic with this image-to-video provider: two of three 8-second tests
+   closed, and only conditionally because geometric drift remained.
+
+Round-two evidence is retained under the ignored directory
+`build/media_paid_validation_round2_20260805/`; it is not a redistributable application asset.

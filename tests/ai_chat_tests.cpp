@@ -968,6 +968,8 @@ int main(int, char**)
             CHECK(videoPrompt.find("ultra-photorealistic") != std::string::npos);
             CHECK(videoPrompt.find("aerial") != std::string::npos);
             CHECK(videoPrompt.find("start exactly") != std::string::npos);
+            CHECK(videoPrompt.find("single unbroken") != std::string::npos);
+            CHECK(videoPrompt.find("no edit point") != std::string::npos);
             CHECK(videoPrompt.find("[AUDIO]") != std::string::npos);
             CHECK(videoPrompt.find("ambient sound") != std::string::npos);
             const earthai::CinematicVideoOutputOptions videoOutput =
@@ -985,10 +987,26 @@ int main(int, char**)
                       "task").get<std::string>() == "image_to_video");
 
             video.motion = earthai::CINEMATIC_MOTION_ORBIT_360;
+            CHECK(earthai::cinematicMinimumDurationSeconds(video.motion) == 8);
+            CHECK(earthai::cinematicMotionRequiresClosureReview(video.motion));
             CHECK(earthai::buildCinematicVideoPrompt(
                 earthai::cinematicRequestUnchecked(capture, video)).find(
                     "360-degree orbit") != std::string::npos);
+            CHECK(earthai::buildCinematicVideoPrompt(
+                earthai::cinematicRequestUnchecked(capture, video)).find(
+                    "front, right, rear and left quadrants") != std::string::npos);
+            CHECK(earthai::cinematicMotionLabel(video.motion) ==
+                  std::string(u8"360° 环拍"));
+            earthai::CinematicGenerationSettings tooShortOrbit = video;
+            tooShortOrbit.durationSeconds = 5;
+            earthai::CinematicGenerationRequest rejectedOrbit;
+            CHECK(!earthai::makeCinematicGenerationRequest(
+                capture, tooShortOrbit, rejectedOrbit));
+            CHECK(earthai::makeCinematicGenerationRequest(
+                capture, video, rejectedOrbit));
             video.motion = earthai::CINEMATIC_MOTION_DIVE;
+            CHECK(earthai::cinematicMinimumDurationSeconds(video.motion) == 4);
+            CHECK(!earthai::cinematicMotionRequiresClosureReview(video.motion));
             CHECK(earthai::buildCinematicVideoPrompt(
                 earthai::cinematicRequestUnchecked(capture, video)).find(
                     "controlled dive") != std::string::npos);

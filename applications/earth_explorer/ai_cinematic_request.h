@@ -128,6 +128,20 @@ namespace earthai
         return motion == CINEMATIC_MOTION_POINT_TO_POINT;
     }
 
+    inline int cinematicMinimumDurationSeconds(CinematicCameraMotion motion)
+    {
+        // Paid Gemini validation on 2026-08-05 found that a short orbit can return a
+        // valid MP4 while only performing a push-in or partial arc. Eight seconds is
+        // still not a guarantee, but it is the shortest product duration at which a
+        // real four-quadrant orbit completed in repeated concrete-location tests.
+        return motion == CINEMATIC_MOTION_ORBIT_360 ? 8 : 4;
+    }
+
+    inline bool cinematicMotionRequiresClosureReview(CinematicCameraMotion motion)
+    {
+        return motion == CINEMATIC_MOTION_ORBIT_360;
+    }
+
     inline std::string cinematicImageModelName(const char* configuredModel)
     {
         return (configuredModel && *configuredModel)
@@ -243,7 +257,9 @@ namespace earthai
         if (settings.mediaKind == CINEMATIC_IMAGE &&
             settings.motion != CINEMATIC_MOTION_STATIC)
             return false;
-        if (settings.durationSeconds < 4 || settings.durationSeconds > 30)
+        if (settings.durationSeconds <
+                cinematicMinimumDurationSeconds(settings.motion) ||
+            settings.durationSeconds > 30)
             return false;
 
         output = CinematicGenerationRequest();
@@ -308,7 +324,7 @@ namespace earthai
         switch (motion)
         {
         case CINEMATIC_MOTION_STATIC: return u8"静态图像";
-        case CINEMATIC_MOTION_AERIAL_TOUR: return u8"超写实航拍";
+        case CINEMATIC_MOTION_AERIAL_TOUR: return u8"一镜到底航拍";
         case CINEMATIC_MOTION_ORBIT_360: return u8"360° 环拍";
         case CINEMATIC_MOTION_DIVE: return u8"俯冲拍摄";
         case CINEMATIC_MOTION_CRANE_REVEAL: return u8"升降揭示";

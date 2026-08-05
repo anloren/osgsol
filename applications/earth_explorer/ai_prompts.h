@@ -515,13 +515,16 @@ namespace earthai
         case CINEMATIC_MOTION_STATIC:
             return "Keep a locked-off camera with only physically subtle environmental motion.";
         case CINEMATIC_MOTION_AERIAL_TOUR:
-            return "Execute a smooth ultra-real aerial establishing flight: gently advance through "
-                   "the center of frame with a restrained rise, stable horizon, continuous scale and "
-                   "physically plausible parallax.";
+            return "Execute one single unbroken ultra-real aerial take from the first frame through "
+                   "the final frame. Gently advance through the center with a restrained rise, "
+                   "stable horizon, continuous scale and physically plausible parallax. Never cut, "
+                   "crossfade, montage, reset the camera, jump altitude or replace the viewpoint.";
         case CINEMATIC_MOTION_ORBIT_360:
-            return "Execute one smooth 360-degree orbit around the center-of-frame subject, keeping "
-                   "radius and elevation coherent and ending near the starting orientation without "
-                   "teleportation or background warping.";
+            return "Complete exactly one full 360-degree orbit around the center-of-frame subject "
+                   "within the requested duration. Pass continuously through the front, right, rear "
+                   "and left quadrants, then finish at the original azimuth and framing. Keep radius "
+                   "and elevation coherent; never fake completion with a cut, loop, teleport, "
+                   "crossfade or background warp.";
         case CINEMATIC_MOTION_DIVE:
             return "Execute a controlled dive toward the center-of-frame subject, pitching down and "
                    "descending continuously while preserving realistic speed, terrain clearance and "
@@ -557,7 +560,9 @@ namespace earthai
         prompt += cinematicMotionPrompt(request.settings.motion);
         prompt += " Duration ";
         prompt += std::to_string(request.settings.durationSeconds);
-        prompt += " seconds, one continuous shot, stabilized motion, temporal consistency, no cuts.";
+        prompt += " seconds. This must be one visibly continuous, unbroken take from first frame to "
+                  "last frame: stabilized motion and temporal consistency, with no edit point, cut, "
+                  "crossfade, montage, time skip, hidden transition or camera reset.";
         appendCinematicEraPrompt(prompt, request.settings);
         appendCinematicTimePrompt(prompt, request.settings);
         appendCinematicStylePrompt(prompt, request.settings);
