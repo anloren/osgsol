@@ -206,16 +206,17 @@ namespace earthai
     };
 
     SnapshotGrabber::SnapshotGrabber(osg::Camera* captureCamera)
+        : _captureCamera(captureCamera)
     {
         // configureAIChat receives Earth's final composition camera (cameras[3]), constructs
         // MediaManager before registering FRAME handlers, and is called before viewer.run().
         // This is the sole Camera callback mutation boundary; runtime paths only publish or
         // revoke a generation through the dispatcher atomic shared_ptr.
-        if (captureCamera)
+        if (_captureCamera.valid())
         {
             _dispatcher = new GenerationDispatcher(
-                captureCamera->getFinalDrawCallback());
-            captureCamera->setFinalDrawCallback(_dispatcher.get());
+                _captureCamera->getFinalDrawCallback());
+            _captureCamera->setFinalDrawCallback(_dispatcher.get());
             _dispatcherInstalled = true;
         }
         else
@@ -353,9 +354,9 @@ namespace earthai
     {
         std::string actual = capturedPath(pngPath);
         osg::ref_ptr<osg::Image> img = osgDB::readImageFile(actual);
-        if (!img.valid() || !_viewer || !_viewer->getCamera()) return;
+        if (!img.valid() || !_captureCamera.valid()) return;
         int vx = 0, vy = 0, vw = 0, vh = 0;
-        const osg::Viewport* vp = _viewer->getCamera()->getViewport();
+        const osg::Viewport* vp = _captureCamera->getViewport();
         if (vp)
         {
             vx = (int)vp->x();

@@ -11,6 +11,7 @@
 #include "ai_cinematic_request.h"
 #include "ai_prompts.h"
 #include <osg/Vec3d>
+#include <osg/observer_ptr>
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 #include <picojson.h>
@@ -185,6 +186,9 @@ namespace earthai
     private:
         struct CaptureGeneration;
         struct GenerationDispatcher;
+        // The same final composition camera that permanently owns the dispatcher. It is
+        // observer-only so shutdown cannot keep the scene graph alive through MediaManager.
+        osg::observer_ptr<osg::Camera> _captureCamera;
         SnapshotCaptureSlot _slot;
         osg::ref_ptr<GenerationDispatcher> _dispatcher;
         bool _dispatcherInstalled = false;

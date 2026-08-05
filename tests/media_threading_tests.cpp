@@ -381,13 +381,17 @@ int main()
     CHECK(mediaHeader.find("CaptureGeneration") != std::string::npos);
     CHECK(mediaHeader.find("GenerationDispatcher") != std::string::npos);
     CHECK(mediaHeader.find("_dispatcherInstalled") != std::string::npos);
+    CHECK(mediaHeader.find("osg::observer_ptr<osg::Camera> _captureCamera") !=
+          std::string::npos);
     CHECK(mediaHeader.find("_timeoutRetainedGenerations") == std::string::npos);
     CHECK(mediaHeader.find("_reapableGenerations") != std::string::npos);
     CHECK(countOccurrences(media, "setFinalDrawCallback(") == 1);
     CHECK(countOccurrences(media, "getFinalDrawCallback(") == 1);
-    CHECK(snapshotConstructor.find("captureCamera->setFinalDrawCallback(_dispatcher.get())") !=
+    CHECK(snapshotConstructor.find("_captureCamera->setFinalDrawCallback(_dispatcher.get())") !=
           std::string::npos);
-    CHECK(snapshotConstructor.find("captureCamera->getFinalDrawCallback()") !=
+    CHECK(snapshotConstructor.find("_captureCamera->getFinalDrawCallback()") !=
+          std::string::npos);
+    CHECK(media.find(": _captureCamera(captureCamera)") !=
           std::string::npos);
     CHECK(snapshotConstructor.find("_dispatcherInstalled = true") != std::string::npos);
     CHECK(snapshotConstructor.find("_viewer->getCamera") == std::string::npos);
@@ -427,6 +431,11 @@ int main()
     CHECK(snapshotGrab.find("_dispatcher->publish(generation)") != std::string::npos);
     CHECK(snapshotGrab.find("setFinalDrawCallback") == std::string::npos);
     CHECK(snapshotGrab.find("getFinalDrawCallback") == std::string::npos);
+    const std::string cropToViewport = extractFunctionBody(
+        media, "void SnapshotGrabber::cropToViewport(");
+    CHECK(cropToViewport.find("_captureCamera.valid()") != std::string::npos);
+    CHECK(cropToViewport.find("_captureCamera->getViewport()") != std::string::npos);
+    CHECK(cropToViewport.find("_viewer") == std::string::npos);
     // A callback that was claimed before timeout can complete after the media job resets. The
     // unconditional FRAME reaper revokes its generation and drops timeout and normal
     // generations only once the render invocation is quiescent.
