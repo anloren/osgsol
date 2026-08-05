@@ -1893,6 +1893,8 @@ int main()
         command.auditSetVideoConfirm(true);
         renderAuditFrame();
         confirm = ImGui::FindWindowByName(u8"确认生成巡航视频");
+        expect(command.auditSnapshot().localConfirmationVisible,
+               "local confirmation did not enter deterministic orbit branch");
         expectRectInside(command.auditSnapshot().videoConfirmButton, confirm,
                          "local confirmation control");
         expectRectInside(command.auditSnapshot().videoModalCancelButton, confirm,

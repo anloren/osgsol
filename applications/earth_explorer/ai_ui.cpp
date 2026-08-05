@@ -118,6 +118,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
     {
         video.phase = earthai::VIDEO_AWAIT_CONFIRM;
         video.pending.ready = true;
+        video.pending.cinematic = true;
         video.pending.llaA.set(
             osg::DegreesToRadians(22.2950),
             osg::DegreesToRadians(114.1404), 1200.0);
@@ -126,6 +127,39 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             osg::DegreesToRadians(114.1694), 900.0);
         video.pending.motionPrompt =
             u8"从香港西九龙上空平滑推进至维多利亚港，保持地平线稳定并保留真实比例。";
+        video.pending.anchorCapture.targetLla = video.pending.llaA;
+        video.pending.anchorCapture.camera.cameraEyeLla = video.pending.llaA;
+        video.pending.anchorCapture.camera.cameraEyeLla[2] = 1200.0;
+        video.pending.anchorCapture.camera.headingDeg = 42.0;
+        video.pending.anchorCapture.camera.offNadirDeg = 30.0;
+        video.pending.anchorCapture.camera.verticalFovDeg = 45.0;
+        video.pending.anchorCapture.camera.aspectRatio = 16.0 / 9.0;
+        video.pending.anchorCapture.camera.viewportWidth = 1280;
+        video.pending.anchorCapture.camera.viewportHeight = 720;
+        if (_auditLocalOnly)
+        {
+            video.pending.singleAnchor = true;
+            earthai::CinematicGenerationSettings local =
+                earthai::defaultVideoCinematicSettings();
+            local.era = earthai::CINEMATIC_ERA_PRESENT;
+            local.localTime = earthai::CINEMATIC_TIME_AUTO;
+            local.visualStyle = earthai::CINEMATIC_STYLE_SCIENTIFIC;
+            local.motion = earthai::CINEMATIC_MOTION_ORBIT_360;
+            local.durationSeconds = 8;
+            local.includeGeneratedAudio = false;
+            video.pending.settings = earthai::normalizedCinematicSubmissionSettings(local);
+            video.pending.motionPrompt = u8"本地确定性 360° 一镜到底审计合同。";
+        }
+        else
+        {
+            video.pending.singleAnchor = false;
+            video.pending.endCapture.targetLla = video.pending.llaB;
+            video.pending.endCapture.camera = video.pending.anchorCapture.camera;
+            video.pending.endCapture.camera.cameraEyeLla = video.pending.llaB;
+            video.pending.endCapture.camera.cameraEyeLla[2] = 900.0;
+            video.pending.settings = earthai::defaultVideoCinematicSettings();
+            video.pending.settings.motion = earthai::CINEMATIC_MOTION_POINT_TO_POINT;
+        }
     }
     else if (_auditVideoState == AUDIT_VIDEO_RUNNING)
         video.phase = earthai::VIDEO_RUNNING;
@@ -1085,6 +1119,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 const bool localDeterministicOrbit = info.cinematic &&
                     earthai::cinematicMotionUsesDeterministicLocalRenderer(
                         info.settings.motion);
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                _auditSnapshot.localConfirmationVisible = localDeterministicOrbit;
+#endif
                 ImGui::PushStyleColor(
                     ImGuiCol_Text, earthui::design::kCyan);
                 ImGui::TextUnformatted(

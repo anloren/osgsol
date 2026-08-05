@@ -50,6 +50,7 @@ public:
         bool historyExpanded = false;
         bool templatePopupVisible = false;
         bool videoModalVisible = false;
+        bool localConfirmationVisible = false;
         bool cinematicStudioVisible = false;
         bool photoEnabled = false;
     };

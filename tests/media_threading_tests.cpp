@@ -245,6 +245,8 @@ int main()
     CHECK(ui.find("AUDIT_ACTION_VIDEO_STOP") != std::string::npos);
     CHECK(ui.find("AUDIT_ACTION_VIDEO_STATUS_DISMISS") != std::string::npos);
     CHECK(ui.find("AUDIT_ACTION_LOCAL_360_START") != std::string::npos);
+    CHECK(ui.find("localConfirmationVisible") != std::string::npos);
+    CHECK(ui.find("CINEMATIC_MOTION_ORBIT_360") != std::string::npos);
     const std::string finalizer = extractFunctionBody(
         media, "void MediaManager::finalizeVideoCancellation()");
     CHECK(finalizer.find("existing.status == AIJob::RUNNING") != std::string::npos);
