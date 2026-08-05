@@ -7,6 +7,9 @@ SET(EXECUTABLE_FILES
     earth_config.cpp marker_style.cpp
     ai_chat.cpp ai_setup.cpp ai_ui.cpp ai_cards.cpp ai_media.cpp ai_query.cpp ai_world_tools.cpp
     earth_context.cpp earth_context.h
+    project/earth_project.cpp project/earth_project.h
+    project/earth_project_layer_adapter.cpp
+    project/earth_project_layer_adapter.h
     feed_layer.cpp feeds/gdacs_feed.cpp feeds/usgs_quakes_feed.cpp feeds/eonet_feed.cpp
     feeds/gdelt_feed.cpp feeds/gpsjam_feed.cpp feeds/unhcr_feed.cpp feeds/nhc_feed.cpp
     feeds/strategic_feed.cpp feeds/firms_feed.cpp

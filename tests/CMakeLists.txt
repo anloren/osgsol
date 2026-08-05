@@ -165,6 +165,11 @@ TARGET_LINK_LIBRARIES(osgVerse_Test_Ai_Chat PRIVATE
                       OpenThreads osg ${CMAKE_DL_LIBS})
 NEW_LIGHTWEIGHT_CTEST(osgVerse_Test_Earth_Context earth_context_tests.cpp
                       offline 120)
+NEW_LIGHTWEIGHT_CTEST(osgSol_Test_EarthProject earth_project_tests.cpp
+                      "offline;scienceearth;project" 30)
+NEW_LIGHTWEIGHT_CTEST(osgSol_Test_EarthProjectLayerAdapter
+                      earth_project_layer_adapter_tests.cpp
+                      "offline;scienceearth;project" 30)
 TARGET_COMPILE_DEFINITIONS(osgVerse_Test_Ai_Chat PRIVATE
                            OSGVERSE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 NEW_CTEST(osgVerse_Test_Feeds feed_layer_tests.cpp offline 120)  # FeedLayer framework / geo primitives / LayerManager unit tests
@@ -339,7 +344,7 @@ IF(BUILD_TESTING)
         LABELS "offline;scienceearth"
         TIMEOUT 30)
 
-    IF(APPLE)
+    IF(APPLE AND OSGSOL_BUILD_SCIENCE)
         ADD_LIBRARY(osgSol_Test_SciencePluginFake MODULE
             science_plugin_fake.cpp)
         ADD_LIBRARY(osgSol_Test_SciencePluginFakeV4 MODULE
