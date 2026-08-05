@@ -5,6 +5,7 @@
 #include "science_workbench_model.h"
 
 #include <ScienceQueryTypes.h>
+#include <ScienceProcessingRegistry.h>
 
 #include <cstddef>
 #include <memory>
@@ -14,7 +15,9 @@
 std::string serializeScienceWorkbenchSnapshot(
     const ScienceWorkbenchViewModel& model,
     const std::vector<earthscience::ScienceSourceDescriptor>& sources,
-    std::shared_ptr<const earthscience::ScienceArtifact> activeArtifact);
+    std::shared_ptr<const earthscience::ScienceArtifact> activeArtifact,
+    const std::vector<earthscience::ScienceProcessingCapability>&
+        processingCapabilities = {});
 
 bool copyScienceWorkbenchSnapshot(
     const std::string& snapshot,

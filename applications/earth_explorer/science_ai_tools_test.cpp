@@ -728,8 +728,9 @@ namespace
         picojson::value result;
         require(tools.dispatch("search_science_sources", emptyArgs(), result),
                 "search tool did not dispatch");
-        require(result.is<picojson::object>() && result.contains("sources"),
-                "search result omitted source catalog");
+        require(result.is<picojson::object>() && result.contains("sources") &&
+                    result.contains("processing_capabilities"),
+                "search result omitted source or processing catalog");
         const picojson::array& sources =
             result.get("sources").get<picojson::array>();
         require(sources.size() == 3 &&
@@ -745,6 +746,14 @@ namespace
                     sources[2].get("id").get<std::string>() == "sentinel-2-l2a" &&
                     sources[2].get("visualizations").get<picojson::array>().size() == 1,
                 "search result omitted health or attribution");
+        const picojson::array& processingCapabilities =
+            result.get("processing_capabilities").get<picojson::array>();
+        require(processingCapabilities.size() == 6 &&
+                    processingCapabilities.back().get(
+                        "optional_plugin").get<bool>() &&
+                    !processingCapabilities.back().get(
+                        "available").get<bool>(),
+                "search result hid or overstated optional processing engines");
         requireMatrixUnchanged(originalMatrix, *manipulator);
 
         const earthai::Tool& start = findTool(tools, "start_science_research");
@@ -805,6 +814,12 @@ namespace
                     result.get("progress").contains("determinate") &&
                     !result.get("progress").contains("percent"),
                 "indeterminate job progress was not honest and structured");
+        require(result.contains("processing") &&
+                    result.get("processing").get("capability_id").
+                        get<std::string>() ==
+                        "science-provider/alphaearth-foundations" &&
+                    result.get("processing").contains("cost"),
+                "AI job result omitted typed processing identity or cost");
         require(providerPointer->lastQuery.sourceId ==
                     "alphaearth-foundations" &&
                     !layer->isVisible() && layers.find("alphaearth") &&

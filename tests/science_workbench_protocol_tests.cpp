@@ -192,6 +192,63 @@ void testSnapshotIsDeterministicAndBounded()
            "copied snapshot must match source");
 }
 
+void testProcessingStateIsVisibleToAiContext()
+{
+    ScienceWorkbenchModel model = readyModel();
+    auto processing = std::make_shared<earthscience::ScienceProcessingRecord>();
+    processing->recordId = "processing-1";
+    processing->liveJobId = 7;
+    processing->capabilityId =
+        "science-provider/era5-agricultural-climate";
+    processing->sourceId = "era5-agricultural-climate";
+    processing->state = earthscience::ScienceJobState::Fetching;
+    processing->cost.sourceBytesUpperBound = 1200;
+    processing->progress.stage = earthscience::ScienceProgressStage::Reading;
+    processing->progress.completedUnits = 3;
+    processing->progress.totalUnits = 9;
+    processing->progress.determinate = true;
+    processing->progress.unit = "year";
+    processing->message = "Reading";
+    processing->createdAt = "2026-08-05T10:00:00Z";
+    processing->updatedAt = "2026-08-05T10:00:01Z";
+    earthscience::ScienceJobSnapshot job;
+    job.jobId = 7;
+    job.state = earthscience::ScienceJobState::Fetching;
+    job.progress = processing->progress;
+    job.processing = processing;
+    model.applyJobSnapshot(job);
+
+    earthscience::ScienceProcessingRegistry registry;
+    std::string error;
+    expect(registry.addBuiltInSource(sourceDescriptor(), error),
+           "test processing capability must register");
+    for (const auto& capability :
+         earthscience::optionalScienceProcessingCapabilities())
+        expect(registry.add(capability, error),
+               "optional processing capability must register");
+    const std::string snapshot = serializeScienceWorkbenchSnapshot(
+        model.viewModel(), {sourceDescriptor()}, nullptr, registry.list());
+    picojson::value parsed;
+    expect(picojson::parse(parsed, snapshot).empty(),
+           "processing context snapshot must parse");
+    const picojson::object& root = parsed.get<picojson::object>();
+    const picojson::object& state =
+        root.at("processing").get<picojson::object>();
+    expect(state.at("recordId").get<std::string>() == "processing-1" &&
+               state.at("capabilityId").get<std::string>() ==
+                   "science-provider/era5-agricultural-climate" &&
+               state.at("progress").get<picojson::object>()
+                   .at("completedUnits").get<double>() == 3.0,
+           "AI context lost processing identity or progress");
+    const picojson::array& capabilities =
+        root.at("processingCapabilities").get<picojson::array>();
+    expect(capabilities.size() == 4,
+           "AI context did not receive built-in and optional capabilities");
+    expect(!capabilities.back().get<picojson::object>()
+                .at("available").get<bool>(),
+           "unloaded optional engine must remain explicitly unavailable");
+}
+
 void testActionValidation()
 {
     ScienceWorkbenchAction action;
@@ -302,6 +359,7 @@ void testReportEvidenceUsesOnlyDeclaredFacts()
 int main()
 {
     testSnapshotIsDeterministicAndBounded();
+    testProcessingStateIsVisibleToAiContext();
     testActionValidation();
     testReportEvidenceUsesOnlyDeclaredFacts();
     std::cout << "ScienceWorkbenchProtocol tests passed" << std::endl;

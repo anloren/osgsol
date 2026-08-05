@@ -347,6 +347,7 @@ void ScienceWorkbenchModel::applyProgress(
 void ScienceWorkbenchModel::applyJobSnapshot(
     const earthscience::ScienceJobSnapshot& snapshot)
 {
+    _view.processing = snapshot.processing;
     applyProgress(snapshot.progress);
     switch (snapshot.state)
     {

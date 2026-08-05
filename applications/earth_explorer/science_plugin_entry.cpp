@@ -12,6 +12,7 @@
 #include <AlphaEarthProvider.h>
 #include <CopernicusDemProvider.h>
 #include <Era5AgroProvider.h>
+#include <ScienceEvidenceStore.h>
 #include <ScienceQueryService.h>
 #include <ScienceSourceRegistry.h>
 #include <Sentinel2Provider.h>
@@ -20,6 +21,7 @@
 #include <ui/ImGuiComponents.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -41,6 +43,10 @@ namespace
     public:
         explicit SciencePluginSession(const std::string& indexPath)
         {
+            const char* rootOverride =
+                std::getenv("OSGSOL_SCIENCE_RESEARCH_ROOT");
+            researchRoot = rootOverride && rootOverride[0]
+                ? rootOverride : earthscience::defaultScienceResearchRoot();
             std::unique_ptr<earthscience::ScienceSourceRegistry> registry(
                 new earthscience::ScienceSourceRegistry);
             std::string error;
@@ -81,6 +87,11 @@ namespace
 
             service.reset(new earthscience::ScienceQueryService(
                 std::move(registry)));
+            error.clear();
+            if (!service->configureProcessingHistory(
+                    researchRoot, error))
+                OSG_WARN << "ScienceEarth processing history unavailable: "
+                         << error << std::endl;
             layer = new SciencePreviewLayer(service.get());
             workbench.configureTemporalSources(service->listSources());
 
@@ -103,6 +114,7 @@ namespace
         // Declaration order is deliberate: destruction runs panel, layer,
         // then service so the preview never observes a destroyed service.
         std::unique_ptr<earthscience::ScienceQueryService> service;
+        std::string researchRoot;
         osg::ref_ptr<SciencePreviewLayer> layer;
         ScienceEarthPanel panel;
         ScienceWorkbenchModel workbench;
@@ -267,7 +279,8 @@ namespace
         SciencePluginSession* runtime = session(value);
         if (!runtime) return;
         registerScienceResearchTools(tools, runtime->service.get(),
-                                     runtime->layer.get(), layers, manipulator);
+                                     runtime->layer.get(), layers, manipulator,
+                                     runtime->researchRoot);
     }
 
     void bindGui(void*, const OsgSolScienceGuiBridgeV1* bridge)
@@ -309,7 +322,8 @@ namespace
         output->revision = view.revision;
         const std::string snapshot = serializeScienceWorkbenchSnapshot(
             view, runtime->service->listSources(),
-            runtime->workbench.artifact(view.activeArtifactId));
+            runtime->workbench.artifact(view.activeArtifactId),
+            runtime->service->listProcessingCapabilities());
         return copyScienceWorkbenchSnapshot(snapshot, output);
     }
 

@@ -1,6 +1,8 @@
 #include "ScienceQueryService.h"
 
 #include <algorithm>
+#include <cctype>
+#include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -221,17 +223,67 @@ namespace
             query.time.explicitYears.begin(), query.time.explicitYears.end());
         return static_cast<std::uint64_t>(*years.second - *years.first + 1);
     }
+
+    std::string processingRecordId(std::uint64_t jobId)
+    {
+        const auto ticks = std::chrono::duration_cast<
+            std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        return "processing-" + std::to_string(ticks) + "-" +
+            std::to_string(jobId);
+    }
+
+    std::string safeProcessingSourceId(const std::string& sourceId)
+    {
+        if (!sourceId.empty() && sourceId.size() <= 160 &&
+            std::all_of(sourceId.begin(), sourceId.end(),
+                [](unsigned char character)
+                {
+                    return std::isalnum(character) || character == '-' ||
+                        character == '_' || character == '.' ||
+                        character == ':';
+                }))
+            return sourceId;
+        return "unknown-source";
+    }
+
+    bool sameProgress(const ScienceProgress& left,
+                      const ScienceProgress& right)
+    {
+        return left.stage == right.stage &&
+            left.completedUnits == right.completedUnits &&
+            left.totalUnits == right.totalUnits &&
+            left.determinate == right.determinate &&
+            left.unit == right.unit &&
+            left.elapsedSeconds == right.elapsedSeconds;
+    }
 }
 
 ScienceQueryService::ScienceQueryService(
     std::unique_ptr<ScienceSourceRegistry> registry)
-    : _registry(std::move(registry))
+    : _registry(std::move(registry)),
+      _processingRegistry(new ScienceProcessingRegistry)
 {
     if (!_registry)
     {
         _state.state = ScienceJobState::Unavailable;
         _state.progress.stage = ScienceProgressStage::Failed;
         _state.message = "science source registry is missing";
+    }
+    else
+    {
+        std::string ignored;
+        for (const ScienceSourceDescriptor& source : _registry->listSources())
+        {
+            ignored.clear();
+            _processingRegistry->addBuiltInSource(source, ignored);
+        }
+        for (const ScienceProcessingCapability& capability :
+             optionalScienceProcessingCapabilities())
+        {
+            ignored.clear();
+            _processingRegistry->add(capability, ignored);
+        }
     }
 }
 
@@ -246,6 +298,45 @@ std::vector<ScienceSourceDescriptor> ScienceQueryService::listSources() const
     std::lock_guard<std::mutex> lock(_mutex);
     return _registry ? _registry->listSources()
                      : std::vector<ScienceSourceDescriptor>();
+}
+
+std::vector<ScienceProcessingCapability>
+ScienceQueryService::listProcessingCapabilities() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _processingRegistry ? _processingRegistry->list()
+                               : std::vector<ScienceProcessingCapability>();
+}
+
+bool ScienceQueryService::registerProcessingPlugin(
+    const ScienceProcessingPluginManifest& manifest,
+    const std::vector<ScienceProcessingCapability>& capabilities,
+    std::string& error)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_processingRegistry)
+    {
+        error = "processing registry is unavailable";
+        return false;
+    }
+    return _processingRegistry->registerPlugin(manifest, capabilities, error);
+}
+
+bool ScienceQueryService::configureProcessingHistory(
+    const std::string& root, std::string& error)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (root.empty())
+    {
+        error = "processing history root is empty";
+        return false;
+    }
+    std::unique_ptr<ScienceProcessingStore> store(
+        new ScienceProcessingStore(root));
+    if (!store->prepare(error)) return false;
+    _processingStore = std::move(store);
+    error.clear();
+    return true;
 }
 
 bool ScienceQueryService::validateQuery(
@@ -428,6 +519,7 @@ std::uint64_t ScienceQueryService::submit(const GeoTemporalQuery& query)
         // The precise validation error was populated by validate().
     }
 
+    if (_providerActive) cancelProcessingRecord("Superseded by a new job");
     cancelActiveProvider();
     _activeProvider = nullptr;
     _activeSourceId.clear();
@@ -439,8 +531,32 @@ std::uint64_t ScienceQueryService::submit(const GeoTemporalQuery& query)
         next.progress.stage = ScienceProgressStage::Failed;
         next.message = error;
         _state = std::move(next);
+        ScienceProcessingRecord processing;
+        processing.recordId = processingRecordId(jobId);
+        processing.liveJobId = jobId;
+        processing.capabilityId = "science-provider/" +
+            safeProcessingSourceId(query.sourceId);
+        processing.sourceId = safeProcessingSourceId(query.sourceId);
+        processing.state = _state.state;
+        processing.progress = _state.progress;
+        processing.message = _state.message;
+        processing.createdAt = scienceProcessingUtcNow();
+        processing.updatedAt = processing.createdAt;
+        publishProcessingRecord(std::move(processing));
         return jobId;
     }
+
+    ScienceProcessingRecord processing;
+    processing.recordId = processingRecordId(jobId);
+    processing.liveJobId = jobId;
+    const ScienceProcessingCapability* capability =
+        _processingRegistry ? _processingRegistry->resolve(query) : nullptr;
+    processing.capabilityId = capability ? capability->id :
+        "science-provider/" + safeProcessingSourceId(query.sourceId);
+    processing.sourceId = safeProcessingSourceId(query.sourceId);
+    processing.cost = estimateUnlocked(query);
+    processing.createdAt = scienceProcessingUtcNow();
+    processing.updatedAt = processing.createdAt;
 
     const std::uint64_t providerGeneration = provider->submit(query);
     if (providerGeneration == 0)
@@ -449,6 +565,10 @@ std::uint64_t ScienceQueryService::submit(const GeoTemporalQuery& query)
         next.progress.stage = ScienceProgressStage::Failed;
         next.message = "science provider rejected query";
         _state = std::move(next);
+        processing.state = _state.state;
+        processing.progress = _state.progress;
+        processing.message = _state.message;
+        publishProcessingRecord(std::move(processing));
         return jobId;
     }
 
@@ -460,6 +580,10 @@ std::uint64_t ScienceQueryService::submit(const GeoTemporalQuery& query)
     next.progress.stage = ScienceProgressStage::Queued;
     next.message = "Queued";
     _state = std::move(next);
+    processing.state = _state.state;
+    processing.progress = _state.progress;
+    processing.message = _state.message;
+    publishProcessingRecord(std::move(processing));
     return jobId;
 }
 
@@ -472,6 +596,7 @@ void ScienceQueryService::cancel(std::uint64_t jobId)
     _state.progress = ScienceProgress();
     _state.progress.stage = ScienceProgressStage::Cancelled;
     _state.message = "Cancelled";
+    cancelProcessingRecord(_state.message);
 }
 
 void ScienceQueryService::clearArtifact()
@@ -597,7 +722,83 @@ ScienceJobSnapshot ScienceQueryService::snapshot()
     {
         _providerActive = false;
     }
+    syncProcessingRecord();
     return _state;
+}
+
+void ScienceQueryService::publishProcessingRecord(
+    ScienceProcessingRecord record)
+{
+    record.updatedAt = scienceProcessingUtcNow();
+    std::string storeError;
+    if (_processingStore && !_processingStore->save(record, storeError))
+    {
+        const std::string warning =
+            "processing history persistence failed: " + storeError;
+        if (std::find(record.warnings.begin(), record.warnings.end(), warning) ==
+            record.warnings.end())
+            record.warnings.push_back(warning);
+    }
+    _state.processing =
+        std::make_shared<const ScienceProcessingRecord>(std::move(record));
+}
+
+void ScienceQueryService::cancelProcessingRecord(const std::string& message)
+{
+    if (!_state.processing) return;
+    ScienceProcessingRecord record = *_state.processing;
+    record.cancelRequested = true;
+    record.state = ScienceJobState::Cancelled;
+    record.progress = ScienceProgress();
+    record.progress.stage = ScienceProgressStage::Cancelled;
+    record.message = message;
+    publishProcessingRecord(std::move(record));
+}
+
+void ScienceQueryService::syncProcessingRecord()
+{
+    if (!_state.processing) return;
+    const ScienceProcessingRecord& current = *_state.processing;
+    std::string artifactId;
+    std::vector<std::string> warnings;
+    std::vector<ScienceProcessingProvenance> provenance;
+    std::shared_ptr<const ScienceArtifact> artifact;
+    if (_state.lastSuccessfulArtifact &&
+        _state.lastSuccessfulArtifact->generation == _state.jobId)
+        artifact = _state.lastSuccessfulArtifact;
+    if (_state.lastSuccessfulAnalysisArtifact &&
+        _state.lastSuccessfulAnalysisArtifact->generation == _state.jobId)
+        artifact = _state.lastSuccessfulAnalysisArtifact;
+    if (artifact)
+    {
+        artifactId = artifact->artifactId;
+        warnings = artifact->warnings;
+        for (const ScienceSourceReference& reference :
+             artifact->sourceReferences)
+        {
+            provenance.push_back({
+                reference.sourceId.empty() ? artifact->query.sourceId
+                                           : reference.sourceId,
+                reference.providerVersion, reference.datasetId,
+                reference.originalUrl, reference.attribution,
+                reference.acquisitionTime});
+        }
+    }
+    if (current.state == _state.state &&
+        sameProgress(current.progress, _state.progress) &&
+        current.message == _state.message &&
+        current.resultArtifactId == artifactId &&
+        current.warnings == warnings &&
+        current.provenance.size() == provenance.size())
+        return;
+    ScienceProcessingRecord record = current;
+    record.state = _state.state;
+    record.progress = _state.progress;
+    record.message = _state.message;
+    record.resultArtifactId = artifactId;
+    record.warnings = std::move(warnings);
+    record.provenance = std::move(provenance);
+    publishProcessingRecord(std::move(record));
 }
 
 bool ScienceQueryService::validate(

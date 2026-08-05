@@ -16,6 +16,12 @@ ADD_LIBRARY(osgSolScienceCore STATIC
     ScienceEmbedding.h
     ScienceEvidenceStore.cpp
     ScienceEvidenceStore.h
+    ScienceProcessingRegistry.cpp
+    ScienceProcessingRegistry.h
+    ScienceProcessingStore.cpp
+    ScienceProcessingStore.h
+    ScienceProcessingTypes.cpp
+    ScienceProcessingTypes.h
     ScienceProvider.h
     ScienceArtifactStore.cpp
     ScienceArtifactStore.h
@@ -41,6 +47,19 @@ TARGET_INCLUDE_DIRECTORIES(osgSolScienceCore
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
     PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty")
 SET_TARGET_PROPERTIES(osgSolScienceCore PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden)
+
+ADD_LIBRARY(osgSolScienceProcessingHost STATIC
+    ScienceProcessingPluginApi.h
+    ScienceProcessingPluginLoader.cpp
+    ScienceProcessingPluginLoader.h)
+TARGET_COMPILE_FEATURES(osgSolScienceProcessingHost PUBLIC cxx_std_17)
+TARGET_INCLUDE_DIRECTORIES(osgSolScienceProcessingHost
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+TARGET_LINK_LIBRARIES(osgSolScienceProcessingHost
+    PUBLIC osgSolScienceCore ${CMAKE_DL_LIBS})
+SET_TARGET_PROPERTIES(osgSolScienceProcessingHost PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     CXX_VISIBILITY_PRESET hidden)
 
@@ -134,6 +153,7 @@ TARGET_INCLUDE_DIRECTORIES(osgdb_science PRIVATE
     "${OSGSOL_SCIENCE_DEPS_ROOT}/include")
 TARGET_LINK_LIBRARIES(osgdb_science
     osgSolSciencePreview
+    osgSolScienceProcessingHost
     osgVerseReaderWriter
     osgVersePipeline
     osgVerseModeling
@@ -418,6 +438,54 @@ IF(BUILD_TESTING)
     ADD_TEST(NAME osgSol_Test_ScienceQueryService
              COMMAND $<TARGET_FILE:osgSol_Test_ScienceQueryService>)
     SET_TESTS_PROPERTIES(osgSol_Test_ScienceQueryService PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_ScienceProcessingRegistry
+        ScienceProcessingRegistryTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceProcessingRegistry
+        PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceProcessingRegistry
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceProcessingRegistry
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceProcessingRegistry>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceProcessingRegistry PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_EXECUTABLE(osgSol_Test_ScienceProcessingStore
+        ScienceProcessingStoreTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceProcessingStore
+        PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceProcessingStore
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceProcessingStore
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceProcessingStore>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceProcessingStore PROPERTIES
+        LABELS "offline;scienceearth"
+        TIMEOUT 10)
+
+    ADD_LIBRARY(osgSol_Test_ScienceProcessingPlugin MODULE
+        ScienceProcessingPluginFake.cpp
+        ScienceProcessingPluginApi.h)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceProcessingPlugin
+        PRIVATE cxx_std_17)
+    SET_TARGET_PROPERTIES(osgSol_Test_ScienceProcessingPlugin PROPERTIES
+        PREFIX "")
+
+    ADD_EXECUTABLE(osgSol_Test_ScienceProcessingPluginLoader
+        ScienceProcessingPluginLoaderTest.cpp)
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceProcessingPluginLoader
+        PRIVATE cxx_std_17)
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceProcessingPluginLoader
+        PRIVATE osgSolScienceProcessingHost)
+    TARGET_COMPILE_DEFINITIONS(osgSol_Test_ScienceProcessingPluginLoader
+        PRIVATE "OSGSOL_TEST_PROCESSING_PLUGIN=\"$<TARGET_FILE:osgSol_Test_ScienceProcessingPlugin>\"")
+    ADD_DEPENDENCIES(osgSol_Test_ScienceProcessingPluginLoader
+        osgSol_Test_ScienceProcessingPlugin)
+    ADD_TEST(NAME osgSol_Test_ScienceProcessingPluginLoader
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceProcessingPluginLoader>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceProcessingPluginLoader PROPERTIES
         LABELS "offline;scienceearth"
         TIMEOUT 10)
 

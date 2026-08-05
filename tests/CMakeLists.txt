@@ -409,6 +409,8 @@ IF(BUILD_TESTING)
                  COMMAND $<TARGET_FILE:osgSol_Test_SciencePluginRuntime>)
         SET_TESTS_PROPERTIES(osgSol_Test_SciencePluginRuntime PROPERTIES
             LABELS "offline;scienceearth"
+            ENVIRONMENT
+                "OSGSOL_SCIENCE_RESEARCH_ROOT=${CMAKE_CURRENT_BINARY_DIR}/science-plugin-runtime-state"
             TIMEOUT 30)
 
         IF(OSGSOL_BUILD_RMLUI_PRODUCT_UI)

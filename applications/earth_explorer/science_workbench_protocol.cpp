@@ -290,6 +290,72 @@ picojson::object progressObject(const earthscience::ScienceProgress& progress)
     return output;
 }
 
+picojson::object processingRecordObject(
+    const earthscience::ScienceProcessingRecord& record)
+{
+    picojson::object output;
+    output["schemaVersion"] = picojson::value(record.schemaVersion);
+    output["recordId"] = picojson::value(record.recordId);
+    output["liveJobId"] = number(static_cast<double>(record.liveJobId));
+    output["capabilityId"] = picojson::value(record.capabilityId);
+    output["sourceId"] = picojson::value(record.sourceId);
+    output["state"] = picojson::value(
+        earthscience::scienceJobStateName(record.state));
+    output["cost"] = picojson::value(costObject(record.cost));
+    output["progress"] = picojson::value(progressObject(record.progress));
+    output["cancelRequested"] = picojson::value(record.cancelRequested);
+    output["resultArtifactId"] = picojson::value(record.resultArtifactId);
+    output["warnings"] = picojson::value(stringArray(record.warnings));
+    picojson::array provenance;
+    for (const earthscience::ScienceProcessingProvenance& source :
+         record.provenance)
+    {
+        picojson::object item;
+        item["sourceId"] = picojson::value(source.sourceId);
+        item["providerVersion"] = picojson::value(source.providerVersion);
+        item["datasetId"] = picojson::value(source.datasetId);
+        item["originalUrl"] = picojson::value(source.originalUrl);
+        item["attribution"] = picojson::value(source.attribution);
+        item["acquisitionTime"] = picojson::value(source.acquisitionTime);
+        provenance.emplace_back(item);
+    }
+    output["provenance"] = picojson::value(provenance);
+    output["message"] = picojson::value(record.message);
+    output["createdAt"] = picojson::value(record.createdAt);
+    output["updatedAt"] = picojson::value(record.updatedAt);
+    return output;
+}
+
+picojson::object processingCapabilityObject(
+    const earthscience::ScienceProcessingCapability& capability)
+{
+    picojson::object output;
+    output["id"] = picojson::value(capability.id);
+    output["displayName"] = picojson::value(capability.displayName);
+    output["engineId"] = picojson::value(capability.engineId);
+    output["executionKind"] = picojson::value(
+        earthscience::scienceProcessingExecutionKindName(
+            capability.executionKind));
+    output["sourceIds"] = picojson::value(stringArray(capability.sourceIds));
+    output["inputFormats"] = picojson::value(
+        stringArray(capability.inputFormats));
+    picojson::array outputs;
+    for (earthscience::ScienceOutputKind kind : capability.outputKinds)
+        outputs.emplace_back(earthscience::scienceOutputKindName(kind));
+    output["outputKinds"] = picojson::value(outputs);
+    output["cancellable"] = picojson::value(capability.cancellable);
+    output["persistentRecord"] = picojson::value(
+        capability.persistentRecord);
+    output["optionalPlugin"] = picojson::value(capability.optionalPlugin);
+    output["available"] = picojson::value(capability.available);
+    output["pluginAbiVersion"] = number(capability.pluginAbiVersion);
+    output["pluginId"] = picojson::value(capability.pluginId);
+    output["pluginVersion"] = picojson::value(capability.pluginVersion);
+    output["availabilityMessage"] = picojson::value(
+        capability.availabilityMessage);
+    return output;
+}
+
 picojson::object seriesObject(
     const earthscience::ScienceVariableSeries& series)
 {
@@ -586,7 +652,9 @@ bool parseGeometry(const picojson::object& object,
 std::string serializeScienceWorkbenchSnapshot(
     const ScienceWorkbenchViewModel& model,
     const std::vector<earthscience::ScienceSourceDescriptor>& sources,
-    std::shared_ptr<const earthscience::ScienceArtifact> activeArtifact)
+    std::shared_ptr<const earthscience::ScienceArtifact> activeArtifact,
+    const std::vector<earthscience::ScienceProcessingCapability>&
+        processingCapabilities)
 {
     picojson::object root;
     root["schema"] = picojson::value("science-workbench-ui-v1");
@@ -647,6 +715,15 @@ std::string serializeScienceWorkbenchSnapshot(
     root["target"] = picojson::value(target);
     root["cost"] = picojson::value(costObject(model.cost));
     root["progress"] = picojson::value(progressObject(model.progress));
+    root["processing"] = model.processing
+        ? picojson::value(processingRecordObject(*model.processing))
+        : picojson::value();
+    picojson::array processingValues;
+    processingValues.reserve(processingCapabilities.size());
+    for (const earthscience::ScienceProcessingCapability& capability :
+         processingCapabilities)
+        processingValues.emplace_back(processingCapabilityObject(capability));
+    root["processingCapabilities"] = picojson::value(processingValues);
 
     picojson::array sourceValues;
     sourceValues.reserve(sources.size());

@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "ScienceArtifactStore.h"
+#include "ScienceProcessingRegistry.h"
+#include "ScienceProcessingStore.h"
 #include "ScienceSourceRegistry.h"
 
 namespace earthscience
@@ -24,6 +26,14 @@ namespace earthscience
         ScienceQueryService& operator=(const ScienceQueryService&) = delete;
 
         std::vector<ScienceSourceDescriptor> listSources() const;
+        std::vector<ScienceProcessingCapability>
+            listProcessingCapabilities() const;
+        bool registerProcessingPlugin(
+            const ScienceProcessingPluginManifest& manifest,
+            const std::vector<ScienceProcessingCapability>& capabilities,
+            std::string& error);
+        bool configureProcessingHistory(
+            const std::string& root, std::string& error);
         bool validateQuery(
             const GeoTemporalQuery& query, std::string& error) const;
         ScienceQueryCost estimate(const GeoTemporalQuery& query) const;
@@ -43,9 +53,14 @@ namespace earthscience
         ScienceQueryCost estimateUnlocked(
             const GeoTemporalQuery& query) const;
         void cancelActiveProvider();
+        void publishProcessingRecord(ScienceProcessingRecord record);
+        void cancelProcessingRecord(const std::string& message);
+        void syncProcessingRecord();
 
         mutable std::mutex _mutex;
         std::unique_ptr<ScienceSourceRegistry> _registry;
+        std::unique_ptr<ScienceProcessingRegistry> _processingRegistry;
+        std::unique_ptr<ScienceProcessingStore> _processingStore;
         IScienceProvider* _activeProvider = nullptr;
         std::string _activeSourceId;
         std::uint64_t _activeProviderGeneration = 0;

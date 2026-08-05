@@ -11,6 +11,8 @@
 
 namespace earthscience
 {
+    struct ScienceProcessingRecord;
+
     enum class ScienceSourceHealth
     {
         Unavailable,
@@ -504,6 +506,7 @@ namespace earthscience
         std::shared_ptr<const ScienceArtifact> lastSuccessfulPreviewArtifact;
         std::shared_ptr<const ScienceArtifact> lastSuccessfulAnalysisArtifact;
         std::shared_ptr<const ScienceArtifact> displayArtifact;
+        std::shared_ptr<const ScienceProcessingRecord> processing;
     };
 
     std::uint64_t estimatedArtifactBytes(const ScienceArtifact& artifact);

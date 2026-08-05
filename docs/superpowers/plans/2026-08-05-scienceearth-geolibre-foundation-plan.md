@@ -98,10 +98,36 @@ model, isolated science plugin, or EarthContextHub.
 
 ## Slice 4: processing registry and optional data engines
 
-- [ ] Add typed processing capability registration over existing science jobs.
-- [ ] Persist cost, progress, cancellation, result, warnings, and provenance.
-- [ ] Add native DuckDB Spatial/GeoParquet, PMTiles, and Zarr-family support only
-      through isolated optional plugins; do not enlarge the base runtime.
+- [x] Add typed processing capability registration over existing science jobs.
+- [x] Persist cost, progress, cancellation, result, warnings, and provenance.
+- [x] Add the native DuckDB Spatial/GeoParquet, PMTiles, and Zarr-family host
+      boundary only through isolated optional plugins; do not enlarge the
+      Science-off runtime or claim absent engines are available.
+
+### Slice 4 verification record
+
+- Every registered `IScienceProvider` now publishes a typed built-in processing
+  capability. DuckDB Spatial/GeoParquet, PMTiles v3, and Zarr-family entries are
+  explicit unavailable optional-plugin slots, not silently bundled features.
+- `ScienceQueryService` owns one immutable current processing snapshot and an
+  optional atomic JSON ledger. The product science session enables the ledger
+  under the existing research root; queued work, structured progress, exact
+  cost bounds, cancellation, terminal artifact id, warnings, and structured
+  source provenance survive process boundaries.
+- Workbench snapshots and AI science tools expose the same processing record
+  and capability catalog. Missing native engines remain visibly unavailable.
+- The native extension host validates ABI v1 and bounded metadata, owns module
+  lifetime, and supports bounded JSON submit/snapshot/cancel calls. A dynamic
+  fake module proves the boundary offline. Concrete DuckDB, PMTiles, and Zarr
+  engine binaries remain separately built optional modules and are not shipped
+  by this foundation.
+- Science-enabled Release builds pass for EarthExplorer, the real Science
+  plugin, the processing host, and all new tests. The complete non-window
+  offline suite passes 82/82. A separate Science-disabled Release build passes
+  EarthExplorer and its complete 33/33 non-window offline suite.
+- Real-plugin tests redirect research and processing records to an isolated
+  build-tree directory. No production research data, application window,
+  listener, package, signing flow, or Desktop copy was touched.
 
 ## Verification gates
 

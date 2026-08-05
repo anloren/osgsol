@@ -4,6 +4,7 @@
 #include "project/earth_temporal_controller.h"
 
 #include <ScienceQueryTypes.h>
+#include <ScienceProcessingTypes.h>
 
 #include <cstdint>
 #include <memory>
@@ -53,6 +54,7 @@ struct ScienceWorkbenchViewModel
     std::string errorCode;
     std::string errorMessage;
     earthproject::EarthTemporalState temporal;
+    std::shared_ptr<const earthscience::ScienceProcessingRecord> processing;
 };
 
 enum class ScienceWorkbenchActionKind

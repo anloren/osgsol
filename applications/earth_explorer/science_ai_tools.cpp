@@ -1059,6 +1059,46 @@ namespace
             snapshot.query.time.intervalEnd);
         result["camera_changed"] = picojson::value(false);
         result["layer_changed"] = picojson::value(false);
+        if (snapshot.processing)
+        {
+            const earthscience::ScienceProcessingRecord& processing =
+                *snapshot.processing;
+            picojson::object item;
+            item["record_id"] = picojson::value(processing.recordId);
+            item["capability_id"] = picojson::value(
+                processing.capabilityId);
+            item["state"] = picojson::value(std::string(
+                earthscience::scienceJobStateName(processing.state)));
+            item["cost"] = costJson(processing.cost);
+            item["progress"] = progressJson(processing.progress);
+            item["cancel_requested"] = picojson::value(
+                processing.cancelRequested);
+            item["result_artifact_id"] = picojson::value(
+                processing.resultArtifactId);
+            picojson::array warnings;
+            for (const std::string& warning : processing.warnings)
+                warnings.emplace_back(warning);
+            item["warnings"] = picojson::value(warnings);
+            picojson::array provenance;
+            for (const earthscience::ScienceProcessingProvenance& source :
+                 processing.provenance)
+            {
+                picojson::object entry;
+                entry["source_id"] = picojson::value(source.sourceId);
+                entry["provider_version"] = picojson::value(
+                    source.providerVersion);
+                entry["dataset_id"] = picojson::value(source.datasetId);
+                entry["original_url"] = picojson::value(source.originalUrl);
+                entry["attribution"] = picojson::value(source.attribution);
+                entry["acquisition_time"] = picojson::value(
+                    source.acquisitionTime);
+                provenance.emplace_back(entry);
+            }
+            item["provenance"] = picojson::value(provenance);
+            item["created_at"] = picojson::value(processing.createdAt);
+            item["updated_at"] = picojson::value(processing.updatedAt);
+            result["processing"] = picojson::value(item);
+        }
 
         std::shared_ptr<const earthscience::ScienceArtifact> resultArtifact =
             snapshot.lastSuccessfulArtifact;
@@ -1512,6 +1552,32 @@ void registerScienceResearchTools(
             sourcesJson.push_back(sourceJson(source));
         picojson::object result;
         result["sources"] = picojson::value(sourcesJson);
+        picojson::array processing;
+        for (const earthscience::ScienceProcessingCapability& capability :
+             service->listProcessingCapabilities())
+        {
+            picojson::object item;
+            item["id"] = picojson::value(capability.id);
+            item["name"] = picojson::value(capability.displayName);
+            item["engine_id"] = picojson::value(capability.engineId);
+            item["execution_kind"] = picojson::value(
+                earthscience::scienceProcessingExecutionKindName(
+                    capability.executionKind));
+            item["available"] = picojson::value(capability.available);
+            item["optional_plugin"] = picojson::value(
+                capability.optionalPlugin);
+            item["plugin_id"] = picojson::value(capability.pluginId);
+            item["plugin_version"] = picojson::value(
+                capability.pluginVersion);
+            item["availability_message"] = picojson::value(
+                capability.availabilityMessage);
+            picojson::array formats;
+            for (const std::string& format : capability.inputFormats)
+                formats.emplace_back(format);
+            item["input_formats"] = picojson::value(formats);
+            processing.emplace_back(item);
+        }
+        result["processing_capabilities"] = picojson::value(processing);
         return picojson::value(result);
     };
     tools->add(search);

@@ -1,9 +1,11 @@
 #include "ScienceQueryService.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -1043,6 +1045,98 @@ namespace
             *fixture.service, *fixture.provider, query,
             "multi-year regional analysis requires explicit confirmation");
     }
+
+    void testPersistsTypedProcessingLifecycle()
+    {
+        const std::filesystem::path root =
+            std::filesystem::temp_directory_path() /
+            ("osgsol-query-processing-" +
+             std::to_string(static_cast<unsigned long long>(
+                 std::chrono::steady_clock::now().time_since_epoch().count())));
+        std::filesystem::create_directories(root);
+        ServiceFixture fixture;
+        std::string error;
+        require(fixture.service->configureProcessingHistory(
+                    root.string(), error),
+                "processing history could not be configured");
+        const std::vector<earthscience::ScienceProcessingCapability>
+            capabilities = fixture.service->listProcessingCapabilities();
+        require(capabilities.size() == 4,
+                "service did not publish provider plus three optional engines");
+
+        const std::uint64_t jobId = fixture.service->submit(makeQuery());
+        earthscience::ScienceJobSnapshot snapshot = fixture.service->snapshot();
+        require(snapshot.processing &&
+                    snapshot.processing->liveJobId == jobId &&
+                    snapshot.processing->capabilityId ==
+                        "science-provider/alphaearth-foundations" &&
+                    snapshot.processing->cost.resultCells == 256u * 256u,
+                "queued job has no typed processing record and cost");
+        const std::string firstRecordId = snapshot.processing->recordId;
+        earthscience::ScienceProcessingStore store(root.string());
+        earthscience::ScienceProcessingRecord persisted;
+        require(store.load(firstRecordId, persisted, error) &&
+                    persisted.state == earthscience::ScienceJobState::Queued,
+                "queued processing record was not durable");
+
+        const std::uint64_t generation = fixture.provider->generation();
+        fixture.provider->publish(
+            generation, earthscience::ScienceJobState::Fetching,
+            makeProgress(earthscience::ScienceProgressStage::Reading,
+                         2, 5, "tiles", 1.5), "Reading");
+        snapshot = fixture.service->snapshot();
+        require(snapshot.processing &&
+                    snapshot.processing->progress.completedUnits == 2,
+                "provider progress was not attached to processing state");
+
+        auto artifact = std::make_shared<earthscience::ScienceArtifact>(
+            *makeArtifact("ledger-artifact", generation));
+        artifact->warnings = {"partial source coverage"};
+        earthscience::ScienceSourceReference reference;
+        reference.sourceId = "alphaearth-foundations";
+        reference.providerVersion = "provider-v1";
+        reference.datasetId = "dataset-42";
+        reference.originalUrl = "https://example.test/aef";
+        reference.attribution = "Example";
+        reference.acquisitionTime = "2025";
+        artifact->sourceReferences.push_back(reference);
+        fixture.provider->publish(
+            generation, earthscience::ScienceJobState::Ready,
+            makeProgress(earthscience::ScienceProgressStage::Ready,
+                         5, 5, "tiles", 2.0), "Ready", artifact);
+        snapshot = fixture.service->snapshot();
+        require(snapshot.processing &&
+                    snapshot.processing->state ==
+                        earthscience::ScienceJobState::Ready &&
+                    snapshot.processing->resultArtifactId ==
+                        "ledger-artifact" &&
+                    snapshot.processing->warnings == artifact->warnings &&
+                    snapshot.processing->provenance.size() == 1 &&
+                    snapshot.processing->provenance.front().datasetId ==
+                        "dataset-42",
+                "ready result, warnings, or provenance missed the ledger");
+        require(store.load(firstRecordId, persisted, error) &&
+                    persisted.state == earthscience::ScienceJobState::Ready &&
+                    persisted.resultArtifactId == "ledger-artifact",
+                "terminal processing record was not durable");
+
+        const std::uint64_t cancelledJob = fixture.service->submit(makeQuery());
+        snapshot = fixture.service->snapshot();
+        const std::string cancelledRecordId = snapshot.processing->recordId;
+        fixture.service->cancel(cancelledJob);
+        snapshot = fixture.service->snapshot();
+        require(snapshot.processing && snapshot.processing->cancelRequested &&
+                    snapshot.processing->state ==
+                        earthscience::ScienceJobState::Cancelled,
+                "cancellation was not recorded");
+        require(store.load(cancelledRecordId, persisted, error) &&
+                    persisted.cancelRequested &&
+                    persisted.state ==
+                        earthscience::ScienceJobState::Cancelled,
+                "cancelled processing record was not durable");
+        std::error_code removeError;
+        std::filesystem::remove_all(root, removeError);
+    }
 }
 
 int main()
@@ -1061,6 +1155,7 @@ int main()
         testDispatchesBoundedIntervalRasterForCapableProvider();
         testProviderPreviewCostsAndArtifactsRemainIsolated();
         testRequiresConfirmationAndEnforcesEstimatedBudgets();
+        testPersistsTypedProcessingLifecycle();
         testDestructionCancelsBeforeProviderDestruction();
         std::cout << "[OK] ScienceEarth single-active-job query service\n";
         return 0;
