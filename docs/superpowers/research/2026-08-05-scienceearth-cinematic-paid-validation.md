@@ -246,9 +246,24 @@ Automated evidence at this checkpoint:
 - The complete EarthExplorer target compiles. No application window was launched for this
   checkpoint.
 
-This is an implementation checkpoint, not visual acceptance. The 360 preset remains blocked in
-the production UI until a user-run, full-speed render confirms all of the following together:
-one view throughout, no cut or transition, correct direction, all four quadrants, exact return,
-no vertical inversion, stable terrain/3D-tile LOD and restoration of the original camera. The
-local renderer also does not yet provide historical/anime video restyling; those settings must
-remain unavailable for this path until a temporally stable, motion-locked styling stage is proven.
+## Local one-take product wiring — ready for manual verification
+
+The deterministic 360 preset is now enabled as **local-rendered 360-degree one-take recording**.
+It is not a provider-generated video mode: starting it requires no AI API key, sends no Nano
+Banana/Omni/Veo request, and incurs no AI fee. Submission normalizes the route to present day,
+current visible time, scientific rendering, exactly 8 seconds, 24 fps, and a silent H.264 MP4.
+The UI visibly locks and explains those values instead of implying that historical, deep-time,
+anime, style, prompt, or generated-audio controls affect the local output.
+
+The confirmation boundary states that the fixed current-view target is recorded by one continuous
+physical camera. The recorder preserves the currently visible sun/time/layers/labels and hides
+only application UI. The existing application-owned invariants remain: immutable target, constant
+radius, monotonically advancing azimuth, exact closure, render-phase override after update and
+before rendering, no manipulator mutation, and restoration of the normal user view after capture.
+
+Automated evidence covers normalized local submission, UI and no-provider source contracts,
+trajectory/encoder seams, and an `osgVerse_EarthExplorer` build. This is **ready for manual
+verification**, not visually accepted. A user-run full-speed capture must still confirm one
+unbroken view, all four quadrants and exact return, correct direction/no vertical inversion,
+stable terrain and 3D-tile appearance, and restoration of the original camera. No application
+executable was launched for this update.

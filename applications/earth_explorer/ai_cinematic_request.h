@@ -142,13 +142,41 @@ namespace earthai
         return motion == CINEMATIC_MOTION_ORBIT_360;
     }
 
+    inline bool cinematicMotionUsesDeterministicLocalRenderer(
+        CinematicCameraMotion motion)
+    {
+        return motion == CINEMATIC_MOTION_ORBIT_360;
+    }
+
     inline bool cinematicMotionProductionReady(CinematicCameraMotion motion)
     {
         // A strict paid playback review on 2026-08-05 found multiple shot changes in an
         // Omni-generated "360 orbit" even though the request explicitly prohibited cuts.
-        // Do not sell or report this as one-take until a deterministic continuous camera
-        // trajectory pipeline is available and runtime-validated.
+        // Provider generation must stay blocked for this motion.  The application-owned
+        // deterministic renderer is selected separately and does not call a provider.
         return motion != CINEMATIC_MOTION_ORBIT_360;
+    }
+
+    inline CinematicGenerationSettings normalizedCinematicSubmissionSettings(
+        const CinematicGenerationSettings& settings)
+    {
+        CinematicGenerationSettings normalized = settings;
+        if (cinematicMotionUsesDeterministicLocalRenderer(normalized.motion))
+        {
+            // A local orbit records the visible osgSol scene exactly as it is now.  It
+            // cannot truthfully apply a historical era, time override, restyle, prompt,
+            // or generated audio, so keep the submitted value contract explicit.
+            normalized.era = CINEMATIC_ERA_PRESENT;
+            normalized.localTime = CINEMATIC_TIME_AUTO;
+            normalized.visualStyle = CINEMATIC_STYLE_SCIENTIFIC;
+            normalized.durationSeconds = 8;
+            normalized.includeGeneratedAudio = false;
+            normalized.customEra.clear();
+            normalized.customLocalTime.clear();
+            normalized.customStyle.clear();
+            normalized.userPrompt.clear();
+        }
+        return normalized;
     }
 
     inline std::string cinematicImageModelName(const char* configuredModel)
@@ -263,20 +291,23 @@ namespace earthai
         CinematicGenerationRequest& output)
     {
         if (!cinematicCaptureIsUsable(anchor)) return false;
-        if (settings.mediaKind == CINEMATIC_IMAGE &&
-            settings.motion != CINEMATIC_MOTION_STATIC)
+        const CinematicGenerationSettings normalized =
+            normalizedCinematicSubmissionSettings(settings);
+        if (normalized.mediaKind == CINEMATIC_IMAGE &&
+            normalized.motion != CINEMATIC_MOTION_STATIC)
             return false;
-        if (settings.mediaKind == CINEMATIC_VIDEO &&
-            !cinematicMotionProductionReady(settings.motion))
+        if (normalized.mediaKind == CINEMATIC_VIDEO &&
+            !cinematicMotionProductionReady(normalized.motion) &&
+            !cinematicMotionUsesDeterministicLocalRenderer(normalized.motion))
             return false;
-        if (settings.durationSeconds <
-                cinematicMinimumDurationSeconds(settings.motion) ||
-            settings.durationSeconds > 30)
+        if (normalized.durationSeconds <
+                cinematicMinimumDurationSeconds(normalized.motion) ||
+            normalized.durationSeconds > 30)
             return false;
 
         output = CinematicGenerationRequest();
         output.anchor = anchor;
-        output.settings = settings;
+        output.settings = normalized;
         return true;
     }
 
@@ -337,7 +368,7 @@ namespace earthai
         {
         case CINEMATIC_MOTION_STATIC: return u8"静态图像";
         case CINEMATIC_MOTION_AERIAL_TOUR: return u8"一镜到底航拍";
-        case CINEMATIC_MOTION_ORBIT_360: return u8"360° 一镜到底环拍（暂不可用）";
+        case CINEMATIC_MOTION_ORBIT_360: return u8"本地渲染 360° 一镜到底环拍";
         case CINEMATIC_MOTION_DIVE: return u8"俯冲拍摄";
         case CINEMATIC_MOTION_CRANE_REVEAL: return u8"升降揭示";
         case CINEMATIC_MOTION_TRUCK: return u8"平行横移";

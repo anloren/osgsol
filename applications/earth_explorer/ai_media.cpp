@@ -1277,8 +1277,10 @@ namespace earthai
     bool MediaManager::beginCinematicVideoCapture(
         const CinematicGenerationSettings& settings)
     {
-        if (settings.mediaKind != CINEMATIC_VIDEO ||
-            settings.motion == CINEMATIC_MOTION_STATIC)
+        const CinematicGenerationSettings normalizedSettings =
+            normalizedCinematicSubmissionSettings(settings);
+        if (normalizedSettings.mediaKind != CINEMATIC_VIDEO ||
+            normalizedSettings.motion == CINEMATIC_MOTION_STATIC)
             return false;
 
         const PhotoCameraContext camera = currentPhotoCameraContext();
@@ -1295,15 +1297,17 @@ namespace earthai
             input, camera, requestId);
 
         OneTakeOrbitPlan orbitPlan;
-        if (settings.motion == CINEMATIC_MOTION_ORBIT_360)
+        if (cinematicMotionUsesDeterministicLocalRenderer(
+                normalizedSettings.motion))
         {
             // This path is deliberately local: no image-to-video provider is allowed to
             // invent the camera motion.  Preserve the exact world-space camera eye/up,
             // freeze the visible ground target, and rotate both around that target's
             // geodetic vertical.  The provider-based production gate remains false until
             // a manual visual pass approves this rendered-frame path.
-            if (settings.durationSeconds < cinematicMinimumDurationSeconds(
-                    settings.motion) || settings.durationSeconds > 30)
+            if (normalizedSettings.durationSeconds <
+                    cinematicMinimumDurationSeconds(normalizedSettings.motion) ||
+                normalizedSettings.durationSeconds > 30)
                 return false;
             osg::Vec3d eyeWorld, lookAtWorld, cameraUp;
             camera.visibleViewMatrix.getLookAt(
@@ -1323,21 +1327,23 @@ namespace earthai
                 std::sin(latitude));
             seed.cameraUp = cameraUp;
             if (!makeOneTakeOrbitPlan(
-                    seed, settings.durationSeconds, 24, orbitPlan))
+                    seed, normalizedSettings.durationSeconds, 24, orbitPlan))
                 return false;
         }
         else
         {
             CinematicGenerationRequest validation;
-            if (!makeCinematicGenerationRequest(capture, settings, validation))
+            if (!makeCinematicGenerationRequest(
+                    capture, normalizedSettings, validation))
                 return false;
         }
 
         if (!beginVideoCapture(camera.cameraEyeLla, std::string()))
             return false;
         _video->cinematic = true;
-        _video->singleAnchor = !cinematicMotionNeedsEndFrame(settings.motion);
-        _video->cinematicSettings = settings;
+        _video->singleAnchor =
+            !cinematicMotionNeedsEndFrame(normalizedSettings.motion);
+        _video->cinematicSettings = normalizedSettings;
         _video->anchorCapture = capture;
         _video->orbitPlan = orbitPlan;
         return true;

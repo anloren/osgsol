@@ -988,6 +988,11 @@ int main(int, char**)
                       "task").get<std::string>() == "image_to_video");
 
             video.motion = earthai::CINEMATIC_MOTION_ORBIT_360;
+            video.era = earthai::CINEMATIC_ERA_1920S;
+            video.localTime = earthai::CINEMATIC_TIME_1900;
+            video.visualStyle = earthai::CINEMATIC_STYLE_ANIME;
+            video.durationSeconds = 20;
+            video.includeGeneratedAudio = true;
             CHECK(earthai::cinematicMinimumDurationSeconds(video.motion) == 8);
             CHECK(earthai::cinematicMotionRequiresClosureReview(video.motion));
             CHECK(!earthai::cinematicMotionProductionReady(video.motion));
@@ -1039,14 +1044,64 @@ int main(int, char**)
                 earthai::cinematicRequestUnchecked(capture, video)).find(
                     "front, right, rear and left quadrants") != std::string::npos);
             CHECK(earthai::cinematicMotionLabel(video.motion) ==
-                  std::string(u8"360° 一镜到底环拍（暂不可用）"));
+                  std::string(u8"本地渲染 360° 一镜到底环拍"));
+            earthai::CinematicGenerationRequest localOrbit;
+            CHECK(earthai::makeCinematicGenerationRequest(
+                capture, video, localOrbit));
+            CHECK(localOrbit.settings.era == earthai::CINEMATIC_ERA_PRESENT);
+            CHECK(localOrbit.settings.localTime == earthai::CINEMATIC_TIME_AUTO);
+            CHECK(localOrbit.settings.visualStyle == earthai::CINEMATIC_STYLE_SCIENTIFIC);
+            CHECK(localOrbit.settings.durationSeconds == 8);
+            CHECK(!localOrbit.settings.includeGeneratedAudio);
             earthai::CinematicGenerationSettings tooShortOrbit = video;
             tooShortOrbit.durationSeconds = 5;
-            earthai::CinematicGenerationRequest rejectedOrbit;
-            CHECK(!earthai::makeCinematicGenerationRequest(
-                capture, tooShortOrbit, rejectedOrbit));
-            CHECK(!earthai::makeCinematicGenerationRequest(
-                capture, video, rejectedOrbit));
+            earthai::CinematicGenerationRequest normalizedShortOrbit;
+            CHECK(earthai::makeCinematicGenerationRequest(
+                capture, tooShortOrbit, normalizedShortOrbit));
+            CHECK(normalizedShortOrbit.settings.durationSeconds == 8);
+
+            // The local one-take route is a product boundary rather than a better
+            // provider prompt: users must see its no-fee/no-network contract, and the
+            // deterministic branch must remain free of provider calls.
+            const std::string cinematicUiSource = readWholeFile(
+                std::string(OSGVERSE_SOURCE_DIR) +
+                "/applications/earth_explorer/ai_ui.cpp");
+            CHECK(cinematicUiSource.find(
+                u8"本地录制：不收取 AI 费用，不发起网络请求。") !=
+                  std::string::npos);
+            CHECK(cinematicUiSource.find(
+                u8"固定当前画面中心 · 8 秒 · 24 fps · 静音 MP4 · 同一条连续物理相机路径。") !=
+                  std::string::npos);
+            CHECK(cinematicUiSource.find(u8"开始本地录制") !=
+                  std::string::npos);
+            CHECK(cinematicUiSource.find(
+                "if (core)\n        {\n            std::vector<earthai::ChatEntry> transcript") !=
+                  std::string::npos);
+            CHECK(cinematicUiSource.find(
+                "if (core || media)\n        {\n            // 照片生成入口") !=
+                  std::string::npos);
+            const std::string cinematicMediaSource = readWholeFile(
+                std::string(OSGVERSE_SOURCE_DIR) +
+                "/applications/earth_explorer/ai_media.cpp");
+            const size_t localConfirmBegin = cinematicMediaSource.find(
+                "if (deterministicOrbit)");
+            const size_t localConfirmEnd = cinematicMediaSource.find(
+                "else if (hasFake)", localConfirmBegin);
+            CHECK(localConfirmBegin != std::string::npos);
+            CHECK(localConfirmEnd != std::string::npos);
+            const std::string localConfirm = cinematicMediaSource.substr(
+                localConfirmBegin, localConfirmEnd - localConfirmBegin);
+            CHECK(localConfirm.find("OmniVideoProvider") == std::string::npos);
+            CHECK(localConfirm.find("VeoVideoProvider") == std::string::npos);
+            CHECK(localConfirm.find("hudHide(false)") != std::string::npos);
+            const std::string setupSource = readWholeFile(
+                std::string(OSGVERSE_SOURCE_DIR) +
+                "/applications/earth_explorer/ai_setup.cpp");
+            CHECK(setupSource.find(
+                "earthai::MediaManager* mediaMgr = new earthai::MediaManager(") !=
+                  std::string::npos);
+            CHECK(setupSource.find("if (_core) _core->drainMainThread();") !=
+                  std::string::npos);
             video.motion = earthai::CINEMATIC_MOTION_DIVE;
             CHECK(earthai::cinematicMinimumDurationSeconds(video.motion) == 4);
             CHECK(!earthai::cinematicMotionRequiresClosureReview(video.motion));

@@ -397,8 +397,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         }
 
         // openVideoModal 声明在外层函数作用域(见上方),本帧是否需要 OpenPopup
-        // (A/B 都就绪、Modal 尚未打开时置真)在下面 if(core) 块里赋值。
-        if (core)
+        // (A/B 都就绪、Modal 尚未打开时置真)在下面媒体控制块里赋值。
+        if (core || media)
         {
             // 照片生成入口（Task 8 接线，见 ai_media.h/MediaManager）；🎬 视频（Task 9）三态按钮。
             // 内置中文字体（ChineseFull 范围）不含 emoji glyph，📷/🎬 会渲染成方块（tofu），
@@ -434,11 +434,11 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             }
 
             // 🎬 三态：空闲"视频" -> 已录 A"完成B点"(+取消) -> 两点都录完:自动弹确认 Modal。
-            bool videoEnabled = (core && media && mani && !busy
+            bool videoEnabled = (media && mani && !busy
                                  && (vphase == earthai::VIDEO_IDLE || vphase == earthai::VIDEO_WAIT_B));
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
             videoEnabled = videoEnabled ||
-                (core && _auditMediaControlsEnabled && mani && !busy &&
+                (_auditMediaControlsEnabled && mani && !busy &&
                  (vphase == earthai::VIDEO_IDLE ||
                   vphase == earthai::VIDEO_WAIT_B));
 #endif
@@ -480,10 +480,10 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             }
             else
             {
-                bool idleEnabled = (core && media && mani && !busy && vphase == earthai::VIDEO_IDLE);
+                bool idleEnabled = (media && mani && !busy && vphase == earthai::VIDEO_IDLE);
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
                 idleEnabled = idleEnabled ||
-                    (core && _auditMediaControlsEnabled && mani && !busy &&
+                    (_auditMediaControlsEnabled && mani && !busy &&
                      vphase == earthai::VIDEO_IDLE);
 #endif
                 if (!idleEnabled) ImGui::BeginDisabled();
@@ -597,11 +597,35 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         }
         if (_cinematicMediaKind == earthai::CINEMATIC_VIDEO)
             ImGui::PopStyleColor();
+        const bool localDeterministicOrbit =
+            _cinematicMediaKind == earthai::CINEMATIC_VIDEO &&
+            earthai::cinematicMotionUsesDeterministicLocalRenderer(
+                static_cast<earthai::CinematicCameraMotion>(_cinematicMotion));
+        if (localDeterministicOrbit)
+        {
+            const earthai::CinematicGenerationSettings normalized =
+                earthai::normalizedCinematicSubmissionSettings(
+                    earthai::CinematicGenerationSettings{
+                        earthai::CINEMATIC_VIDEO,
+                        static_cast<earthai::CinematicEra>(_cinematicEra),
+                        static_cast<earthai::CinematicLocalTime>(_cinematicLocalTime),
+                        static_cast<earthai::CinematicVisualStyle>(_cinematicVisualStyle),
+                        earthai::CINEMATIC_MOTION_ORBIT_360});
+            _cinematicEra = normalized.era;
+            _cinematicLocalTime = normalized.localTime;
+            _cinematicVisualStyle = normalized.visualStyle;
+            _cinematicPrompt[0] = '\0';
+            _cinematicCustomEra[0] = '\0';
+            _cinematicCustomTime[0] = '\0';
+            _cinematicCustomStyle[0] = '\0';
+        }
         ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kTextDim);
         ImGui::TextWrapped(
             _cinematicMediaKind == earthai::CINEMATIC_IMAGE
                 ? u8"默认引擎：Nano Banana 2 · 2K · 自动匹配当前视口比例"
-                : u8"默认链路：Nano Banana 2 生成本次首帧 · Omni/Veo 执行连续运镜");
+                : (localDeterministicOrbit
+                    ? u8"本地渲染当前 osgSol 场景；不调用 Nano Banana、Omni 或 Veo。"
+                    : u8"默认链路：Nano Banana 2 生成本次首帧 · Omni/Veo 执行连续运镜"));
         ImGui::PopStyleColor();
 
         ImGui::BeginChild(
@@ -630,18 +654,31 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 _cinematicMediaKind == earthai::CINEMATIC_IMAGE
                     ? earthai::defaultImageCinematicSettings()
                     : earthai::defaultVideoCinematicSettings();
-            _cinematicEra = defaults.era;
-            _cinematicLocalTime = defaults.localTime;
-            _cinematicVisualStyle = defaults.visualStyle;
-            _cinematicMotion = defaults.motion;
+            const earthai::CinematicGenerationSettings appliedDefaults =
+                localDeterministicOrbit
+                    ? earthai::normalizedCinematicSubmissionSettings(
+                        earthai::CinematicGenerationSettings{
+                            earthai::CINEMATIC_VIDEO,
+                            defaults.era, defaults.localTime,
+                            defaults.visualStyle,
+                            earthai::CINEMATIC_MOTION_ORBIT_360})
+                    : defaults;
+            _cinematicEra = appliedDefaults.era;
+            _cinematicLocalTime = appliedDefaults.localTime;
+            _cinematicVisualStyle = appliedDefaults.visualStyle;
+            _cinematicMotion = localDeterministicOrbit
+                ? earthai::CINEMATIC_MOTION_ORBIT_360 : appliedDefaults.motion;
             _cinematicPrompt[0] = '\0';
             _cinematicCustomEra[0] = '\0';
             _cinematicCustomTime[0] = '\0';
             _cinematicCustomStyle[0] = '\0';
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(u8"图像默认科学写实；视频默认超写实航拍；时代和时间恢复为当前");
+            ImGui::SetTooltip(localDeterministicOrbit
+                ? u8"本地环拍锁定为当代当前光照、科学写实、8 秒和静音 MP4"
+                : u8"图像默认科学写实；视频默认超写实航拍；时代和时间恢复为当前");
 
+        if (localDeterministicOrbit) ImGui::BeginDisabled();
         ImGui::SeparatorText(u8"提示词");
         ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kTextDim);
         ImGui::TextWrapped(
@@ -743,6 +780,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 "##cinematic_custom_style", u8"描述媒介、色彩、镜头与质感；不能改动视角",
                 _cinematicCustomStyle, sizeof(_cinematicCustomStyle));
         }
+        if (localDeterministicOrbit) ImGui::EndDisabled();
 
         if (_cinematicMediaKind == earthai::CINEMATIC_VIDEO)
         {
@@ -770,10 +808,10 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                          static_cast<earthai::CinematicCameraMotion>(_cinematicMotion)))
             {
                 ImGui::TextWrapped(
-                    u8"严格要求整段属于同一个连续物理镜头。当前视频提供商实测仍会产生"
-                    u8"多次切镜或视角替换，因此已暂停售费提交；待确定性连续轨迹管线接入后恢复。"
-                    u8"任何未来成片仍必须经过前、右、后、左并回到起点，且不得切镜、转场、"
-                    u8"循环或重置机位。");
+                    u8"本地录制：不收取 AI 费用，不发起网络请求。"
+                    u8"固定当前画面中心 · 8 秒 · 24 fps · 静音 MP4 · 同一条连续物理相机路径。"
+                    u8"会保留当前可见的太阳、时间、图层与标注，只隐藏应用 UI；"
+                    u8"不做历史、深时、动漫、风格化或生成音频处理。");
             }
             else
             {
@@ -819,7 +857,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         // re-enable a paid mode that failed its production media acceptance test.
         if (_cinematicMediaKind == earthai::CINEMATIC_VIDEO &&
             !earthai::cinematicMotionProductionReady(
-                static_cast<earthai::CinematicCameraMotion>(_cinematicMotion)))
+                static_cast<earthai::CinematicCameraMotion>(_cinematicMotion)) &&
+            !localDeterministicOrbit)
             canGenerate = false;
         const float actionGap = ImGui::GetStyle().ItemSpacing.x;
         const float actionWidth =
@@ -828,8 +867,10 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         const char* submitLabel =
             _cinematicMediaKind == earthai::CINEMATIC_IMAGE
                 ? u8"从当前视角生成图像"
-                : (_cinematicMotion == earthai::CINEMATIC_MOTION_POINT_TO_POINT
-                    ? u8"记录当前起点 A" : u8"从当前视角生成视频");
+                : (localDeterministicOrbit
+                    ? u8"开始本地录制"
+                    : (_cinematicMotion == earthai::CINEMATIC_MOTION_POINT_TO_POINT
+                    ? u8"记录当前起点 A" : u8"从当前视角生成视频"));
         ImGui::PushStyleColor(ImGuiCol_Button, earthui::design::kCyan);
         ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kCarbon);
         if (ImGui::Button(submitLabel, ImVec2(actionWidth, 34.0f)))
@@ -853,6 +894,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             request.settings.customLocalTime = _cinematicCustomTime;
             request.settings.customStyle = _cinematicCustomStyle;
             request.settings.userPrompt = _cinematicPrompt;
+            request.settings = earthai::normalizedCinematicSubmissionSettings(
+                request.settings);
             if (media) media->enqueueCinematicRequest(request);
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
             _auditActionMask |= AUDIT_ACTION_CINEMATIC_SUBMIT;
@@ -921,10 +964,14 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             if (info.ready)
             {
                 const bool singleAnchor = info.cinematic && info.singleAnchor;
+                const bool localDeterministicOrbit = info.cinematic &&
+                    earthai::cinematicMotionUsesDeterministicLocalRenderer(
+                        info.settings.motion);
                 ImGui::PushStyleColor(
                     ImGuiCol_Text, earthui::design::kCyan);
                 ImGui::TextUnformatted(
-                    singleAnchor ? u8"当前视角运镜" : u8"两点穿越");
+                    localDeterministicOrbit ? u8"确认本地录制" :
+                    (singleAnchor ? u8"当前视角运镜" : u8"两点穿越"));
                 ImGui::PopStyleColor();
                 ImGui::TextWrapped(
                     singleAnchor
@@ -971,9 +1018,21 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 ImGui::Separator();
                 ImGui::PushStyleColor(
                     ImGuiCol_Text, earthui::design::kMeasure);
-                ImGui::TextWrapped(
-                    u8"将提交 Nano Banana 2 首帧与当前视频生成 provider。"
-                    u8"视频生成会产生费用；确认后才发出网络请求。");
+                if (localDeterministicOrbit)
+                {
+                    ImGui::TextWrapped(
+                        u8"本地录制：不收取 AI 费用，不发起网络请求。"
+                        u8"固定当前画面中心 · 8 秒 · 24 fps · 静音 MP4 · "
+                        u8"同一条连续物理相机路径。"
+                        u8"录制的是当前可见 osgSol 场景，不生成历史、深时、动漫、"
+                        u8"风格化画面或音频。");
+                }
+                else
+                {
+                    ImGui::TextWrapped(
+                        u8"将提交 Nano Banana 2 首帧与当前视频生成 provider。"
+                        u8"视频生成会产生费用；确认后才发出网络请求。");
+                }
                 ImGui::PopStyleColor();
 
                 const float actionGap = ImGui::GetStyle().ItemSpacing.x;
@@ -988,7 +1047,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                     ImGuiCol_ButtonActive, earthui::design::kMeasure);
                 ImGui::PushStyleColor(
                     ImGuiCol_Text, earthui::design::kCarbon);
-                if (ImGui::Button(u8"确认生成", ImVec2(actionWidth, 0.0f)))
+                if (ImGui::Button(
+                        localDeterministicOrbit ? u8"开始本地录制" : u8"确认生成",
+                        ImVec2(actionWidth, 0.0f)))
                 {
                     if (media)
                     {

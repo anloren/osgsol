@@ -91,23 +91,23 @@ public:
     {
         if (ea.getEventType() == osgGA::GUIEventAdapter::FRAME)
         {
-            _core->drainMainThread();
+            if (_core) _core->drainMainThread();
             if (_media) _media->update();
-            if (!_fired && !_autoSubmitText.empty() && _frameCount >= _delayFrames)
+            if (_core && !_fired && !_autoSubmitText.empty() && _frameCount >= _delayFrames)
             { _core->submit(_autoSubmitText); _fired = true; }
-            if (!_fired) ++_frameCount;
+            if (_core && !_fired) ++_frameCount;
 
             // 第一条已完全跑完(含其触发的 MediaManager 异步 Job,例如 generate_photo 的
             // 整条快照->生图流水线——不只是 core 不再 busy,还要求 Job 状态机回到 IDLE,
             // 否则第二条 generate_photo 会被 "already running" 拒绝,见上面类头注释)。
-            if (_fired && !_fired2 && !_autoSubmit2Text.empty() && !_core->busy()
+            if (_core && _fired && !_fired2 && !_autoSubmit2Text.empty() && !_core->busy()
                 && (!_media || _media->photoIdleForTest()))
             { _core->submit(_autoSubmit2Text); _fired2 = true; }
 
             // autosubmit(headless E2E)模式下把新增会话条目同步落 OSG 日志:
             // GeminiProvider 的错误(如 "HTTP 400: ...")与最终回复文本原本只进 UI 转录,
             // headless 冒烟无从取证——这里补一条日志通道。正常交互(无 autosubmit)不生效。
-            if (!_autoSubmitText.empty())
+            if (_core && !_autoSubmitText.empty())
             {
                 std::vector<earthai::ChatEntry> ts = _core->transcript();
                 static const char* kKinds[] = { "user", "assistant", "tool", "error" };
@@ -188,27 +188,12 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
             return picojson::value(result);
         });
 
-    // MediaManager(Task 8 快照+生图管线)先于 aiRegistry 构造完:generate_photo/generate_video
-    // 工具的 execute 需要捕获它的指针。EARTH_AI_KEY 在这里先读一次(下面 aiCore 构造再读一次
-    // 不冲突,getenv 本身可重复调用);EARTH_AI_FAKE_IMG 的读取封装在 MediaManager 内部
-    // (ai_media.cpp::fakeImgPath),此处只需知道"要不要 new"。
-    // PART A 审查修复:原条件只看 (有 key || 有 FAKE_IMG),没考虑 aiCore 是否真的会被创建——
-    // 若只设了 EARTH_AI_FAKE_IMG 而没设 EARTH_AI_KEY/EARTH_AI_FAKE,aiCore 下面仍会保持
-    // null(FakeProvider 需要 EARTH_AI_FAKE 脚本,不是 FAKE_IMG),导致 mediaMgr 被 new 出来
-    // 却从未挂上 AIFrameHandler(update() 永远不被调用)、也没有 generate_photo/video 工具
-    // 可触发它——一个"活不起来"的死对象外加一根不会触发的 UI 引用。这里改成与"aiCore 是否
-    // 会被创建"同一条件(有 EARTH_AI_KEY 或 EARTH_AI_FAKE),否则不构造 mediaMgr,即便设了
-    // EARTH_AI_FAKE_IMG 也不例外——FAKE_IMG 只是"生图/生视频这一步跳过网络",离线 E2E 时
-    // 仍需搭配 EARTH_AI_FAKE 脚本才能把 generate_photo/generate_video 工具调用触发起来。
-    // 环境变量优先,回退磁盘 keys.env(双击 .app 读不到环境变量,见 earth_config.h)。
+    // MediaManager owns both paid media and the deterministic local recorder. The latter
+    // must be available without an AI key, so the manager exists for every Earth session;
+    // only provider requests consult the key or fake-provider configuration.
     std::string aiKeyForMedia = earthcfg::resolveKey("EARTH_AI_KEY");
-    const char* aiFakeForMedia = getenv("EARTH_AI_FAKE");
-    earthai::MediaManager* mediaMgr = nullptr;
-    if (!aiKeyForMedia.empty() || (aiFakeForMedia && *aiFakeForMedia))
-    {
-        mediaMgr = new earthai::MediaManager(
-            &viewer, ui ? ui->cards() : nullptr, aiKeyForMedia, mani);
-    }
+    earthai::MediaManager* mediaMgr = new earthai::MediaManager(
+        &viewer, ui ? ui->cards() : nullptr, aiKeyForMedia, mani);
     runtime.media = mediaMgr;
 
     {
@@ -588,12 +573,12 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
         // 因此一次调用同时覆盖两条路径。
         if (mediaMgr) mediaMgr->setChatCore(aiCore);
 
-        const char* autoSubmit = getenv("EARTH_AI_AUTOSUBMIT");   // headless E2E 用
-        const char* delayEnv = getenv("EARTH_AI_AUTOSUBMIT_DELAY_FRAMES");
-        int delayFrames = (delayEnv && *delayEnv) ? atoi(delayEnv) : 0;
-        viewer.addEventHandler(new AIFrameHandler(aiCore, mediaMgr, mani,
-            (autoSubmit && *autoSubmit) ? autoSubmit : "", delayFrames));
     }
+    const char* autoSubmit = getenv("EARTH_AI_AUTOSUBMIT");   // headless E2E 用
+    const char* delayEnv = getenv("EARTH_AI_AUTOSUBMIT_DELAY_FRAMES");
+    int delayFrames = (delayEnv && *delayEnv) ? atoi(delayEnv) : 0;
+    viewer.addEventHandler(new AIFrameHandler(aiCore, mediaMgr, mani,
+        (autoSubmit && *autoSubmit) ? autoSubmit : "", delayFrames));
     runtime.core = aiCore;
     return runtime;
 }
