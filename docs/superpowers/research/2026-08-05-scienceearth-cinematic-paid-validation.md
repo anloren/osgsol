@@ -189,3 +189,26 @@ left quadrants without a hidden cut or world rotation.
 
 Round-two evidence is retained under the ignored directory
 `build/media_paid_validation_round2_20260805/`; it is not a redistributable application asset.
+
+## Post-correction one-take 360 validation
+
+After the UI, label and generation prompt were corrected to define a 360 orbit itself as a
+single unbroken take, one additional paid 8-second image-to-video request was explicitly run
+against the real Sydney Harbour oblique reference. The exact request required a continuous
+clockwise physical camera path through 0/90/180/270/360 degrees, forbidding cuts, loops,
+crossfades, hidden transitions, camera resets, teleports and world rotation.
+
+- Provider/media: completed; 1280x720 H.264, 24 fps, 192 frames, AAC audio, 8.000 seconds.
+- One-take continuity: pass. Half-second sampling showed one progressive camera path; no camera
+  replacement or edit point was visible.
+- Automated discontinuity probe: pass. The maximum full-sequence scene score was 0.193424 and
+  there were zero frames above the 0.30 hard-cut threshold.
+- Full orbit: pass. Samples at 0/2/4/6/7.9 seconds showed the camera passing the four sides and
+  returning to a view near the starting azimuth.
+- Geometric stability: conditional only. Orbit radius tightened and widened noticeably, and
+  small generated landmark drift remained. First/last full-frame SSIM was 0.344, so the return
+  was directionally closed rather than pixel-identical.
+
+The accepted product statement is therefore “one continuous full orbit with post-generation
+closure review”, not “survey-stable or geometrically exact 360 capture”. Evidence is retained
+under the ignored directory `build/media_paid_validation_round3_20260805/`.
