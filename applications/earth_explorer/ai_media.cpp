@@ -32,6 +32,13 @@
 
 namespace earthai
 {
+    const std::string& resolvedCinematicImageModel()
+    {
+        static const std::string model = cinematicImageModelName(
+            getenv("EARTH_AI_IMAGE_MODEL"));
+        return model;
+    }
+
     // 错误摘要截断,与 ai_chat.cpp::truncate200 同规则(避免长 base64/大段文本刷屏日志)。
     static std::string truncate200(const std::string& s)
     {
@@ -276,10 +283,7 @@ namespace earthai
         // 注意:key 拼在 URL 里,下面任何日志/错误信息都不得把 req->url 整串打印出来
         // 生图模型:EARTH_AI_IMAGE_MODEL 覆盖。默认使用官方 Nano Banana 2 的稳定模型名；
         // 需要更高推理精度时仍可显式切换 gemini-3-pro-image，但不能由应用暗中升级计费。
-        static const std::string kImageModel = []() {
-            const char* e = getenv("EARTH_AI_IMAGE_MODEL");
-            return cinematicImageModelName(e);
-        }();
+        const std::string& kImageModel = resolvedCinematicImageModel();
         req->url = "https://generativelanguage.googleapis.com/v1beta/models/" +
                    kImageModel + ":generateContent?key=" + _apiKey;
         req->headers["Content-Type"] = "application/json";
@@ -703,6 +707,8 @@ namespace earthai
         std::size_t orbitFrameIndex = 0;
         std::vector<std::string> orbitFramePaths;
         std::string orbitCaptureDir;
+        bool hudHidden = false;
+        bool hudAdjustScene = true;
 
         std::thread worker;
         bool workerJoinable = false;
@@ -733,7 +739,8 @@ namespace earthai
                                const std::string& apiKeyOrEmpty,
                                osgVerse::EarthManipulator* photoManipulator)
         : _viewer(viewer), _photoManipulator(photoManipulator), _cards(cards),
-          _apiKey(apiKeyOrEmpty), _videoModel(videoModel()), _grabber(viewer),
+          _apiKey(apiKeyOrEmpty), _imageModel(resolvedCinematicImageModel()),
+          _videoModel(videoModel()), _grabber(viewer),
           _state(IDLE), _jobId(0), _photoRequestId(0), _workerJoinable(false),
           _viewRenderUpdateTicks(0),
           _waitSnapshotTicks(0),
@@ -1036,6 +1043,8 @@ namespace earthai
             if (!succeeded)
             {
                 _videoCommandError = error;
+                if (settings.mediaKind == CINEMATIC_VIDEO)
+                    publishVideoFailure(error);
                 if (_chatCore)
                     _chatCore->addErrorNote(u8"时空影像请求失败：" + error);
             }
@@ -1318,6 +1327,7 @@ namespace earthai
     {
         if (_video->phase != VideoJob::IDLE)
         {
+            publishVideoFailure("video capture is not idle");
             applyVideoOwnerCommandResult(false);
             return false;
         }
@@ -1325,6 +1335,7 @@ namespace earthai
         // capturing A when the selected model cannot consume an end frame.
         if (!frozenCapture && !_routeCapabilities.canGeneratePointToPoint())
         {
+            publishVideoFailure("two-point video route is unavailable");
             applyVideoOwnerCommandResult(false);
             return false;
         }
@@ -1349,6 +1360,8 @@ namespace earthai
         // 用户反馈 1:视频 A 点抓帧同样要隐藏 HUD——hudRestore() 在 updateVideoInternal()
         // 的 WAIT_A 分支里,该点快照 ready()/超时判定出结果的那一刻立即调用。
         hudHide();
+        _video->hudHidden = true;
+        _video->hudAdjustScene = true;
         _videoGrabber.grab(_video->snapPathA);
         _video->phase = VideoJob::WAIT_A;
         _video->waitSnapshotTicks = 0;
@@ -1365,15 +1378,18 @@ namespace earthai
             normalizedCinematicSubmissionSettings(settings);
         if (normalizedSettings.mediaKind != CINEMATIC_VIDEO ||
             normalizedSettings.motion == CINEMATIC_MOTION_STATIC)
+        {
+            publishVideoFailure("invalid cinematic video settings");
             return false;
+        }
         if (!cinematicSubmissionCanStart(
                 normalizedSettings, _routeCapabilities))
-            return false;
+        { publishVideoFailure("cinematic video route is unavailable"); return false; }
 
         const PhotoCameraContext camera = currentPhotoCameraContext();
         if (!camera.viewTargetValid || camera.viewportWidth <= 0 ||
             camera.viewportHeight <= 0)
-            return false;
+        { publishVideoFailure("cinematic camera context is invalid"); return false; }
 
         PhotoRequest input;
         input.lla = camera.viewTargetLla;
@@ -1394,19 +1410,19 @@ namespace earthai
             if (normalizedSettings.durationSeconds <
                     cinematicMinimumDurationSeconds(normalizedSettings.motion) ||
                 normalizedSettings.durationSeconds > 30)
-                return false;
+            { publishVideoFailure("local orbit duration is invalid"); return false; }
         }
         else
         {
             CinematicGenerationRequest validation;
             if (!makeCinematicGenerationRequest(
                     capture, normalizedSettings, validation))
-                return false;
+            { publishVideoFailure("cinematic provider request is invalid"); return false; }
         }
 
         if (!beginVideoCapture(
                 camera.cameraEyeLla, std::string(), &capture))
-            return false;
+        { publishVideoFailure("cinematic capture could not start"); return false; }
         _video->cinematic = true;
         _video->singleAnchor =
             !cinematicMotionNeedsEndFrame(normalizedSettings.motion);
@@ -1458,6 +1474,8 @@ namespace earthai
         // 用户反馈 1:B 点抓帧同样要隐藏 HUD——hudRestore() 在 updateVideoInternal() 的
         // CAPTURING_B 分支里,该点快照 ready()/超时判定出结果的那一刻立即调用。
         hudHide();
+        _video->hudHidden = true;
+        _video->hudAdjustScene = true;
         _videoGrabber.grab(_video->snapPathB);
         _video->phase = VideoJob::CAPTURING_B;
         _video->waitSnapshotTicks = 0;
@@ -1546,6 +1564,7 @@ namespace earthai
                 _jobs.update(_video->jobId, AIJob::FAILED, 1.0f, "",
                              "cannot create deterministic orbit frame directory");
                 if (_cards) _cards->removeJob(_video->jobId);
+                publishVideoFailure("cannot create deterministic orbit frame directory");
                 resetVideo();
                 picojson::object err;
                 err["error"] = picojson::value(std::string(
@@ -1562,6 +1581,8 @@ namespace earthai
             // 本地确定性环拍必须逐帧保留用户正在看的太阳、时间与标注状态；这里只隐藏
             // 应用 UI，不能套用 AI 参考图的补光/去标注处理。
             hudHide(false);
+            _video->hudHidden = true;
+            _video->hudAdjustScene = false;
             _videoGrabber.grab(frameName.str());
             _video->orbitFramePaths.push_back(capturedPath(frameName.str()));
             _video->waitSnapshotTicks = 0;
@@ -1782,17 +1803,6 @@ namespace earthai
         if (_video->phase == VideoJob::IDLE) return;
         OSG_NOTICE << "[AIChat] generate_video cancelled (phase="
                    << (int)_video->phase << ")" << std::endl;
-        // 用户反馈 1:若取消发生在 WAIT_A/CAPTURING_B(抓帧还没稳定、hudRestore() 还没被
-        // updateVideoInternal() 调用过)——HUD 此刻仍是隐藏状态,必须在这里补上恢复,
-        // 否则用户点「取消」之后界面会永久少了 ImGui 面板/对话条。WAIT_B/AWAIT_CONFIRM
-        // 阶段 hudRestore() 已经在对应快照 ready() 时调用过(计数已归零),这里再调用一次
-        // hudHide()/hudRestore() 不对称的话会有下溢风险——用 videoPhase() 精确判断是否
-        // "抓帧中"来决定要不要补这一次 restore。
-        if (_video->phase == VideoJob::CAPTURING_ORBIT)
-            hudRestore(false);
-        else if (_video->phase == VideoJob::WAIT_A ||
-                 _video->phase == VideoJob::CAPTURING_B)
-            hudRestore();
         const bool workerLive = _video->workerJoinable &&
             _video->worker.joinable() && !_video->workerDone->load();
         if (classifyVideoCancellation(workerLive) == VIDEO_CANCEL_ASYNC_REAP)
@@ -1805,6 +1815,25 @@ namespace earthai
                 _jobs.update(_video->jobId, AIJob::RUNNING, 1.0f, "", "cancelling");
             return;
         }
+        finalizeVideoCancellation();
+    }
+
+    void MediaManager::finalizeVideoCancellation()
+    {
+        VideoJob& v = *_video;
+        if (v.hudHidden)
+        {
+            hudRestore(v.hudAdjustScene);
+            v.hudHidden = false;
+        }
+        if (v.jobId > 0)
+        {
+            _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "", "cancelled");
+            if (_cards) _cards->removeJob(v.jobId);
+        }
+        if (!v.snapPathA.empty()) std::remove(capturedPath(v.snapPathA).c_str());
+        if (!v.snapPathB.empty()) std::remove(capturedPath(v.snapPathB).c_str());
+        if (!v.mp4Path.empty()) std::remove(v.mp4Path.c_str());
         resetVideo();
     }
 
@@ -1843,8 +1872,7 @@ namespace earthai
             if (!v.workerDone->load()) return;
             if (v.workerJoinable && v.worker.joinable()) v.worker.join();
             v.workerJoinable = false;
-            if (v.jobId > 0 && _cards) _cards->removeJob(v.jobId);
-            resetVideo();
+            finalizeVideoCancellation();
             return;
         }
 
@@ -1854,14 +1882,14 @@ namespace earthai
             {
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
-                    hudRestore();   // 超时:HUD 必须复原,不能永久隐藏
+                    hudRestore(); v.hudHidden = false; // 超时:HUD 必须复原
                     publishVideoFailure("A-point snapshot timeout");
                     resetVideo();
                 }
                 return;
             }
             // A 点快照已稳定:抓帧已完成,立即恢复 HUD(不必等到 B 点/确认/生成全部结束)。
-            hudRestore();
+            hudRestore(); v.hudHidden = false;
             const PhotoCameraContext completedFrameCamera = currentPhotoCameraContext();
             if (v.cinematic && !completedFrameCamera.viewTargetValid)
             {
@@ -1881,7 +1909,7 @@ namespace earthai
                     return;
                 }
                 v.anchorCapture = rebuilt;
-                hudHide();
+                hudHide(); v.hudHidden = true; v.hudAdjustScene = true;
                 _videoGrabber.grab(v.snapPathA);
                 v.waitSnapshotTicks = 0;
                 return;
@@ -1932,14 +1960,14 @@ namespace earthai
             {
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
-                    hudRestore();   // 超时:HUD 必须复原,不能永久隐藏
+                    hudRestore(); v.hudHidden = false; // 超时:HUD 必须复原
                     publishVideoFailure("B-point snapshot timeout");
                     resetVideo();
                 }
                 return;
             }
             // B 点快照就绪:抓帧已完成,立即恢复 HUD。
-            hudRestore();
+            hudRestore(); v.hudHidden = false;
             const PhotoCameraContext completedFrameCamera = currentPhotoCameraContext();
             if (v.cinematic && !completedFrameCamera.viewTargetValid)
             {
@@ -1959,7 +1987,7 @@ namespace earthai
                     return;
                 }
                 v.endCapture = rebuilt;
-                hudHide();
+                hudHide(); v.hudHidden = true; v.hudAdjustScene = true;
                 _videoGrabber.grab(v.snapPathB);
                 v.waitSnapshotTicks = 0;
                 return;
@@ -1988,7 +2016,7 @@ namespace earthai
             if (v.orbitFrameIndex >= v.orbitPlan.frames.size() ||
                 v.orbitFramePaths.size() != v.orbitFrameIndex + 1)
             {
-                hudRestore(false);
+                hudRestore(false); v.hudHidden = false;
                 _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "",
                              "deterministic orbit frame state is inconsistent");
                 if (_cards) _cards->removeJob(v.jobId);
@@ -2006,7 +2034,7 @@ namespace earthai
             {
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
-                    hudRestore(false);
+                    hudRestore(false); v.hudHidden = false;
                     _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "",
                                  "deterministic orbit frame capture timeout");
                     if (_cards) _cards->removeJob(v.jobId);
@@ -2036,7 +2064,7 @@ namespace earthai
 
             // Camera override ends before encoding. The original EarthManipulator was
             // never mutated, so the next normal frame restores the user's exact view.
-            hudRestore(false);
+            hudRestore(false); v.hudHidden = false;
             const std::vector<std::string> frames = v.orbitFramePaths;
             const int fps = v.orbitPlan.framesPerSecond;
             const std::string output = v.mp4Path;
@@ -2072,7 +2100,8 @@ namespace earthai
         if (v.phase == VideoJob::ENCODING_ORBIT)
         {
             AIJob snap;
-            if (!_jobs.get(v.jobId, snap)) { resetVideo(); return; }
+            if (!_jobs.get(v.jobId, snap))
+            { publishVideoFailure("deterministic orbit job disappeared"); resetVideo(); return; }
             if (snap.status == AIJob::RUNNING)
             {
                 _jobs.creepProgress(v.jobId,
@@ -2135,7 +2164,8 @@ namespace earthai
         if (v.phase == VideoJob::SUBMITTING)
         {
             AIJob snap;
-            if (!_jobs.get(v.jobId, snap)) { resetVideo(); return; }
+            if (!_jobs.get(v.jobId, snap))
+            { publishVideoFailure("video submission job disappeared"); resetVideo(); return; }
             // Omni 同步路径:worker 一步到位直接置 DONE(mp4 已写盘),这里收尾。
             if (snap.status == AIJob::DONE)
             {
@@ -2187,7 +2217,8 @@ namespace earthai
             if (v.pollInFlight)
             {
                 AIJob snap;
-                if (!_jobs.get(v.jobId, snap)) { resetVideo(); return; }
+                if (!_jobs.get(v.jobId, snap))
+                { publishVideoFailure("video polling job disappeared"); resetVideo(); return; }
                 if (snap.status == AIJob::DONE)
                 {
                     if (!v.workerDone->load()) return;
@@ -2233,7 +2264,16 @@ namespace earthai
                     if (v.workerJoinable && v.worker.joinable()) v.worker.join();
                     v.workerJoinable = false;
                     v.pollInFlight = false;
-                    v.pollDone->store(false);
+                    v.pollDone = std::make_shared<std::atomic<bool>>(true);
+                    v.workerDone = v.pollDone;
+                    if (v.pollTicks > kPollTimeoutTicks)
+                    {
+                        _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "",
+                                     "polling timeout (10min)");
+                        publishVideoFailure("polling timeout (10min)");
+                        finalizeVideoCancellation();
+                        return;
+                    }
                     // review:收割完当前这一轮 worker 后立刻 return,不让本 tick 继续往下走
                     // 到"到达轮询间隔就再 spawn 一个新 worker"那段——pollInFlight 刚清成
                     // false、ticksSinceLastPoll 也可能恰好已经 >= kPollIntervalTicks,不加
@@ -2260,8 +2300,13 @@ namespace earthai
             {
                 _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "", "polling timeout (10min)");
                 publishVideoFailure("polling timeout (10min)");
-                v.cancelRequested->store(true);
-                v.phase = VideoJob::CANCELLING;
+                if (classifyVideoPollTimeout(v.pollInFlight) ==
+                    VIDEO_POLL_TIMEOUT_ASYNC_REAP)
+                {
+                    v.cancelRequested->store(true);
+                    v.phase = VideoJob::CANCELLING;
+                }
+                else finalizeVideoCancellation();
                 return;
             }
 

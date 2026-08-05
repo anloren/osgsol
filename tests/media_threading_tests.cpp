@@ -185,6 +185,11 @@ int main()
     CHECK(classifyVideoCancellation(false) == VIDEO_CANCEL_RESET_NOW);
     CHECK(classifyVideoCancellation(true) == VIDEO_CANCEL_ASYNC_REAP);
 
+    // Timeout after a done:false poll is terminal immediately; timeout while a GET is live
+    // requests asynchronous cancellation and must not block the FRAME owner.
+    CHECK(classifyVideoPollTimeout(false) == VIDEO_POLL_TIMEOUT_FINALIZE_NOW);
+    CHECK(classifyVideoPollTimeout(true) == VIDEO_POLL_TIMEOUT_ASYNC_REAP);
+
     // Local video failures remain visible even when the optional chat core is absent.
     VideoStatusBanner banner;
     banner = reduceVideoStatusBanner(banner, VIDEO_STATUS_FAILURE,
@@ -223,6 +228,18 @@ int main()
           resetVideo.find("_video->worker.join()"));
     CHECK(setup.find("class VideoEscapeCancelHandler") != std::string::npos);
     CHECK(setup.find("VideoUiRequest::Cancel") != std::string::npos);
+    // ImGui items need an active surface. Keep the persistent no-core status inside the
+    // command-bar Begin/End block rather than emitting widgets after End().
+    const size_t statusWidget = ui.find("视频状态：%s");
+    const size_t commandEnd = ui.find("    ImGui::End();", statusWidget);
+    CHECK(statusWidget != std::string::npos);
+    CHECK(commandEnd != std::string::npos);
+    CHECK(statusWidget < commandEnd);
+    // UI disclosure and the request URL must resolve the same process-stable image model.
+    CHECK(mediaHeader.find("resolvedCinematicImageModel") != std::string::npos);
+    CHECK(media.find("const std::string& kImageModel = resolvedCinematicImageModel()") !=
+          std::string::npos);
+    CHECK(ui.find("media->imageModelLabel()") != std::string::npos);
 
     const std::string videoPoll = extractFunctionBody(
         media, "void VeoVideoProvider::poll(");
@@ -408,7 +425,7 @@ int main()
     CHECK(update.find("_hudHideCount.load() > 0) applyFillLight()") ==
           std::string::npos);
     CHECK(confirmVideo.find("hudHide(false);") != std::string::npos);
-    CHECK(cancelVideo.find("hudRestore(false);") != std::string::npos);
+    CHECK(cancelVideo.find("finalizeVideoCancellation();") != std::string::npos);
     CHECK(countOccurrences(updateVideo, "hudRestore(false);") >= 3);
 
     // The application owns the orbit pose after manipulator update and before cull/draw.  This

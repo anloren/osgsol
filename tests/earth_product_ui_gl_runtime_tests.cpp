@@ -1862,6 +1862,18 @@ int main()
                          "provider cancel");
         clickAuditRect(command.auditSnapshot().videoModalCancelButton);
         command.auditSetVideoConfirm(false);
+        command.auditSetLocalOnly(true);
+        renderAuditFrame();
+        expectRectInside(command.auditSnapshot().local360Button, commandWindow,
+                         "local 360 entry");
+        clickAuditRect(command.auditSnapshot().local360Button);
+        renderAuditFrame();
+        studio = ImGui::FindWindowByName(u8"时空影像工作台");
+        expectRectInside(command.auditSnapshot().cinematicSubmitButton, studio,
+                         "local 360 start");
+        clickAuditRect(command.auditSnapshot().cinematicCancelButton);
+        renderAuditFrame();
+        command.auditSetLocalOnly(false);
     }
     command.auditSetMediaControlsEnabled(false);
 

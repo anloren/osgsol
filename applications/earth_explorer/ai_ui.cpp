@@ -95,17 +95,20 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
     earthai::MediaRouteCapabilities routeCapabilities = media
         ? media->routeCapabilities() : earthai::MediaRouteCapabilities();
     bool mediaControlsVisible = media != nullptr;
+    bool localAuditAvailable = false;
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
     if (_auditMediaControlsEnabled)
     {
         // Audit builds inject an explicit complete capability value. Production never derives
         // route eligibility from the audit flag or from pointer presence.
-        routeCapabilities.hasRealMediaKey = true;
-        routeCapabilities.hasProviderSession = true;
+        routeCapabilities.hasRealMediaKey = !_auditLocalOnly;
+        routeCapabilities.hasProviderSession = !_auditLocalOnly;
         routeCapabilities.videoProvider =
+            _auditLocalOnly ? earthai::CINEMATIC_VIDEO_PROVIDER_UNKNOWN :
             earthai::CINEMATIC_VIDEO_PROVIDER_VEO;
         routeCapabilities.deterministicLocalEncoder = true;
         mediaControlsVisible = true;
+        localAuditAvailable = _auditMediaControlsEnabled;
     }
     if (_auditVideoState == AUDIT_VIDEO_WAIT_B)
     {
@@ -525,7 +528,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 // 没有 provider 视频能力时只暴露这条确定性、本地的单一入口；不能借由
                 // MediaManager 的存在解锁普通图像或付费视频。
                 if (!routeCapabilities.canGenerateProviderVideo() &&
-                    routeCapabilities.canRenderLocalOrbit() && media && mani && !busy &&
+                    routeCapabilities.canRenderLocalOrbit() &&
+                    (media != nullptr || localAuditAvailable) && mani && !busy &&
                     vphase == earthai::VIDEO_IDLE)
                 {
                     ImGui::SameLine();
@@ -547,6 +551,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                         _cinematicStudioOpen = true;
                         ImGui::OpenPopup(u8"时空影像工作台");
                     }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                    _auditSnapshot.local360Button = auditLastItemRect();
+#endif
                 }
             }
 
@@ -577,22 +584,22 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             core->submit(submitText);
             _preparedTemplateStatus.clear();
         }
-    }
-    ImGui::End();
-
-    if (video.statusBanner.visible)
-    {
-        ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kDanger);
-        ImGui::TextWrapped(u8"视频状态：%s", video.statusBanner.message.c_str());
-        ImGui::PopStyleColor();
-        ImGui::SameLine();
-        if (ImGui::SmallButton(u8"关闭提示") && media)
+        if (video.statusBanner.visible)
         {
-            earthai::VideoUiRequest request;
-            request.kind = earthai::VideoUiRequest::DismissStatus;
-            media->enqueueVideoRequest(request);
+            ImGui::Separator();
+            ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kDanger);
+            ImGui::TextWrapped(u8"视频状态：%s", video.statusBanner.message.c_str());
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            if (ImGui::SmallButton(u8"关闭提示") && media)
+            {
+                earthai::VideoUiRequest request;
+                request.kind = earthai::VideoUiRequest::DismissStatus;
+                media->enqueueVideoRequest(request);
+            }
         }
     }
+    ImGui::End();
 
     ImGui::PopStyleColor(5);
     ImGui::PopStyleVar(4);
@@ -683,12 +690,16 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             _cinematicCustomStyle[0] = '\0';
         }
         ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kTextDim);
-        ImGui::TextWrapped(
-            _cinematicMediaKind == earthai::CINEMATIC_IMAGE
-                ? u8"付费 provider：Nano Banana 2 · 2K · 预计数十秒 · 参考约 US$0.04/张（非实时保证；以 provider 当前账单为准）。"
-                : (localDeterministicOrbit
-                    ? u8"本地 360° 渲染当前 osgSol 场景：零 AI 费用、零网络请求；不调用 Nano Banana、Omni 或 Veo。录制时按 Esc 可立即停止。"
-                    : u8"付费 provider 视频：Nano Banana 2 首帧 + 当前 Omni/Veo 模型 · 默认 8 秒 · 预计数十秒至数分钟 · 参考约 US$1–6（非实时保证；以 provider 当前账单为准）。确认前取消不会发请求；提交后费用可能无法撤销。"));
+        if (_cinematicMediaKind == earthai::CINEMATIC_IMAGE)
+            ImGui::TextWrapped(
+                u8"付费 provider 图像：%s · 2K · 预计数十秒 · 参考约 US$0.04/张（非实时保证；以 provider 当前账单为准）。",
+                media ? media->imageModelLabel().c_str() : "configured image model");
+        else if (localDeterministicOrbit)
+            ImGui::TextWrapped(
+                u8"本地 360° 渲染当前 osgSol 场景：零 AI 费用、零网络请求；不调用 Nano Banana、Omni 或 Veo。录制时按 Esc 可立即停止。");
+        else
+            ImGui::TextWrapped(
+                u8"付费 provider 视频：当前图像模型首帧 + Omni/Veo · 默认 8 秒 · 预计数十秒至数分钟 · 参考约 US$1–6（非实时保证；以 provider 当前账单为准）。确认前取消不会发请求；提交后费用可能无法撤销。");
         ImGui::PopStyleColor();
 
         ImGui::BeginChild(

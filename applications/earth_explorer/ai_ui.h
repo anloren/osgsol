@@ -34,6 +34,7 @@ public:
         AuditRect sendButton;
         AuditRect photoButton;
         AuditRect videoButton;
+        AuditRect local360Button;
         AuditRect videoCancelButton;
         AuditRect videoConfirmButton;
         AuditRect videoModalCancelButton;
@@ -101,6 +102,7 @@ public:
     {
         _auditMediaControlsEnabled = enabled;
     }
+    void auditSetLocalOnly(bool enabled) { _auditLocalOnly = enabled; }
     unsigned int auditActionMask() const { return _auditActionMask; }
     void auditClearActions() { _auditActionMask = 0u; }
 #endif
@@ -125,6 +127,7 @@ private:
     AuditSnapshot _auditSnapshot;
     AuditVideoState _auditVideoState = AUDIT_VIDEO_IDLE;
     bool _auditMediaControlsEnabled = false;
+    bool _auditLocalOnly = false;
     unsigned int _auditActionMask = 0u;
 #endif
 };

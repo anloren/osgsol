@@ -15,6 +15,7 @@
 #include <osgViewer/ViewerEventHandlers>
 #include <picojson.h>
 #include <atomic>
+#include <cstdlib>
 #include <deque>
 #include <ios>
 #include <mutex>
@@ -27,6 +28,8 @@ namespace osgVerse { class EarthManipulator; }
 
 namespace earthai
 {
+    // Process-stable resolution: UI disclosure and request URL share this exact configured model.
+    const std::string& resolvedCinematicImageModel();
     class AIChatCore;   // 前置声明:MediaManager 只持有裸指针(setChatCore 注入),不需要完整定义
 
     // 抓当前帧到 PNG 文件。基于 osgViewer::ScreenCaptureHandler(EARTH_AUTOCAP 同款),
@@ -238,6 +241,18 @@ namespace earthai
         return workerIsLive ? VIDEO_CANCEL_ASYNC_REAP : VIDEO_CANCEL_RESET_NOW;
     }
 
+    enum VideoPollTimeoutDisposition
+    {
+        VIDEO_POLL_TIMEOUT_FINALIZE_NOW,
+        VIDEO_POLL_TIMEOUT_ASYNC_REAP
+    };
+
+    inline VideoPollTimeoutDisposition classifyVideoPollTimeout(bool pollWorkerIsLive)
+    {
+        return pollWorkerIsLive ? VIDEO_POLL_TIMEOUT_ASYNC_REAP :
+            VIDEO_POLL_TIMEOUT_FINALIZE_NOW;
+    }
+
     struct VideoStatusBanner
     {
         bool visible = false;
@@ -323,6 +338,7 @@ namespace earthai
         // Live studio readout. Confirmation readouts use PendingVideoInfo's immutable captures.
         PhotoCameraContext cinematicCameraContext() const;
         const std::string& videoModelLabel() const { return _videoModel; }
+        const std::string& imageModelLabel() const { return _imageModel; }
 
         // 快门补光:抓帧期间把 WorldSunDir 临时对准相机(夜面/背光视角否则拍出全黑构图参考,
         // banana 只能纯靠坐标推理)。main 注入 EarthAtmosphereOcean 指针;为空则跳过补光。
@@ -418,6 +434,7 @@ namespace earthai
         osgVerse::EarthManipulator* _photoManipulator;
         AICardPanel* _cards;
         std::string _apiKey;
+        std::string _imageModel;
         std::string _videoModel;
         MediaRouteCapabilities _routeCapabilities;
         SnapshotGrabber _grabber;
@@ -473,6 +490,7 @@ namespace earthai
         void applyVideoOwnerCommandResult(bool succeeded);
         void publishVideoFailure(const std::string& message);
         void clearVideoStatusBanner();
+        void finalizeVideoCancellation();
 
         // 安全地把 *_video 重置为初始状态:先 join 掉可能还 joinable 的 worker 线程,
         // 再做 *_video = VideoJob()(move-assign)。std::thread 的 move 赋值要求目标线程
