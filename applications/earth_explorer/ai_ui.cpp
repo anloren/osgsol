@@ -92,7 +92,11 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
     bool openVideoModal = false;
     earthai::MediaManager::VideoUiSnapshot video = media
         ? media->videoUiSnapshot() : earthai::MediaManager::VideoUiSnapshot();
+    bool mediaAvailable = media != nullptr;
+    bool providerAvailable = core != nullptr;
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
+    mediaAvailable = mediaAvailable || _auditMediaControlsEnabled;
+    providerAvailable = providerAvailable || _auditMediaControlsEnabled;
     if (_auditVideoState == AUDIT_VIDEO_WAIT_B)
     {
         video.phase = earthai::VIDEO_WAIT_B;
@@ -404,10 +408,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             // 内置中文字体（ChineseFull 范围）不含 emoji glyph，📷/🎬 会渲染成方块（tofu），
             // 因此用文字标签"照片"/"视频"代替。
             ImGui::SameLine();
-            bool photoEnabled = (core && media && !busy);
+            bool photoEnabled = !busy && earthai::cinematicSubmissionCanStart(
+                earthai::defaultImageCinematicSettings(), mediaAvailable, providerAvailable);
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
-            photoEnabled = photoEnabled ||
-                (core && _auditMediaControlsEnabled && !busy);
             _auditSnapshot.photoEnabled = photoEnabled;
 #endif
             if (!photoEnabled) ImGui::BeginDisabled();
@@ -434,14 +437,13 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             }
 
             // 🎬 三态：空闲"视频" -> 已录 A"完成B点"(+取消) -> 两点都录完:自动弹确认 Modal。
-            bool videoEnabled = (media && mani && !busy
-                                 && (vphase == earthai::VIDEO_IDLE || vphase == earthai::VIDEO_WAIT_B));
-#if defined(OSGSOL_UI_AUDIT_HOOKS)
-            videoEnabled = videoEnabled ||
-                (_auditMediaControlsEnabled && mani && !busy &&
-                 (vphase == earthai::VIDEO_IDLE ||
-                  vphase == earthai::VIDEO_WAIT_B));
-#endif
+            earthai::CinematicGenerationSettings pointToPoint =
+                earthai::defaultVideoCinematicSettings();
+            pointToPoint.motion = earthai::CINEMATIC_MOTION_POINT_TO_POINT;
+            bool videoEnabled = mani && !busy &&
+                (vphase == earthai::VIDEO_IDLE || vphase == earthai::VIDEO_WAIT_B) &&
+                earthai::cinematicSubmissionCanStart(
+                    pointToPoint, mediaAvailable, providerAvailable);
             ImGui::SameLine();
             if (vphase == earthai::VIDEO_WAIT_B)
             {
@@ -480,12 +482,10 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             }
             else
             {
-                bool idleEnabled = (media && mani && !busy && vphase == earthai::VIDEO_IDLE);
-#if defined(OSGSOL_UI_AUDIT_HOOKS)
-                idleEnabled = idleEnabled ||
-                    (_auditMediaControlsEnabled && mani && !busy &&
-                     vphase == earthai::VIDEO_IDLE);
-#endif
+                bool idleEnabled = mani && !busy && vphase == earthai::VIDEO_IDLE &&
+                    earthai::cinematicSubmissionCanStart(
+                        earthai::defaultVideoCinematicSettings(), mediaAvailable,
+                        providerAvailable);
                 if (!idleEnabled) ImGui::BeginDisabled();
                 if (ImGui::Button(u8"视频", ImVec2(52.0f, 0.0f)) && mani)
                 {
@@ -506,10 +506,36 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 if (!idleEnabled) ImGui::EndDisabled();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 {
-                    ImGui::SetTooltip(media && mani
+                    ImGui::SetTooltip(idleEnabled
                         ? u8"打开时空影像工作台：一镜到底航拍、360° 一镜到底环拍、"
                           u8"俯冲、横移或两点穿越"
-                        : u8"生成视频（需设置 EARTH_AI_KEY / EARTH_AI_FAKE_MP4）");
+                        : u8"生成视频（需设置 EARTH_AI_KEY / EARTH_AI_FAKE）");
+                }
+
+                // 无 provider 时只暴露这条确定性、本地的单一入口；不能借由
+                // MediaManager 的存在解锁普通图像或付费视频。
+                if (!core && media && mani && !busy &&
+                    vphase == earthai::VIDEO_IDLE)
+                {
+                    ImGui::SameLine();
+                    if (ImGui::Button(u8"本地360", ImVec2(76.0f, 0.0f)))
+                    {
+                        const earthai::CinematicGenerationSettings localDefaults =
+                            earthai::normalizedCinematicSubmissionSettings(
+                                earthai::CinematicGenerationSettings{
+                                    earthai::CINEMATIC_VIDEO,
+                                    earthai::CINEMATIC_ERA_PRESENT,
+                                    earthai::CINEMATIC_TIME_AUTO,
+                                    earthai::CINEMATIC_STYLE_SCIENTIFIC,
+                                    earthai::CINEMATIC_MOTION_ORBIT_360});
+                        _cinematicMediaKind = localDefaults.mediaKind;
+                        _cinematicMotion = localDefaults.motion;
+                        _cinematicEra = localDefaults.era;
+                        _cinematicLocalTime = localDefaults.localTime;
+                        _cinematicVisualStyle = localDefaults.visualStyle;
+                        _cinematicStudioOpen = true;
+                        ImGui::OpenPopup(u8"时空影像工作台");
+                    }
                 }
             }
 
@@ -847,19 +873,18 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         const bool customStyleReady =
             _cinematicVisualStyle != earthai::CINEMATIC_STYLE_CUSTOM ||
             _cinematicCustomStyle[0] != '\0';
-        bool canGenerate = mani && customEraReady && customTimeReady &&
-            customStyleReady && media;
-#if defined(OSGSOL_UI_AUDIT_HOOKS)
-        canGenerate = canGenerate || (_auditMediaControlsEnabled && mani &&
-            customEraReady && customTimeReady && customStyleReady);
-#endif
-        // Audit hooks may bypass missing runtime services for layout testing, but must never
-        // re-enable a paid mode that failed its production media acceptance test.
-        if (_cinematicMediaKind == earthai::CINEMATIC_VIDEO &&
-            !earthai::cinematicMotionProductionReady(
-                static_cast<earthai::CinematicCameraMotion>(_cinematicMotion)) &&
-            !localDeterministicOrbit)
-            canGenerate = false;
+        earthai::CinematicGenerationSettings availability =
+            _cinematicMediaKind == earthai::CINEMATIC_IMAGE
+                ? earthai::defaultImageCinematicSettings()
+                : earthai::defaultVideoCinematicSettings();
+        availability.mediaKind =
+            static_cast<earthai::CinematicMediaKind>(_cinematicMediaKind);
+        availability.motion = availability.mediaKind == earthai::CINEMATIC_IMAGE
+            ? earthai::CINEMATIC_MOTION_STATIC
+            : static_cast<earthai::CinematicCameraMotion>(_cinematicMotion);
+        const bool canGenerate = mani && customEraReady && customTimeReady &&
+            customStyleReady && earthai::cinematicSubmissionCanStart(
+                availability, mediaAvailable, providerAvailable);
         const float actionGap = ImGui::GetStyle().ItemSpacing.x;
         const float actionWidth =
             (ImGui::GetContentRegionAvail().x - actionGap) * 0.5f;

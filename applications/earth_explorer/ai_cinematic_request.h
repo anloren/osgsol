@@ -157,6 +157,21 @@ namespace earthai
         return motion != CINEMATIC_MOTION_ORBIT_360;
     }
 
+    inline bool cinematicSubmissionCanStart(
+        const CinematicGenerationSettings& settings, bool mediaAvailable,
+        bool providerAvailable)
+    {
+        if (!mediaAvailable) return false;
+
+        if (settings.mediaKind == CINEMATIC_IMAGE)
+            return settings.motion == CINEMATIC_MOTION_STATIC && providerAvailable;
+
+        const bool localRenderer =
+            cinematicMotionUsesDeterministicLocalRenderer(settings.motion);
+        if (localRenderer) return true;
+        return cinematicMotionProductionReady(settings.motion) && providerAvailable;
+    }
+
     inline CinematicGenerationSettings normalizedCinematicSubmissionSettings(
         const CinematicGenerationSettings& settings)
     {

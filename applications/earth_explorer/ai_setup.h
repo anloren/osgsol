@@ -28,7 +28,8 @@ struct AIChatDeps
 struct AIChatRuntime
 {
     earthai::AIChatCore* core = nullptr;    // 无 EARTH_AI_KEY/EARTH_AI_FAKE 时为 null=零影响
-    earthai::MediaManager* media = nullptr; // 无 EARTH_AI_KEY/EARTH_AI_FAKE 时为 null
+    // MediaManager 始终存在以支持不带 key 的本地 360° 录制；付费/provider 路径仍要求 core。
+    earthai::MediaManager* media = nullptr;
     // 统一工作区上下文总线。无 AI key 时也存在，便于各模块在固定启动顺序内注册；
     // 真正提交模型请求或调用 get_earth_context 时才读取各 section。
     std::shared_ptr<earthai::EarthContextHub> context;

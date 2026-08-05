@@ -1060,6 +1060,19 @@ int main(int, char**)
                 capture, tooShortOrbit, normalizedShortOrbit));
             CHECK(normalizedShortOrbit.settings.durationSeconds == 8);
 
+            // Availability is a routing decision: creating MediaManager for the local
+            // recorder must not make provider-backed image or video submission usable.
+            const earthai::CinematicGenerationSettings providerImage =
+                earthai::defaultImageCinematicSettings();
+            const earthai::CinematicGenerationSettings providerVideo =
+                earthai::defaultVideoCinematicSettings();
+            CHECK(earthai::cinematicSubmissionCanStart(video, true, false));
+            CHECK(!earthai::cinematicSubmissionCanStart(providerImage, true, false));
+            CHECK(!earthai::cinematicSubmissionCanStart(providerVideo, true, false));
+            CHECK(earthai::cinematicSubmissionCanStart(providerImage, true, true));
+            CHECK(earthai::cinematicSubmissionCanStart(providerVideo, true, true));
+            CHECK(!earthai::cinematicSubmissionCanStart(video, false, true));
+
             // The local one-take route is a product boundary rather than a better
             // provider prompt: users must see its no-fee/no-network contract, and the
             // deterministic branch must remain free of provider calls.
