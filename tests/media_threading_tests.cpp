@@ -111,6 +111,24 @@ int main()
     CHECK(drained[1].kind == VideoUiRequest::Cancel);
     CHECK(queue.drain().empty());
 
+    CinematicUiRequestQueue cinematicQueue;
+    CinematicUiRequest imageRequest;
+    imageRequest.settings = defaultImageCinematicSettings();
+    imageRequest.settings.era = CINEMATIC_ERA_1920S;
+    imageRequest.settings.userPrompt = "Victoria Harbour";
+    CinematicUiRequest videoRequest;
+    videoRequest.settings = defaultVideoCinematicSettings();
+    videoRequest.settings.motion = CINEMATIC_MOTION_ORBIT_360;
+    cinematicQueue.push(imageRequest);
+    cinematicQueue.push(videoRequest);
+    const std::vector<CinematicUiRequest> cinematicDrained =
+        cinematicQueue.drain();
+    CHECK(cinematicDrained.size() == 2);
+    CHECK(cinematicDrained[0].settings.mediaKind == CINEMATIC_IMAGE);
+    CHECK(cinematicDrained[0].settings.userPrompt == "Victoria Harbour");
+    CHECK(cinematicDrained[1].settings.motion == CINEMATIC_MOTION_ORBIT_360);
+    CHECK(cinematicQueue.drain().empty());
+
     // Pure reducer behavior: failures replace stale text, no-request publications retain it,
     // and every successful request boundary (plus Cancel) clears it.
     std::string commandError = "stale error";
@@ -226,6 +244,7 @@ int main()
     // Runtime structure: request dispatch and both state machines reach exactly one publication
     // epilogue, which copies the FRAME-owned persistent command error.
     CHECK(update.find("_videoRequests.drain()") != std::string::npos);
+    CHECK(update.find("_cinematicRequests.drain()") != std::string::npos);
     const std::string drainStatement =
         "std::vector<VideoUiRequest> requests = _videoRequests.drain();";
     size_t firstUpdateCode = update.find_first_not_of(" \t\r\n");
@@ -248,10 +267,11 @@ int main()
     CHECK(snapshotGetter.find("videoPhase(") == std::string::npos);
     CHECK(snapshotGetter.find("pendingVideoInfo(") == std::string::npos);
 
-    // Draw traversal reads one snapshot and enqueues all four request kinds; live mutations stay
-    // in FRAME-owned MediaManager / main-thread tool paths.
+    // Draw traversal reads one snapshot. New image/video starts use the unified cinematic value
+    // queue; Finish-B / Confirm / Cancel remain explicit video state-machine requests. Live
+    // mutations stay in FRAME-owned MediaManager / main-thread tool paths.
     CHECK(countOccurrences(draw, "media->videoUiSnapshot()") == 1);
-    CHECK(draw.find("request.kind = earthai::VideoUiRequest::Begin") != std::string::npos);
+    CHECK(draw.find("media->enqueueCinematicRequest(request)") != std::string::npos);
     CHECK(draw.find("request.kind = earthai::VideoUiRequest::CaptureEnd") != std::string::npos);
     CHECK(draw.find("request.kind = earthai::VideoUiRequest::Confirm") != std::string::npos);
     CHECK(draw.find("request.kind = earthai::VideoUiRequest::Cancel") != std::string::npos);
@@ -261,6 +281,8 @@ int main()
     CHECK(draw.find("media->cancelVideo(") == std::string::npos);
     CHECK(draw.find("media->videoPhase(") == std::string::npos);
     CHECK(draw.find("media->pendingVideoInfo(") == std::string::npos);
+    CHECK(draw.find("media->startCinematicImageJob(") == std::string::npos);
+    CHECK(draw.find("media->beginCinematicVideoCapture(") == std::string::npos);
     CHECK(setup.find("mediaVideoPtr->beginVideoCapture(") != std::string::npos);
     CHECK(setup.find("mediaVideoPtr->captureVideoEnd(") != std::string::npos);
     CHECK(frameHandle.find("_media->confirmVideo(") != std::string::npos);

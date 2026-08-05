@@ -37,6 +37,10 @@ AIChatUI::AIChatUI()
     : _historyCollapsed(true), _lastEntryCount(0)
 {
     _inputBuf[0] = '\0';
+    _cinematicPrompt[0] = '\0';
+    _cinematicCustomEra[0] = '\0';
+    _cinematicCustomTime[0] = '\0';
+    _cinematicCustomStyle[0] = '\0';
 }
 
 // 转发给 AICardPanel(Task 8 PART A 从本文件抽出,见 ai_cards.h/.cpp)。
@@ -117,7 +121,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         ImGui::PopStyleColor();
         ImGui::SameLine();
         ImGui::TextDisabled(busy ? u8"正在执行…" : u8"就绪");
-        ImGui::SameLine();
+        if (winWidth >= 360.0f) ImGui::SameLine();
         ImGui::TextColored(
             earthui::design::kSuccess, u8"上下文已连接");
         if (ImGui::IsItemHovered())
@@ -392,7 +396,6 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             if (!canSubmit) ImGui::EndDisabled();
         }
 
-        bool photoSubmit = false;
         // openVideoModal 声明在外层函数作用域(见上方),本帧是否需要 OpenPopup
         // (A/B 都就绪、Modal 尚未打开时置真)在下面 if(core) 块里赋值。
         if (core)
@@ -410,7 +413,10 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             if (!photoEnabled) ImGui::BeginDisabled();
             if (ImGui::Button(u8"照片", ImVec2(52.0f, 0.0f)))
             {
-                photoSubmit = true;
+                _cinematicMediaKind = earthai::CINEMATIC_IMAGE;
+                _cinematicMotion = earthai::CINEMATIC_MOTION_STATIC;
+                _cinematicStudioOpen = true;
+                ImGui::OpenPopup(u8"时空影像工作台");
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
                 _auditActionMask |= AUDIT_ACTION_PHOTO;
 #endif
@@ -423,7 +429,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             // ImGuiHoveredFlags_AllowWhenDisabled 才能在禁用按钮上弹出 tooltip。
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             {
-                ImGui::SetTooltip(media ? u8"生成当前视角实景照片，约 $0.04/张"
+                    ImGui::SetTooltip(media ? u8"打开时空影像工作台：从当前视角生成当代、历史或深时重建图像"
                                         : u8"生成照片（需设置 EARTH_AI_KEY）");
             }
 
@@ -483,14 +489,15 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 if (!idleEnabled) ImGui::BeginDisabled();
                 if (ImGui::Button(u8"视频", ImVec2(52.0f, 0.0f)) && mani)
                 {
-                    osg::Vec3d llaA = mani->computeEyeLatLonHeight();
-                    earthai::VideoUiRequest request;
-                    request.kind = earthai::VideoUiRequest::Begin;
-                    request.lla = llaA;
-                    if (media) media->enqueueVideoRequest(request);
+                    _cinematicMediaKind = earthai::CINEMATIC_VIDEO;
+                    if (_cinematicMotion == earthai::CINEMATIC_MOTION_STATIC)
+                        _cinematicMotion = earthai::CINEMATIC_MOTION_AERIAL_TOUR;
+                    if (_cinematicVisualStyle == earthai::CINEMATIC_STYLE_SCIENTIFIC)
+                        _cinematicVisualStyle = earthai::CINEMATIC_STYLE_ULTRA_REAL;
+                    _cinematicStudioOpen = true;
+                    ImGui::OpenPopup(u8"时空影像工作台");
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
-                    else if (_auditMediaControlsEnabled)
-                        _auditActionMask |= AUDIT_ACTION_VIDEO_BEGIN;
+                    _auditActionMask |= AUDIT_ACTION_VIDEO_BEGIN;
 #endif
                 }
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
@@ -500,7 +507,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 {
                     ImGui::SetTooltip(media && mani
-                        ? u8"记录起点 A，移动相机后点「完成B点」生成 8 秒巡航视频（约 $2-6）"
+                        ? u8"打开时空影像工作台：一键航拍、360° 环拍、俯冲、横移或两点穿越"
                         : u8"生成视频（需设置 EARTH_AI_KEY / EARTH_AI_FAKE_MP4）");
                 }
             }
@@ -515,7 +522,6 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         // generate_photo(见 test/ai_fake_photo.json)。🎬 把值类型请求入队，不经对话循环——
         // 两点采集 + 确认 Modal 是强 UI 流程；FRAME owner 会在下一个 update() tick 执行请求。
         // generate_video 工具仍在 main-thread drain 里直调同一套 MediaManager 状态机。
-        if (photoSubmit && core) core->submit(u8"生成一张当前视角的实景照片");
         if (submitted && core)
         {
             core->submit(submitText);
@@ -527,7 +533,333 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
     ImGui::PopStyleColor(5);
     ImGui::PopStyleVar(4);
 
-    // ---- 视频确认 Modal(Task 9):居中弹窗,展示 A/B 坐标 + 运动提示词预览 + 费用提示。----
+    // ---- 时空影像工作台：图像与视频共享当前视角、时空、风格和科学边界。----
+    // 入口只打开工作台，不再把一个隐藏默认提示直接提交给模型；用户能在产生费用前看到
+    // 每个默认值。真正的媒体请求仍通过值类型队列交给 FRAME owner，draw traversal 不碰
+    // 相机或 MediaManager 的 live 状态。
+    if (_cinematicStudioOpen &&
+        !ImGui::IsPopupOpen(u8"时空影像工作台"))
+        ImGui::OpenPopup(u8"时空影像工作台");
+
+    const earthui::BoundedWindowLayout studioLayout =
+        earthui::computeCenteredModalLayout(
+            io.DisplaySize.x, io.DisplaySize.y, 680.0f, 800.0f);
+    ImGui::SetNextWindowPos(
+        ImVec2(studioLayout.x, studioLayout.y), ImGuiCond_Always,
+        ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(
+        ImVec2(studioLayout.width, studioLayout.maxHeight),
+        ImGuiCond_Always);
+    bool keepCinematicStudioOpen = _cinematicStudioOpen;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 5.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f, 16.0f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, earthui::design::kCarbon);
+    ImGui::PushStyleColor(ImGuiCol_Border, earthui::design::kBorder);
+    if (ImGui::BeginPopupModal(
+            u8"时空影像工作台", &keepCinematicStudioOpen,
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings))
+    {
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+        _auditSnapshot.cinematicStudioVisible = true;
+#endif
+        ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kCyan);
+        ImGui::TextUnformatted(u8"CINEMATIC EARTH / 时空影像");
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::TextDisabled(u8"每次生成独立 · 当前画面是唯一几何锚点");
+
+        const float tabGap = ImGui::GetStyle().ItemSpacing.x;
+        const float tabWidth =
+            (ImGui::GetContentRegionAvail().x - tabGap) * 0.5f;
+        if (_cinematicMediaKind == earthai::CINEMATIC_IMAGE)
+            ImGui::PushStyleColor(ImGuiCol_Button, earthui::design::kOxblood);
+        if (ImGui::Button(u8"图像生成", ImVec2(tabWidth, 32.0f)))
+        {
+            _cinematicMediaKind = earthai::CINEMATIC_IMAGE;
+            _cinematicMotion = earthai::CINEMATIC_MOTION_STATIC;
+            if (_cinematicVisualStyle == earthai::CINEMATIC_STYLE_ULTRA_REAL)
+                _cinematicVisualStyle = earthai::CINEMATIC_STYLE_SCIENTIFIC;
+        }
+        if (_cinematicMediaKind == earthai::CINEMATIC_IMAGE)
+            ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (_cinematicMediaKind == earthai::CINEMATIC_VIDEO)
+            ImGui::PushStyleColor(ImGuiCol_Button, earthui::design::kOxblood);
+        if (ImGui::Button(u8"视频生成", ImVec2(tabWidth, 32.0f)))
+        {
+            _cinematicMediaKind = earthai::CINEMATIC_VIDEO;
+            if (_cinematicMotion == earthai::CINEMATIC_MOTION_STATIC)
+                _cinematicMotion = earthai::CINEMATIC_MOTION_AERIAL_TOUR;
+            if (_cinematicVisualStyle == earthai::CINEMATIC_STYLE_SCIENTIFIC)
+                _cinematicVisualStyle = earthai::CINEMATIC_STYLE_ULTRA_REAL;
+        }
+        if (_cinematicMediaKind == earthai::CINEMATIC_VIDEO)
+            ImGui::PopStyleColor();
+        ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kTextDim);
+        ImGui::TextWrapped(
+            _cinematicMediaKind == earthai::CINEMATIC_IMAGE
+                ? u8"默认引擎：Nano Banana 2 · 2K · 自动匹配当前视口比例"
+                : u8"默认链路：Nano Banana 2 生成本次首帧 · Omni/Veo 执行连续运镜");
+        ImGui::PopStyleColor();
+
+        ImGui::BeginChild(
+            "##cinematic_studio_scroll",
+            ImVec2(0.0f, -52.0f), false);
+
+        ImGui::SeparatorText(u8"当前视角");
+        if (mani)
+        {
+            const osg::Vec3d eye = mani->computeEyeLatLonHeight();
+            ImGui::Text(u8"相机  %.4f°  %.4f°  ·  高度 %.2f km",
+                        osg::RadiansToDegrees(eye[0]),
+                        osg::RadiansToDegrees(eye[1]), eye[2] / 1000.0);
+            ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kSuccess);
+            ImGui::TextWrapped(
+                u8"提交时冻结中心、方向、俯仰、视场与比例；不会移动地球。");
+            ImGui::PopStyleColor();
+        }
+        else
+            ImGui::TextColored(
+                earthui::design::kDanger, u8"当前相机不可用，无法生成");
+
+        if (ImGui::Button(u8"恢复此模式默认设置"))
+        {
+            const earthai::CinematicGenerationSettings defaults =
+                _cinematicMediaKind == earthai::CINEMATIC_IMAGE
+                    ? earthai::defaultImageCinematicSettings()
+                    : earthai::defaultVideoCinematicSettings();
+            _cinematicEra = defaults.era;
+            _cinematicLocalTime = defaults.localTime;
+            _cinematicVisualStyle = defaults.visualStyle;
+            _cinematicMotion = defaults.motion;
+            _cinematicPrompt[0] = '\0';
+            _cinematicCustomEra[0] = '\0';
+            _cinematicCustomTime[0] = '\0';
+            _cinematicCustomStyle[0] = '\0';
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(u8"图像默认科学写实；视频默认超写实航拍；时代和时间恢复为当前");
+
+        ImGui::SeparatorText(u8"提示词");
+        ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kTextDim);
+        ImGui::TextWrapped(
+            u8"补充季节、天气、叙事或禁止内容；地点和镜头仍以当前视角为准。");
+        ImGui::PopStyleColor();
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextMultiline(
+            "##cinematic_prompt", _cinematicPrompt,
+            sizeof(_cinematicPrompt), ImVec2(-1.0f, 50.0f));
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+        _auditSnapshot.cinematicPrompt = auditLastItemRect();
+#endif
+
+        const auto drawPresetGrid = [&](const char* id,
+                                        const std::vector<const char*>& labels,
+                                        int& selected,
+                                        int auditSlot) {
+            const float gap = ImGui::GetStyle().ItemSpacing.x;
+            const float width = std::max(
+                88.0f, (ImGui::GetContentRegionAvail().x - gap * 2.0f) / 3.0f);
+            ImGui::PushID(id);
+            for (std::size_t index = 0; index < labels.size(); ++index)
+            {
+                if (index > 0 && index % 3 != 0) ImGui::SameLine();
+                const bool active = selected == static_cast<int>(index);
+                if (active)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Button, earthui::design::kOxblood);
+                    ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kTextStrong);
+                }
+                if (ImGui::Button(labels[index], ImVec2(width, 30.0f)))
+                    selected = static_cast<int>(index);
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+                if (index == 0)
+                {
+                    if (auditSlot == 0)
+                        _auditSnapshot.cinematicEraPreset = auditLastItemRect();
+                    else if (auditSlot == 1)
+                        _auditSnapshot.cinematicTimePreset = auditLastItemRect();
+                    else if (auditSlot == 2)
+                        _auditSnapshot.cinematicStylePreset = auditLastItemRect();
+                    else if (auditSlot == 3)
+                        _auditSnapshot.cinematicMotionPreset = auditLastItemRect();
+                }
+#else
+                (void)auditSlot;
+#endif
+                if (active) ImGui::PopStyleColor(2);
+            }
+            ImGui::PopID();
+        };
+
+        ImGui::SeparatorText(u8"时代");
+        const std::vector<const char*> eraLabels = {
+            earthai::cinematicEraLabel(earthai::CINEMATIC_ERA_PRESENT),
+            earthai::cinematicEraLabel(earthai::CINEMATIC_ERA_1920S),
+            earthai::cinematicEraLabel(earthai::CINEMATIC_ERA_CAMBRIAN_CHENGJIANG),
+            earthai::cinematicEraLabel(earthai::CINEMATIC_ERA_CUSTOM)};
+        drawPresetGrid("era", eraLabels, _cinematicEra, 0);
+        if (_cinematicEra == earthai::CINEMATIC_ERA_CUSTOM)
+        {
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint(
+                "##cinematic_custom_era", u8"例如：公元 1750 年 / 晚白垩世",
+                _cinematicCustomEra, sizeof(_cinematicCustomEra));
+        }
+
+        ImGui::SeparatorText(u8"当地时间");
+        const std::vector<const char*> timeLabels = {
+            earthai::cinematicTimeLabel(earthai::CINEMATIC_TIME_AUTO),
+            earthai::cinematicTimeLabel(earthai::CINEMATIC_TIME_DAWN),
+            earthai::cinematicTimeLabel(earthai::CINEMATIC_TIME_NOON),
+            earthai::cinematicTimeLabel(earthai::CINEMATIC_TIME_1900),
+            earthai::cinematicTimeLabel(earthai::CINEMATIC_TIME_NIGHT),
+            earthai::cinematicTimeLabel(earthai::CINEMATIC_TIME_CUSTOM)};
+        drawPresetGrid("time", timeLabels, _cinematicLocalTime, 1);
+        if (_cinematicLocalTime == earthai::CINEMATIC_TIME_CUSTOM)
+        {
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint(
+                "##cinematic_custom_time", u8"例如：当地 19:35 / 日出前 20 分钟",
+                _cinematicCustomTime, sizeof(_cinematicCustomTime));
+        }
+
+        ImGui::SeparatorText(u8"表现风格");
+        const std::vector<const char*> styleLabels = {
+            earthai::cinematicStyleLabel(earthai::CINEMATIC_STYLE_SCIENTIFIC),
+            earthai::cinematicStyleLabel(earthai::CINEMATIC_STYLE_ULTRA_REAL),
+            earthai::cinematicStyleLabel(earthai::CINEMATIC_STYLE_ARCHIVAL_AMBER),
+            earthai::cinematicStyleLabel(earthai::CINEMATIC_STYLE_DOCUMENTARY),
+            earthai::cinematicStyleLabel(earthai::CINEMATIC_STYLE_CINEMATIC),
+            earthai::cinematicStyleLabel(earthai::CINEMATIC_STYLE_ANIME),
+            earthai::cinematicStyleLabel(earthai::CINEMATIC_STYLE_CUSTOM)};
+        drawPresetGrid("style", styleLabels, _cinematicVisualStyle, 2);
+        if (_cinematicVisualStyle == earthai::CINEMATIC_STYLE_CUSTOM)
+        {
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint(
+                "##cinematic_custom_style", u8"描述媒介、色彩、镜头与质感；不能改动视角",
+                _cinematicCustomStyle, sizeof(_cinematicCustomStyle));
+        }
+
+        if (_cinematicMediaKind == earthai::CINEMATIC_VIDEO)
+        {
+            ImGui::SeparatorText(u8"运镜");
+            const std::vector<const char*> motionLabels = {
+                earthai::cinematicMotionLabel(earthai::CINEMATIC_MOTION_AERIAL_TOUR),
+                earthai::cinematicMotionLabel(earthai::CINEMATIC_MOTION_ORBIT_360),
+                earthai::cinematicMotionLabel(earthai::CINEMATIC_MOTION_DIVE),
+                earthai::cinematicMotionLabel(earthai::CINEMATIC_MOTION_CRANE_REVEAL),
+                earthai::cinematicMotionLabel(earthai::CINEMATIC_MOTION_TRUCK),
+                earthai::cinematicMotionLabel(earthai::CINEMATIC_MOTION_POINT_TO_POINT)};
+            int motionIndex = std::max(
+                0, _cinematicMotion -
+                    static_cast<int>(earthai::CINEMATIC_MOTION_AERIAL_TOUR));
+            drawPresetGrid("motion", motionLabels, motionIndex, 3);
+            _cinematicMotion = motionIndex +
+                static_cast<int>(earthai::CINEMATIC_MOTION_AERIAL_TOUR);
+            ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kTextDim);
+            ImGui::TextWrapped(
+                _cinematicMotion == earthai::CINEMATIC_MOTION_POINT_TO_POINT
+                    ? u8"先冻结当前起点；随后移动地球并点击“完成 B 点”，再确认生成。"
+                    : u8"单个当前首帧即可；确认后由视频模型执行连续运镜。 ");
+            ImGui::PopStyleColor();
+        }
+
+        if (_cinematicEra != earthai::CINEMATIC_ERA_PRESENT)
+        {
+            ImGui::SeparatorText(u8"科学边界");
+            ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kMeasure);
+            ImGui::TextWrapped(
+                _cinematicEra == earthai::CINEMATIC_ERA_CAMBRIAN_CHENGJIANG
+                    ? u8"深时科学重建：现代位置只作镜头锚点；古地理、生态与外观存在显著不确定性。"
+                    : u8"历史重建：会执行时代错置检查；输出不是发现的档案照片或直接观测。 ");
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndChild();
+
+        const bool customEraReady =
+            _cinematicEra != earthai::CINEMATIC_ERA_CUSTOM ||
+            _cinematicCustomEra[0] != '\0';
+        const bool customTimeReady =
+            _cinematicLocalTime != earthai::CINEMATIC_TIME_CUSTOM ||
+            _cinematicCustomTime[0] != '\0';
+        const bool customStyleReady =
+            _cinematicVisualStyle != earthai::CINEMATIC_STYLE_CUSTOM ||
+            _cinematicCustomStyle[0] != '\0';
+        bool canGenerate = mani && customEraReady && customTimeReady &&
+            customStyleReady && media;
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+        canGenerate = canGenerate || (_auditMediaControlsEnabled && mani &&
+            customEraReady && customTimeReady && customStyleReady);
+#endif
+        const float actionGap = ImGui::GetStyle().ItemSpacing.x;
+        const float actionWidth =
+            (ImGui::GetContentRegionAvail().x - actionGap) * 0.5f;
+        if (!canGenerate) ImGui::BeginDisabled();
+        const char* submitLabel =
+            _cinematicMediaKind == earthai::CINEMATIC_IMAGE
+                ? u8"从当前视角生成图像"
+                : (_cinematicMotion == earthai::CINEMATIC_MOTION_POINT_TO_POINT
+                    ? u8"记录当前起点 A" : u8"从当前视角生成视频");
+        ImGui::PushStyleColor(ImGuiCol_Button, earthui::design::kCyan);
+        ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kCarbon);
+        if (ImGui::Button(submitLabel, ImVec2(actionWidth, 34.0f)))
+        {
+            earthai::CinematicUiRequest request;
+            request.settings = _cinematicMediaKind == earthai::CINEMATIC_IMAGE
+                ? earthai::defaultImageCinematicSettings()
+                : earthai::defaultVideoCinematicSettings();
+            request.settings.mediaKind =
+                static_cast<earthai::CinematicMediaKind>(_cinematicMediaKind);
+            request.settings.era =
+                static_cast<earthai::CinematicEra>(_cinematicEra);
+            request.settings.localTime =
+                static_cast<earthai::CinematicLocalTime>(_cinematicLocalTime);
+            request.settings.visualStyle =
+                static_cast<earthai::CinematicVisualStyle>(_cinematicVisualStyle);
+            request.settings.motion = _cinematicMediaKind == earthai::CINEMATIC_IMAGE
+                ? earthai::CINEMATIC_MOTION_STATIC
+                : static_cast<earthai::CinematicCameraMotion>(_cinematicMotion);
+            request.settings.customEra = _cinematicCustomEra;
+            request.settings.customLocalTime = _cinematicCustomTime;
+            request.settings.customStyle = _cinematicCustomStyle;
+            request.settings.userPrompt = _cinematicPrompt;
+            if (media) media->enqueueCinematicRequest(request);
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+            _auditActionMask |= AUDIT_ACTION_CINEMATIC_SUBMIT;
+#endif
+            _cinematicStudioOpen = false;
+            keepCinematicStudioOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+        _auditSnapshot.cinematicSubmitButton = auditLastItemRect();
+#endif
+        ImGui::PopStyleColor(2);
+        if (!canGenerate) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (ImGui::Button(u8"取消", ImVec2(actionWidth, 34.0f)))
+        {
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+            _auditActionMask |= AUDIT_ACTION_CINEMATIC_CANCEL;
+#endif
+            _cinematicStudioOpen = false;
+            keepCinematicStudioOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+#if defined(OSGSOL_UI_AUDIT_HOOKS)
+        _auditSnapshot.cinematicCancelButton = auditLastItemRect();
+#endif
+        ImGui::EndPopup();
+    }
+    if (!keepCinematicStudioOpen) _cinematicStudioOpen = false;
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
+
+    // ---- 视频确认 Modal:展示冻结视角、运镜/时空设置与显式计费边界。----
     // 放在 AI 对话条窗口 Begin/End 之外(Modal 是独立的顶层窗口,不依赖对话条是否展开)。
     bool videoUiAvailable = media != nullptr;
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
@@ -561,22 +893,60 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             earthai::MediaManager::PendingVideoInfo info = video.pending;
             if (info.ready)
             {
+                const bool singleAnchor = info.cinematic && info.singleAnchor;
+                ImGui::PushStyleColor(
+                    ImGuiCol_Text, earthui::design::kCyan);
+                ImGui::TextUnformatted(
+                    singleAnchor ? u8"当前视角运镜" : u8"两点穿越");
+                ImGui::PopStyleColor();
                 ImGui::TextWrapped(
-                    u8"起点 A：纬度 %.4f° 经度 %.4f° 高度 %.1fm",
+                    singleAnchor
+                        ? u8"冻结首帧：纬度 %.4f° 经度 %.4f° 高度 %.1fm"
+                        : u8"起点 A：纬度 %.4f° 经度 %.4f° 高度 %.1fm",
                     osg::RadiansToDegrees(info.llaA[0]),
                     osg::RadiansToDegrees(info.llaA[1]), info.llaA[2]);
-                ImGui::TextWrapped(
-                    u8"终点 B：纬度 %.4f° 经度 %.4f° 高度 %.1fm",
-                    osg::RadiansToDegrees(info.llaB[0]),
-                    osg::RadiansToDegrees(info.llaB[1]), info.llaB[2]);
+                if (!singleAnchor)
+                {
+                    ImGui::TextWrapped(
+                        u8"终点 B：纬度 %.4f° 经度 %.4f° 高度 %.1fm",
+                        osg::RadiansToDegrees(info.llaB[0]),
+                        osg::RadiansToDegrees(info.llaB[1]), info.llaB[2]);
+                }
+                if (info.cinematic)
+                {
+                    ImGui::Spacing();
+                    ImGui::TextWrapped(
+                        u8"运镜：%s    时代：%s    时间：%s    风格：%s",
+                        earthai::cinematicMotionLabel(info.settings.motion),
+                        earthai::cinematicEraLabel(info.settings.era),
+                        earthai::cinematicTimeLabel(info.settings.localTime),
+                        earthai::cinematicStyleLabel(info.settings.visualStyle));
+                    if (info.settings.era != earthai::CINEMATIC_ERA_PRESENT)
+                    {
+                        ImGui::PushStyleColor(
+                            ImGuiCol_Text, earthui::design::kMeasure);
+                        ImGui::TextWrapped(
+                            info.settings.era ==
+                                earthai::CINEMATIC_ERA_CAMBRIAN_CHENGJIANG
+                                ? u8"科学重建，不是直接观测；现代地理仅作为本次镜头锚点。"
+                                : u8"历史重建，不是发现的档案影像；会执行时代错置检查。");
+                        ImGui::PopStyleColor();
+                    }
+                }
                 ImGui::Separator();
-                ImGui::TextWrapped("%s", info.motionPrompt.c_str());
+                if (ImGui::TreeNodeEx(
+                        u8"查看完整生成合同",
+                        ImGuiTreeNodeFlags_SpanAvailWidth))
+                {
+                    ImGui::TextWrapped("%s", info.motionPrompt.c_str());
+                    ImGui::TreePop();
+                }
                 ImGui::Separator();
                 ImGui::PushStyleColor(
                     ImGuiCol_Text, earthui::design::kMeasure);
-                ImGui::TextWrapped(u8"将提交视频生成(默认 Omni Flash,同步、较快;"
-                                   u8"EARTH_AI_VIDEO_MODEL=veo-3.1-* 可换首尾帧穿越模式,约 $1-6/条)。"
-                                   u8"此操作计费,确认?");
+                ImGui::TextWrapped(
+                    u8"将提交 Nano Banana 2 首帧与当前视频生成 provider。"
+                    u8"视频生成会产生费用；确认后才发出网络请求。");
                 ImGui::PopStyleColor();
 
                 const float actionGap = ImGui::GetStyle().ItemSpacing.x;

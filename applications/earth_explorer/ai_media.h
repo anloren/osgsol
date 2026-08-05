@@ -8,6 +8,7 @@
 #include <pipeline/Utilities.h>   // EarthAtmosphereOcean(快门补光)
 #include "ai_motion.h"
 #include "ai_photo_request.h"
+#include "ai_cinematic_request.h"
 #include "ai_prompts.h"
 #include <osg/Vec3d>
 #include <osgViewer/Viewer>
@@ -68,8 +69,11 @@ namespace earthai
     public:
         explicit GeminiMediaProvider(const std::string& apiKey);
         // 成功返回生成图 PNG 字节(非空);失败返回空字符串,err 写入原因。key 不进日志。
-        std::string generateImage(const std::string& pngBytes, const std::string& prompt,
-                                  std::string& err);
+        std::string generateImage(
+            const std::string& pngBytes, const std::string& prompt,
+            std::string& err,
+            const CinematicImageOutputOptions& output =
+                CinematicImageOutputOptions());
 
     private:
         std::string _apiKey;
@@ -170,6 +174,32 @@ namespace earthai
         std::deque<VideoUiRequest> _requests;
     };
 
+    struct CinematicUiRequest
+    {
+        CinematicGenerationSettings settings;
+    };
+
+    class CinematicUiRequestQueue
+    {
+    public:
+        void push(const CinematicUiRequest& request)
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _requests.push_back(request);
+        }
+        std::vector<CinematicUiRequest> drain()
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            std::vector<CinematicUiRequest> result(
+                _requests.begin(), _requests.end());
+            _requests.clear();
+            return result;
+        }
+    private:
+        std::mutex _mutex;
+        std::deque<CinematicUiRequest> _requests;
+    };
+
     struct VideoUiDispatchResult
     {
         VideoUiRequest::Kind kind = VideoUiRequest::Begin;
@@ -268,9 +298,9 @@ namespace earthai
 
         void update();   // 主线程每帧调:轮询抓帧就绪 → 起工作线程生图/生视频 → 完成后推卡片/收尾 Job
 
-        // ---- 视频两点巡航流程(Task 9):A 点 -> B 点 -> 确认 Modal -> 提交 -> 轮询 -> 完成 ----
-        // 状态机见 .cpp VideoPhase 注释。UI(🎬 按钮/确认 Modal)与 generate_video 工具
-        // 共用同一套状态,任何入口都必须先过两点采集 + 确认这两步,不允许绕过。
+        // ---- 视频生成流程:当前视角运镜或 A/B 两点穿越 -> 确认 -> 提交 -> 完成 ----
+        // 状态机见 .cpp VideoPhase 注释。一键航拍、环拍、俯冲等只冻结当前首帧；仅
+        // POINT_TO_POINT 继续采集 B 点。两种流程都必须经过确认，不能绕过计费边界。
 
         // 当前视频流程所处阶段,UI(三态按钮/确认 Modal)与 generate_video 工具都据此判断
         // 该进入哪一步——VIDEO_IDLE 即"没有视频任务在跑",调用方按需自行与该值比较
@@ -283,13 +313,15 @@ namespace earthai
         bool beginVideoCapture(const osg::Vec3d& llaA, const std::string& style = std::string());
         // 记录 B 点。要求当前处于"已录 A、等待 B"阶段,否则返回 false。
         bool captureVideoEnd(const osg::Vec3d& llaB);
-        // 两点都已抓到快照文件后才能取(A/B 快照仍在写盘时返回 false)。
-        // 供 UI 确认 Modal 展示:A/B 坐标 + 视频提示词预览(buildVideoPrompt 输出,含运镜
-        // 语言,不再是纯 buildMotionPrompt 的轨迹句子)+ 状态是否就绪。
+        // 所需快照已经就绪后才能取：单首帧模式只等 A，两点穿越还必须等 B。
+        // 供 UI 确认 Modal 展示冻结视角、运镜、时空风格与完整生成合同。
         struct PendingVideoInfo
         {
             bool ready = false;      // 两点快照都已就绪,可以画确认 Modal 了
+            bool cinematic = false;
+            bool singleAnchor = false;
             osg::Vec3d llaA, llaB;
+            CinematicGenerationSettings settings;
             std::string motionPrompt;   // 展示用的最终视频提示词(buildVideoPrompt 输出;字段名沿用旧称避免波及 ai_ui.cpp 之外的引用)
         };
         struct VideoUiSnapshot
@@ -303,6 +335,8 @@ namespace earthai
         // draw traversal 只提交值类型请求、读取不可变快照；live VideoJob 只由 FRAME update()
         // 以及同属 FRAME owner 的 AI 工具 drain 访问。
         void enqueueVideoRequest(const VideoUiRequest& request) { _videoRequests.push(request); }
+        void enqueueCinematicRequest(const CinematicUiRequest& request)
+        { _cinematicRequests.push(request); }
         VideoUiSnapshot videoUiSnapshot() const;
 
         // 用户在确认 Modal 里点「确认生成」:真正建 Job、起 worker 提交 Veo 请求。
@@ -345,6 +379,9 @@ namespace earthai
         int _jobId;
         std::string _snapPath, _genPath, _prompt;
         PhotoRequest _pendingPhotoInput;
+        CinematicGenerationSettings _pendingCinematicSettings;
+        CinematicImageOutputOptions _photoOutputOptions;
+        bool _photoUsesCinematic = false;
         PhotoCaptureRequest _captureRequest;
         long long _photoRequestId;
         std::thread _worker;
@@ -375,6 +412,7 @@ namespace earthai
         VideoJob* _video;  // 指针以避免本头文件暴露 VideoJob 定义(pimpl 风格,video 专属状态)
 
         VideoUiRequestQueue _videoRequests;
+        CinematicUiRequestQueue _cinematicRequests;
         std::string _videoCommandError;
         mutable std::mutex _videoSnapshotMutex;
         VideoUiSnapshot _videoSnapshot;
@@ -384,6 +422,12 @@ namespace earthai
         // 会导致 grab() 互相覆盖对方的捕获目标。两条流程完全独立、开销可忽略(只是一个
         // ScreenCaptureHandler),分开更安全。
         SnapshotGrabber _videoGrabber;
+        long long _cinematicRequestSerial = 0;
+
+        picojson::value startCinematicImageJob(
+            const CinematicGenerationSettings& settings);
+        bool beginCinematicVideoCapture(
+            const CinematicGenerationSettings& settings);
     };
 }
 #endif

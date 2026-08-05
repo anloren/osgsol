@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include "ai_photo_request.h"
+#include "ai_cinematic_request.h"
 // buildMotionPrompt 同样 header-only、只依赖 osg/Vec3d + string + cmath + cstdio(见该文件
 // 头注释),依赖它不会把 ai_prompts.h 拖出"只依赖这四个头"的约束——直接复用其 A->B 轨迹
 // 描述(罗盘方位/距离/高度变化),避免两处各写一份雷同的三角函数计算。
@@ -360,6 +361,203 @@ namespace earthai
              "natural motion blur, no text, no UI, no watermarks.";
         if (!styleSuffix.empty()) { p += " Style: "; p += styleSuffix; }
         return p;
+    }
+
+    inline void appendCinematicEraPrompt(
+        std::string& prompt, const CinematicGenerationSettings& settings)
+    {
+        prompt += "\n[SCIENTIFIC AND TEMPORAL BASIS] ";
+        switch (settings.era)
+        {
+        case CINEMATIC_ERA_PRESENT:
+            prompt += "Present-day scene. Preserve geographically plausible current terrain, "
+                      "coastline, vegetation, land use and architecture.";
+            break;
+        case CINEMATIC_ERA_1920S:
+            prompt += "historical reconstruction for calendar year 1920. Reconstruct only "
+                      "features supportable by the place and period. This is a historically "
+                      "informed visualization, not documentary evidence. Apply a strict "
+                      "anachronism guard: remove post-1920 buildings, vehicles, infrastructure, "
+                      "lighting, signage and materials unless the user explicitly requests them.";
+            break;
+        case CINEMATIC_ERA_CAMBRIAN_CHENGJIANG:
+            prompt += "Deep-time scientific reconstruction of the Early Cambrian Chengjiang "
+                      "biota and environment, approximately 518 million years ago. Use the modern "
+                      "map location only as the current-view camera and geographic anchor; replace "
+                      "modern geography with a cautious paleogeographic and paleoenvironmental "
+                      "reconstruction supported by peer-reviewed fossil and sedimentary evidence. "
+                      "This is a scientific reconstruction with substantial uncertainty, not a "
+                      "photograph or direct observation. no humans, no modern buildings, no modern "
+                      "boats, no roads, no modern cultivated plants, and no anachronistic animals.";
+            break;
+        case CINEMATIC_ERA_CUSTOM:
+            prompt += "User-specified temporal reconstruction: ";
+            prompt += settings.customEra.empty() ? "unspecified era" : settings.customEra;
+            prompt += ". Treat uncertain details as reconstruction, not observed fact, and prevent "
+                      "features from other periods from leaking into the scene.";
+            break;
+        }
+    }
+
+    inline void appendCinematicTimePrompt(
+        std::string& prompt, const CinematicGenerationSettings& settings)
+    {
+        prompt += "\n[LOCAL TIME AND LIGHT] ";
+        switch (settings.localTime)
+        {
+        case CINEMATIC_TIME_AUTO:
+            prompt += "Follow the current reference frame's physically plausible illumination.";
+            break;
+        case CINEMATIC_TIME_DAWN:
+            prompt += "Dawn local time; low-angle light and atmosphere must be geographically "
+                      "and seasonally plausible.";
+            break;
+        case CINEMATIC_TIME_NOON:
+            prompt += "12:00 local time; physically plausible near-noon illumination.";
+            break;
+        case CINEMATIC_TIME_1900:
+            prompt += "19:00 local time. Choose twilight or night illumination according to the "
+                      "requested place, era and season; do not use modern electric lighting in a "
+                      "historical scene unless it existed there then.";
+            break;
+        case CINEMATIC_TIME_NIGHT:
+            prompt += "Deep night local time with physically plausible moonlight, haze and "
+                      "period-correct artificial light only.";
+            break;
+        case CINEMATIC_TIME_CUSTOM:
+            prompt += settings.customLocalTime.empty()
+                ? "User requested a custom but unspecified local time."
+                : settings.customLocalTime;
+            break;
+        }
+    }
+
+    inline void appendCinematicStylePrompt(
+        std::string& prompt, const CinematicGenerationSettings& settings)
+    {
+        prompt += "\n[VISUAL TREATMENT] ";
+        switch (settings.visualStyle)
+        {
+        case CINEMATIC_STYLE_SCIENTIFIC:
+            prompt += "Scientific photorealism: restrained color, physically coherent materials, "
+                      "natural atmosphere, no sensational or invented hero elements.";
+            break;
+        case CINEMATIC_STYLE_ULTRA_REAL:
+            prompt += "ultra-photorealistic large-format aerial cinematography, natural dynamic "
+                      "range, physically coherent detail, no game-render appearance.";
+            break;
+        case CINEMATIC_STYLE_ARCHIVAL_AMBER:
+            prompt += "Period-appropriate aged amber photographic print: subtle yellowed paper, "
+                      "silver-gelatin grain, restrained fading and optical softness; no fake border, "
+                      "caption, date stamp or watermark.";
+            break;
+        case CINEMATIC_STYLE_DOCUMENTARY:
+            prompt += "Observational documentary photography, neutral color and exposure, "
+                      "credible lens behavior, no dramatized events.";
+            break;
+        case CINEMATIC_STYLE_CINEMATIC:
+            prompt += "Premium cinematic naturalism with controlled contrast, realistic lens "
+                      "response and subtle film grain; no implausible spectacle.";
+            break;
+        case CINEMATIC_STYLE_ANIME:
+            prompt += "High-end anime visual language with coherent geography, stable structures "
+                      "and deliberate line and color design; style may change appearance but not "
+                      "the anchored camera composition or scientific era constraints.";
+            break;
+        case CINEMATIC_STYLE_CUSTOM:
+            prompt += settings.customStyle.empty()
+                ? "User requested a custom but unspecified visual treatment."
+                : settings.customStyle;
+            break;
+        }
+    }
+
+    inline std::string buildCinematicImagePrompt(
+        const CinematicGenerationRequest& request)
+    {
+        std::string prompt = buildPhotoPrompt(request.anchor);
+        prompt += "\n[REQUEST IDENTITY] This is generation request ";
+        prompt += std::to_string(request.anchor.requestId);
+        prompt += ". It is a fresh independent generation with exactly one authoritative current "
+                  "viewport reference. Never retrieve, blend or imitate an earlier generated image.";
+        appendCinematicEraPrompt(prompt, request.settings);
+        appendCinematicTimePrompt(prompt, request.settings);
+        appendCinematicStylePrompt(prompt, request.settings);
+        if (!request.settings.userPrompt.empty())
+        {
+            prompt += "\n[USER INTENT] ";
+            prompt += request.settings.userPrompt;
+            prompt += ". User intent may refine content but cannot move the locked camera, weaken "
+                      "scientific uncertainty, or introduce anachronisms.";
+        }
+        prompt += "\n[OUTPUT SAFETY] No UI, labels, logos, captions, maps, borders or watermarks. "
+                  "Do not present a reconstruction as a recovered archival photograph, direct "
+                  "observation or measured scientific result.";
+        return prompt;
+    }
+
+    inline const char* cinematicMotionPrompt(CinematicCameraMotion motion)
+    {
+        switch (motion)
+        {
+        case CINEMATIC_MOTION_STATIC:
+            return "Keep a locked-off camera with only physically subtle environmental motion.";
+        case CINEMATIC_MOTION_AERIAL_TOUR:
+            return "Execute a smooth ultra-real aerial establishing flight: gently advance through "
+                   "the center of frame with a restrained rise, stable horizon, continuous scale and "
+                   "physically plausible parallax.";
+        case CINEMATIC_MOTION_ORBIT_360:
+            return "Execute one smooth 360-degree orbit around the center-of-frame subject, keeping "
+                   "radius and elevation coherent and ending near the starting orientation without "
+                   "teleportation or background warping.";
+        case CINEMATIC_MOTION_DIVE:
+            return "Execute a controlled dive toward the center-of-frame subject, pitching down and "
+                   "descending continuously while preserving realistic speed, terrain clearance and "
+                   "scale; never cut to a different altitude.";
+        case CINEMATIC_MOTION_CRANE_REVEAL:
+            return "Perform a slow crane rise and tilt reveal, exposing more of the scene beyond the "
+                   "foreground while keeping the original subject and horizon continuous.";
+        case CINEMATIC_MOTION_TRUCK:
+            return "Perform a stabilized lateral truck move with gentle parallax, constant altitude "
+                   "and a continuous look direction toward the original center-of-frame subject.";
+        case CINEMATIC_MOTION_POINT_TO_POINT:
+            return "Interpolate continuously from the provided first frame to the separately supplied "
+                   "end frame, with no cut, teleport, scale jump or invented intermediate geography.";
+        }
+        return "Keep the camera physically coherent.";
+    }
+
+    inline std::string buildCinematicVideoPrompt(
+        const CinematicGenerationRequest& request)
+    {
+        static const double kRad2Deg = 57.29577951308232;
+        const PhotoCameraContext& camera = request.anchor.camera;
+        std::string prompt = "Create a coherent video from the provided first frame. start exactly "
+                             "from that frame: same camera position, heading, pitch, roll, projection, "
+                             "field of view, horizon, scale and center-of-frame subject. Do not begin "
+                             "from a new drone angle or a closer view. Geographic anchor: ";
+        prompt += formatLatLonDeg(
+            request.anchor.targetLla[0] * kRad2Deg,
+            request.anchor.targetLla[1] * kRad2Deg);
+        prompt += ". Camera altitude: ";
+        prompt += photoPromptNumber(camera.cameraEyeLla[2] / 1000.0, "%.2f");
+        prompt += " km above WGS84.\n[CAMERA MOTION] ";
+        prompt += cinematicMotionPrompt(request.settings.motion);
+        prompt += " Duration ";
+        prompt += std::to_string(request.settings.durationSeconds);
+        prompt += " seconds, one continuous shot, stabilized motion, temporal consistency, no cuts.";
+        appendCinematicEraPrompt(prompt, request.settings);
+        appendCinematicTimePrompt(prompt, request.settings);
+        appendCinematicStylePrompt(prompt, request.settings);
+        if (!request.settings.userPrompt.empty())
+        {
+            prompt += "\n[USER INTENT] ";
+            prompt += request.settings.userPrompt;
+        }
+        prompt += "\n[CONSISTENCY] Preserve terrain, coastline, buildings, organisms and lighting "
+                  "identity across every frame. No morphing, duplicated structures, sliding ground, "
+                  "camera jumps, text, UI, logos or watermarks.";
+        return prompt;
     }
 }
 #endif

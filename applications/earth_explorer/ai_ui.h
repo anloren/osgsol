@@ -37,9 +37,17 @@ public:
         AuditRect videoCancelButton;
         AuditRect videoConfirmButton;
         AuditRect videoModalCancelButton;
+        AuditRect cinematicPrompt;
+        AuditRect cinematicSubmitButton;
+        AuditRect cinematicCancelButton;
+        AuditRect cinematicEraPreset;
+        AuditRect cinematicTimePreset;
+        AuditRect cinematicStylePreset;
+        AuditRect cinematicMotionPreset;
         bool historyExpanded = false;
         bool templatePopupVisible = false;
         bool videoModalVisible = false;
+        bool cinematicStudioVisible = false;
         bool photoEnabled = false;
     };
     enum AuditVideoState
@@ -54,7 +62,9 @@ public:
         AUDIT_ACTION_VIDEO_BEGIN = 1u << 1,
         AUDIT_ACTION_VIDEO_END = 1u << 2,
         AUDIT_ACTION_VIDEO_CONFIRM = 1u << 3,
-        AUDIT_ACTION_VIDEO_CANCEL = 1u << 4
+        AUDIT_ACTION_VIDEO_CANCEL = 1u << 4,
+        AUDIT_ACTION_CINEMATIC_SUBMIT = 1u << 5,
+        AUDIT_ACTION_CINEMATIC_CANCEL = 1u << 6
     };
 #endif
 
@@ -100,6 +110,16 @@ private:
     bool _historyCollapsed;    // 历史面板折叠状态（默认折叠，地图优先）
     size_t _lastEntryCount;    // 上次绘制时的历史条数，用于检测新增条目并自动滚动到底部
     std::string _preparedTemplateStatus; // 已准备的地点/参数摘要，发送前保持可见
+    bool _cinematicStudioOpen = false;
+    int _cinematicMediaKind = 0;
+    int _cinematicEra = 0;
+    int _cinematicLocalTime = 0;
+    int _cinematicVisualStyle = 0;
+    int _cinematicMotion = 1;
+    char _cinematicPrompt[1024];
+    char _cinematicCustomEra[128];
+    char _cinematicCustomTime[64];
+    char _cinematicCustomStyle[128];
     AICardPanel _cards;
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
     AuditSnapshot _auditSnapshot;

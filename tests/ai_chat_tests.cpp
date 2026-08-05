@@ -25,6 +25,7 @@
 // 提示词工程(用户反馈 2/3 的核心改动):header-only 纯函数,依赖约束与 ai_motion.h 相同,
 // 直接 include 到测试翻译单元。
 #include "../applications/earth_explorer/ai_prompts.h"
+#include "../applications/earth_explorer/ai_cinematic_request.h"
 #if __has_include("../applications/earth_explorer/ai_photo_request.h")
 #include "../applications/earth_explorer/ai_photo_request.h"
 #define OSGSOL_HAS_PHOTO_REQUEST 1
@@ -876,6 +877,124 @@ int main(int, char**)
             CHECK(p.find("southwest") != std::string::npos);
             CHECK(p.find("first frame") != std::string::npos);
             CHECK(p.find("descending") != std::string::npos);
+        }
+
+        // 时空影像工作台：所有图像/视频请求都从本次不可变快门上下文建立，默认不带
+        // 任何旧产物引用。历史与深时生成必须把事实、重建假设、创意风格和禁止项分层。
+        {
+            const osg::Vec3d eyeWorld(6378137.0 + 1200.0, 0.0, 0.0);
+            const osg::Vec3d targetWorld(
+                6378137.0 * std::cos(0.01),
+                6378137.0 * std::sin(0.01), 0.0);
+            const osg::Matrixd view = osg::Matrixd::lookAt(
+                eyeWorld, targetWorld, osg::Vec3d(0.0, 0.0, 1.0));
+            const osg::Matrixd projection = osg::Matrixd::perspective(
+                42.0, 16.0 / 9.0, 1.0, 20000000.0);
+            const earthai::PhotoCameraContext camera =
+                earthai::makePhotoCameraContext(
+                    osg::Vec3d(22.2930 * kDeg, 114.1690 * kDeg, 1200.0),
+                    osg::Vec3d(22.2870 * kDeg, 114.1690 * kDeg, 0.0),
+                    view, projection, 1920, 1080);
+            earthai::PhotoRequest input;
+            input.lla.set(22.2870 * kDeg, 114.1690 * kDeg, 0.0);
+            const earthai::PhotoCaptureRequest capture =
+                earthai::makePhotoCaptureRequest(input, camera, 901);
+
+            earthai::CinematicGenerationSettings image =
+                earthai::defaultImageCinematicSettings();
+            CHECK(image.mediaKind == earthai::CINEMATIC_IMAGE);
+            CHECK(image.era == earthai::CINEMATIC_ERA_PRESENT);
+            CHECK(image.motion == earthai::CINEMATIC_MOTION_STATIC);
+
+            image.era = earthai::CINEMATIC_ERA_1920S;
+            image.localTime = earthai::CINEMATIC_TIME_1900;
+            image.visualStyle = earthai::CINEMATIC_STYLE_ARCHIVAL_AMBER;
+            image.userPrompt = "Victoria Harbour, Hong Kong";
+            earthai::CinematicGenerationRequest historical;
+            CHECK(earthai::makeCinematicGenerationRequest(
+                capture, image, historical));
+            CHECK(historical.anchor.requestId == 901);
+            CHECK(historical.previousArtifactId.empty());
+            const osg::Matrixd originalView = capture.camera.visibleViewMatrix;
+            const std::string historicalPrompt =
+                earthai::buildCinematicImagePrompt(historical);
+            CHECK(historicalPrompt.find("1920") != std::string::npos);
+            CHECK(historicalPrompt.find("19:00 local time") != std::string::npos);
+            CHECK(historicalPrompt.find("Victoria Harbour") != std::string::npos);
+            CHECK(historicalPrompt.find("historical reconstruction") != std::string::npos);
+            CHECK(historicalPrompt.find("not documentary evidence") != std::string::npos);
+            CHECK(historicalPrompt.find("anachron") != std::string::npos);
+            CHECK(historicalPrompt.find("aged amber") != std::string::npos);
+            CHECK(historicalPrompt.find("HARD CAMERA-GEOMETRY LOCK") != std::string::npos);
+            CHECK(capture.camera.visibleViewMatrix == originalView);
+
+            earthai::CinematicGenerationSettings cambrian = image;
+            cambrian.era = earthai::CINEMATIC_ERA_CAMBRIAN_CHENGJIANG;
+            cambrian.localTime = earthai::CINEMATIC_TIME_NOON;
+            cambrian.visualStyle = earthai::CINEMATIC_STYLE_SCIENTIFIC;
+            cambrian.userPrompt = "Chengjiang biota in Yunnan";
+            earthai::CinematicGenerationRequest deepTime;
+            CHECK(earthai::makeCinematicGenerationRequest(
+                capture, cambrian, deepTime));
+            const std::string cambrianPrompt =
+                earthai::buildCinematicImagePrompt(deepTime);
+            CHECK(cambrianPrompt.find("Early Cambrian") != std::string::npos);
+            CHECK(cambrianPrompt.find("approximately 518 million years") != std::string::npos);
+            CHECK(cambrianPrompt.find("scientific reconstruction") != std::string::npos);
+            CHECK(cambrianPrompt.find("paleogeographic") != std::string::npos);
+            CHECK(cambrianPrompt.find("no humans") != std::string::npos);
+            CHECK(cambrianPrompt.find("modern buildings") != std::string::npos);
+
+            earthai::CinematicGenerationSettings video =
+                earthai::defaultVideoCinematicSettings();
+            CHECK(video.mediaKind == earthai::CINEMATIC_VIDEO);
+            CHECK(video.motion == earthai::CINEMATIC_MOTION_AERIAL_TOUR);
+            CHECK(video.visualStyle == earthai::CINEMATIC_STYLE_ULTRA_REAL);
+            earthai::CinematicGenerationRequest videoRequest;
+            CHECK(earthai::makeCinematicGenerationRequest(
+                capture, video, videoRequest));
+            std::string videoPrompt =
+                earthai::buildCinematicVideoPrompt(videoRequest);
+            CHECK(videoPrompt.find("provided first frame") != std::string::npos);
+            CHECK(videoPrompt.find("ultra-photorealistic") != std::string::npos);
+            CHECK(videoPrompt.find("aerial") != std::string::npos);
+            CHECK(videoPrompt.find("start exactly") != std::string::npos);
+
+            video.motion = earthai::CINEMATIC_MOTION_ORBIT_360;
+            CHECK(earthai::buildCinematicVideoPrompt(
+                earthai::cinematicRequestUnchecked(capture, video)).find(
+                    "360-degree orbit") != std::string::npos);
+            video.motion = earthai::CINEMATIC_MOTION_DIVE;
+            CHECK(earthai::buildCinematicVideoPrompt(
+                earthai::cinematicRequestUnchecked(capture, video)).find(
+                    "controlled dive") != std::string::npos);
+            video.motion = earthai::CINEMATIC_MOTION_POINT_TO_POINT;
+            CHECK(earthai::cinematicMotionNeedsEndFrame(video.motion));
+            CHECK(!earthai::cinematicMotionNeedsEndFrame(
+                earthai::CINEMATIC_MOTION_ORBIT_360));
+            video.visualStyle = earthai::CINEMATIC_STYLE_ANIME;
+            CHECK(earthai::buildCinematicVideoPrompt(
+                earthai::cinematicRequestUnchecked(capture, video)).find(
+                    "anime") != std::string::npos);
+
+            CHECK(earthai::cinematicImageModelName(NULL) ==
+                  "gemini-3.1-flash-image");
+            CHECK(earthai::cinematicImageModelName("gemini-3-pro-image") ==
+                  "gemini-3-pro-image");
+            const earthai::CinematicImageOutputOptions output =
+                earthai::cinematicImageOutputOptions(historical);
+            CHECK(output.aspectRatio == "16:9");
+            CHECK(output.imageSize == "2K");
+            const picojson::object config =
+                earthai::cinematicGeminiImageGenerationConfig(output);
+            CHECK(config.find("responseModalities") != config.end());
+            CHECK(config.find("imageConfig") != config.end());
+            const picojson::object imageConfig =
+                config.find("imageConfig")->second.get<picojson::object>();
+            CHECK(imageConfig.find("aspectRatio")->second.get<std::string>() ==
+                  "16:9");
+            CHECK(imageConfig.find("imageSize")->second.get<std::string>() ==
+                  "2K");
         }
 
         std::cout << "buildPhotoPrompt/buildVideoPrompt tests OK\n";

@@ -239,8 +239,9 @@ namespace earthai
         return false;
     }
 
-    std::string GeminiMediaProvider::generateImage(const std::string& pngBytes,
-                                                    const std::string& prompt, std::string& err)
+    std::string GeminiMediaProvider::generateImage(
+        const std::string& pngBytes, const std::string& prompt, std::string& err,
+        const CinematicImageOutputOptions& output)
     {
         std::string b64 = hv::Base64Encode((const unsigned char*)pngBytes.data(), (unsigned int)pngBytes.size());
 
@@ -257,25 +258,20 @@ namespace earthai
         picojson::object content; content["parts"] = picojson::value(parts);
         picojson::array contents; contents.push_back(picojson::value(content));
 
-        picojson::array modalities;
-        modalities.push_back(picojson::value(std::string("TEXT")));
-        modalities.push_back(picojson::value(std::string("IMAGE")));
-        picojson::object genConfig; genConfig["responseModalities"] = picojson::value(modalities);
-
         picojson::object body;
         body["contents"] = picojson::value(contents);
-        body["generationConfig"] = picojson::value(genConfig);
+        body["generationConfig"] = picojson::value(
+            cinematicGeminiImageGenerationConfig(output));
 
         requests::Request req(new HttpRequest);
         req->method = HTTP_POST;
         req->timeout = 60;   // 生图比对话慢,给足 60s(spec 要求)
         // 注意:key 拼在 URL 里,下面任何日志/错误信息都不得把 req->url 整串打印出来
-        // 生图模型:EARTH_AI_IMAGE_MODEL 覆盖,默认 nano-banana-pro-preview(2026-07 真机 key
-        // 实测该 key 的生图模型只有 banana pro,无 "2 lite";老 gemini-2.5-flash-image 仍在,
-        // 需要时可 env 切回)。
+        // 生图模型:EARTH_AI_IMAGE_MODEL 覆盖。默认使用官方 Nano Banana 2 的稳定模型名；
+        // 需要更高推理精度时仍可显式切换 gemini-3-pro-image，但不能由应用暗中升级计费。
         static const std::string kImageModel = []() {
             const char* e = getenv("EARTH_AI_IMAGE_MODEL");
-            return (e && *e) ? std::string(e) : std::string("nano-banana-pro-preview");
+            return cinematicImageModelName(e);
         }();
         req->url = "https://generativelanguage.googleapis.com/v1beta/models/" +
                    kImageModel + ":generateContent?key=" + _apiKey;
@@ -322,20 +318,24 @@ namespace earthai
                                          const std::string& motionPrompt, std::string& err)
     {
         std::string b64A = hv::Base64Encode((const unsigned char*)pngBytesA.data(), (unsigned int)pngBytesA.size());
-        std::string b64B = hv::Base64Encode((const unsigned char*)pngBytesB.data(), (unsigned int)pngBytesB.size());
 
         picojson::object image;
         image["bytesBase64Encoded"] = picojson::value(b64A);
         image["mimeType"] = picojson::value(std::string("image/png"));
 
-        picojson::object lastFrame;
-        lastFrame["bytesBase64Encoded"] = picojson::value(b64B);
-        lastFrame["mimeType"] = picojson::value(std::string("image/png"));
-
         picojson::object instance;
         instance["prompt"] = picojson::value(motionPrompt);
         instance["image"] = picojson::value(image);
-        instance["lastFrame"] = picojson::value(lastFrame);
+        if (!pngBytesB.empty())
+        {
+            const std::string b64B = hv::Base64Encode(
+                (const unsigned char*)pngBytesB.data(),
+                (unsigned int)pngBytesB.size());
+            picojson::object lastFrame;
+            lastFrame["bytesBase64Encoded"] = picojson::value(b64B);
+            lastFrame["mimeType"] = picojson::value(std::string("image/png"));
+            instance["lastFrame"] = picojson::value(lastFrame);
+        }
 
         picojson::array instances; instances.push_back(picojson::value(instance));
         picojson::object body; body["instances"] = picojson::value(instances);
@@ -680,6 +680,11 @@ namespace earthai
         std::string motionPrompt;           // Modal 预览用:buildVideoPrompt 输出(见 updateVideoInternal)
         std::string mp4Path;                // 最终保存路径(worker 完成后写入)
         std::string operationName;          // Veo predictLongRunning 返回的 operation 名字
+        bool cinematic = false;
+        bool singleAnchor = false;
+        CinematicGenerationSettings cinematicSettings;
+        PhotoCaptureRequest anchorCapture;
+        PhotoCaptureRequest endCapture;
 
         std::thread worker;
         bool workerJoinable = false;
@@ -842,6 +847,8 @@ namespace earthai
         _pendingPhotoInput.lla = lla;
         _pendingPhotoInput.style = stylePrompt;
         _pendingPhotoInput.showCameraPlatform = showCameraPlatform;
+        _photoUsesCinematic = false;
+        _pendingCinematicSettings = defaultImageCinematicSettings();
         _photoRequestId = _jobId;
 
         _jobs.update(_jobId, AIJob::RUNNING, 0.1f, "", "");
@@ -858,6 +865,38 @@ namespace earthai
         r["status"] = picojson::value(std::string("started"));
         r["job_id"] = picojson::value((double)_jobId);
         return picojson::value(r);
+    }
+
+    picojson::value MediaManager::startCinematicImageJob(
+        const CinematicGenerationSettings& settings)
+    {
+        if (settings.mediaKind != CINEMATIC_IMAGE ||
+            settings.motion != CINEMATIC_MOTION_STATIC)
+        {
+            picojson::object err;
+            err["error"] = picojson::value(
+                std::string("invalid cinematic image settings"));
+            return picojson::value(err);
+        }
+        const PhotoCameraContext camera = currentPhotoCameraContext();
+        if (!camera.viewTargetValid || camera.viewportWidth <= 0 ||
+            camera.viewportHeight <= 0)
+        {
+            picojson::object err;
+            err["error"] = picojson::value(
+                std::string("current view has no visible Earth target"));
+            return picojson::value(err);
+        }
+        picojson::value result = startPhotoJob(
+            std::string(), camera.viewTargetLla, false);
+        if (result.is<picojson::object>() && result.contains("status") &&
+            result.get("status").is<std::string>() &&
+            result.get("status").get<std::string>() == "started")
+        {
+            _photoUsesCinematic = true;
+            _pendingCinematicSettings = settings;
+        }
+        return result;
     }
 
     void MediaManager::update()
@@ -894,6 +933,38 @@ namespace earthai
                 result.succeeded = true;
             }
             _videoCommandError = reduceVideoCommandError(_videoCommandError, result);
+        }
+
+        const std::vector<CinematicUiRequest> cinematicRequests =
+            _cinematicRequests.drain();
+        for (size_t i = 0; i < cinematicRequests.size(); ++i)
+        {
+            const CinematicGenerationSettings& settings =
+                cinematicRequests[i].settings;
+            bool succeeded = false;
+            std::string error;
+            if (settings.mediaKind == CINEMATIC_IMAGE)
+            {
+                picojson::value response = startCinematicImageJob(settings);
+                succeeded = !(response.is<picojson::object>() &&
+                    response.contains("error") &&
+                    response.get("error").is<std::string>());
+                if (!succeeded)
+                    error = response.get("error").get<std::string>();
+            }
+            else
+            {
+                succeeded = beginCinematicVideoCapture(settings);
+                if (!succeeded)
+                    error = "cinematic video capture could not start";
+            }
+            if (!succeeded)
+            {
+                _videoCommandError = error;
+                if (_chatCore)
+                    _chatCore->addErrorNote(u8"时空影像请求失败：" + error);
+            }
+            else _videoCommandError.clear();
         }
 
         // 快门期间每 tick 重申补光(对抗"真实时间太阳"每帧重写,见 hudHide 注释)
@@ -937,7 +1008,31 @@ namespace earthai
                 _pendingPhotoInput,
                 currentPhotoCameraContext(),
                 _photoRequestId);
-            _prompt = buildPhotoPrompt(_captureRequest);
+            if (_photoUsesCinematic)
+            {
+                CinematicGenerationRequest request;
+                if (!makeCinematicGenerationRequest(
+                        _captureRequest, _pendingCinematicSettings, request))
+                {
+                    _jobs.update(_jobId, AIJob::FAILED, 1.0f, "",
+                                 "invalid cinematic capture context");
+                    if (_cards) _cards->removeJob(_jobId);
+                    if (_chatCore)
+                        _chatCore->addErrorNote(
+                            u8"图像生成失败：当前视角无法冻结");
+                    _state = IDLE;
+                    return;
+                }
+                _prompt = buildCinematicImagePrompt(request);
+                _photoOutputOptions = cinematicImageOutputOptions(request);
+            }
+            else
+            {
+                _prompt = buildPhotoPrompt(_captureRequest);
+                CinematicGenerationRequest request = cinematicRequestUnchecked(
+                    _captureRequest, defaultImageCinematicSettings());
+                _photoOutputOptions = cinematicImageOutputOptions(request);
+            }
             hudHide();
             _grabber.grab(_snapPath);
             _state = WAITING_SNAPSHOT;
@@ -1021,12 +1116,14 @@ namespace earthai
             std::string apiKey = _apiKey;
             std::string prompt = _prompt;
             std::string genPath = _genPath;
+            CinematicImageOutputOptions outputOptions = _photoOutputOptions;
             int jobId = _jobId;
             JobManager* jobsPtr = &_jobs;
             std::string fakeImg; bool hasFake = fakeImgPath(fakeImg);
             std::string failMsg; bool hasFail = fakeImgFailMsg(failMsg);
 
-            _worker = std::thread([snapBytes, prompt, genPath, jobId, jobsPtr, apiKey,
+            _worker = std::thread([snapBytes, prompt, genPath, outputOptions,
+                                   jobId, jobsPtr, apiKey,
                                    hasFake, fakeImg, hasFail, failMsg]()
             {
                 std::string outBytes, err;
@@ -1050,7 +1147,11 @@ namespace earthai
                 else
                 {
                     GeminiMediaProvider provider(apiKey);
-                    try { outBytes = provider.generateImage(snapBytes, prompt, err); }
+                    try
+                    {
+                        outBytes = provider.generateImage(
+                            snapBytes, prompt, err, outputOptions);
+                    }
                     catch (const std::exception& e)
                     { err = std::string("provider exception: ") + e.what(); }
                 }
@@ -1145,6 +1246,38 @@ namespace earthai
         return true;
     }
 
+    bool MediaManager::beginCinematicVideoCapture(
+        const CinematicGenerationSettings& settings)
+    {
+        if (settings.mediaKind != CINEMATIC_VIDEO ||
+            settings.motion == CINEMATIC_MOTION_STATIC)
+            return false;
+
+        const PhotoCameraContext camera = currentPhotoCameraContext();
+        if (!camera.viewTargetValid || camera.viewportWidth <= 0 ||
+            camera.viewportHeight <= 0)
+            return false;
+
+        PhotoRequest input;
+        input.lla = camera.viewTargetLla;
+        const long long requestId =
+            static_cast<long long>(time(NULL)) * 100000LL +
+            (++_cinematicRequestSerial % 100000LL);
+        const PhotoCaptureRequest capture = makePhotoCaptureRequest(
+            input, camera, requestId);
+        CinematicGenerationRequest validation;
+        if (!makeCinematicGenerationRequest(capture, settings, validation))
+            return false;
+
+        if (!beginVideoCapture(camera.cameraEyeLla, std::string()))
+            return false;
+        _video->cinematic = true;
+        _video->singleAnchor = !cinematicMotionNeedsEndFrame(settings.motion);
+        _video->cinematicSettings = settings;
+        _video->anchorCapture = capture;
+        return true;
+    }
+
     bool MediaManager::captureVideoEnd(const osg::Vec3d& llaB)
     {
         // 只有"A 点已经稳定就绪、且还没触发过 B 点采集"这一个阶段允许调用——WAIT_B 是
@@ -1159,6 +1292,19 @@ namespace earthai
         long long epoch = (long long)time(nullptr);
         std::string dir = outDir();
         _video->llaB = llaB;
+        if (_video->cinematic)
+        {
+            const PhotoCameraContext camera = currentPhotoCameraContext();
+            PhotoRequest input;
+            input.lla = camera.viewTargetValid
+                ? camera.viewTargetLla : llaB;
+            input.lla[2] = 0.0;
+            const long long requestId =
+                static_cast<long long>(time(NULL)) * 100000LL +
+                (++_cinematicRequestSerial % 100000LL);
+            _video->endCapture = makePhotoCaptureRequest(
+                input, camera, requestId);
+        }
         _video->snapPathB = dir + "/tourB_" + std::to_string(epoch) + ".png";
         // 用户反馈 1:B 点抓帧同样要隐藏 HUD——hudRestore() 在 updateVideoInternal() 的
         // CAPTURING_B 分支里,该点快照 ready()/超时判定出结果的那一刻立即调用。
@@ -1176,6 +1322,21 @@ namespace earthai
     {
         PendingVideoInfo info;
         info.llaA = _video->llaA; info.llaB = _video->llaB;
+        info.cinematic = _video->cinematic;
+        info.singleAnchor = _video->singleAnchor;
+        info.settings = _video->cinematicSettings;
+        if (info.cinematic)
+        {
+            // 工作台面向用户报告的是画面中心的地理锚点，而不是相机眼点经纬度；
+            // 高度仍使用相机真实椭球高，避免把地面目标的 0 m 误写成拍摄高度。
+            info.llaA = _video->anchorCapture.targetLla;
+            info.llaA[2] = _video->anchorCapture.camera.cameraEyeLla[2];
+            if (!info.singleAnchor)
+            {
+                info.llaB = _video->endCapture.targetLla;
+                info.llaB[2] = _video->endCapture.camera.cameraEyeLla[2];
+            }
+        }
         info.ready = (_video->phase == VideoJob::AWAIT_CONFIRM);
         if (info.ready) info.motionPrompt = _video->motionPrompt;
         return info;
@@ -1236,7 +1397,32 @@ namespace earthai
             std::string snapA = _video->snapPathA, snapB = _video->snapPathB;
             osg::Vec3d llaA = _video->llaA, llaB = _video->llaB;
             std::string style = _video->style;
-            std::string videoPrompt = buildVideoPrompt(llaA, llaB, style);
+            const bool cinematic = _video->cinematic;
+            const bool hasEndFrame = !_video->singleAnchor;
+            std::string videoPrompt = _video->motionPrompt;
+            if (videoPrompt.empty())
+                videoPrompt = buildVideoPrompt(llaA, llaB, style);
+            std::string photoPromptA = buildPhotoPrompt(llaA, style);
+            std::string photoPromptB = buildPhotoPrompt(llaB, style);
+            CinematicImageOutputOptions outputA, outputB;
+            if (cinematic)
+            {
+                const CinematicGenerationRequest requestA =
+                    cinematicRequestUnchecked(
+                        _video->anchorCapture,
+                        _video->cinematicSettings);
+                photoPromptA = buildCinematicImagePrompt(requestA);
+                outputA = cinematicImageOutputOptions(requestA);
+                if (hasEndFrame)
+                {
+                    const CinematicGenerationRequest requestB =
+                        cinematicRequestUnchecked(
+                            _video->endCapture,
+                            _video->cinematicSettings);
+                    photoPromptB = buildCinematicImagePrompt(requestB);
+                    outputB = cinematicImageOutputOptions(requestB);
+                }
+            }
             std::string apiKey = _apiKey;
             std::string model = videoModel();
             int jobId = _video->jobId;
@@ -1255,22 +1441,29 @@ namespace earthai
             std::string fakeImg; bool hasFakeImg = fakeImgPath(fakeImg);
 
             if (_video->workerJoinable && _video->worker.joinable()) _video->worker.join();
-            _video->worker = std::thread([snapA, snapB, llaA, llaB, style, videoPrompt, apiKey, model,
-                                          jobId, jobsPtr, useOmni, mp4Path, dir, frameEpoch,
+            _video->worker = std::thread([snapA, snapB, videoPrompt,
+                                          photoPromptA, photoPromptB,
+                                          outputA, outputB, apiKey, model,
+                                          jobId, jobsPtr, useOmni,
+                                          hasEndFrame, mp4Path, dir, frameEpoch,
                                           hasFakeImg, fakeImg]()
             {
                 std::string actualA = capturedPath(snapA), actualB = capturedPath(snapB);
                 std::string rawA, rawB;
                 if (!readFileBytes(actualA, rawA) || rawA.empty()
-                    || (!useOmni && (!readFileBytes(actualB, rawB) || rawB.empty())))
+                    || (!useOmni && hasEndFrame &&
+                        (!readFileBytes(actualB, rawB) || rawB.empty())))
                 {
                     jobsPtr->update(jobId, AIJob::FAILED, 1.0f, "", "failed to read A/B snapshot files");
                     return;
                 }
 
                 // ---- Step 1:banana 生图(A 点必做;Veo 路径 B 点也做)----
-                auto genPhoto = [&](const std::string& rawBytes, const osg::Vec3d& lla,
-                                    const std::string& savePath, std::string& outBytes, std::string& err) -> bool
+                auto genPhoto = [&](const std::string& rawBytes,
+                                    const std::string& prompt,
+                                    const CinematicImageOutputOptions& output,
+                                    const std::string& savePath,
+                                    std::string& outBytes, std::string& err) -> bool
                 {
                     if (hasFakeImg)
                     {
@@ -1280,7 +1473,11 @@ namespace earthai
                     else
                     {
                         GeminiMediaProvider provider(apiKey);
-                        try { outBytes = provider.generateImage(rawBytes, buildPhotoPrompt(lla, style), err); }
+                        try
+                        {
+                            outBytes = provider.generateImage(
+                                rawBytes, prompt, err, output);
+                        }
                         catch (const std::exception& e) { err = std::string("provider exception: ") + e.what(); }
                     }
                     if (outBytes.empty()) { if (err.empty()) err = "unknown banana error"; return false; }
@@ -1290,7 +1487,8 @@ namespace earthai
 
                 std::string photoA, errA;
                 std::string framePathA = dir + "/frameA_" + std::to_string(frameEpoch) + ".png";
-                if (!genPhoto(rawA, llaA, framePathA, photoA, errA))
+                if (!genPhoto(rawA, photoPromptA, outputA,
+                              framePathA, photoA, errA))
                 {
                     jobsPtr->update(jobId, AIJob::FAILED, 1.0f, "", "banana photo A failed: " + errA);
                     return;
@@ -1298,10 +1496,11 @@ namespace earthai
                 jobsPtr->creepProgress(jobId, 0.25f);   // 0.25 after banana(A);SUBMITTING 阶段其余进度沿用旧的爬升逻辑
 
                 std::string photoB, errB;
-                if (!useOmni)
+                if (!useOmni && hasEndFrame)
                 {
                     std::string framePathB = dir + "/frameB_" + std::to_string(frameEpoch) + ".png";
-                    if (!genPhoto(rawB, llaB, framePathB, photoB, errB))
+                    if (!genPhoto(rawB, photoPromptB, outputB,
+                                  framePathB, photoB, errB))
                     {
                         jobsPtr->update(jobId, AIJob::FAILED, 1.0f, "", "banana photo B failed: " + errB);
                         return;
@@ -1413,6 +1612,18 @@ namespace earthai
             // A 点快照已稳定:抓帧已完成,立即恢复 HUD(不必等到 B 点/确认/生成全部结束)。
             hudRestore();
             _videoGrabber.cropToViewport(v.snapPathA);   // 裁掉未渲染边条
+            if (v.cinematic && v.singleAnchor)
+            {
+                CinematicGenerationRequest request = cinematicRequestUnchecked(
+                    v.anchorCapture, v.cinematicSettings);
+                v.llaB = v.llaA;
+                v.snapPathB.clear();
+                v.motionPrompt = buildCinematicVideoPrompt(request);
+                v.phase = VideoJob::AWAIT_CONFIRM;
+                OSG_NOTICE << "[AIChat] cinematic single-anchor video awaiting confirm"
+                           << std::endl;
+                return;
+            }
             // 进入"等待用户触发 B 点"的稳态,不做任何自动跳转(beginVideoCapture 只负责起个头,
             // 真正的下一步由用户移动相机后再次调用 captureVideoEnd 触发——这里只是把"抓帧中"
             // 过渡到"抓帧已就绪"这两个瞬态/稳态分开)。
@@ -1438,7 +1649,16 @@ namespace earthai
             // 生成视频提示词预览(用户反馈 3:改用 buildVideoPrompt——geo 上下文 + A->B 轨迹 +
             // 电影运镜语言,取代旧的纯 buildMotionPrompt 轨迹句子;buildVideoPrompt 内部仍会
             // 调 buildMotionPrompt 拼轨迹描述,不重复实现)。
-            v.motionPrompt = buildVideoPrompt(v.llaA, v.llaB, v.style);
+            if (v.cinematic)
+            {
+                CinematicGenerationRequest request = cinematicRequestUnchecked(
+                    v.anchorCapture, v.cinematicSettings);
+                request.endAnchor = v.endCapture;
+                request.hasEndAnchor = true;
+                v.motionPrompt = buildCinematicVideoPrompt(request);
+            }
+            else
+                v.motionPrompt = buildVideoPrompt(v.llaA, v.llaB, v.style);
             v.phase = VideoJob::AWAIT_CONFIRM;
             OSG_NOTICE << "[AIChat] generate_video awaiting confirm, prompt=" << v.motionPrompt << std::endl;
             return;

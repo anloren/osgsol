@@ -1364,16 +1364,69 @@ int main()
     clickAuditRect(command.auditSnapshot().photoButton);
     expect(command.auditActionMask() & AIChatUI::AUDIT_ACTION_PHOTO,
            "real Photo click did not activate the production button");
-    expect(
-        earthai::g_productUiSubmissions.size() == photoSubmitBefore + 1 &&
-        earthai::g_productUiSubmissions.back() ==
-            u8"生成一张当前视角的实景照片",
-        "real Photo click did not submit the current-view request");
+    renderAuditFrame();
+    expect(command.auditSnapshot().cinematicStudioVisible,
+           "Photo did not open the cinematic workspace");
+    expect(earthai::g_productUiSubmissions.size() == photoSubmitBefore,
+           "opening cinematic workspace prematurely submitted an AI prompt");
+    ImGuiWindow* cinematicStudio =
+        ImGui::FindWindowByName(u8"时空影像工作台");
+    expect(cinematicStudio != nullptr,
+           "cinematic workspace has no production modal window");
+    expectRectInside(command.auditSnapshot().cinematicPrompt,
+                     cinematicStudio, "cinematic prompt");
+    expectRectInside(command.auditSnapshot().cinematicEraPreset,
+                     cinematicStudio, "cinematic era preset");
+    expectRectInside(command.auditSnapshot().cinematicTimePreset,
+                     cinematicStudio, "cinematic time preset");
+    expectRectInside(command.auditSnapshot().cinematicStylePreset,
+                     cinematicStudio, "cinematic style preset");
+    expectRectInside(command.auditSnapshot().cinematicSubmitButton,
+                     cinematicStudio, "cinematic submit");
+    expectRectInside(command.auditSnapshot().cinematicCancelButton,
+                     cinematicStudio, "cinematic cancel");
+    saveAuditFrame("1440x900-cinematic-image.ppm");
+    clickAuditRect(command.auditSnapshot().cinematicSubmitButton);
+    expect(command.auditActionMask() &
+               AIChatUI::AUDIT_ACTION_CINEMATIC_SUBMIT,
+           "cinematic image submit did not publish a typed media request");
+    renderAuditFrame();
+    expect(!command.auditSnapshot().cinematicStudioVisible,
+           "cinematic image submit did not close the workspace");
     command.auditClearActions();
     clickAuditRect(command.auditSnapshot().videoButton);
     expect(
         command.auditActionMask() & AIChatUI::AUDIT_ACTION_VIDEO_BEGIN,
-        "real Video click did not publish the begin request");
+        "real Video click did not open the video workspace");
+    renderAuditFrame();
+    expect(command.auditSnapshot().cinematicStudioVisible,
+           "Video did not open the cinematic workspace");
+    ImGuiWindow* cinematicScroll = nullptr;
+    for (ImGuiWindow* candidate : ImGui::GetCurrentContext()->Windows)
+    {
+        if (candidate && std::string(candidate->Name).find(
+                "cinematic_studio_scroll") != std::string::npos)
+        {
+            cinematicScroll = candidate;
+            break;
+        }
+    }
+    expect(cinematicScroll != nullptr && cinematicScroll->ScrollMax.y > 0.0f,
+           "cinematic workspace has no visible vertical scroll range");
+    ImGui::SetScrollY(cinematicScroll, cinematicScroll->ScrollMax.y);
+    renderAuditFrame();
+    renderAuditFrame();
+    expectRectInside(command.auditSnapshot().cinematicMotionPreset,
+                     ImGui::FindWindowByName(u8"时空影像工作台"),
+                     "cinematic motion preset");
+    saveAuditFrame("1440x900-cinematic-video-motion.ppm");
+    clickAuditRect(command.auditSnapshot().cinematicCancelButton);
+    expect(command.auditActionMask() &
+               AIChatUI::AUDIT_ACTION_CINEMATIC_CANCEL,
+           "cinematic video cancel did not close without submission");
+    renderAuditFrame();
+    expect(!command.auditSnapshot().cinematicStudioVisible,
+           "cinematic video cancel left the workspace open");
     command.auditClearActions();
     command.auditSetVideoState(AIChatUI::AUDIT_VIDEO_WAIT_B);
     renderAuditFrame();
