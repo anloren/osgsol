@@ -468,6 +468,7 @@ namespace earthai
         : _apiKey(apiKey), _model(model) {}
 
     bool OmniVideoProvider::generate(const std::string& firstPngBytes, const std::string& motionPrompt,
+                                     const CinematicVideoOutputOptions& output,
                                      std::string& mp4Bytes, std::string& err)
     {
         std::string b64 = hv::Base64Encode((const unsigned char*)firstPngBytes.data(),
@@ -482,11 +483,13 @@ namespace earthai
         input.push_back(picojson::value(imgPart));
         input.push_back(picojson::value(txtPart));
 
-        picojson::object respFmt; respFmt["type"] = picojson::value(std::string("video"));
         picojson::object body;
         body["model"] = picojson::value(_model);
         body["input"] = picojson::value(input);
-        body["response_format"] = picojson::value(respFmt);
+        body["response_format"] = picojson::value(
+            cinematicGeminiVideoResponseFormat(output));
+        body["generation_config"] = picojson::value(
+            cinematicGeminiImageToVideoConfig());
 
         requests::Request req(new HttpRequest);
         req->method = HTTP_POST;
@@ -1405,6 +1408,7 @@ namespace earthai
             std::string photoPromptA = buildPhotoPrompt(llaA, style);
             std::string photoPromptB = buildPhotoPrompt(llaB, style);
             CinematicImageOutputOptions outputA, outputB;
+            CinematicVideoOutputOptions videoOutput;
             if (cinematic)
             {
                 const CinematicGenerationRequest requestA =
@@ -1413,6 +1417,7 @@ namespace earthai
                         _video->cinematicSettings);
                 photoPromptA = buildCinematicImagePrompt(requestA);
                 outputA = cinematicImageOutputOptions(requestA);
+                videoOutput = cinematicVideoOutputOptions(requestA);
                 if (hasEndFrame)
                 {
                     const CinematicGenerationRequest requestB =
@@ -1443,7 +1448,8 @@ namespace earthai
             if (_video->workerJoinable && _video->worker.joinable()) _video->worker.join();
             _video->worker = std::thread([snapA, snapB, videoPrompt,
                                           photoPromptA, photoPromptB,
-                                          outputA, outputB, apiKey, model,
+                                          outputA, outputB, videoOutput,
+                                          apiKey, model,
                                           jobId, jobsPtr, useOmni,
                                           hasEndFrame, mp4Path, dir, frameEpoch,
                                           hasFakeImg, fakeImg]()
@@ -1517,7 +1523,11 @@ namespace earthai
                     OmniVideoProvider provider(apiKey, model);
                     std::string err, mp4Bytes;
                     bool ok = false;
-                    try { ok = provider.generate(photoA, videoPrompt, mp4Bytes, err); }
+                    try
+                    {
+                        ok = provider.generate(
+                            photoA, videoPrompt, videoOutput, mp4Bytes, err);
+                    }
                     catch (const std::exception& e) { err = std::string("provider exception: ") + e.what(); }
                     if (!ok || mp4Bytes.empty())
                     {

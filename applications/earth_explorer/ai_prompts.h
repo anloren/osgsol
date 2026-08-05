@@ -371,14 +371,19 @@ namespace earthai
         {
         case CINEMATIC_ERA_PRESENT:
             prompt += "Present-day scene. Preserve geographically plausible current terrain, "
-                      "coastline, vegetation, land use and architecture.";
+                      "coastline, vegetation, land use and architecture. Reproduce only structures "
+                      "actually visible in the authoritative reference: never infer a named "
+                      "landmark from shape alone, restore a demolished feature, or portray obsolete "
+                      "transport infrastructure as active.";
             break;
         case CINEMATIC_ERA_1920S:
             prompt += "historical reconstruction for calendar year 1920. Reconstruct only "
                       "features supportable by the place and period. This is a historically "
                       "informed visualization, not documentary evidence. Apply a strict "
                       "anachronism guard: remove post-1920 buildings, vehicles, infrastructure, "
-                      "lighting, signage and materials unless the user explicitly requests them.";
+                      "lighting, signage and materials unless the user explicitly requests them. "
+                      "Keep only detail resolvable at the locked camera altitude; do not sharpen "
+                      "uncertain history into a modern-looking street grid.";
             break;
         case CINEMATIC_ERA_CAMBRIAN_CHENGJIANG:
             prompt += "Deep-time scientific reconstruction of the Early Cambrian Chengjiang "
@@ -389,6 +394,10 @@ namespace earthai
                       "This is a scientific reconstruction with substantial uncertainty, not a "
                       "photograph or direct observation. no humans, no modern buildings, no modern "
                       "boats, no roads, no modern cultivated plants, and no anachronistic animals.";
+            prompt += " At the locked camera altitude, individual organisms may appear only when "
+                      "physically resolvable; never enlarge fossils or animals to make them visible. "
+                      "Paleogeographic shape and color are inferential and must not imply a known "
+                      "pixel-exact ancient surface.";
             break;
         case CINEMATIC_ERA_CUSTOM:
             prompt += "User-specified temporal reconstruction: ";
@@ -417,8 +426,10 @@ namespace earthai
             break;
         case CINEMATIC_TIME_1900:
             prompt += "19:00 local time. Choose twilight or night illumination according to the "
-                      "requested place, era and season; do not use modern electric lighting in a "
-                      "historical scene unless it existed there then.";
+                      "requested place, era and season. If date or season is unspecified, use "
+                      "unmistakable civil twilight rather than midday or late-afternoon lighting. "
+                      "Do not use modern electric lighting in a historical scene unless it existed "
+                      "there then.";
             break;
         case CINEMATIC_TIME_NIGHT:
             prompt += "Deep night local time with physically plausible moonlight, haze and "
@@ -492,7 +503,8 @@ namespace earthai
         }
         prompt += "\n[OUTPUT SAFETY] No UI, labels, logos, captions, maps, borders or watermarks. "
                   "Do not present a reconstruction as a recovered archival photograph, direct "
-                  "observation or measured scientific result.";
+                  "observation or measured scientific result. Preserve the locked coverage and "
+                  "spatial scale; do not zoom, crop into a landmark, or reframe for drama.";
         return prompt;
     }
 
@@ -553,6 +565,17 @@ namespace earthai
         {
             prompt += "\n[USER INTENT] ";
             prompt += request.settings.userPrompt;
+        }
+        if (request.settings.includeGeneratedAudio)
+        {
+            prompt += "\n[AUDIO] Generate restrained geographically, temporally and physically "
+                      "appropriate ambient sound. No narration, dialogue or music unless the user "
+                      "explicitly requests it.";
+        }
+        else
+        {
+            prompt += "\n[AUDIO] No dialogue, narration, music or added sound effects. Keep the "
+                      "output effectively silent; this is a best-effort model instruction.";
         }
         prompt += "\n[CONSISTENCY] Preserve terrain, coastline, buildings, organisms and lighting "
                   "identity across every frame. No morphing, duplicated structures, sliding ground, "

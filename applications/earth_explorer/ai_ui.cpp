@@ -760,10 +760,22 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             _cinematicMotion = motionIndex +
                 static_cast<int>(earthai::CINEMATIC_MOTION_AERIAL_TOUR);
             ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kTextDim);
-            ImGui::TextWrapped(
-                _cinematicMotion == earthai::CINEMATIC_MOTION_POINT_TO_POINT
-                    ? u8"先冻结当前起点；随后移动地球并点击“完成 B 点”，再确认生成。"
-                    : u8"单个当前首帧即可；确认后由视频模型执行连续运镜。 ");
+            if (_cinematicMotion == earthai::CINEMATIC_MOTION_POINT_TO_POINT)
+            {
+                ImGui::TextWrapped(
+                    u8"先冻结当前起点；随后移动地球并点击“完成 B 点”，再确认生成。");
+            }
+            else if (_cinematicMotion == earthai::CINEMATIC_MOTION_ORBIT_360)
+            {
+                ImGui::TextWrapped(
+                    u8"单个当前首帧即可。完整 360° 环拍建议至少 8–10 秒；"
+                    u8"5 秒快速预览可能无法闭合。");
+            }
+            else
+            {
+                ImGui::TextWrapped(
+                    u8"单个当前首帧即可；确认后由视频模型执行连续运镜。");
+            }
             ImGui::PopStyleColor();
         }
 

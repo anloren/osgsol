@@ -69,6 +69,9 @@ namespace earthai
         std::string customStyle;
         std::string userPrompt;
         int durationSeconds = 8;
+        // Omni video currently generates audio by default. Video presets explicitly enable
+        // restrained ambience; false remains a best-effort prompt until deterministic
+        // post-processing can strip the returned audio stream.
         bool includeGeneratedAudio = false;
     };
 
@@ -88,6 +91,12 @@ namespace earthai
     {
         std::string aspectRatio = "16:9";
         std::string imageSize = "2K";
+    };
+
+    struct CinematicVideoOutputOptions
+    {
+        std::string aspectRatio = "16:9";
+        int durationSeconds = 8;
     };
 
     inline CinematicGenerationSettings defaultImageCinematicSettings()
@@ -110,6 +119,7 @@ namespace earthai
         settings.visualStyle = CINEMATIC_STYLE_ULTRA_REAL;
         settings.motion = CINEMATIC_MOTION_AERIAL_TOUR;
         settings.durationSeconds = 8;
+        settings.includeGeneratedAudio = true;
         return settings;
     }
 
@@ -178,6 +188,43 @@ namespace earthai
         picojson::object config;
         config["responseModalities"] = picojson::value(modalities);
         config["imageConfig"] = picojson::value(imageConfig);
+        return config;
+    }
+
+    inline CinematicVideoOutputOptions cinematicVideoOutputOptions(
+        const CinematicGenerationRequest& request)
+    {
+        CinematicVideoOutputOptions options;
+        double aspect = request.anchor.camera.aspectRatio;
+        if (!(request.anchor.camera.aspectRatioValid && aspect > 0.0) &&
+            request.anchor.camera.viewportWidth > 0 &&
+            request.anchor.camera.viewportHeight > 0)
+        {
+            aspect = static_cast<double>(request.anchor.camera.viewportWidth) /
+                static_cast<double>(request.anchor.camera.viewportHeight);
+        }
+        options.aspectRatio = aspect > 0.0 && aspect < 1.0 ? "9:16" : "16:9";
+        options.durationSeconds = request.settings.durationSeconds;
+        return options;
+    }
+
+    inline picojson::object cinematicGeminiVideoResponseFormat(
+        const CinematicVideoOutputOptions& options)
+    {
+        picojson::object format;
+        format["type"] = picojson::value(std::string("video"));
+        format["aspect_ratio"] = picojson::value(options.aspectRatio);
+        format["duration"] = picojson::value(
+            std::to_string(options.durationSeconds) + "s");
+        return format;
+    }
+
+    inline picojson::object cinematicGeminiImageToVideoConfig()
+    {
+        picojson::object videoConfig;
+        videoConfig["task"] = picojson::value(std::string("image_to_video"));
+        picojson::object config;
+        config["video_config"] = picojson::value(videoConfig);
         return config;
     }
 

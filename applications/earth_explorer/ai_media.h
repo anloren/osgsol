@@ -129,6 +129,7 @@ namespace earthai
         // 失败返回 false 并填 err。响应里视频可能是 steps[].content[] 的 base64,
         // 也可能是 output_video.uri(需再 GET 下载),两种形状都处理。
         bool generate(const std::string& firstPngBytes, const std::string& motionPrompt,
+                      const CinematicVideoOutputOptions& output,
                       std::string& mp4Bytes, std::string& err);
     private:
         std::string _apiKey, _model;

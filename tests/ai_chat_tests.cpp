@@ -925,6 +925,10 @@ int main(int, char**)
             CHECK(historicalPrompt.find("not documentary evidence") != std::string::npos);
             CHECK(historicalPrompt.find("anachron") != std::string::npos);
             CHECK(historicalPrompt.find("aged amber") != std::string::npos);
+            CHECK(historicalPrompt.find("unmistakable civil twilight") !=
+                  std::string::npos);
+            CHECK(historicalPrompt.find("modern-looking street grid") !=
+                  std::string::npos);
             CHECK(historicalPrompt.find("HARD CAMERA-GEOMETRY LOCK") != std::string::npos);
             CHECK(capture.camera.visibleViewMatrix == originalView);
 
@@ -944,12 +948,17 @@ int main(int, char**)
             CHECK(cambrianPrompt.find("paleogeographic") != std::string::npos);
             CHECK(cambrianPrompt.find("no humans") != std::string::npos);
             CHECK(cambrianPrompt.find("modern buildings") != std::string::npos);
+            CHECK(cambrianPrompt.find("never enlarge fossils or animals") !=
+                  std::string::npos);
+            CHECK(cambrianPrompt.find("pixel-exact ancient surface") !=
+                  std::string::npos);
 
             earthai::CinematicGenerationSettings video =
                 earthai::defaultVideoCinematicSettings();
             CHECK(video.mediaKind == earthai::CINEMATIC_VIDEO);
             CHECK(video.motion == earthai::CINEMATIC_MOTION_AERIAL_TOUR);
             CHECK(video.visualStyle == earthai::CINEMATIC_STYLE_ULTRA_REAL);
+            CHECK(video.includeGeneratedAudio);
             earthai::CinematicGenerationRequest videoRequest;
             CHECK(earthai::makeCinematicGenerationRequest(
                 capture, video, videoRequest));
@@ -959,6 +968,21 @@ int main(int, char**)
             CHECK(videoPrompt.find("ultra-photorealistic") != std::string::npos);
             CHECK(videoPrompt.find("aerial") != std::string::npos);
             CHECK(videoPrompt.find("start exactly") != std::string::npos);
+            CHECK(videoPrompt.find("[AUDIO]") != std::string::npos);
+            CHECK(videoPrompt.find("ambient sound") != std::string::npos);
+            const earthai::CinematicVideoOutputOptions videoOutput =
+                earthai::cinematicVideoOutputOptions(videoRequest);
+            CHECK(videoOutput.aspectRatio == "16:9");
+            CHECK(videoOutput.durationSeconds == video.durationSeconds);
+            const picojson::object videoFormat =
+                earthai::cinematicGeminiVideoResponseFormat(videoOutput);
+            CHECK(videoFormat.at("type").get<std::string>() == "video");
+            CHECK(videoFormat.at("aspect_ratio").get<std::string>() == "16:9");
+            CHECK(videoFormat.at("duration").get<std::string>() == "8s");
+            const picojson::object videoConfig =
+                earthai::cinematicGeminiImageToVideoConfig();
+            CHECK(videoConfig.at("video_config").get<picojson::object>().at(
+                      "task").get<std::string>() == "image_to_video");
 
             video.motion = earthai::CINEMATIC_MOTION_ORBIT_360;
             CHECK(earthai::buildCinematicVideoPrompt(
@@ -968,6 +992,11 @@ int main(int, char**)
             CHECK(earthai::buildCinematicVideoPrompt(
                 earthai::cinematicRequestUnchecked(capture, video)).find(
                     "controlled dive") != std::string::npos);
+            video.includeGeneratedAudio = false;
+            CHECK(earthai::buildCinematicVideoPrompt(
+                earthai::cinematicRequestUnchecked(capture, video)).find(
+                    "effectively silent") != std::string::npos);
+            video.includeGeneratedAudio = true;
             video.motion = earthai::CINEMATIC_MOTION_POINT_TO_POINT;
             CHECK(earthai::cinematicMotionNeedsEndFrame(video.motion));
             CHECK(!earthai::cinematicMotionNeedsEndFrame(
