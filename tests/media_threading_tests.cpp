@@ -364,7 +364,9 @@ int main()
         media, "void SnapshotGrabber::reapTerminalGeneration()");
     const std::string snapshotGrab = extractFunctionBody(
         media, "std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::grab(");
-    const std::string outerDraw = extractFunctionBody(
+    const std::string snapshotConstructor = extractFunctionBody(
+        media, "SnapshotGrabber::SnapshotGrabber(osgViewer::Viewer* viewer)");
+    const std::string dispatcherDraw = extractFunctionBody(
         media, "virtual void operator()(osg::RenderInfo& renderInfo) const");
     CHECK(snapshotReady.find("capture->completedSuccessfully()") !=
           std::string::npos);
@@ -372,15 +374,22 @@ int main()
           std::string::npos);
     CHECK(snapshotRetire.find("capture->retireIfNotStarted()") !=
           std::string::npos);
-    // A timeout must detach only its recorded camera/callback pair. Fresh generations never
-    // mutate a possibly in-flight WindowCaptureCallback or accumulate viewer event handlers.
+    // OSG RenderStage reads Camera::_finalDrawCallback without a synchronization boundary.
+    // The dispatcher is therefore installed exactly once during MediaManager construction;
+    // runtime FRAME paths publish/revoke generations atomically and never read/write Camera's
+    // callback pointer.
     CHECK(mediaHeader.find("CaptureGeneration") != std::string::npos);
+    CHECK(mediaHeader.find("GenerationDispatcher") != std::string::npos);
+    CHECK(mediaHeader.find("_dispatcherInstalled") != std::string::npos);
     CHECK(mediaHeader.find("_timeoutRetainedGenerations") != std::string::npos);
     CHECK(mediaHeader.find("_reapableGenerations") != std::string::npos);
-    CHECK(media.find("camera->getFinalDrawCallback() != outerCallback.get()") !=
+    CHECK(countOccurrences(media, "setFinalDrawCallback(") == 1);
+    CHECK(media.find("getFinalDrawCallback") == std::string::npos);
+    CHECK(snapshotConstructor.find("camera->setFinalDrawCallback(_dispatcher.get())") !=
           std::string::npos);
-    CHECK(media.find("camera->setFinalDrawCallback(0)") != std::string::npos);
-    CHECK(snapshotRetire.find("detachExactCallback()") != std::string::npos);
+    CHECK(snapshotConstructor.find("_dispatcherInstalled = true") != std::string::npos);
+    CHECK(snapshotRetire.find("_dispatcher->revoke(_activeGeneration)") !=
+          std::string::npos);
     CHECK(snapshotRetire.find("removeCallbackFromViewer") == std::string::npos);
     CHECK(snapshotGrab.find("new GenerationScreenCaptureHandler(") !=
           std::string::npos);
@@ -400,41 +409,44 @@ int main()
     CHECK(snapshotGrab.find("std::remove(actualPath.c_str()) != 0") !=
           std::string::npos);
     CHECK(snapshotGrab.find("token->retireIfNotStarted()") != std::string::npos);
-    // OSG's numFrames=1 self-removal happens after the capture operation and can clear a
-    // newer callback. Generations therefore stay attached at numFrames=0 until the FRAME
-    // owner identity-detaches the terminal token (success or failure).
+    // numFrames=0 keeps the one-generation handler from self-removing the permanent camera
+    // dispatcher. The FRAME owner only revokes the generation after terminal publication.
     CHECK(snapshotGrab.find("GenerationScreenCaptureHandler(operation.get(), 0)") !=
           std::string::npos);
     CHECK(snapshotReady.find("capture->terminal()") != std::string::npos);
     CHECK(snapshotReady.find("reapTerminalGeneration()") != std::string::npos);
     CHECK(snapshotGrab.find("reapTerminalGeneration()") != std::string::npos);
-    // An arm failure never attached a callback, so it must not consume permanent retention.
+    // A failed dispatcher install does not start a token and cannot consume permanent retention.
     CHECK(snapshotGrab.find("_timeoutRetainedGenerations.push_back(generation)") ==
           std::string::npos);
+    CHECK(snapshotGrab.find("_dispatcher->publish(generation)") != std::string::npos);
+    CHECK(snapshotGrab.find("setFinalDrawCallback") == std::string::npos);
+    CHECK(snapshotGrab.find("getFinalDrawCallback") == std::string::npos);
     // A callback that was claimed before timeout can complete after the media job resets. The
-    // unconditional FRAME reaper must exact-detach it while retaining one active generation
-    // until the next grab, so numFrames=0 cannot trigger continuous readback.
+    // unconditional FRAME reaper revokes its generation and drops normal generations only once
+    // the render invocation is quiescent; timeout winners retain their own generation forever.
     CHECK(mediaHeader.find("void reapTerminalGeneration()") != std::string::npos);
     CHECK(snapshotTerminalReaper.find("_activeGeneration->token->terminal()") !=
           std::string::npos);
-    CHECK(snapshotTerminalReaper.find("detachExactCallback()") != std::string::npos);
-    CHECK(snapshotTerminalReaper.find("_activeGeneration.reset()") != std::string::npos);
-    // Token terminal is published inside CaptureOperation, before OSG's outer draw callback
-    // returns. The installed callback therefore has its own full-invocation quiescence guard.
-    CHECK(media.find("class GenerationDrawCallback") != std::string::npos);
-    CHECK(media.find("std::atomic<unsigned int> _inFlight") != std::string::npos);
-    CHECK(media.find("outerCallback") != std::string::npos);
-    CHECK(media.find("camera->getFinalDrawCallback() != outerCallback.get()") !=
+    CHECK(snapshotTerminalReaper.find("_dispatcher->revoke(_activeGeneration)") !=
           std::string::npos);
+    CHECK(snapshotTerminalReaper.find("_activeGeneration.reset()") != std::string::npos);
+    // The dispatcher atomically owns a shared generation, so a render traversal either sees no
+    // capture or keeps the immutable generation alive through its complete callback invocation.
+    CHECK(media.find("struct SnapshotGrabber::GenerationDispatcher") != std::string::npos);
+    CHECK(media.find("std::atomic_load_explicit(&_generation") != std::string::npos);
+    CHECK(media.find("std::atomic_store_explicit(&_generation") != std::string::npos);
+    CHECK(media.find("std::atomic_compare_exchange_strong_explicit(") != std::string::npos);
+    CHECK(media.find("std::atomic<unsigned int> _inFlight") != std::string::npos);
     CHECK(snapshotTerminalReaper.find("quiescent()") != std::string::npos);
     CHECK(snapshotTerminalReaper.find("_reapableGenerations.push_back") !=
           std::string::npos);
     CHECK(snapshotTerminalReaper.find("_timeoutRetainedGenerations") ==
           std::string::npos);
-    // The render thread only publishes wrapper quiescence. All camera callback reads/writes
-    // stay on the FRAME owner; an ExitGuard check-then-clear is a TOCTOU against re-arm.
-    CHECK(outerDraw.find("getFinalDrawCallback") == std::string::npos);
-    CHECK(outerDraw.find("setFinalDrawCallback") == std::string::npos);
+    CHECK(dispatcherDraw.find("std::atomic_load_explicit(&_generation") !=
+          std::string::npos);
+    CHECK(dispatcherDraw.find("getFinalDrawCallback") == std::string::npos);
+    CHECK(dispatcherDraw.find("setFinalDrawCallback") == std::string::npos);
 
     // Architectural regression guard: a live worker cancellation only transitions to async
     // reaping. resetVideo checks workerDone before its sole join, so FRAME/ESC never waits for
@@ -550,6 +562,18 @@ int main()
     CHECK(!beginVideo.empty() && !captureEnd.empty() && !confirmVideo.empty());
     CHECK(!cancelVideo.empty() && !updateVideo.empty() && !ownerResult.empty());
     CHECK(!frameHandle.empty() && !viewerFrame.empty());
+    // The only Camera callback installation happens while configureAIChat constructs
+    // MediaManager: before its FRAME handler is registered and before Earth enters run().
+    // This is the safe initialization boundary for the process-stable dispatcher.
+    size_t mediaManagerConstruction = setup.find("new earthai::MediaManager(");
+    size_t frameHandlerRegistration = setup.find("viewer.addEventHandler(new AIFrameHandler(");
+    size_t configureAI = earthMain.find("configureAIChat(aiDeps)");
+    size_t viewerRun = earthMain.find("viewerResult = viewer.run()");
+    CHECK(mediaManagerConstruction != std::string::npos);
+    CHECK(frameHandlerRegistration != std::string::npos);
+    CHECK(mediaManagerConstruction < frameHandlerRegistration);
+    CHECK(configureAI != std::string::npos && viewerRun != std::string::npos);
+    CHECK(configureAI < viewerRun);
     CHECK(beginVideo.find("_video->artifactId") != std::string::npos);
     CHECK(beginVideo.find("++_cinematicRequestSerial") != std::string::npos);
     CHECK(confirmVideo.find("generatedFramePathA") != std::string::npos);

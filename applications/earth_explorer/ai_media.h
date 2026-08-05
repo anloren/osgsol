@@ -144,13 +144,15 @@ namespace earthai
     // 抓当前帧到 PNG 文件。基于 osgViewer::ScreenCaptureHandler(EARTH_AUTOCAP 同款),
     // 挂到 viewer 上按需触发单帧捕获;写盘由捕获回调在渲染后完成(异步:调用 grab() 之后
     // 要过几帧文件才会出现,ready() 供轮询)。
-    // 每次请求使用独立的 handler/callback generation。绝不在旧 callback 可能仍在
-    // render thread 读像素时替换它的 CaptureOperation；超时 generation 留存到 grabber
-    // 生命周期结束，使迟到回调只能命中它自己的已取消 token。
+    // The camera owns one process-stable dispatcher installed during MediaManager construction,
+    // before viewer.realize()/run(). Each request publishes an immutable capture generation
+    // through the dispatcher; FRAME never replaces or clears Camera::finalDrawCallback while
+    // rendering may read it.
     class SnapshotGrabber
     {
     public:
         explicit SnapshotGrabber(osgViewer::Viewer* viewer);
+        ~SnapshotGrabber();
         // Returns this request's controller, or null when any earlier callback has not reached
         // terminal state. Callers retain their own token and must never cancel the grabber's
         // current slot on behalf of an older request.
@@ -159,8 +161,8 @@ namespace earthai
         // callback to publish its terminal state. This never waits for rendering.
         void retire(const std::shared_ptr<SnapshotCaptureController>& capture);
         // FRAME-wide safety net for a callback that was claimed before its owning media job
-        // timed out/reset. Detaches the exact callback on terminality but keeps one active
-        // generation alive until the next grab can drop it safely.
+        // timed out/reset. Revokes the published generation on terminality and keeps one active
+        // generation alive until its render invocation is quiescent.
         void reapTerminalGeneration();
 
         // 真正的跨帧稳定性判断:调用方(MediaManager::update())每帧调一次 ready()。
@@ -182,12 +184,15 @@ namespace earthai
 
     private:
         struct CaptureGeneration;
+        struct GenerationDispatcher;
         osgViewer::Viewer* _viewer;
         SnapshotCaptureSlot _slot;
+        osg::ref_ptr<GenerationDispatcher> _dispatcher;
+        bool _dispatcherInstalled = false;
         std::shared_ptr<CaptureGeneration> _activeGeneration;
-        // A timeout that wins before wrapper entry leaves OSG able to hold a raw callback
-        // pointer; retain that generation for this grabber's lifetime. Normal terminal
-        // generations use the separate reapable list and drop only after outer exit.
+        // A timeout that wins before generation invocation keeps its generation for this
+        // grabber's lifetime. Normal terminal generations use the separate reapable list and
+        // drop only after the render invocation is quiescent.
         std::vector<std::shared_ptr<CaptureGeneration>> _timeoutRetainedGenerations;
         std::vector<std::shared_ptr<CaptureGeneration>> _reapableGenerations;
         int _contentW = 0, _contentH = 0;   // 裁剪矩形(左下原点),0=未设置

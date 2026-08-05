@@ -17,7 +17,6 @@
 #include <osgDB/ReadFile>
 #include <osgDB/WriteFile>
 #include <osg/Notify>
-#include <osg/observer_ptr>
 #include <algorithm>
 #include <atomic>
 #include <fstream>
@@ -131,9 +130,6 @@ namespace earthai
         GenerationScreenCaptureHandler(CaptureOperation* operation, int frames)
             : osgViewer::ScreenCaptureHandler(operation, frames) {}
 
-        osg::Camera* selectCamera(osgViewer::ViewerBase& viewer)
-        { return findAppropriateCameraForCallback(viewer); }
-
         osg::Camera::DrawCallback* callbackIdentity() const { return _callback.get(); }
     };
 
@@ -147,84 +143,86 @@ namespace earthai
 
     // ---------------- SnapshotGrabber ----------------
 
-    class GenerationDrawCallback : public osg::Camera::DrawCallback
-    {
-    public:
-        explicit GenerationDrawCallback(osg::Camera::DrawCallback* inner)
-            : _inner(inner) {}
-
-        virtual void operator()(osg::RenderInfo& renderInfo) const
-        {
-            _inFlight.fetch_add(1, std::memory_order_acq_rel);
-            struct ExitGuard
-            {
-                const GenerationDrawCallback* callback;
-                ~ExitGuard()
-                {
-                    callback->_inFlight.fetch_sub(1, std::memory_order_acq_rel);
-                }
-            } guard { this };
-            if (_inner.valid()) (*_inner)(renderInfo);
-        }
-
-        bool quiescent() const
-        { return _inFlight.load(std::memory_order_acquire) == 0; }
-
-    private:
-        osg::ref_ptr<osg::Camera::DrawCallback> _inner;
-        mutable std::atomic<unsigned int> _inFlight { 0 };
-    };
-
     struct SnapshotGrabber::CaptureGeneration
     {
         std::shared_ptr<SnapshotCaptureController> token;
         osg::ref_ptr<GenerationScreenCaptureHandler> handler;
-        osg::observer_ptr<osg::Camera> armedCamera;
-        osg::ref_ptr<GenerationDrawCallback> outerCallback;
-        bool detached = false;
+        osg::ref_ptr<osg::Camera::DrawCallback> callback;
+        mutable std::atomic<unsigned int> _inFlight { 0 };
 
-        bool arm(osgViewer::ViewerBase& viewer)
+        void invoke(osg::RenderInfo& renderInfo) const
         {
-            osg::Camera* camera = handler.valid() ? handler->selectCamera(viewer) : 0;
-            if (!camera || !outerCallback.valid()) return false;
-            armedCamera = camera;
-            // Capture the exact camera/callback pairing once. Do not delegate to
-            // captureNextFrame(), which recomputes the target later.
-            camera->setFinalDrawCallback(outerCallback.get());
-            return true;
-        }
-
-        bool detachExactCallback()
-        {
-            if (detached) return true;
-            osg::Camera* camera = armedCamera.get();
-            if (!camera || !outerCallback.valid() ||
-                camera->getFinalDrawCallback() != outerCallback.get())
+            _inFlight.fetch_add(1, std::memory_order_acq_rel);
+            struct ExitGuard
             {
-                detached = true;
-                return false;
-            }
-            camera->setFinalDrawCallback(0);
-            detached = true;
-            return true;
+                const CaptureGeneration* generation;
+                ~ExitGuard()
+                {
+                    generation->_inFlight.fetch_sub(1, std::memory_order_acq_rel);
+                }
+            } guard { this };
+            if (callback.valid()) (*callback)(renderInfo);
         }
 
         bool quiescent() const
-        { return outerCallback.valid() && outerCallback->quiescent(); }
-
-        bool attached() const
-        {
-            osg::Camera* camera = armedCamera.get();
-            return camera && outerCallback.valid() &&
-                camera->getFinalDrawCallback() == outerCallback.get();
-        }
+        { return _inFlight.load(std::memory_order_acquire) == 0; }
     };
 
-    SnapshotGrabber::SnapshotGrabber(osgViewer::Viewer* viewer) : _viewer(viewer) {}
+    // OSG's RenderStage can read Camera::_finalDrawCallback more than once without a lock.
+    // Install this dispatcher once before viewer.run(); runtime ownership changes only publish
+    // or revoke immutable shared generations through the C++14 shared_ptr atomic operations.
+    struct SnapshotGrabber::GenerationDispatcher : public osg::Camera::DrawCallback
+    {
+        virtual void operator()(osg::RenderInfo& renderInfo) const
+        {
+            const std::shared_ptr<CaptureGeneration> generation =
+                std::atomic_load_explicit(&_generation, std::memory_order_acquire);
+            if (generation) generation->invoke(renderInfo);
+        }
+
+        void publish(const std::shared_ptr<CaptureGeneration>& generation)
+        {
+            std::atomic_store_explicit(&_generation, generation, std::memory_order_release);
+        }
+
+        void revoke(const std::shared_ptr<CaptureGeneration>& generation)
+        {
+            std::shared_ptr<CaptureGeneration> expected = generation;
+            std::atomic_compare_exchange_strong_explicit(
+                &_generation, &expected, std::shared_ptr<CaptureGeneration>(),
+                std::memory_order_acq_rel, std::memory_order_acquire);
+        }
+
+    private:
+        mutable std::shared_ptr<CaptureGeneration> _generation;
+    };
+
+    SnapshotGrabber::SnapshotGrabber(osgViewer::Viewer* viewer)
+        : _viewer(viewer), _dispatcher(new GenerationDispatcher)
+    {
+        // configureAIChat constructs MediaManager before it registers its FRAME handlers, and
+        // earth_main calls configureAIChat before viewer.realize()/viewer.run(). This is the
+        // one safe installation boundary; no runtime path mutates Camera's callback pointer.
+        osg::Camera* camera = _viewer ? _viewer->getCamera() : 0;
+        if (camera && _dispatcher.valid())
+        {
+            camera->setFinalDrawCallback(_dispatcher.get());
+            _dispatcherInstalled = true;
+        }
+        else
+            OSG_WARN << "[AIChat] cannot install stable snapshot dispatcher" << std::endl;
+    }
+
+    SnapshotGrabber::~SnapshotGrabber() {}
 
     std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::grab(
         const std::string& pngPath)
     {
+        if (!_dispatcherInstalled || !_dispatcher.valid())
+        {
+            OSG_WARN << "[AIChat] snapshot dispatcher unavailable: " << pngPath << std::endl;
+            return std::shared_ptr<SnapshotCaptureController>();
+        }
         const std::shared_ptr<SnapshotCaptureController> token = _slot.begin(pngPath);
         if (!token)
         {
@@ -233,8 +231,8 @@ namespace earthai
             return std::shared_ptr<SnapshotCaptureController>();
         }
 
-        // A normal callback may have reached token terminal before its outer draw callback
-        // returns. Reap only after the generation wrapper proves quiescent.
+        // A normal callback may have reached token terminal before its generation invocation
+        // returns. Reap only after the invocation wrapper proves quiescent.
         reapTerminalGeneration();
 
         // WriteToFile does not expose writeImageFile() success. Remove any expected output
@@ -264,19 +262,12 @@ namespace earthai
             std::make_shared<CaptureGeneration>();
         generation->token = token;
         generation->handler = new GenerationScreenCaptureHandler(operation.get(), 0);
-        generation->outerCallback = new GenerationDrawCallback(
-            generation->handler->callbackIdentity());
-        if (!_viewer || !generation->arm(*_viewer))
-        {
-            token->retireIfNotStarted();
-            OSG_WARN << "[AIChat] cannot arm snapshot camera: " << pngPath << std::endl;
-            return std::shared_ptr<SnapshotCaptureController>();
-        }
-        // This generation is explicitly detached from ready() once terminal. The following
-        // FRAME-side grab can then drop it, so a 192-frame orbit does not retain 192 full-size
-        // WindowCaptureCallback ContextData image buffers. Timeout-retired/uncertain entries
-        // take the separate retained path in retire() only.
+        generation->callback = generation->handler->callbackIdentity();
+        // The dispatcher load in render obtains its own shared_ptr. FRAME only changes that
+        // atomic publication, so a late RenderStage read can retain this immutable generation
+        // without touching Camera::_finalDrawCallback.
         _activeGeneration = generation;
+        _dispatcher->publish(generation);
         OSG_NOTICE << "[AIChat] snapshot grab -> " << pngPath << std::endl;
         return token;
     }
@@ -288,12 +279,10 @@ namespace earthai
         if (!capture->retireIfNotStarted()) return;
         if (_activeGeneration && _activeGeneration->token == capture)
         {
-            // Detach only if the exact camera still owns this generation's exact callback.
-            // Never use the handler's generic removal API: it recomputes a camera and can
-            // clear a newer/unrelated final callback.
-            _activeGeneration->detachExactCallback();
-            // retireIfNotStarted won before wrapper entry; OSG may already hold a raw pointer
-            // that has not incremented _inFlight yet, so this generation is permanent.
+            // retireIfNotStarted won before dispatcher entry. OSG may already have read the
+            // dispatcher raw pointer but not yet atomically acquired its generation, so retain
+            // this revoked generation for the grabber lifetime.
+            _dispatcher->revoke(_activeGeneration);
             _timeoutRetainedGenerations.push_back(_activeGeneration);
             _activeGeneration.reset();
         }
@@ -305,8 +294,8 @@ namespace earthai
         if (_activeGeneration && _activeGeneration->token &&
             _activeGeneration->token->terminal())
         {
-            _activeGeneration->detachExactCallback();
-            if (_activeGeneration->quiescent() && !_activeGeneration->attached())
+            _dispatcher->revoke(_activeGeneration);
+            if (_activeGeneration->quiescent())
                 _activeGeneration.reset();
             else
             {
@@ -318,7 +307,7 @@ namespace earthai
         {
             const std::shared_ptr<CaptureGeneration>& generation =
                 _reapableGenerations[index];
-            if (generation && generation->quiescent() && !generation->attached())
+            if (generation && generation->quiescent())
                 _reapableGenerations.erase(_reapableGenerations.begin() + index);
             else
                 ++index;
@@ -330,9 +319,8 @@ namespace earthai
         const std::string& pngPath)
     {
         if (!capture || capture->requestedPath() != pngPath) return false;
-        // numFrames=0 prevents OSG's post-operation self-removal from clearing a newer
-        // generation. The FRAME owner removes this exact callback for either terminal outcome
-        // before checking success or polling the artifact.
+        // numFrames=0 prevents OSG's post-operation self-removal. The stable camera dispatcher
+        // stays installed; FRAME revokes only this generation before polling its artifact.
         if (capture->terminal()) reapTerminalGeneration();
         if (!capture->completedSuccessfully()) return false;
         // WriteToFile 用 "_0" 后缀(单 GraphicsContext、OVERWRITE 策略)拼实际文件名,
