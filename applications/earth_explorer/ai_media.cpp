@@ -17,6 +17,7 @@
 #include <osgDB/ReadFile>
 #include <osgDB/WriteFile>
 #include <osg/Notify>
+#include <osg/observer_ptr>
 #include <algorithm>
 #include <atomic>
 #include <fstream>
@@ -121,17 +122,19 @@ namespace earthai
         std::shared_ptr<SnapshotCaptureController> _controller;
     };
 
-    class RetirableScreenCaptureHandler : public osgViewer::ScreenCaptureHandler
+    // The OSG implementation updates WindowCaptureCallback's operation for every GraphicsContext
+    // without a synchronization boundary. Never call setCaptureOperation after arming: a render
+    // callback can be partway through readPixels() before it invokes the operation.
+    class GenerationScreenCaptureHandler : public osgViewer::ScreenCaptureHandler
     {
     public:
-        RetirableScreenCaptureHandler(CaptureOperation* operation, int frames)
+        GenerationScreenCaptureHandler(CaptureOperation* operation, int frames)
             : osgViewer::ScreenCaptureHandler(operation, frames) {}
 
-        void retirePending(osgViewer::ViewerBase& viewer)
-        {
-            setFramesToCapture(0);
-            removeCallbackFromViewer(viewer);
-        }
+        osg::Camera* selectCamera(osgViewer::ViewerBase& viewer)
+        { return findAppropriateCameraForCallback(viewer); }
+
+        osg::Camera::DrawCallback* callbackIdentity() const { return _callback.get(); }
     };
 
     static bool writeFileBytes(const std::string& path, const std::string& bytes)
@@ -144,26 +147,39 @@ namespace earthai
 
     // ---------------- SnapshotGrabber ----------------
 
-    SnapshotGrabber::SnapshotGrabber(osgViewer::Viewer* viewer) : _viewer(viewer)
+    struct SnapshotGrabber::CaptureGeneration
     {
-        // 唯一一个 ScreenCaptureHandler,构造时创建并 addEventHandler 一次;grab() 只更新
-        // 它内部 WriteToFile 的捕获目标(setCaptureOperation),不再重复 addEventHandler ——
-        // 修复此前"每次 grab() 都 new 一个 handler 且从不摘除"导致 viewer 上 handler 无限
-        // 累积的问题(N 次 grab 后 viewer 挂了 N 个 handler)。
-        // WriteToFile 的 filename 是"不含扩展名的前缀",实际路径由 EARTH_AUTOCAP 同款规则
-        // 拼成 "<prefix>_0.<ext>"(单 context、OVERWRITE 策略下固定后缀 "_0")。
-        osg::ref_ptr<osgViewer::ScreenCaptureHandler::WriteToFile> writer =
-            new osgViewer::ScreenCaptureHandler::WriteToFile(
-                "", "png", osgViewer::ScreenCaptureHandler::WriteToFile::OVERWRITE);
-        _capturer = new RetirableScreenCaptureHandler(writer.get(), 1);
-        // ScreenCaptureHandler 默认响应键盘 'c' 触发截屏(见 handle() 里 _keyEventTakeScreenShot);
-        // 这会导致用户在 AI 拍照流程之外按一次 'c' 就写出一份意料之外的文件(用当前 WriteToFile
-        // 前缀,即最近一次 grab() 的目标)。setKeyEventTakeScreenShot(0) 存在于此版本 OSG
-        // (build/sdk_core/include/osgViewer/ViewerEventHandlers 已确认),0 不是合法 GUIEventAdapter
-        // 键值,等效关闭该热键。
-        _capturer->setKeyEventTakeScreenShot(0);
-        _viewer->addEventHandler(_capturer.get());
-    }
+        std::shared_ptr<SnapshotCaptureController> token;
+        osg::ref_ptr<GenerationScreenCaptureHandler> handler;
+        osg::observer_ptr<osg::Camera> armedCamera;
+        osg::ref_ptr<osg::Camera::DrawCallback> armedCallback;
+
+        bool arm(osgViewer::ViewerBase& viewer)
+        {
+            osg::Camera* camera = handler.valid() ? handler->selectCamera(viewer) : 0;
+            osg::Camera::DrawCallback* callback =
+                handler.valid() ? handler->callbackIdentity() : 0;
+            if (!camera || !callback) return false;
+            armedCamera = camera;
+            armedCallback = callback;
+            // Capture the exact camera/callback pairing once. Do not delegate to
+            // captureNextFrame(), which recomputes the target later.
+            camera->setFinalDrawCallback(callback);
+            return true;
+        }
+
+        bool detachExactCallback()
+        {
+            osg::Camera* camera = armedCamera.get();
+            if (!camera || !armedCallback.valid() ||
+                camera->getFinalDrawCallback() != armedCallback.get())
+                return false;
+            camera->setFinalDrawCallback(0);
+            return true;
+        }
+    };
+
+    SnapshotGrabber::SnapshotGrabber(osgViewer::Viewer* viewer) : _viewer(viewer) {}
 
     std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::grab(
         const std::string& pngPath)
@@ -176,22 +192,45 @@ namespace earthai
             return std::shared_ptr<SnapshotCaptureController>();
         }
 
+        // WriteToFile does not expose writeImageFile() success. Remove any expected output
+        // before arming so a completed token plus a stable old file can never look successful.
+        const std::string actualPath = capturedPath(pngPath);
+        if (osgDB::fileExists(actualPath) &&
+            std::remove(actualPath.c_str()) != 0 && osgDB::fileExists(actualPath))
+        {
+            token->retireIfNotStarted();
+            OSG_WARN << "[AIChat] cannot remove stale snapshot before capture: "
+                     << actualPath << std::endl;
+            return std::shared_ptr<SnapshotCaptureController>();
+        }
+
         // pngPath 末尾去掉 ".png" 作为 WriteToFile 的前缀(它自己会拼回 "_0.png")。
         std::string prefix = pngPath;
         const std::string ext = ".png";
         if (prefix.size() >= ext.size() && prefix.compare(prefix.size() - ext.size(), ext.size(), ext) == 0)
             prefix.resize(prefix.size() - ext.size());
 
-        // 只重设捕获目标(新 WriteToFile 覆盖旧的 CaptureOperation),复用同一个已挂载的
-        // handler,不再 addEventHandler。
         osg::ref_ptr<osgViewer::ScreenCaptureHandler::WriteToFile> writer =
             new osgViewer::ScreenCaptureHandler::WriteToFile(
                 prefix, "png", osgViewer::ScreenCaptureHandler::WriteToFile::OVERWRITE);
         osg::ref_ptr<CancellableCaptureOperation> operation =
             new CancellableCaptureOperation(writer.get(), token);
-        _capturer->setCaptureOperation(operation.get());
-        _capturer->setFramesToCapture(1);
-        _capturer->captureNextFrame(*_viewer);
+        std::shared_ptr<CaptureGeneration> generation =
+            std::make_shared<CaptureGeneration>();
+        generation->token = token;
+        generation->handler = new GenerationScreenCaptureHandler(operation.get(), 1);
+        if (!_viewer || !generation->arm(*_viewer))
+        {
+            token->retireIfNotStarted();
+            _retainedGenerations.push_back(generation);
+            OSG_WARN << "[AIChat] cannot arm snapshot camera: " << pngPath << std::endl;
+            return std::shared_ptr<SnapshotCaptureController>();
+        }
+        // Never mutate or reuse an armed handler/callback. Retain old generations through this
+        // grabber's lifetime, including normal completions, because OSG can still unwind an old
+        // draw callback after it has made the token terminal.
+        if (_activeGeneration) _retainedGenerations.push_back(_activeGeneration);
+        _activeGeneration = generation;
         OSG_NOTICE << "[AIChat] snapshot grab -> " << pngPath << std::endl;
         return token;
     }
@@ -201,9 +240,15 @@ namespace earthai
     {
         if (!capture) return;
         if (!capture->retireIfNotStarted()) return;
-        RetirableScreenCaptureHandler* handler =
-            static_cast<RetirableScreenCaptureHandler*>(_capturer.get());
-        if (handler && _viewer) handler->retirePending(*_viewer);
+        if (_activeGeneration && _activeGeneration->token == capture)
+        {
+            // Detach only if the exact camera still owns this generation's exact callback.
+            // Never use the handler's generic removal API: it recomputes a camera and can
+            // clear a newer/unrelated final callback.
+            _activeGeneration->detachExactCallback();
+            _retainedGenerations.push_back(_activeGeneration);
+            _activeGeneration.reset();
+        }
     }
 
     bool SnapshotGrabber::ready(

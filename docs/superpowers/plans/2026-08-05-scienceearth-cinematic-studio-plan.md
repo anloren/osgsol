@@ -114,3 +114,9 @@
 - 快照超时若回调尚未开始，会原子退休该 token 并从 OSG 最终绘制回调移除；共享槽随即可接收下一请求。若回调已拥有写入权，则不会替换它，延迟回收仍等其终态，避免迟到回调写入未追踪路径。`ready(token, path)` 还要求该 token 的写入已成功完成，旧文件或仅路径/尺寸碰撞不能伪造完成。
 - 所有视频工件使用 `timestamp + monotonic request serial + job ID` 命名：A/B 快照、provider 生成的首/尾帧、环拍目录和 MP4 不再只依赖秒级时间。provider 帧路径保存在 `VideoJob`，取消走同一延迟清理队列；失败、超时和编码器取消会删除已写的 provider 帧或局部 MP4。
 - 确认弹窗改为展示实际解析后的图像模型和视频 provider/model，避免把环境覆盖后的图像模型误标为固定的 Nano Banana 2。非 macOS encoder stub 与 macOS 实现均保持 cancellation-aware 的五参数 ABI；纯测试锁定该合同和所有失败路径的 MP4 删除守卫。
+
+### Task 6B capture-generation isolation correction (2026-08-06)
+
+- 每次抓帧创建不可变的 handler/callback generation；记录 arm 时选中的精确 camera 和 `DrawCallback` 身份。超时只在该 camera 仍持有该 callback 时才摘除，绝不重新扫描相机或调用会清除新 callback 的通用移除路径。
+- 已 arm 的 generation 不再调用 `setCaptureOperation` 或复用。超时若赢得 token，旧 generation 留存到 `SnapshotGrabber` 生命周期结束；若 render callback 已经 claim token，仍等待终态而不旋转 generation。这里不把 handler 注册为 viewer event handler，因此连续成功抓帧不会累积事件处理器。
+- 每次 arm 前删除预期的 `_0.png`；若现存文件无法删除则请求 fail-closed。这样 `WriteToFile` 不回传错误时，终态 token 与稳定文件也不能误接纳上一轮残留的 PNG。无窗口测试锁定精确 identity detach、generation 不复用/不注册 event handler，以及 stale-file 删除失败路径。

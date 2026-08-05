@@ -350,7 +350,7 @@ int main()
     CHECK(countOccurrences(mediaHeader, "SnapshotGrabber _grabber;") == 1);
     CHECK(mediaHeader.find("_videoGrabber") == std::string::npos);
     CHECK(countOccurrences(media, "_grabber(viewer)") == 1);
-    CHECK(countOccurrences(media, "new RetirableScreenCaptureHandler(") == 1);
+    CHECK(countOccurrences(media, "new GenerationScreenCaptureHandler(") == 1);
     CHECK(media.find("snapCaptureTokenA") != std::string::npos);
     CHECK(media.find("snapCaptureTokenB") != std::string::npos);
     CHECK(media.find("orbitCaptureToken") != std::string::npos);
@@ -360,12 +360,35 @@ int main()
         media, "bool SnapshotGrabber::ready(");
     const std::string snapshotRetire = extractFunctionBody(
         media, "void SnapshotGrabber::retire(");
+    const std::string snapshotGrab = extractFunctionBody(
+        media, "std::shared_ptr<SnapshotCaptureController> SnapshotGrabber::grab(");
     CHECK(snapshotReady.find("capture->completedSuccessfully()") !=
           std::string::npos);
     CHECK(snapshotReady.find("capture->requestedPath() != pngPath") !=
           std::string::npos);
     CHECK(snapshotRetire.find("capture->retireIfNotStarted()") !=
           std::string::npos);
+    // A timeout must detach only its recorded camera/callback pair. Fresh generations never
+    // mutate a possibly in-flight WindowCaptureCallback or accumulate viewer event handlers.
+    CHECK(mediaHeader.find("CaptureGeneration") != std::string::npos);
+    CHECK(mediaHeader.find("_retainedGenerations") != std::string::npos);
+    CHECK(media.find("camera->getFinalDrawCallback() != armedCallback.get()") !=
+          std::string::npos);
+    CHECK(media.find("camera->setFinalDrawCallback(0)") != std::string::npos);
+    CHECK(snapshotRetire.find("detachExactCallback()") != std::string::npos);
+    CHECK(snapshotRetire.find("removeCallbackFromViewer") == std::string::npos);
+    CHECK(snapshotGrab.find("new GenerationScreenCaptureHandler(") !=
+          std::string::npos);
+    CHECK(snapshotGrab.find("setCaptureOperation") == std::string::npos);
+    CHECK(snapshotGrab.find("captureNextFrame") == std::string::npos);
+    CHECK(snapshotGrab.find("addEventHandler") == std::string::npos);
+    // WriteToFile discards writeImageFile's return value. A stale expected artifact must be
+    // deleted before arming; deletion failure makes the request terminal and returns null.
+    CHECK(snapshotGrab.find("const std::string actualPath = capturedPath(pngPath)") !=
+          std::string::npos);
+    CHECK(snapshotGrab.find("std::remove(actualPath.c_str()) != 0") !=
+          std::string::npos);
+    CHECK(snapshotGrab.find("token->retireIfNotStarted()") != std::string::npos);
 
     // Architectural regression guard: a live worker cancellation only transitions to async
     // reaping. resetVideo checks workerDone before its sole join, so FRAME/ESC never waits for

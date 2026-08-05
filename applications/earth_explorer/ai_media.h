@@ -144,8 +144,9 @@ namespace earthai
     // 抓当前帧到 PNG 文件。基于 osgViewer::ScreenCaptureHandler(EARTH_AUTOCAP 同款),
     // 挂到 viewer 上按需触发单帧捕获;写盘由捕获回调在渲染后完成(异步:调用 grab() 之后
     // 要过几帧文件才会出现,ready() 供轮询)。
-    // handler 只在构造时创建并 addEventHandler 一次,grab() 复用同一个 handler(只换写盘目标),
-    // 避免每次 grab() 都新增一个 handler 导致 viewer 上 handler 无限累积(见 .cpp 注释)。
+    // 每次请求使用独立的 handler/callback generation。绝不在旧 callback 可能仍在
+    // render thread 读像素时替换它的 CaptureOperation；超时 generation 留存到 grabber
+    // 生命周期结束，使迟到回调只能命中它自己的已取消 token。
     class SnapshotGrabber
     {
     public:
@@ -176,9 +177,14 @@ namespace earthai
         void setContentSize(int w, int h) { _contentW = w; _contentH = h; }
 
     private:
+        struct CaptureGeneration;
         osgViewer::Viewer* _viewer;
-        osg::ref_ptr<osgViewer::ScreenCaptureHandler> _capturer;  // 唯一实例,构造时创建并挂一次
         SnapshotCaptureSlot _slot;
+        std::shared_ptr<CaptureGeneration> _activeGeneration;
+        // Includes completed and timeout-retired generations. Retention is intentional: OSG may
+        // still return through a callback after its token reached terminal, and no generation is
+        // ever reused or mutated after it has been armed.
+        std::vector<std::shared_ptr<CaptureGeneration>> _retainedGenerations;
         int _contentW = 0, _contentH = 0;   // 裁剪矩形(左下原点),0=未设置
     };
 
