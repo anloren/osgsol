@@ -127,7 +127,7 @@ namespace earthai
 
     // ---------------- SnapshotGrabber ----------------
 
-    SnapshotGrabber::SnapshotGrabber(osgViewer::Viewer* viewer) : _viewer(viewer), _lastSize(0)
+    SnapshotGrabber::SnapshotGrabber(osgViewer::Viewer* viewer) : _viewer(viewer)
     {
         // 唯一一个 ScreenCaptureHandler,构造时创建并 addEventHandler 一次;grab() 只更新
         // 它内部 WriteToFile 的捕获目标(setCaptureOperation),不再重复 addEventHandler ——
@@ -175,13 +175,15 @@ namespace earthai
         _capturer->setCaptureOperation(operation.get());
         _capturer->setFramesToCapture(1);
         _capturer->captureNextFrame(*_viewer);
-        _lastSize = 0;   // 新一轮抓帧:清掉上一轮遗留的大小记录,避免 ready() 首次调用就误判稳定
         OSG_NOTICE << "[AIChat] snapshot grab -> " << pngPath << std::endl;
         return token;
     }
 
-    bool SnapshotGrabber::ready(const std::string& pngPath)
+    bool SnapshotGrabber::ready(
+        const std::shared_ptr<SnapshotCaptureController>& capture,
+        const std::string& pngPath)
     {
+        if (!capture || capture->requestedPath() != pngPath) return false;
         // WriteToFile 用 "_0" 后缀(单 GraphicsContext、OVERWRITE 策略)拼实际文件名,
         // 统一经 capturedPath() 计算,与提交侧读取路径保持一致。
         std::string actual = capturedPath(pngPath);
@@ -191,16 +193,12 @@ namespace earthai
         // 内部读两次(那样两次 stat 间隔仅几微秒,写到一半也几乎总能读到同一个字节数,
         // 起不到防御作用)。调用方(MediaManager::update())每帧调一次 ready(),两次真实的
         // update() tick 之间隔了一整帧的时间,足够覆盖磁盘写入延迟。
-        if (!osgDB::fileExists(actual)) { _lastSize = 0; return false; }
+        if (!osgDB::fileExists(actual)) return capture->observeFileSize(pngPath, 0);
         std::ifstream ifs(actual.c_str(), std::ios::binary | std::ios::ate);
-        if (!ifs.is_open()) { _lastSize = 0; return false; }
+        if (!ifs.is_open()) return capture->observeFileSize(pngPath, 0);
         std::streamsize sz = ifs.tellg();
         ifs.close();
-        if (sz <= 0) { _lastSize = 0; return false; }
-
-        bool stable = (sz == _lastSize);
-        _lastSize = sz;
-        return stable;
+        return capture->observeFileSize(pngPath, sz);
     }
 
     void SnapshotGrabber::cropToViewport(const std::string& pngPath)
@@ -1176,7 +1174,7 @@ namespace earthai
 
         if (_state == WAITING_SNAPSHOT)
         {
-            if (!_grabber.ready(_snapPath))
+            if (!_grabber.ready(_photoCaptureToken, _snapPath))
             {
                 // 快照文件迟迟不出现(例如捕获回调没被触发/磁盘异常):计数超阈值就判超时,
                 // 收尾 job 为 FAILED 并把状态机拉回 IDLE,避免永久卡住导致后续 generate_photo
@@ -2054,7 +2052,7 @@ namespace earthai
 
         if (v.phase == VideoJob::WAIT_A)
         {
-            if (!_grabber.ready(v.snapPathA))
+            if (!_grabber.ready(v.snapCaptureTokenA, v.snapPathA))
             {
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
@@ -2139,7 +2137,7 @@ namespace earthai
 
         if (v.phase == VideoJob::CAPTURING_B)
         {
-            if (!_grabber.ready(v.snapPathB))
+            if (!_grabber.ready(v.snapCaptureTokenB, v.snapPathB))
             {
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
@@ -2220,7 +2218,7 @@ namespace earthai
                         << std::setw(6) << std::setfill('0')
                         << v.orbitFrameIndex << ".png";
             const std::string currentRequestPath = currentName.str();
-            if (!_grabber.ready(currentRequestPath))
+            if (!_grabber.ready(v.orbitCaptureToken, currentRequestPath))
             {
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {

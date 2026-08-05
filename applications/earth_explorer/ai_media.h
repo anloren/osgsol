@@ -54,6 +54,23 @@ namespace earthai
         bool delegateStarted() const { return _delegateStarted.load(); }
         bool terminal() const { return _terminal.load(); }
 
+        // Called only by the FRAME owner through SnapshotGrabber::ready(). The render callback
+        // never observes this history, so each request can retain its own two-tick file-size
+        // stability state even after a later request has been armed.
+        bool observeFileSize(const std::string& observedPath,
+                             std::streamsize observedSize)
+        {
+            if (observedPath != _requestedPath) return false;
+            if (observedSize <= 0)
+            {
+                _lastObservedSize = 0;
+                return false;
+            }
+            const bool stable = observedSize == _lastObservedSize;
+            _lastObservedSize = observedSize;
+            return stable;
+        }
+
         SnapshotCaptureCallbackResult beginCallback()
         {
             if (_cancelled.load())
@@ -74,6 +91,7 @@ namespace earthai
         std::atomic<bool> _cancelled { false };
         std::atomic<bool> _delegateStarted { false };
         std::atomic<bool> _terminal { false };
+        std::streamsize _lastObservedSize = 0;
     };
 
     // Main-thread owner for the currently installed one-shot OSG operation. It intentionally
@@ -119,9 +137,10 @@ namespace earthai
         // 本次看到的文件大小与"上一次调用 ready() 时"记录的大小相比——只有连续两次不同的
         // update() tick 都测到同一个 >0 大小,才认为写盘已完成。单次调用内部不再做"读两次
         // 比较"那种伪稳定性判断(两次 stat 间隔太短,几乎总能读到同一个值,写到一半也会
-        // 误判为稳定)。_lastSize 在 grab() 时清零,避免复用上一次抓帧遗留的大小造成
-        // 首次 ready() 就误判稳定。
-        bool ready(const std::string& pngPath);
+        // 误判为稳定)。历史保存在 capture token 而不是 grabber:不同请求即使交错轮询,
+        // 也不会共享首次观测值。path 必须与 token 的请求路径完全一致。
+        bool ready(const std::shared_ptr<SnapshotCaptureController>& capture,
+                   const std::string& pngPath);
         // 快照就绪后按当前相机视口裁剪(抓帧抓的是整个窗口帧缓冲,可能比渲染视口大,
         // 多出的边缘是未渲染的底色,会污染构图参考)。主线程调用(与 ready 同处),
         // 读图-裁剪-回写同一路径;失败静默保留原图(提示词有 no-borders 兜底)。
@@ -135,7 +154,6 @@ namespace earthai
         osgViewer::Viewer* _viewer;
         osg::ref_ptr<osgViewer::ScreenCaptureHandler> _capturer;  // 唯一实例,构造时创建并挂一次
         SnapshotCaptureSlot _slot;
-        std::streamsize _lastSize;   // 上一次 ready() 调用时测到的文件大小,0=尚未测到/已重置
         int _contentW = 0, _contentH = 0;   // 裁剪矩形(左下原点),0=未设置
     };
 

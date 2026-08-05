@@ -162,6 +162,27 @@ int main()
     terminalVideoToken->cancel();
     CHECK(!newerPhotoToken->cancelled());
 
+    // File-size stability is token-local. Interleaving A/B observations must neither borrow
+    // the other's size nor declare either request stable on its first observation.
+    SnapshotCaptureController stableA("stable-a.png");
+    SnapshotCaptureController stableB("stable-b.png");
+    CHECK(!stableA.observeFileSize("stable-a.png", 41));
+    CHECK(!stableB.observeFileSize("stable-b.png", 99));
+    CHECK(stableA.observeFileSize("stable-a.png", 41));
+    CHECK(stableB.observeFileSize("stable-b.png", 99));
+
+    SnapshotCaptureController equalFirstA("equal-a.png");
+    SnapshotCaptureController equalFirstB("equal-b.png");
+    CHECK(!equalFirstA.observeFileSize("equal-a.png", 128));
+    CHECK(!equalFirstB.observeFileSize("equal-b.png", 128));
+    CHECK(equalFirstA.observeFileSize("equal-a.png", 128));
+    CHECK(equalFirstB.observeFileSize("equal-b.png", 128));
+
+    SnapshotCaptureController pathBound("path-bound.png");
+    CHECK(!pathBound.observeFileSize("wrong-path.png", 88));
+    CHECK(!pathBound.observeFileSize("path-bound.png", 88));
+    CHECK(pathBound.observeFileSize("path-bound.png", 88));
+
     VideoUiRequestQueue queue;
     VideoUiRequest first; first.kind = VideoUiRequest::Begin;
     first.lla = osg::Vec3d(1.0, 2.0, 3.0);
@@ -288,6 +309,8 @@ int main()
     CHECK(media.find("snapCaptureTokenA") != std::string::npos);
     CHECK(media.find("snapCaptureTokenB") != std::string::npos);
     CHECK(media.find("orbitCaptureToken") != std::string::npos);
+    CHECK(mediaHeader.find("_lastSize") == std::string::npos);
+    CHECK(mediaHeader.find("observeFileSize") != std::string::npos);
 
     // Architectural regression guard: a live worker cancellation only transitions to async
     // reaping. resetVideo checks workerDone before its sole join, so FRAME/ESC never waits for
