@@ -325,7 +325,7 @@ namespace earthai
         {
         case CINEMATIC_MOTION_STATIC: return u8"静态图像";
         case CINEMATIC_MOTION_AERIAL_TOUR: return u8"一镜到底航拍";
-        case CINEMATIC_MOTION_ORBIT_360: return u8"360° 环拍";
+        case CINEMATIC_MOTION_ORBIT_360: return u8"360° 一镜到底环拍";
         case CINEMATIC_MOTION_DIVE: return u8"俯冲拍摄";
         case CINEMATIC_MOTION_CRANE_REVEAL: return u8"升降揭示";
         case CINEMATIC_MOTION_TRUCK: return u8"平行横移";

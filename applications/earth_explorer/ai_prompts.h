@@ -520,11 +520,13 @@ namespace earthai
                    "stable horizon, continuous scale and physically plausible parallax. Never cut, "
                    "crossfade, montage, reset the camera, jump altitude or replace the viewpoint.";
         case CINEMATIC_MOTION_ORBIT_360:
-            return "Complete exactly one full 360-degree orbit around the center-of-frame subject "
-                   "within the requested duration. Pass continuously through the front, right, rear "
-                   "and left quadrants, then finish at the original azimuth and framing. Keep radius "
-                   "and elevation coherent; never fake completion with a cut, loop, teleport, "
-                   "crossfade or background warp.";
+            return "Complete exactly one full 360-degree orbit as one single unbroken take around "
+                   "the center-of-frame subject within the requested duration. Every frame must "
+                   "belong to the same continuous physical camera path. Pass continuously through "
+                   "the front, right, rear and left quadrants, then finish at the original azimuth "
+                   "and framing. Keep radius and elevation coherent; never fake completion with a "
+                   "cut, loop, teleport, crossfade, hidden transition, camera reset or background "
+                   "warp.";
         case CINEMATIC_MOTION_DIVE:
             return "Execute a controlled dive toward the center-of-frame subject, pitching down and "
                    "descending continuously while preserving realistic speed, terrain clearance and "

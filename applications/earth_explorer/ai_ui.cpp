@@ -507,7 +507,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 {
                     ImGui::SetTooltip(media && mani
-                        ? u8"打开时空影像工作台：一键航拍、360° 环拍、俯冲、横移或两点穿越"
+                        ? u8"打开时空影像工作台：一镜到底航拍、360° 一镜到底环拍、"
+                          u8"俯冲、横移或两点穿越"
                         : u8"生成视频（需设置 EARTH_AI_KEY / EARTH_AI_FAKE_MP4）");
                 }
             }
@@ -769,6 +770,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                          static_cast<earthai::CinematicCameraMotion>(_cinematicMotion)))
             {
                 ImGui::TextWrapped(
+                    u8"整段必须是同一个连续物理镜头，禁止切镜、转场、循环或重置机位。"
                     u8"单个当前首帧即可，固定使用至少 8 秒。"
                     u8"返回“生成完成”不等于闭环通过；成片必须依次经过前、右、后、左"
                     u8"四个方位并回到起始方位，否则按失败处理。");

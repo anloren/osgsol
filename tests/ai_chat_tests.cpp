@@ -994,9 +994,15 @@ int main(int, char**)
                     "360-degree orbit") != std::string::npos);
             CHECK(earthai::buildCinematicVideoPrompt(
                 earthai::cinematicRequestUnchecked(capture, video)).find(
+                    "one single unbroken take") != std::string::npos);
+            CHECK(earthai::buildCinematicVideoPrompt(
+                earthai::cinematicRequestUnchecked(capture, video)).find(
+                    "same continuous physical camera path") != std::string::npos);
+            CHECK(earthai::buildCinematicVideoPrompt(
+                earthai::cinematicRequestUnchecked(capture, video)).find(
                     "front, right, rear and left quadrants") != std::string::npos);
             CHECK(earthai::cinematicMotionLabel(video.motion) ==
-                  std::string(u8"360° 环拍"));
+                  std::string(u8"360° 一镜到底环拍"));
             earthai::CinematicGenerationSettings tooShortOrbit = video;
             tooShortOrbit.durationSeconds = 5;
             earthai::CinematicGenerationRequest rejectedOrbit;

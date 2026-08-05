@@ -178,8 +178,10 @@ left quadrants without a hidden cut or world rotation.
 1. “Aerial tour” is now named “one-take aerial” and its prompt explicitly forbids every edit,
    crossfade, hidden transition, altitude jump, camera reset and viewpoint replacement.
 2. A 360 orbit must be at least 8 seconds. Shorter requests are rejected before network use.
-3. Provider completion is not orbit completion. The UI now says that a returned 360 video only
-   passes after it visibly traverses all four quadrants and returns to the initial azimuth.
+3. A 360 orbit is itself a one-take move: every frame must belong to one continuous physical
+   camera path, with no cut, transition, loop, teleport or camera reset. Provider completion is
+   not orbit completion; the result only passes after it visibly traverses all four quadrants
+   and returns to the initial azimuth.
 4. Historical UI copy no longer implies that prompting can guarantee anachronism removal. It
    requires external source checking before publication or analysis.
 5. Full-360 remains probabilistic with this image-to-video provider: two of three 8-second tests
