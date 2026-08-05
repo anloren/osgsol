@@ -395,6 +395,18 @@ int main()
     CHECK(snapshotGrab.find("std::remove(actualPath.c_str()) != 0") !=
           std::string::npos);
     CHECK(snapshotGrab.find("token->retireIfNotStarted()") != std::string::npos);
+    // OSG's numFrames=1 self-removal happens after the capture operation and can clear a
+    // newer callback. Generations therefore stay attached at numFrames=0 until the FRAME
+    // owner identity-detaches the terminal token (success or failure).
+    CHECK(snapshotGrab.find("GenerationScreenCaptureHandler(operation.get(), 0)") !=
+          std::string::npos);
+    CHECK(snapshotReady.find("capture->terminal()") != std::string::npos);
+    CHECK(snapshotReady.find("detachExactCallback()") != std::string::npos);
+    CHECK(snapshotGrab.find("_activeGeneration->token->terminal()") !=
+          std::string::npos);
+    // An arm failure never attached a callback, so it must not consume permanent retention.
+    CHECK(snapshotGrab.find("_retainedGenerations.push_back(generation)") ==
+          std::string::npos);
 
     // Architectural regression guard: a live worker cancellation only transitions to async
     // reaping. resetVideo checks workerDone before its sole join, so FRAME/ESC never waits for

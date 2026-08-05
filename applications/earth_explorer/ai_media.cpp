@@ -192,6 +192,16 @@ namespace earthai
             return std::shared_ptr<SnapshotCaptureController>();
         }
 
+        // A normal callback has reached terminal on an earlier FRAME. Detach its exact
+        // generation before arming the next one: this is deliberately not OSG's numFrames
+        // self-removal, whose post-operation epilogue can otherwise clear a newer callback.
+        if (_activeGeneration && _activeGeneration->token &&
+            _activeGeneration->token->terminal())
+        {
+            _activeGeneration->detachExactCallback();
+            _activeGeneration.reset();
+        }
+
         // WriteToFile does not expose writeImageFile() success. Remove any expected output
         // before arming so a completed token plus a stable old file can never look successful.
         const std::string actualPath = capturedPath(pngPath);
@@ -218,18 +228,17 @@ namespace earthai
         std::shared_ptr<CaptureGeneration> generation =
             std::make_shared<CaptureGeneration>();
         generation->token = token;
-        generation->handler = new GenerationScreenCaptureHandler(operation.get(), 1);
+        generation->handler = new GenerationScreenCaptureHandler(operation.get(), 0);
         if (!_viewer || !generation->arm(*_viewer))
         {
             token->retireIfNotStarted();
-            _retainedGenerations.push_back(generation);
             OSG_WARN << "[AIChat] cannot arm snapshot camera: " << pngPath << std::endl;
             return std::shared_ptr<SnapshotCaptureController>();
         }
-        // A normal one-shot callback removes itself from the camera. The following FRAME-side
-        // grab can drop its generation, so a 192-frame orbit does not retain 192 full-size
+        // This generation is explicitly detached from ready() once terminal. The following
+        // FRAME-side grab can then drop it, so a 192-frame orbit does not retain 192 full-size
         // WindowCaptureCallback ContextData image buffers. Timeout-retired/uncertain entries
-        // take the separate retained path in retire()/arm failure only.
+        // take the separate retained path in retire() only.
         _activeGeneration = generation;
         OSG_NOTICE << "[AIChat] snapshot grab -> " << pngPath << std::endl;
         return token;
@@ -255,8 +264,14 @@ namespace earthai
         const std::shared_ptr<SnapshotCaptureController>& capture,
         const std::string& pngPath)
     {
-        if (!capture || capture->requestedPath() != pngPath ||
-            !capture->completedSuccessfully()) return false;
+        if (!capture || capture->requestedPath() != pngPath) return false;
+        // numFrames=0 prevents OSG's post-operation self-removal from clearing a newer
+        // generation. The FRAME owner removes this exact callback for either terminal outcome
+        // before checking success or polling the artifact.
+        if (capture->terminal() && _activeGeneration &&
+            _activeGeneration->token == capture)
+            _activeGeneration->detachExactCallback();
+        if (!capture->completedSuccessfully()) return false;
         // WriteToFile 用 "_0" 后缀(单 GraphicsContext、OVERWRITE 策略)拼实际文件名,
         // 统一经 capturedPath() 计算,与提交侧读取路径保持一致。
         std::string actual = capturedPath(pngPath);

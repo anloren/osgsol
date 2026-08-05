@@ -118,5 +118,5 @@
 ### Task 6B capture-generation isolation correction (2026-08-06)
 
 - 每次抓帧创建不可变的 handler/callback generation；记录 arm 时选中的精确 camera 和 `DrawCallback` 身份。超时只在该 camera 仍持有该 callback 时才摘除，绝不重新扫描相机或调用会清除新 callback 的通用移除路径。
-- 已 arm 的 generation 不再调用 `setCaptureOperation` 或复用。超时若赢得 token，旧 generation 留存到 `SnapshotGrabber` 生命周期结束；若 render callback 已经 claim token，仍等待终态而不旋转 generation。正常完成的一次性 callback 会自行从 camera 摘除，下一次 FRAME 抓帧直接丢弃其 generation，避免 8 秒 24 fps 环拍保留 192 份全尺寸 ContextData 图像；这里不把 handler 注册为 viewer event handler，因此连续成功抓帧不会累积事件处理器。
+- 已 arm 的 generation 不再调用 `setCaptureOperation` 或复用，也不使用 OSG `numFrames=1` 的回调后自移除（该 epilogue 可能清掉新 generation）。超时若赢得 token，旧 generation 留存到 `SnapshotGrabber` 生命周期结束；若 render callback 已经 claim token，仍等待终态而不旋转 generation。FRAME 在 token 成功或失败终态时按精确 identity 显式摘除 callback，下一次抓帧直接丢弃正常完成的 generation，避免 8 秒 24 fps 环拍保留 192 份全尺寸 ContextData 图像；这里不把 handler 注册为 viewer event handler，因此连续成功抓帧不会累积事件处理器。
 - 每次 arm 前删除预期的 `_0.png`；若现存文件无法删除则请求 fail-closed。这样 `WriteToFile` 不回传错误时，终态 token 与稳定文件也不能误接纳上一轮残留的 PNG。无窗口测试锁定精确 identity detach、generation 不复用/不注册 event handler，以及 stale-file 删除失败路径。
