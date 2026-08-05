@@ -230,8 +230,8 @@ namespace earthai
     class MediaManager
     {
     public:
-        // apiKeyOrEmpty 为空 → 仅在 EARTH_AI_FAKE_IMG/EARTH_AI_FAKE_MP4 设置时可用(离线 E2E);
-        // 两者都没有的话 startPhotoJob/confirmVideo 会返回 error(由调用方/工具层处理)。
+        // apiKeyOrEmpty 为空时，provider 路径仍要求已配置的 fake chat core 加上对应媒体 fake；
+        // 单独设置 EARTH_AI_FAKE_IMG/EARTH_AI_FAKE_MP4 不会解锁付费/provider 路径。
         //
         // 用户反馈 1(HUD 干净截图)的实现踩坑记录:最初尝试把 finalCamera(render_effects.cpp
         // 里 cameras[3],ImGui 也挂在它上面)的 NodeMask 清零来"隐藏 HUD",结果适得其反——
@@ -261,6 +261,10 @@ namespace earthai
 
         JobManager* jobs() { return &_jobs; }
 
+        // All draw and backend submission decisions use this immutable route description rather
+        // than treating a non-null manager or chat-core pointer as provider capability.
+        MediaRouteCapabilities routeCapabilities() const { return _routeCapabilities; }
+
         // 供 EarthControlUI::runInternal() 每帧查询:true 时本帧不画任何 ImGui 窗口内容。
         // draw traversal 读取、FRAME owner 写入，因此计数必须原子发布。
         bool isHudHidden() const { return _hudHideCount.load() > 0; }
@@ -287,7 +291,11 @@ namespace earthai
         // setter 由 ai_setup.cpp 在 aiCore 构造完成后补上引用。可为空:没有 EARTH_AI_KEY/
         // EARTH_AI_FAKE 时 aiCore 本身就不存在,此时不会调用本方法,_chatCore 保持
         // nullptr——每个使用处都要 null 检查后再解引用(见 .cpp FAILED 分支)。
-        void setChatCore(AIChatCore* core) { _chatCore = core; }
+        void setChatCore(AIChatCore* core)
+        {
+            _chatCore = core;
+            _routeCapabilities.hasProviderSession = core != nullptr;
+        }
 
         // generate_photo 工具入口(主线程调用,在 AIChatCore::drainMainThread 的工具执行阶段):
         // 建 Job → 触发抓帧 → 立即返回 {"status":"started","job_id":N}(不等生图完成)。
@@ -315,7 +323,8 @@ namespace earthai
         // 记录 A 点(抓快照 + 记相机位姿)。若已有视频任务在跑(非 IDLE)返回 false。
         // style:generate_video 工具的可选风格描述,原样透传给 confirmVideo() 里 banana
         // 生图与 buildVideoPrompt 的 styleSuffix;UI 🎬 按钮走这条路径时不带风格,传空串。
-        bool beginVideoCapture(const osg::Vec3d& llaA, const std::string& style = std::string());
+        bool beginVideoCapture(const osg::Vec3d& llaA, const std::string& style = std::string(),
+                               const PhotoCaptureRequest* frozenCapture = nullptr);
         // 记录 B 点。要求当前处于"已录 A、等待 B"阶段,否则返回 false。
         bool captureVideoEnd(const osg::Vec3d& llaB);
         // 所需快照已经就绪后才能取：单首帧模式只等 A，两点穿越还必须等 B。
@@ -357,6 +366,8 @@ namespace earthai
         osgVerse::EarthManipulator* _photoManipulator;
         AICardPanel* _cards;
         std::string _apiKey;
+        std::string _videoModel;
+        MediaRouteCapabilities _routeCapabilities;
         SnapshotGrabber _grabber;
         JobManager _jobs;
         // v0.15-vision 收尾修复:异步生图/生视频 FAILED 时把错误呈现到聊天记录(见 setChatCore
@@ -401,6 +412,7 @@ namespace earthai
 
         void joinWorkerIfAny();
         PhotoCameraContext currentPhotoCameraContext() const;
+        bool rebuildPhotoCaptureContract();
 
         // 照片与视频状态机各自保留原有 early return；public update() 顺序调用两个 helper，
         // 再从单一 epilogue 发布本 tick 的视频 UI 快照。

@@ -508,6 +508,18 @@ namespace earthai
         return prompt;
     }
 
+    inline bool rebuildCinematicImageCaptureContract(
+        const PhotoCaptureRequest& capture,
+        const CinematicGenerationSettings& settings, std::string& prompt,
+        CinematicImageOutputOptions& output)
+    {
+        CinematicGenerationRequest request;
+        if (!makeCinematicGenerationRequest(capture, settings, request)) return false;
+        prompt = buildCinematicImagePrompt(request);
+        output = cinematicImageOutputOptions(request);
+        return true;
+    }
+
     inline const char* cinematicMotionPrompt(CinematicCameraMotion motion)
     {
         switch (motion)
@@ -582,7 +594,36 @@ namespace earthai
         else
         {
             prompt += "\n[AUDIO] No dialogue, narration, music or added sound effects. Keep the "
-                      "output effectively silent; this is a best-effort model instruction.";
+                  "output effectively silent; this is a best-effort model instruction.";
+        }
+        if (request.hasEndAnchor)
+        {
+            const PhotoCameraContext& endCamera = request.endAnchor.camera;
+            prompt += "\n[NON-OVERRIDABLE END FRAME B] Finish exactly at the separately supplied "
+                      "last frame: same B camera position, heading, pitch, roll, projection, field "
+                      "of view, horizon, scale and center-of-frame subject. B geographic anchor: ";
+            prompt += formatLatLonDeg(
+                request.endAnchor.targetLla[0] * kRad2Deg,
+                request.endAnchor.targetLla[1] * kRad2Deg);
+            prompt += ". B camera altitude: ";
+            prompt += photoPromptNumber(endCamera.cameraEyeLla[2] / 1000.0, "%.2f");
+            prompt += " km above WGS84. B viewport: ";
+            prompt += std::to_string(endCamera.viewportWidth);
+            prompt += "x";
+            prompt += std::to_string(endCamera.viewportHeight);
+            if (endCamera.verticalFovValid)
+            {
+                prompt += ". B vertical field of view: ";
+                prompt += photoPromptNumber(endCamera.verticalFovDeg, "%.3f");
+                prompt += " degrees";
+            }
+            if (endCamera.aspectRatioValid)
+            {
+                prompt += ". B aspect ratio: ";
+                prompt += photoPromptNumber(endCamera.aspectRatio, "%.5f");
+            }
+            prompt += ". The A-to-B path and this B frame are mandatory and cannot be overridden "
+                      "by style or user intent.";
         }
         prompt += "\n[CONSISTENCY] Preserve terrain, coastline, buildings, organisms and lighting "
                   "identity across every frame. No morphing, duplicated structures, sliding ground, "

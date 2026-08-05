@@ -92,11 +92,20 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
     bool openVideoModal = false;
     earthai::MediaManager::VideoUiSnapshot video = media
         ? media->videoUiSnapshot() : earthai::MediaManager::VideoUiSnapshot();
-    bool mediaAvailable = media != nullptr;
-    bool providerAvailable = core != nullptr;
+    earthai::MediaRouteCapabilities routeCapabilities = media
+        ? media->routeCapabilities() : earthai::MediaRouteCapabilities();
+    bool mediaControlsVisible = media != nullptr;
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
-    mediaAvailable = mediaAvailable || _auditMediaControlsEnabled;
-    providerAvailable = providerAvailable || _auditMediaControlsEnabled;
+    if (_auditMediaControlsEnabled)
+    {
+        // Audit builds inject an explicit complete capability value. Production never derives
+        // route eligibility from the audit flag or from pointer presence.
+        routeCapabilities.hasRealMediaKey = true;
+        routeCapabilities.hasProviderSession = true;
+        routeCapabilities.lastFrameVideoModel = true;
+        routeCapabilities.deterministicLocalEncoder = true;
+        mediaControlsVisible = true;
+    }
     if (_auditVideoState == AUDIT_VIDEO_WAIT_B)
     {
         video.phase = earthai::VIDEO_WAIT_B;
@@ -402,14 +411,14 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
 
         // openVideoModal 声明在外层函数作用域(见上方),本帧是否需要 OpenPopup
         // (A/B 都就绪、Modal 尚未打开时置真)在下面媒体控制块里赋值。
-        if (core || media)
+        if (mediaControlsVisible)
         {
             // 照片生成入口（Task 8 接线，见 ai_media.h/MediaManager）；🎬 视频（Task 9）三态按钮。
             // 内置中文字体（ChineseFull 范围）不含 emoji glyph，📷/🎬 会渲染成方块（tofu），
             // 因此用文字标签"照片"/"视频"代替。
             ImGui::SameLine();
             bool photoEnabled = !busy && earthai::cinematicSubmissionCanStart(
-                earthai::defaultImageCinematicSettings(), mediaAvailable, providerAvailable);
+                earthai::defaultImageCinematicSettings(), routeCapabilities);
 #if defined(OSGSOL_UI_AUDIT_HOOKS)
             _auditSnapshot.photoEnabled = photoEnabled;
 #endif
@@ -432,8 +441,9 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             // ImGuiHoveredFlags_AllowWhenDisabled 才能在禁用按钮上弹出 tooltip。
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             {
-                    ImGui::SetTooltip(media ? u8"打开时空影像工作台：从当前视角生成当代、历史或深时重建图像"
-                                        : u8"生成照片（需设置 EARTH_AI_KEY）");
+                    ImGui::SetTooltip(routeCapabilities.canGenerateImage()
+                        ? u8"打开时空影像工作台：从当前视角生成当代、历史或深时重建图像"
+                        : u8"生成照片需要已配置的 provider 会话和图像能力");
             }
 
             // 🎬 三态：空闲"视频" -> 已录 A"完成B点"(+取消) -> 两点都录完:自动弹确认 Modal。
@@ -443,7 +453,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             bool videoEnabled = mani && !busy &&
                 (vphase == earthai::VIDEO_IDLE || vphase == earthai::VIDEO_WAIT_B) &&
                 earthai::cinematicSubmissionCanStart(
-                    pointToPoint, mediaAvailable, providerAvailable);
+                    pointToPoint, routeCapabilities);
             ImGui::SameLine();
             if (vphase == earthai::VIDEO_WAIT_B)
             {
@@ -484,8 +494,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             {
                 bool idleEnabled = mani && !busy && vphase == earthai::VIDEO_IDLE &&
                     earthai::cinematicSubmissionCanStart(
-                        earthai::defaultVideoCinematicSettings(), mediaAvailable,
-                        providerAvailable);
+                        earthai::defaultVideoCinematicSettings(), routeCapabilities);
                 if (!idleEnabled) ImGui::BeginDisabled();
                 if (ImGui::Button(u8"视频", ImVec2(52.0f, 0.0f)) && mani)
                 {
@@ -512,9 +521,10 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                         : u8"生成视频（需设置 EARTH_AI_KEY / EARTH_AI_FAKE）");
                 }
 
-                // 无 provider 时只暴露这条确定性、本地的单一入口；不能借由
+                // 没有 provider 视频能力时只暴露这条确定性、本地的单一入口；不能借由
                 // MediaManager 的存在解锁普通图像或付费视频。
-                if (!core && media && mani && !busy &&
+                if (!routeCapabilities.canGenerateProviderVideo() &&
+                    routeCapabilities.canRenderLocalOrbit() && media && mani && !busy &&
                     vphase == earthai::VIDEO_IDLE)
                 {
                     ImGui::SameLine();
@@ -827,8 +837,17 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kTextDim);
             if (_cinematicMotion == earthai::CINEMATIC_MOTION_POINT_TO_POINT)
             {
-                ImGui::TextWrapped(
-                    u8"先冻结当前起点；随后移动地球并点击“完成 B 点”，再确认生成。");
+                if (routeCapabilities.canGenerateProviderVideo() &&
+                    !routeCapabilities.lastFrameVideoModel)
+                {
+                    ImGui::TextWrapped(
+                        u8"当前 Omni 模型不支持首尾帧穿越。请先配置 Veo 首尾帧模型，再记录 A/B 点。");
+                }
+                else
+                {
+                    ImGui::TextWrapped(
+                        u8"先冻结当前起点；随后移动地球并点击“完成 B 点”，再确认生成。");
+                }
             }
             else if (earthai::cinematicMotionRequiresClosureReview(
                          static_cast<earthai::CinematicCameraMotion>(_cinematicMotion)))
@@ -884,7 +903,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             : static_cast<earthai::CinematicCameraMotion>(_cinematicMotion);
         const bool canGenerate = mani && customEraReady && customTimeReady &&
             customStyleReady && earthai::cinematicSubmissionCanStart(
-                availability, mediaAvailable, providerAvailable);
+                availability, routeCapabilities);
         const float actionGap = ImGui::GetStyle().ItemSpacing.x;
         const float actionWidth =
             (ImGui::GetContentRegionAvail().x - actionGap) * 0.5f;

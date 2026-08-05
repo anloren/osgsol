@@ -1073,6 +1073,98 @@ int main(int, char**)
             CHECK(earthai::cinematicSubmissionCanStart(providerVideo, true, true));
             CHECK(!earthai::cinematicSubmissionCanStart(video, false, true));
 
+            earthai::CinematicGenerationSettings pointToPoint = providerVideo;
+            pointToPoint.motion = earthai::CINEMATIC_MOTION_POINT_TO_POINT;
+            CHECK(!earthai::cinematicSubmissionCanStart(pointToPoint, true, true));
+
+            earthai::MediaRouteCapabilities omniCapabilities;
+            omniCapabilities.hasRealMediaKey = true;
+            omniCapabilities.hasProviderSession = true;
+            omniCapabilities.lastFrameVideoModel = false;
+            omniCapabilities.deterministicLocalEncoder = true;
+            CHECK(omniCapabilities.canGenerateImage());
+            CHECK(omniCapabilities.canGenerateProviderVideo());
+            CHECK(!omniCapabilities.canGeneratePointToPoint());
+            CHECK(!earthai::cinematicSubmissionCanStart(
+                pointToPoint, omniCapabilities));
+            CHECK(earthai::cinematicSubmissionCanStart(
+                providerVideo, omniCapabilities));
+
+            earthai::MediaRouteCapabilities veoCapabilities = omniCapabilities;
+            veoCapabilities.lastFrameVideoModel = true;
+            CHECK(veoCapabilities.canGeneratePointToPoint());
+            CHECK(earthai::cinematicSubmissionCanStart(
+                pointToPoint, veoCapabilities));
+
+            earthai::MediaRouteCapabilities fakeOnly;
+            fakeOnly.hasFakeImage = true;
+            fakeOnly.hasFakeMp4 = true;
+            fakeOnly.lastFrameVideoModel = true;
+            fakeOnly.deterministicLocalEncoder = true;
+            CHECK(!fakeOnly.canGenerateImage());
+            CHECK(!fakeOnly.canGenerateProviderVideo());
+            CHECK(!earthai::cinematicSubmissionCanStart(providerImage, fakeOnly));
+            CHECK(!earthai::cinematicSubmissionCanStart(providerVideo, fakeOnly));
+            fakeOnly.hasProviderSession = true;
+            CHECK(fakeOnly.canGenerateImage());
+            CHECK(fakeOnly.canGenerateProviderVideo());
+            CHECK(earthai::cinematicSubmissionCanStart(pointToPoint, fakeOnly));
+            fakeOnly.deterministicLocalEncoder = false;
+            CHECK(!earthai::cinematicSubmissionCanStart(video, fakeOnly));
+            CHECK(earthai::cinematicVideoModelSupportsLastFrame(
+                "veo-3.1-fast-generate-preview"));
+            CHECK(!earthai::cinematicVideoModelSupportsLastFrame(
+                "gemini-omni-flash-preview"));
+
+            earthai::PhotoCaptureRequest recaptured = capture;
+            recaptured.camera.cameraEyeLla[2] += 300.0;
+            std::string originalCinematicPrompt, recapturedCinematicPrompt;
+            earthai::CinematicImageOutputOptions originalCinematicOutput,
+                recapturedCinematicOutput;
+            CHECK(earthai::rebuildCinematicImageCaptureContract(
+                capture, image, originalCinematicPrompt, originalCinematicOutput));
+            CHECK(earthai::rebuildCinematicImageCaptureContract(
+                recaptured, image, recapturedCinematicPrompt,
+                recapturedCinematicOutput));
+            CHECK(recapturedCinematicPrompt.find("1920") != std::string::npos);
+            CHECK(recapturedCinematicPrompt.find("Victoria Harbour") !=
+                  std::string::npos);
+            CHECK(recapturedCinematicPrompt != originalCinematicPrompt);
+            CHECK(recapturedCinematicOutput.aspectRatio ==
+                  originalCinematicOutput.aspectRatio);
+            CHECK(recapturedCinematicOutput.imageSize ==
+                  originalCinematicOutput.imageSize);
+
+            earthai::PhotoCameraContext changedA = capture.camera;
+            changedA.viewportWidth = 1280;
+            CHECK(earthai::cinematicVideoCaptureNeedsRearm(capture, changedA));
+            const earthai::PhotoCaptureRequest rebuiltA =
+                earthai::rebuildCinematicVideoCapture(capture, changedA);
+            CHECK(rebuiltA.targetLla == capture.targetLla);
+            CHECK(rebuiltA.requestId == capture.requestId);
+            CHECK(rebuiltA.camera.viewportWidth == 1280);
+
+            earthai::PhotoCaptureRequest endCapture = capture;
+            endCapture.targetLla[1] += 0.01;
+            earthai::PhotoCameraContext changedB = endCapture.camera;
+            changedB.viewportHeight = 720;
+            CHECK(earthai::cinematicVideoCaptureNeedsRearm(endCapture, changedB));
+            const earthai::PhotoCaptureRequest rebuiltB =
+                earthai::rebuildCinematicVideoCapture(endCapture, changedB);
+            earthai::CinematicGenerationRequest beforeB =
+                earthai::cinematicRequestUnchecked(capture, pointToPoint);
+            beforeB.endAnchor = endCapture;
+            beforeB.hasEndAnchor = true;
+            earthai::CinematicGenerationRequest afterB = beforeB;
+            afterB.endAnchor = rebuiltB;
+            const std::string beforeBPrompt =
+                earthai::buildCinematicVideoPrompt(beforeB);
+            const std::string afterBPrompt =
+                earthai::buildCinematicVideoPrompt(afterB);
+            CHECK(afterBPrompt.find("NON-OVERRIDABLE END FRAME B") !=
+                  std::string::npos);
+            CHECK(afterBPrompt != beforeBPrompt);
+
             // The local one-take route is a product boundary rather than a better
             // provider prompt: users must see its no-fee/no-network contract, and the
             // deterministic branch must remain free of provider calls.
@@ -1091,7 +1183,7 @@ int main(int, char**)
                 "if (core)\n        {\n            std::vector<earthai::ChatEntry> transcript") !=
                   std::string::npos);
             CHECK(cinematicUiSource.find(
-                "if (core || media)\n        {\n            // 照片生成入口") !=
+                "earthai::MediaRouteCapabilities routeCapabilities = media") !=
                   std::string::npos);
             const std::string cinematicMediaSource = readWholeFile(
                 std::string(OSGVERSE_SOURCE_DIR) +
@@ -1392,7 +1484,7 @@ int main(int, char**)
               std::string::npos);
         CHECK(captureBlock.find("photoTargetVisibleInCameraContext") !=
               std::string::npos);
-        CHECK(captureBlock.find("buildPhotoPrompt(_captureRequest)") != std::string::npos);
+        CHECK(captureBlock.find("rebuildPhotoCaptureContract()") != std::string::npos);
         std::cout << "generate_photo independent target tests OK\n";
     }
 

@@ -6,6 +6,7 @@
 // 这个值，避免 UI、相机或上一张生成结果在异步执行期间串入本次任务。
 #include "ai_photo_request.h"
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <string>
 
@@ -99,6 +100,25 @@ namespace earthai
         int durationSeconds = 8;
     };
 
+    // A completed framebuffer may have been rendered after a drag, resize, or projection
+    // update. Keep the target/style/request identity but replace its camera context before
+    // arming another snapshot; neither branch moves the live manipulator.
+    inline bool cinematicVideoCaptureNeedsRearm(
+        const PhotoCaptureRequest& frozen, const PhotoCameraContext& completedFrame)
+    {
+        return !photoCameraContextsMatchFrame(frozen.camera, completedFrame);
+    }
+
+    inline PhotoCaptureRequest rebuildCinematicVideoCapture(
+        const PhotoCaptureRequest& frozen, const PhotoCameraContext& completedFrame)
+    {
+        PhotoRequest input;
+        input.lla = frozen.targetLla;
+        input.style = frozen.style;
+        input.showCameraPlatform = frozen.showCameraPlatform;
+        return makePhotoCaptureRequest(input, completedFrame, frozen.requestId);
+    }
+
     inline CinematicGenerationSettings defaultImageCinematicSettings()
     {
         CinematicGenerationSettings settings;
@@ -157,6 +177,63 @@ namespace earthai
         return motion != CINEMATIC_MOTION_ORBIT_360;
     }
 
+    inline bool cinematicVideoModelSupportsLastFrame(const std::string& model)
+    {
+        std::string normalized = model;
+        for (size_t i = 0; i < normalized.size(); ++i)
+            normalized[i] = static_cast<char>(std::tolower(
+                static_cast<unsigned char>(normalized[i])));
+        // The only implemented provider with a supplied last-frame payload is Veo. Do not
+        // promote an arbitrary model name merely because it claims a similar capability.
+        return normalized.find("veo") != std::string::npos;
+    }
+
+    struct MediaRouteCapabilities
+    {
+        bool hasRealMediaKey = false;
+        bool hasFakeImage = false;
+        bool hasFakeMp4 = false;
+        bool hasProviderSession = false;
+        bool lastFrameVideoModel = false;
+        bool deterministicLocalEncoder = false;
+
+        bool canGenerateImage() const
+        {
+            return hasProviderSession && (hasRealMediaKey || hasFakeImage);
+        }
+
+        bool canGenerateProviderVideo() const
+        {
+            return hasProviderSession && (hasRealMediaKey || hasFakeMp4);
+        }
+
+        bool canGeneratePointToPoint() const
+        {
+            return canGenerateProviderVideo() && lastFrameVideoModel;
+        }
+
+        bool canRenderLocalOrbit() const
+        {
+            return deterministicLocalEncoder;
+        }
+    };
+
+    inline bool cinematicSubmissionCanStart(
+        const CinematicGenerationSettings& settings,
+        const MediaRouteCapabilities& capabilities)
+    {
+        if (settings.mediaKind == CINEMATIC_IMAGE)
+            return settings.motion == CINEMATIC_MOTION_STATIC &&
+                   capabilities.canGenerateImage();
+
+        if (cinematicMotionUsesDeterministicLocalRenderer(settings.motion))
+            return capabilities.canRenderLocalOrbit();
+        if (!cinematicMotionProductionReady(settings.motion)) return false;
+        if (cinematicMotionNeedsEndFrame(settings.motion))
+            return capabilities.canGeneratePointToPoint();
+        return capabilities.canGenerateProviderVideo();
+    }
+
     inline bool cinematicSubmissionCanStart(
         const CinematicGenerationSettings& settings, bool mediaAvailable,
         bool providerAvailable)
@@ -169,6 +246,9 @@ namespace earthai
         const bool localRenderer =
             cinematicMotionUsesDeterministicLocalRenderer(settings.motion);
         if (localRenderer) return true;
+        // A generic provider boolean cannot prove that a two-point request will accept the
+        // separately captured last frame. Leave it unavailable until a route capability says so.
+        if (cinematicMotionNeedsEndFrame(settings.motion)) return false;
         return cinematicMotionProductionReady(settings.motion) && providerAvailable;
     }
 

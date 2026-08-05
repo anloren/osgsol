@@ -727,13 +727,23 @@ namespace earthai
                                const std::string& apiKeyOrEmpty,
                                osgVerse::EarthManipulator* photoManipulator)
         : _viewer(viewer), _photoManipulator(photoManipulator), _cards(cards),
-          _apiKey(apiKeyOrEmpty), _grabber(viewer),
+          _apiKey(apiKeyOrEmpty), _videoModel(videoModel()), _grabber(viewer),
           _state(IDLE), _jobId(0), _photoRequestId(0), _workerJoinable(false),
           _viewRenderUpdateTicks(0),
           _waitSnapshotTicks(0),
           _hudHideCount(0), _captureSceneAdjustmentCount(0),
           _video(new VideoJob), _videoGrabber(viewer)
-    {}
+    {
+        std::string ignored;
+        _routeCapabilities.hasRealMediaKey = !_apiKey.empty();
+        _routeCapabilities.hasFakeImage = fakeImgPath(ignored);
+        _routeCapabilities.hasFakeMp4 = fakeMp4Path(ignored);
+        _routeCapabilities.lastFrameVideoModel =
+            cinematicVideoModelSupportsLastFrame(_videoModel);
+#if defined(__APPLE__)
+        _routeCapabilities.deterministicLocalEncoder = true;
+#endif
+    }
 
     MediaManager::~MediaManager()
     {
@@ -768,6 +778,20 @@ namespace earthai
             _viewer->getCamera()->getViewMatrix(),
             _viewer->getCamera()->getProjectionMatrix(),
             viewportWidth, viewportHeight);
+    }
+
+    bool MediaManager::rebuildPhotoCaptureContract()
+    {
+        if (_photoUsesCinematic)
+            return rebuildCinematicImageCaptureContract(
+                _captureRequest, _pendingCinematicSettings, _prompt,
+                _photoOutputOptions);
+
+        _prompt = buildPhotoPrompt(_captureRequest);
+        const CinematicGenerationRequest request = cinematicRequestUnchecked(
+            _captureRequest, defaultImageCinematicSettings());
+        _photoOutputOptions = cinematicImageOutputOptions(request);
+        return true;
     }
 
     void MediaManager::joinWorkerIfAny()
@@ -850,17 +874,16 @@ namespace earthai
             return picojson::value(err);
         }
 
-        std::string fakeImg;
-        bool hasFake = fakeImgPath(fakeImg);
         // 失败注入钩子(EARTH_AI_FAKE_IMG_FAIL)本身就不需要一张真图——它的全部目的就是
         // "不生成、直接判失败"——因此单独设置它也应该足以让 Job 起步(不强制同时要求
         // EARTH_AI_KEY 或 EARTH_AI_FAKE_IMG),否则这个测试钩子在没有 key/真图的最常见离线
         // 场景下反而用不了,自相矛盾。
         std::string failMsgCheck; bool hasFailHook = fakeImgFailMsg(failMsgCheck);
-        if (_apiKey.empty() && !hasFake && !hasFailHook)
+        if (!_routeCapabilities.canGenerateImage() && !hasFailHook)
         {
             picojson::object err;
-            err["error"] = picojson::value(std::string("no EARTH_AI_KEY and no EARTH_AI_FAKE_IMG configured"));
+            err["error"] = picojson::value(
+                std::string("provider image route is unavailable"));
             return picojson::value(err);
         }
 
@@ -904,6 +927,13 @@ namespace earthai
             picojson::object err;
             err["error"] = picojson::value(
                 std::string("invalid cinematic image settings"));
+            return picojson::value(err);
+        }
+        if (!cinematicSubmissionCanStart(settings, _routeCapabilities))
+        {
+            picojson::object err;
+            err["error"] = picojson::value(
+                std::string("cinematic image provider is unavailable"));
             return picojson::value(err);
         }
         const PhotoCameraContext camera = currentPhotoCameraContext();
@@ -1036,30 +1066,15 @@ namespace earthai
                 _pendingPhotoInput,
                 currentPhotoCameraContext(),
                 _photoRequestId);
-            if (_photoUsesCinematic)
+            if (!rebuildPhotoCaptureContract())
             {
-                CinematicGenerationRequest request;
-                if (!makeCinematicGenerationRequest(
-                        _captureRequest, _pendingCinematicSettings, request))
-                {
-                    _jobs.update(_jobId, AIJob::FAILED, 1.0f, "",
-                                 "invalid cinematic capture context");
-                    if (_cards) _cards->removeJob(_jobId);
-                    if (_chatCore)
-                        _chatCore->addErrorNote(
-                            u8"图像生成失败：当前视角无法冻结");
-                    _state = IDLE;
-                    return;
-                }
-                _prompt = buildCinematicImagePrompt(request);
-                _photoOutputOptions = cinematicImageOutputOptions(request);
-            }
-            else
-            {
-                _prompt = buildPhotoPrompt(_captureRequest);
-                CinematicGenerationRequest request = cinematicRequestUnchecked(
-                    _captureRequest, defaultImageCinematicSettings());
-                _photoOutputOptions = cinematicImageOutputOptions(request);
+                _jobs.update(_jobId, AIJob::FAILED, 1.0f, "",
+                             "invalid cinematic capture context");
+                if (_cards) _cards->removeJob(_jobId);
+                if (_chatCore)
+                    _chatCore->addErrorNote(u8"图像生成失败：当前视角无法冻结");
+                _state = IDLE;
+                return;
             }
             hudHide();
             _grabber.grab(_snapPath);
@@ -1100,7 +1115,18 @@ namespace earthai
                 _captureRequest = makePhotoCaptureRequest(
                     _pendingPhotoInput, completedFrameCamera,
                     _photoRequestId);
-                _prompt = buildPhotoPrompt(_captureRequest);
+                if (!rebuildPhotoCaptureContract())
+                {
+                    hudRestore();
+                    _jobs.update(_jobId, AIJob::FAILED, 1.0f, "",
+                                 "invalid cinematic recapture context");
+                    if (_cards) _cards->removeJob(_jobId);
+                    if (_chatCore)
+                        _chatCore->addErrorNote(
+                            u8"图像生成失败：当前视角无法重建");
+                    _state = IDLE;
+                    return;
+                }
                 _grabber.grab(_snapPath);
                 _waitSnapshotTicks = 0;
                 return;
@@ -1249,7 +1275,9 @@ namespace earthai
         }
     }
 
-    bool MediaManager::beginVideoCapture(const osg::Vec3d& llaA, const std::string& style)
+    bool MediaManager::beginVideoCapture(
+        const osg::Vec3d& llaA, const std::string& style,
+        const PhotoCaptureRequest* frozenCapture)
     {
         if (_video->phase != VideoJob::IDLE)
         {
@@ -1261,6 +1289,18 @@ namespace earthai
         std::string dir = outDir();
         _video->llaA = llaA;
         _video->style = style;
+        if (frozenCapture)
+            _video->anchorCapture = *frozenCapture;
+        else
+        {
+            PhotoRequest input;
+            input.lla = llaA;
+            input.style = style;
+            _video->anchorCapture = makePhotoCaptureRequest(
+                input, currentPhotoCameraContext(),
+                static_cast<long long>(time(NULL)) * 100000LL +
+                    (++_cinematicRequestSerial % 100000LL));
+        }
         _video->snapPathA = dir + "/tourA_" + std::to_string(epoch) + ".png";
         // 用户反馈 1:视频 A 点抓帧同样要隐藏 HUD——hudRestore() 在 updateVideoInternal()
         // 的 WAIT_A 分支里,该点快照 ready()/超时判定出结果的那一刻立即调用。
@@ -1281,6 +1321,9 @@ namespace earthai
             normalizedCinematicSubmissionSettings(settings);
         if (normalizedSettings.mediaKind != CINEMATIC_VIDEO ||
             normalizedSettings.motion == CINEMATIC_MOTION_STATIC)
+            return false;
+        if (!cinematicSubmissionCanStart(
+                normalizedSettings, _routeCapabilities))
             return false;
 
         const PhotoCameraContext camera = currentPhotoCameraContext();
@@ -1338,13 +1381,13 @@ namespace earthai
                 return false;
         }
 
-        if (!beginVideoCapture(camera.cameraEyeLla, std::string()))
+        if (!beginVideoCapture(
+                camera.cameraEyeLla, std::string(), &capture))
             return false;
         _video->cinematic = true;
         _video->singleAnchor =
             !cinematicMotionNeedsEndFrame(normalizedSettings.motion);
         _video->cinematicSettings = normalizedSettings;
-        _video->anchorCapture = capture;
         _video->orbitPlan = orbitPlan;
         return true;
     }
@@ -1374,19 +1417,14 @@ namespace earthai
         long long epoch = (long long)time(nullptr);
         std::string dir = outDir();
         _video->llaB = llaB;
-        if (_video->cinematic)
-        {
-            const PhotoCameraContext camera = currentPhotoCameraContext();
-            PhotoRequest input;
-            input.lla = camera.viewTargetValid
-                ? camera.viewTargetLla : llaB;
-            input.lla[2] = 0.0;
-            const long long requestId =
-                static_cast<long long>(time(NULL)) * 100000LL +
-                (++_cinematicRequestSerial % 100000LL);
-            _video->endCapture = makePhotoCaptureRequest(
-                input, camera, requestId);
-        }
+        const PhotoCameraContext camera = currentPhotoCameraContext();
+        PhotoRequest input;
+        input.lla = camera.viewTargetValid ? camera.viewTargetLla : llaB;
+        input.lla[2] = 0.0;
+        input.style = _video->style;
+        _video->endCapture = makePhotoCaptureRequest(
+            input, camera, static_cast<long long>(time(NULL)) * 100000LL +
+                (++_cinematicRequestSerial % 100000LL));
         _video->snapPathB = dir + "/tourB_" + std::to_string(epoch) + ".png";
         // 用户反馈 1:B 点抓帧同样要隐藏 HUD——hudRestore() 在 updateVideoInternal() 的
         // CAPTURING_B 分支里,该点快照 ready()/超时判定出结果的那一刻立即调用。
@@ -1440,18 +1478,26 @@ namespace earthai
             return picojson::value(err);
         }
 
-        std::string fakeMp4;
-        bool hasFake = fakeMp4Path(fakeMp4);
         const bool deterministicOrbit = _video->cinematic &&
             _video->cinematicSettings.motion == CINEMATIC_MOTION_ORBIT_360 &&
             !_video->orbitPlan.frames.empty();
-        if (_apiKey.empty() && !hasFake && !deterministicOrbit)
+        const bool pointToPoint = !_video->singleAnchor;
+        const bool providerRouteAvailable = pointToPoint
+            ? _routeCapabilities.canGeneratePointToPoint()
+            : _routeCapabilities.canGenerateProviderVideo();
+        if ((!deterministicOrbit && !providerRouteAvailable) ||
+            (deterministicOrbit && !_routeCapabilities.canRenderLocalOrbit()))
         {
             picojson::object err;
-            err["error"] = picojson::value(std::string("no EARTH_AI_KEY and no EARTH_AI_FAKE_MP4 configured"));
+            err["error"] = picojson::value(pointToPoint
+                ? std::string("two-point video requires a Veo last-frame-capable model")
+                : std::string("provider video route is unavailable"));
             applyVideoOwnerCommandResult(false);
             return picojson::value(err);
         }
+
+        std::string fakeMp4;
+        const bool hasFake = fakeMp4Path(fakeMp4);
 
         long long epoch = (long long)time(nullptr);
         _video->mp4Path = outDir() + "/tour_" + std::to_string(epoch) + ".mp4";
@@ -1544,7 +1590,7 @@ namespace earthai
                 }
             }
             std::string apiKey = _apiKey;
-            std::string model = videoModel();
+            std::string model = _videoModel;
             int jobId = _video->jobId;
             JobManager* jobsPtr = &_jobs;
             std::string dir = outDir();
@@ -1745,6 +1791,17 @@ namespace earthai
             }
             // A 点快照已稳定:抓帧已完成,立即恢复 HUD(不必等到 B 点/确认/生成全部结束)。
             hudRestore();
+            const PhotoCameraContext completedFrameCamera = currentPhotoCameraContext();
+            if (cinematicVideoCaptureNeedsRearm(
+                    v.anchorCapture, completedFrameCamera))
+            {
+                v.anchorCapture = rebuildCinematicVideoCapture(
+                    v.anchorCapture, completedFrameCamera);
+                hudHide();
+                _videoGrabber.grab(v.snapPathA);
+                v.waitSnapshotTicks = 0;
+                return;
+            }
             _videoGrabber.cropToViewport(v.snapPathA);   // 裁掉未渲染边条
             if (v.cinematic && v.singleAnchor)
             {
@@ -1792,6 +1849,17 @@ namespace earthai
             }
             // B 点快照就绪:抓帧已完成,立即恢复 HUD。
             hudRestore();
+            const PhotoCameraContext completedFrameCamera = currentPhotoCameraContext();
+            if (cinematicVideoCaptureNeedsRearm(
+                    v.endCapture, completedFrameCamera))
+            {
+                v.endCapture = rebuildCinematicVideoCapture(
+                    v.endCapture, completedFrameCamera);
+                hudHide();
+                _videoGrabber.grab(v.snapPathB);
+                v.waitSnapshotTicks = 0;
+                return;
+            }
             _videoGrabber.cropToViewport(v.snapPathB);   // 裁掉未渲染边条
             // 生成视频提示词预览(用户反馈 3:改用 buildVideoPrompt——geo 上下文 + A->B 轨迹 +
             // 电影运镜语言,取代旧的纯 buildMotionPrompt 轨迹句子;buildVideoPrompt 内部仍会
