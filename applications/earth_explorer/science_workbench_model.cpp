@@ -1,4 +1,5 @@
 #include "science_workbench_model.h"
+#include "science_temporal_adapter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -70,6 +71,21 @@ bool validTimeSelection(const earthscience::ScienceTimeSelection& time)
 }
 }
 
+void ScienceWorkbenchModel::configureTemporalSources(
+    const std::vector<earthscience::ScienceSourceDescriptor>& sources)
+{
+    for (const earthscience::ScienceSourceDescriptor& source : sources)
+    {
+        std::unique_ptr<earthproject::IEarthTemporalAdapter> adapter =
+            makeScienceTemporalAdapter(source);
+        if (!adapter) continue;
+        std::string error;
+        _temporalController.registerAdapter(std::move(adapter), error);
+    }
+    syncTemporalView();
+    changed();
+}
+
 void ScienceWorkbenchModel::updateLiveCameraContext(
     const earthscience::ScienceGeometry& mapCenterPoint,
     const earthscience::ScienceGeometry& visibleBounds)
@@ -107,6 +123,8 @@ bool ScienceWorkbenchModel::dispatch(
             return fail("workbench-run-active", error);
         _view.draft.sourceId = action.sourceId;
         _view.selectedMethodId.clear();
+        _activeTemporalToken = {};
+        syncTemporalView();
         refreshDraftPhase();
         changed();
         return true;
@@ -137,21 +155,26 @@ bool ScienceWorkbenchModel::dispatch(
         return true;
 
     case ScienceWorkbenchActionKind::SetYearRange:
+    {
         if (running(_view.phase))
             return fail("workbench-run-active", error);
         if (action.firstYear <= 0 || action.lastYear <= 0 ||
             action.firstYear > action.lastYear ||
             action.lastYear - action.firstYear > 500)
             return fail("workbench-year-range-invalid", error);
-        _view.draft.time.mode = earthscience::ScienceTimeMode::ExplicitYears;
-        _view.draft.time.explicitYears.clear();
+        earthscience::GeoTemporalQuery candidate = _view.draft;
+        candidate.time.mode = earthscience::ScienceTimeMode::ExplicitYears;
+        candidate.time.explicitYears.clear();
         for (int year = action.firstYear; year <= action.lastYear; ++year)
-            _view.draft.time.explicitYears.push_back(year);
-        _view.draft.analysis.baselineYear = action.firstYear;
-        _view.draft.analysis.comparisonYear = action.lastYear;
+            candidate.time.explicitYears.push_back(year);
+        candidate.analysis.baselineYear = action.firstYear;
+        candidate.analysis.comparisonYear = action.lastYear;
+        if (!updateTemporalRequest(candidate, &error)) return false;
+        _view.draft = std::move(candidate);
         refreshDraftPhase();
         changed();
         return true;
+    }
 
     case ScienceWorkbenchActionKind::SetMethod:
         _view.selectedMethodId = action.methodId;
@@ -167,6 +190,11 @@ bool ScienceWorkbenchModel::dispatch(
             return fail("workbench-time-required", error);
         if (running(_view.phase))
             return fail("workbench-run-active", error);
+        if (!updateTemporalRequest(_view.draft, &error)) return false;
+        if (_activeTemporalToken &&
+            !_temporalController.beginLoading(_activeTemporalToken))
+            return fail("workbench-temporal-request-stale", error);
+        syncTemporalView();
         _pendingSubmission = _view.draft;
         _view.phase = ScienceWorkbenchPhase::Queued;
         _view.progress = {};
@@ -180,6 +208,9 @@ bool ScienceWorkbenchModel::dispatch(
         if (!running(_view.phase))
             return fail("workbench-no-active-run", error);
         _pendingSubmission.reset();
+        if (_activeTemporalToken)
+            _temporalController.markCancelled(_activeTemporalToken);
+        syncTemporalView();
         _view.phase = ScienceWorkbenchPhase::Cancelled;
         _view.progress.stage = earthscience::ScienceProgressStage::Cancelled;
         changed();
@@ -264,6 +295,7 @@ void ScienceWorkbenchModel::configureDraft(
         _view.target.requested;
     _view.draft = draft;
     if (_view.target.locked) _view.draft.geometry = lockedGeometry;
+    updateTemporalRequest(_view.draft);
     refreshDraftPhase();
     changed();
 }
@@ -319,9 +351,13 @@ void ScienceWorkbenchModel::applyJobSnapshot(
     switch (snapshot.state)
     {
     case earthscience::ScienceJobState::Queued:
+        if (_activeTemporalToken)
+            _temporalController.beginLoading(_activeTemporalToken);
         _view.phase = ScienceWorkbenchPhase::Queued;
         break;
     case earthscience::ScienceJobState::Fetching:
+        if (_activeTemporalToken)
+            _temporalController.beginLoading(_activeTemporalToken);
         if (_view.phase != ScienceWorkbenchPhase::Analyzing)
             _view.phase = ScienceWorkbenchPhase::Fetching;
         break;
@@ -329,11 +365,16 @@ void ScienceWorkbenchModel::applyJobSnapshot(
         _view.phase = ScienceWorkbenchPhase::Ready;
         break;
     case earthscience::ScienceJobState::Failed:
+        if (_activeTemporalToken)
+            _temporalController.markFailed(
+                _activeTemporalToken, snapshot.message);
         _view.phase = ScienceWorkbenchPhase::Failed;
         _view.errorCode = "workbench-run-failed";
         _view.errorMessage = snapshot.message;
         break;
     case earthscience::ScienceJobState::Cancelled:
+        if (_activeTemporalToken)
+            _temporalController.markCancelled(_activeTemporalToken);
         _view.phase = ScienceWorkbenchPhase::Cancelled;
         _view.errorCode = "workbench-run-cancelled";
         _view.errorMessage = snapshot.message;
@@ -353,6 +394,7 @@ void ScienceWorkbenchModel::applyJobSnapshot(
     else if (snapshot.lastSuccessfulArtifact &&
              !hasArtifact(snapshot.lastSuccessfulArtifact->artifactId))
         applyArtifact(snapshot.lastSuccessfulArtifact);
+    syncTemporalView();
     changed();
 }
 
@@ -369,6 +411,20 @@ void ScienceWorkbenchModel::applyArtifact(
     _view.phase = ScienceWorkbenchPhase::Ready;
     _view.errorCode.clear();
     _view.errorMessage.clear();
+
+    const earthproject::EarthTemporalSelection appliedTime =
+        earthTemporalSelectionForArtifact(*artifactValue);
+    const earthproject::EarthTemporalState* temporalState =
+        _temporalController.state(artifactValue->query.sourceId);
+    if (temporalState && temporalState->hasRequested &&
+        sameTemporalSelection(
+            temporalState->requested,
+            earthTemporalSelectionForQuery(artifactValue->query)))
+    {
+        const earthproject::TemporalRequestToken token = {
+            artifactValue->query.sourceId, temporalState->generation};
+        _temporalController.markApplied(token, appliedTime);
+    }
 
     _view.target.requested = artifactValue->query.geometry;
     _view.target.requestedCenter = geometryCenter(
@@ -388,6 +444,7 @@ void ScienceWorkbenchModel::applyArtifact(
             _view.target.hasActualCoverage = true;
         }
     }
+    syncTemporalView();
     changed();
 }
 
@@ -421,10 +478,47 @@ void ScienceWorkbenchModel::refreshDraftPhase()
     if (!_view.target.locked)
         _view.phase = ScienceWorkbenchPhase::Draft;
     else if (!_view.draft.sourceId.empty() &&
-             !_view.draft.time.explicitYears.empty())
+             validTimeSelection(_view.draft.time))
         _view.phase = ScienceWorkbenchPhase::ReadyToRun;
     else
         _view.phase = ScienceWorkbenchPhase::TargetLocked;
+}
+
+bool ScienceWorkbenchModel::updateTemporalRequest(
+    const earthscience::GeoTemporalQuery& query,
+    std::string* errorCode)
+{
+    if (!_temporalController.state(query.sourceId))
+    {
+        _activeTemporalToken = {};
+        syncTemporalView();
+        return true;
+    }
+    const earthproject::TemporalRequestResult result =
+        _temporalController.request(
+            query.sourceId, earthTemporalSelectionForQuery(query));
+    if (!result.ok)
+    {
+        if (errorCode) *errorCode = result.errorCode;
+        syncTemporalView();
+        return false;
+    }
+    _activeTemporalToken = result.token;
+    syncTemporalView();
+    return true;
+}
+
+void ScienceWorkbenchModel::syncTemporalView()
+{
+    const earthproject::EarthTemporalState* state =
+        _temporalController.state(_view.draft.sourceId);
+    if (state)
+        _view.temporal = *state;
+    else
+    {
+        _view.temporal = {};
+        _view.temporal.adapterId = _view.draft.sourceId;
+    }
 }
 
 void ScienceWorkbenchModel::lockTarget(

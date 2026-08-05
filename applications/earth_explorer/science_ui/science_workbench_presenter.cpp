@@ -126,6 +126,12 @@ struct SnapshotView
     double completedUnits = 0.0;
     double totalUnits = 0.0;
     std::string progressStage;
+    std::string temporalLoadState;
+    std::string requestedTime;
+    std::string availableTime;
+    std::string appliedTime;
+    bool temporalLoading = false;
+    bool temporalHasApplied = false;
     std::vector<SourceView> sources;
     ArtifactView artifact;
     EvidenceView evidence;
@@ -167,6 +173,41 @@ std::vector<std::string> stringArrayField(
     for (const picojson::value& item : value->get<picojson::array>())
         if (item.is<std::string>()) output.push_back(item.get<std::string>());
     return output;
+}
+
+std::string temporalSelectionLabel(const picojson::object& selection)
+{
+    const std::string kind = stringField(selection, "kind");
+    const std::vector<std::string> values =
+        stringArrayField(selection, "values");
+    if (!values.empty())
+    {
+        if (values.size() == 1u) return values.front();
+        return values.front() + "–" + values.back() + "（" +
+            std::to_string(values.size()) + " 个值）";
+    }
+    const std::string start = stringField(selection, "startValue");
+    const std::string end = stringField(selection, "endValue");
+    if (kind == "live-clock")
+        return start.empty() ? "实时" : "实时 · " + start;
+    if (!start.empty() && !end.empty()) return start + " → " + end;
+    return start;
+}
+
+std::string temporalAvailabilityLabel(const picojson::object& availability)
+{
+    if (!boolField(availability, "known")) return "由数据源动态确定";
+    const std::vector<std::string> values =
+        stringArrayField(availability, "values");
+    if (!values.empty())
+    {
+        if (values.size() == 1u) return values.front();
+        return values.front() + "–" + values.back();
+    }
+    const std::string first = stringField(availability, "firstValue");
+    const std::string last = stringField(availability, "lastValue");
+    if (!first.empty() && !last.empty()) return first + " → " + last;
+    return first.empty() ? last : first;
 }
 
 bool geometryField(const picojson::object& object, const char* key,
@@ -234,6 +275,29 @@ bool parseSnapshot(const std::string& json, SnapshotView& output,
     output.activeArtifactId = stringField(root, "activeArtifactId");
     output.selectedMetricId = stringField(root, "selectedMetricId");
     output.selectedYear = static_cast<int>(numberField(root, "selectedYear"));
+
+    if (const picojson::value* temporalValue = field(root, "temporal");
+        temporalValue && temporalValue->is<picojson::object>())
+    {
+        const picojson::object& temporal =
+            temporalValue->get<picojson::object>();
+        output.temporalLoadState = stringField(temporal, "loadState");
+        output.temporalLoading = boolField(temporal, "loading");
+        output.temporalHasApplied = boolField(temporal, "hasApplied");
+        if (const picojson::value* requested = field(temporal, "requested");
+            requested && requested->is<picojson::object>())
+            output.requestedTime = temporalSelectionLabel(
+                requested->get<picojson::object>());
+        if (const picojson::value* availability =
+                field(temporal, "availability");
+            availability && availability->is<picojson::object>())
+            output.availableTime = temporalAvailabilityLabel(
+                availability->get<picojson::object>());
+        if (const picojson::value* applied = field(temporal, "applied");
+            applied && applied->is<picojson::object>())
+            output.appliedTime = temporalSelectionLabel(
+                applied->get<picojson::object>());
+    }
 
     if (const picojson::value* draftValue = field(root, "draft");
         draftValue && draftValue->is<picojson::object>())
@@ -1537,6 +1601,22 @@ void ScienceWorkbenchPresenter::onRmlFrame(Rml::Context& context)
     _impl->setText("year-range-summary", displayedYearCount > 0
         ? "共 " + std::to_string(displayedYearCount) + " 个完整年度"
         : "请设置有效的开始与结束年份");
+    _impl->setText("requested-time", view.requestedTime.empty()
+        ? "尚未选择" : view.requestedTime);
+    _impl->setText("available-time", view.availableTime.empty()
+        ? "未声明" : view.availableTime);
+    if (view.temporalLoading)
+        _impl->setText("loading-time", view.requestedTime.empty()
+            ? "正在读取" : "正在读取 " + view.requestedTime);
+    else if (view.temporalLoadState == "failed")
+        _impl->setText("loading-time", "读取失败，已应用结果保持不变");
+    else if (view.temporalLoadState == "cancelled")
+        _impl->setText("loading-time", "已取消，已应用结果保持不变");
+    else
+        _impl->setText("loading-time", "未在读取");
+    _impl->setText("applied-time",
+        view.temporalHasApplied && !view.appliedTime.empty()
+            ? view.appliedTime : "尚无结果");
 
     std::string runLabel = "开始分析";
     if (selected)

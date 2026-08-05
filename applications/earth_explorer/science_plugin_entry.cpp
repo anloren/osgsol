@@ -82,6 +82,7 @@ namespace
             service.reset(new earthscience::ScienceQueryService(
                 std::move(registry)));
             layer = new SciencePreviewLayer(service.get());
+            workbench.configureTemporalSources(service->listSources());
 
             std::string workbenchError;
             ScienceWorkbenchAction source;

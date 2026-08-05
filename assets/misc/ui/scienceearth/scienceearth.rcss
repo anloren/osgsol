@@ -242,6 +242,41 @@ select selectbox option.disabled {
 .year-field input { width: 100%; }
 .range-connector { width: 18px; height: 1px; margin: 0 7px 17px 7px; background: #38c3df; }
 .range-summary { margin-top: 9px; color: #a7aaa6; font-size: 12px; }
+.temporal-status {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px #3b302e;
+}
+.temporal-status div {
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 24px;
+    align-items: flex-start;
+    justify-content: space-between;
+}
+.temporal-status span {
+    width: 72px;
+    color: #7f8684;
+    font-size: 11px;
+}
+.temporal-status strong {
+    display: block;
+    box-sizing: border-box;
+    flex: 1;
+    min-width: 0;
+    color: #e5e4df;
+    font-size: 12px;
+    font-weight: 400;
+    text-align: right;
+    white-space: normal;
+    word-break: break-word;
+}
+#loading-time { color: #38c3df; }
+#applied-time { color: #5cb86a; }
 .field-error, .operation-error { min-height: 0; margin-top: 7px; color: #ef6a62; }
 
 .disclosure-toggle { width: 100%; color: #a7aaa6; }

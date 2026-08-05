@@ -71,10 +71,30 @@ model, isolated science plugin, or EarthContextHub.
 
 ## Slice 3: shared temporal contract
 
-- [ ] Add a renderer-independent temporal adapter interface.
-- [ ] Pilot AlphaEarth, Sentinel-2, and ERA5/ERA5-Land through one controller.
-- [ ] Keep live data in the same contract with an explicit live clock mode.
-- [ ] Show requested time, available time, loading, and applied time distinctly.
+- [x] Add a renderer-independent temporal adapter interface.
+- [x] Pilot AlphaEarth, Sentinel-2, and ERA5/ERA5-Land through one controller.
+- [x] Keep live data in the same contract with an explicit live clock mode.
+- [x] Show requested time, available time, loading, and applied time distinctly.
+
+### Slice 3 verification record
+
+- `EarthTemporalController` owns bounded, renderer-free adapter state and keeps
+  availability, requested selection, load state, and applied selection as
+  separate values. Every asynchronous transition carries a generation token,
+  so an older completion cannot replace a newer request.
+- AlphaEarth, Sentinel-2, ERA5-Land, and ERA5 Agricultural Climate adapters are
+  created from the runtime provider descriptors. Sentinel-2 keeps its requested
+  search interval separate from the actual scene acquisition instant.
+- Live sources use the same selection and loading lifecycle with an explicit
+  `live-clock` mode; no implicit wall-clock string is treated as fixed data.
+- The Science workbench protocol now publishes the temporal state into the
+  existing bounded `scienceWorkbench` AI context. Its UI renders four named
+  rows: requested time, source availability, loading state, and map-applied
+  time. Selecting a new year never relabels the previous result as applied.
+- Science-enabled EarthExplorer, the real science plugin, and the headless
+  RmlUi presenter build. Science-disabled EarthExplorer also builds without the
+  plugin. All 79 non-window offline tests pass, including stale-completion,
+  bounded-metadata, protocol, model, and UI runtime coverage.
 
 ## Slice 4: processing registry and optional data engines
 

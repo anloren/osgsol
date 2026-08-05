@@ -121,7 +121,8 @@ int main()
         "method-options", "cost-disclosure", "run-footer",
         "progress-footer", "unlocked-target-actions",
         "unlocked-target-action", "locked-target-actions",
-        "locked-target-action"};
+        "locked-target-action", "temporal-status",
+        "requested-time", "available-time", "loading-time", "applied-time"};
     for (const std::string& id : requiredIds)
         expect(rml.find("id=\"" + id + "\"") != std::string::npos,
                "required connected-workflow element ID is missing");
@@ -159,6 +160,13 @@ int main()
                style.find(".range-strip") == std::string::npos,
            "time range must use an explicit year summary, never a decorative"
            " bar that looks like an inoperable slider");
+    expect(style.find(".temporal-status") != std::string::npos &&
+               presenter.find("requested-time") != std::string::npos &&
+               presenter.find("available-time") != std::string::npos &&
+               presenter.find("loading-time") != std::string::npos &&
+               presenter.find("applied-time") != std::string::npos,
+           "requested, available, loading, and applied time need four"
+           " explicit connected UI readouts");
 
     const std::size_t disclosure = rml.find("id=\"cost-disclosure\"");
     expect(disclosure != std::string::npos &&

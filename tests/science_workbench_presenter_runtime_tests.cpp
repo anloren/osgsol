@@ -238,6 +238,16 @@ int main()
     expect(inner(composer, "analysis-name").find(
                "ERA5 Agricultural Climate") != std::string::npos,
            "initial source description must match the model source");
+    expect(inner(composer, "requested-time").find("2017") !=
+               std::string::npos &&
+               inner(composer, "available-time").find("1940") !=
+               std::string::npos,
+           "initial workbench must separate requested and available time");
+    expect(inner(composer, "loading-time").find("未在读取") !=
+               std::string::npos &&
+               inner(composer, "applied-time").find("尚无结果") !=
+               std::string::npos,
+           "a selected draft must not masquerade as loading or applied");
     expect(!visible(composer, "science-help-copy"),
            "science help must start collapsed");
     click(*context, composer, "science-help");
@@ -379,6 +389,9 @@ int main()
            error);
     presenter.onRmlFrame(*context);
     context->Update();
+    expect(inner(composer, "applied-time").find("2017") !=
+               std::string::npos,
+           "a completed artifact must publish its applied time");
     expect(drain(presenter).empty(),
            "opening an artifact must not dispatch a metric change recursively");
 

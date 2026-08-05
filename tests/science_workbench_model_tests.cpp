@@ -39,6 +39,16 @@ ScienceWorkbenchAction action(ScienceWorkbenchActionKind kind)
     return value;
 }
 
+earthscience::ScienceSourceDescriptor temporalSource(
+    const std::string& id, int firstYear, int lastYear)
+{
+    earthscience::ScienceSourceDescriptor value;
+    value.id = id;
+    value.firstYear = firstYear;
+    value.lastYear = lastYear;
+    return value;
+}
+
 void makeRunnable(ScienceWorkbenchModel& model)
 {
     ScienceWorkbenchAction source = action(
@@ -258,6 +268,102 @@ void testReadyAnalysisOpensItsReportInsteadOfOldPreview()
            "completed analysis must open its report instead of the retained"
            " map preview");
 }
+
+void testTemporalStateSeparatesRequestedLoadingAndAppliedTime()
+{
+    ScienceWorkbenchModel model;
+    model.configureTemporalSources({
+        temporalSource("alphaearth-foundations", 2017, 2025),
+        temporalSource("sentinel-2-l2a", 2015, 2026),
+        temporalSource("era5-land-surface-history", 1940, 2025),
+        temporalSource("era5-agricultural-climate", 1940, 2025),
+    });
+    std::string error;
+    ScienceWorkbenchAction source = action(
+        ScienceWorkbenchActionKind::SelectSource);
+    source.sourceId = "alphaearth-foundations";
+    expect(model.dispatch(source, error), "temporal source must select");
+    model.updateLiveCameraContext(
+        point(22.3, 114.17), bounds(113.8, 22.0, 114.5, 22.6));
+    expect(model.dispatch(
+        action(ScienceWorkbenchActionKind::LockMapCenter), error),
+        "temporal target must lock");
+    ScienceWorkbenchAction yearRange = action(
+        ScienceWorkbenchActionKind::SetYearRange);
+    yearRange.firstYear = 2017;
+    yearRange.lastYear = 2025;
+    expect(model.dispatch(yearRange, error), "temporal years must select");
+
+    const earthproject::EarthTemporalState& selected =
+        model.viewModel().temporal;
+    expect(selected.availability.firstValue == "2017" &&
+               selected.availability.lastValue == "2025",
+           "source availability must be distinct from selection");
+    expect(selected.hasRequested && selected.requested.values.front() ==
+               "2017" && selected.requested.values.back() == "2025",
+           "requested range must be visible before loading");
+    expect(!selected.hasApplied,
+           "selection alone must not claim the time is applied");
+
+    expect(model.dispatch(action(ScienceWorkbenchActionKind::Run), error),
+           "temporal query must run");
+    expect(model.viewModel().temporal.loadState ==
+               earthproject::TemporalLoadState::Loading,
+           "run must expose loading state");
+
+    earthscience::ScienceJobSnapshot snapshot;
+    snapshot.jobId = 44;
+    snapshot.state = earthscience::ScienceJobState::Ready;
+    snapshot.progress.stage = earthscience::ScienceProgressStage::Ready;
+    auto ready = std::make_shared<earthscience::ScienceArtifact>();
+    ready->artifactId = "alphaearth-temporal-44";
+    ready->generation = snapshot.jobId;
+    ready->query = *model.takePendingSubmission();
+    snapshot.lastSuccessfulAnalysisArtifact = ready;
+    model.applyJobSnapshot(snapshot);
+    expect(model.viewModel().temporal.loadState ==
+               earthproject::TemporalLoadState::Applied,
+           "ready artifact must expose applied state");
+    expect(model.viewModel().temporal.applied.values.front() == "2017" &&
+               model.viewModel().temporal.applied.values.back() == "2025",
+           "applied time must come from the successful artifact");
+
+    yearRange.firstYear = 2024;
+    yearRange.lastYear = 2024;
+    expect(model.dispatch(yearRange, error), "new requested year must select");
+    expect(model.viewModel().temporal.requested.values.front() == "2024",
+           "new request must update immediately");
+    expect(model.viewModel().temporal.applied.values.front() == "2017",
+           "new request must not relabel the old map result as applied");
+}
+
+void testUnavailableYearDoesNotPolluteWorkbenchDraft()
+{
+    ScienceWorkbenchModel model;
+    model.configureTemporalSources({
+        temporalSource("alphaearth-foundations", 2017, 2025)});
+    std::string error;
+    ScienceWorkbenchAction source = action(
+        ScienceWorkbenchActionKind::SelectSource);
+    source.sourceId = "alphaearth-foundations";
+    expect(model.dispatch(source, error), "bounded source must select");
+    ScienceWorkbenchAction valid = action(
+        ScienceWorkbenchActionKind::SetYearRange);
+    valid.firstYear = 2025;
+    valid.lastYear = 2025;
+    expect(model.dispatch(valid, error), "available year must select");
+
+    ScienceWorkbenchAction invalid = valid;
+    invalid.firstYear = 2026;
+    invalid.lastYear = 2026;
+    expect(!model.dispatch(invalid, error),
+           "unavailable year must be rejected by the shared adapter");
+    expect(error == "temporal-value-unavailable",
+           "unavailable year needs a stable temporal error");
+    expect(model.viewModel().draft.time.explicitYears.size() == 1u &&
+               model.viewModel().draft.time.explicitYears[0] == 2025,
+           "rejected time must not mutate the workbench draft");
+}
 }
 
 int main()
@@ -269,6 +375,8 @@ int main()
     testReportLifecycleDoesNotDeleteOnCloseOrMinimize();
     testFailureRetainsPreviousReadyArtifact();
     testReadyAnalysisOpensItsReportInsteadOfOldPreview();
+    testTemporalStateSeparatesRequestedLoadingAndAppliedTime();
+    testUnavailableYearDoesNotPolluteWorkbenchDraft();
     std::cout << "ScienceWorkbenchModel tests passed" << std::endl;
     return 0;
 }

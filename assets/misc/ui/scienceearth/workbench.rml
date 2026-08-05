@@ -73,6 +73,12 @@
                 </div>
             </div>
             <p id="year-range-summary" class="range-summary">共 9 个完整年度</p>
+            <div id="temporal-status" class="temporal-status">
+                <div><span>已请求</span><strong id="requested-time">尚未选择</strong></div>
+                <div><span>数据可用</span><strong id="available-time">正在读取数据源范围</strong></div>
+                <div><span>载入状态</span><strong id="loading-time">未在读取</strong></div>
+                <div><span>地图已应用</span><strong id="applied-time">尚无结果</strong></div>
+            </div>
             <p id="time-error" class="field-error"></p>
         </section>
 

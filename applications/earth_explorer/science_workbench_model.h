@@ -1,6 +1,8 @@
 #ifndef EARTH_SCIENCE_WORKBENCH_MODEL_H
 #define EARTH_SCIENCE_WORKBENCH_MODEL_H
 
+#include "project/earth_temporal_controller.h"
+
 #include <ScienceQueryTypes.h>
 
 #include <cstdint>
@@ -50,6 +52,7 @@ struct ScienceWorkbenchViewModel
     std::vector<std::string> minimizedArtifactIds;
     std::string errorCode;
     std::string errorMessage;
+    earthproject::EarthTemporalState temporal;
 };
 
 enum class ScienceWorkbenchActionKind
@@ -89,6 +92,8 @@ struct ScienceWorkbenchAction
 class ScienceWorkbenchModel
 {
 public:
+    void configureTemporalSources(
+        const std::vector<earthscience::ScienceSourceDescriptor>& sources);
     void updateLiveCameraContext(
         const earthscience::ScienceGeometry& mapCenterPoint,
         const earthscience::ScienceGeometry& visibleBounds);
@@ -111,6 +116,10 @@ private:
     void refreshDraftPhase();
     void lockTarget(const earthscience::ScienceGeometry& geometry);
     void removeMinimized(const std::string& artifactId);
+    bool updateTemporalRequest(
+        const earthscience::GeoTemporalQuery& query,
+        std::string* errorCode = nullptr);
+    void syncTemporalView();
 
     ScienceWorkbenchViewModel _view;
     earthscience::ScienceGeometry _liveMapCenter;
@@ -120,6 +129,8 @@ private:
     std::optional<earthscience::GeoTemporalQuery> _pendingSubmission;
     std::unordered_map<std::string,
         std::shared_ptr<const earthscience::ScienceArtifact>> _artifacts;
+    earthproject::EarthTemporalController _temporalController;
+    earthproject::TemporalRequestToken _activeTemporalToken;
 };
 
 #endif

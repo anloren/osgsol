@@ -51,7 +51,13 @@ bool copySnapshot(void*, OsgSolScienceUiBufferV1* output)
             "\"revision\":" +
                 std::to_string(7 + std::max(artifactGeneration, 1)));
     }
-    const std::string& value = artifactReady ? artifact : draft;
+    std::string value = artifactReady ? artifact : draft;
+    const std::string temporal = artifactReady
+        ? R"("temporal":{"sourceId":"alphaearth-foundations","availability":{"known":true,"firstValue":"2017","lastValue":"2025","values":["2017","2018","2019","2020","2021","2022","2023","2024","2025"]},"hasRequested":true,"requested":{"kind":"discrete-values","startValue":null,"endValue":null,"values":["2017","2025"]},"loadState":"applied","loading":false,"hasApplied":true,"applied":{"kind":"discrete-values","startValue":null,"endValue":null,"values":["2017","2025"]},"generation":2,"error":""},)"
+        : R"("temporal":{"sourceId":"era5-agricultural-climate","availability":{"known":true,"firstValue":"1940","lastValue":"2025","values":[]},"hasRequested":true,"requested":{"kind":"discrete-values","startValue":null,"endValue":null,"values":["2017","2018","2019","2020","2021","2022","2023","2024","2025"]},"loadState":"idle","loading":false,"hasApplied":false,"applied":null,"generation":1,"error":""},)";
+    const std::size_t temporalPosition = value.find("\"selectedMethodId\"");
+    if (temporalPosition != std::string::npos)
+        value.insert(temporalPosition, temporal);
     if (!output || output->structSize < sizeof(*output)) return false;
     output->revision = artifactReady
         ? static_cast<std::uint64_t>(

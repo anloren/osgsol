@@ -11,6 +11,8 @@ SET(EXECUTABLE_FILES
     project/earth_project_command_bus.cpp project/earth_project_command_bus.h
     project/earth_project_command_context.cpp
     project/earth_project_command_context.h
+    project/earth_temporal_controller.cpp
+    project/earth_temporal_controller.h
     project/earth_project_layer_adapter.cpp
     project/earth_project_layer_adapter.h
     feed_layer.cpp feeds/gdacs_feed.cpp feeds/usgs_quakes_feed.cpp feeds/eonet_feed.cpp
@@ -321,7 +323,9 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
     ADD_EXECUTABLE(osgSol_Test_ScienceWorkbenchProtocol
         "${CMAKE_SOURCE_DIR}/tests/science_workbench_protocol_tests.cpp"
         science_workbench_protocol.cpp
-        science_workbench_model.cpp)
+        science_workbench_model.cpp
+        science_temporal_adapter.cpp
+        project/earth_temporal_controller.cpp)
     TARGET_COMPILE_FEATURES(osgSol_Test_ScienceWorkbenchProtocol PRIVATE cxx_std_17)
     TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceWorkbenchProtocol PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -337,7 +341,9 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
 
     ADD_EXECUTABLE(osgSol_Test_ScienceWorkbenchModel
         "${CMAKE_SOURCE_DIR}/tests/science_workbench_model_tests.cpp"
-        science_workbench_model.cpp)
+        science_workbench_model.cpp
+        science_temporal_adapter.cpp
+        project/earth_temporal_controller.cpp)
     TARGET_COMPILE_FEATURES(osgSol_Test_ScienceWorkbenchModel PRIVATE cxx_std_17)
     TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceWorkbenchModel PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -348,6 +354,20 @@ IF(OSGSOL_BUILD_SCIENCE AND BUILD_TESTING)
              COMMAND $<TARGET_FILE:osgSol_Test_ScienceWorkbenchModel>)
     SET_TESTS_PROPERTIES(osgSol_Test_ScienceWorkbenchModel PROPERTIES
         LABELS "offline;scienceearth"
+        TIMEOUT 30)
+
+    ADD_EXECUTABLE(osgSol_Test_ScienceTemporalAdapter
+        "${CMAKE_SOURCE_DIR}/tests/science_temporal_adapter_tests.cpp")
+    TARGET_COMPILE_FEATURES(osgSol_Test_ScienceTemporalAdapter PRIVATE cxx_std_17)
+    TARGET_INCLUDE_DIRECTORIES(osgSol_Test_ScienceTemporalAdapter PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/science")
+    TARGET_LINK_LIBRARIES(osgSol_Test_ScienceTemporalAdapter
+        PRIVATE osgSolScienceCore)
+    ADD_TEST(NAME osgSol_Test_ScienceTemporalAdapter
+             COMMAND $<TARGET_FILE:osgSol_Test_ScienceTemporalAdapter>)
+    SET_TESTS_PROPERTIES(osgSol_Test_ScienceTemporalAdapter PROPERTIES
+        LABELS "offline;scienceearth;project"
         TIMEOUT 30)
 
     ADD_EXECUTABLE(osgSol_Test_ScienceWorkbenchQueryPlan

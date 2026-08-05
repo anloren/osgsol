@@ -19,6 +19,11 @@ void expect(bool condition, const char* message)
 ScienceWorkbenchModel readyModel()
 {
     ScienceWorkbenchModel model;
+    earthscience::ScienceSourceDescriptor temporal;
+    temporal.id = "era5-agricultural-climate";
+    temporal.firstYear = 1940;
+    temporal.lastYear = 2025;
+    model.configureTemporalSources({temporal});
     ScienceWorkbenchAction source;
     source.kind = ScienceWorkbenchActionKind::SelectSource;
     source.sourceId = "era5-agricultural-climate";
@@ -144,6 +149,18 @@ void testSnapshotIsDeterministicAndBounded()
            "snapshot must expose target lock");
     expect(root.at("sources").get<picojson::array>().size() == 1,
            "snapshot must expose source descriptors");
+    const picojson::object& temporal =
+        root.at("temporal").get<picojson::object>();
+    expect(temporal.at("loadState").get<std::string>() == "idle",
+           "snapshot must distinguish a selected request from loading");
+    expect(temporal.at("requested").get<picojson::object>()
+               .at("values").get<picojson::array>().size() == 9,
+           "snapshot must expose the requested years");
+    expect(temporal.at("availability").get<picojson::object>()
+               .at("firstValue").get<std::string>() == "1940",
+           "snapshot must expose provider availability separately");
+    expect(!temporal.at("hasApplied").get<bool>(),
+           "snapshot must not claim an unapplied selection is on the map");
 
     OsgSolScienceUiBufferV1 sizeProbe = {};
     sizeProbe.structSize = sizeof(sizeProbe);

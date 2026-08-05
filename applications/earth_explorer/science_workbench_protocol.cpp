@@ -148,6 +148,50 @@ picojson::array stringArray(const std::vector<std::string>& values)
     return output;
 }
 
+picojson::object temporalSelectionObject(
+    const earthproject::EarthTemporalSelection& selection)
+{
+    picojson::object output;
+    output["kind"] = picojson::value(
+        earthproject::temporalSelectionKindName(selection.kind));
+    output["startValue"] = availableString(selection.startValue);
+    output["endValue"] = availableString(selection.endValue);
+    output["values"] = picojson::value(stringArray(selection.values));
+    return output;
+}
+
+picojson::object temporalStateObject(
+    const earthproject::EarthTemporalState& state)
+{
+    picojson::object availability;
+    availability["known"] = picojson::value(state.availability.known);
+    availability["firstValue"] = availableString(
+        state.availability.firstValue);
+    availability["lastValue"] = availableString(
+        state.availability.lastValue);
+    availability["values"] = picojson::value(
+        stringArray(state.availability.values));
+
+    picojson::object output;
+    output["sourceId"] = picojson::value(state.adapterId);
+    output["availability"] = picojson::value(availability);
+    output["hasRequested"] = picojson::value(state.hasRequested);
+    output["requested"] = state.hasRequested
+        ? picojson::value(temporalSelectionObject(state.requested))
+        : picojson::value();
+    output["loadState"] = picojson::value(
+        earthproject::temporalLoadStateName(state.loadState));
+    output["loading"] = picojson::value(
+        state.loadState == earthproject::TemporalLoadState::Loading);
+    output["hasApplied"] = picojson::value(state.hasApplied);
+    output["applied"] = state.hasApplied
+        ? picojson::value(temporalSelectionObject(state.applied))
+        : picojson::value();
+    output["generation"] = number(static_cast<double>(state.generation));
+    output["error"] = picojson::value(state.error);
+    return output;
+}
+
 picojson::object variableObject(
     const earthscience::ScienceVariableDescriptor& variable)
 {
@@ -559,6 +603,7 @@ std::string serializeScienceWorkbenchSnapshot(
         stringArray(model.minimizedArtifactIds));
     root["errorCode"] = picojson::value(model.errorCode);
     root["errorMessage"] = picojson::value(model.errorMessage);
+    root["temporal"] = picojson::value(temporalStateObject(model.temporal));
 
     picojson::object query;
     query["sourceId"] = picojson::value(model.draft.sourceId);
