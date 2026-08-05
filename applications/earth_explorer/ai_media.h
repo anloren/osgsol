@@ -150,7 +150,7 @@ namespace earthai
 
     struct VideoUiRequest
     {
-        enum Kind { Begin, CaptureEnd, Confirm, Cancel } kind = Begin;
+        enum Kind { Begin, CaptureEnd, Confirm, Cancel, DismissStatus } kind = Begin;
         osg::Vec3d lla;
         std::string style;
     };
@@ -224,6 +224,52 @@ namespace earthai
         return succeeded ? std::string() : previous;
     }
 
+    // A frame owner may cancel capture synchronously only while no worker exists.  Once an
+    // encoder or provider HTTP worker is live, it must only request cancellation and let a
+    // later FRAME tick reap the terminal thread; joining here could freeze rendering.
+    enum VideoCancellationDisposition
+    {
+        VIDEO_CANCEL_RESET_NOW,
+        VIDEO_CANCEL_ASYNC_REAP
+    };
+
+    inline VideoCancellationDisposition classifyVideoCancellation(bool workerIsLive)
+    {
+        return workerIsLive ? VIDEO_CANCEL_ASYNC_REAP : VIDEO_CANCEL_RESET_NOW;
+    }
+
+    struct VideoStatusBanner
+    {
+        bool visible = false;
+        std::string message;
+    };
+
+    enum VideoStatusAction
+    {
+        VIDEO_STATUS_NO_CHANGE,
+        VIDEO_STATUS_FAILURE,
+        VIDEO_STATUS_SUCCESS,
+        VIDEO_STATUS_DISMISS
+    };
+
+    // Unlike transient commandError, this status is intentionally persistent: local capture
+    // and encoder failures must still be visible in no-core/fake/local configurations.
+    inline VideoStatusBanner reduceVideoStatusBanner(
+        const VideoStatusBanner& previous, VideoStatusAction action,
+        const std::string& message = std::string())
+    {
+        if (action == VIDEO_STATUS_FAILURE)
+        {
+            VideoStatusBanner next;
+            next.visible = !message.empty();
+            next.message = message;
+            return next;
+        }
+        if (action == VIDEO_STATUS_SUCCESS || action == VIDEO_STATUS_DISMISS)
+            return VideoStatusBanner();
+        return previous;
+    }
+
     // 生成式媒体管线总控:Job 驱动,每帧 update() 由 AIFrameHandler 调用(主线程)。
     // 照片与视频各自只支持"单个 pending 任务"——与真实使用场景(用户点一次等一次)相符,
     // 并发第二个请求会被 startPhotoJob/beginVideoCapture 拒绝,避免状态机复杂化。
@@ -274,6 +320,9 @@ namespace earthai
         // 一次收尾 tick)——用来判断"何时可以安全地再触发一次 generate_photo 而不会撞上
         // startPhotoJob() 的 already-running 防重入拒绝"。业务代码不要依赖这个方法。
         bool photoIdleForTest() const { return _state == IDLE; }
+        // Live studio readout. Confirmation readouts use PendingVideoInfo's immutable captures.
+        PhotoCameraContext cinematicCameraContext() const;
+        const std::string& videoModelLabel() const { return _videoModel; }
 
         // 快门补光:抓帧期间把 WorldSunDir 临时对准相机(夜面/背光视角否则拍出全黑构图参考,
         // banana 只能纯靠坐标推理)。main 注入 EarthAtmosphereOcean 指针;为空则跳过补光。
@@ -335,6 +384,8 @@ namespace earthai
             bool cinematic = false;
             bool singleAnchor = false;
             osg::Vec3d llaA, llaB;
+            PhotoCaptureRequest anchorCapture;
+            PhotoCaptureRequest endCapture;
             CinematicGenerationSettings settings;
             std::string motionPrompt;   // 展示用的最终视频提示词(buildVideoPrompt 输出;字段名沿用旧称避免波及 ai_ui.cpp 之外的引用)
         };
@@ -343,6 +394,7 @@ namespace earthai
             VideoPhaseKindPublic phase = VIDEO_IDLE;
             PendingVideoInfo pending;
             std::string commandError;
+            VideoStatusBanner statusBanner;
         };
         PendingVideoInfo pendingVideoInfo() const;
 
@@ -419,6 +471,8 @@ namespace earthai
         void updatePhotoInternal();
         void updateVideoInternal();
         void applyVideoOwnerCommandResult(bool succeeded);
+        void publishVideoFailure(const std::string& message);
+        void clearVideoStatusBanner();
 
         // 安全地把 *_video 重置为初始状态:先 join 掉可能还 joinable 的 worker 线程,
         // 再做 *_video = VideoJob()(move-assign)。std::thread 的 move 赋值要求目标线程
@@ -435,6 +489,7 @@ namespace earthai
         VideoUiRequestQueue _videoRequests;
         CinematicUiRequestQueue _cinematicRequests;
         std::string _videoCommandError;
+        VideoStatusBanner _videoStatusBanner;
         mutable std::mutex _videoSnapshotMutex;
         VideoUiSnapshot _videoSnapshot;
 

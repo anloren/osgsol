@@ -180,6 +180,24 @@ int main()
     CHECK(reduceVideoOwnerCommandError(ownerError, false) == ownerError);
     CHECK(reduceVideoOwnerCommandError(ownerError, true).empty());
 
+    // Cancellation is a FRAME-owner state transition, not a synchronous wait.  A live
+    // encoder/HTTP worker must be reaped later; pre-worker capture can reset immediately.
+    CHECK(classifyVideoCancellation(false) == VIDEO_CANCEL_RESET_NOW);
+    CHECK(classifyVideoCancellation(true) == VIDEO_CANCEL_ASYNC_REAP);
+
+    // Local video failures remain visible even when the optional chat core is absent.
+    VideoStatusBanner banner;
+    banner = reduceVideoStatusBanner(banner, VIDEO_STATUS_FAILURE,
+                                     "local encoder failed");
+    CHECK(banner.visible);
+    CHECK(banner.message == "local encoder failed");
+    CHECK(reduceVideoStatusBanner(banner, VIDEO_STATUS_NO_CHANGE).message ==
+          "local encoder failed");
+    CHECK(reduceVideoStatusBanner(banner, VIDEO_STATUS_SUCCESS).message.empty());
+    banner = reduceVideoStatusBanner(banner, VIDEO_STATUS_FAILURE,
+                                     "snapshot timeout");
+    CHECK(reduceVideoStatusBanner(banner, VIDEO_STATUS_DISMISS).visible == false);
+
     const std::string ui = readSourceFile("applications/earth_explorer/ai_ui.cpp");
     const std::string uiHeader = readSourceFile("applications/earth_explorer/ai_ui.h");
     const std::string media = readSourceFile("applications/earth_explorer/ai_media.cpp");
@@ -189,6 +207,22 @@ int main()
         "applications/earth_explorer/earth_main.cpp");
     CHECK(!ui.empty() && !uiHeader.empty() && !media.empty() && !mediaHeader.empty());
     CHECK(!setup.empty() && !earthMain.empty());
+
+    // Architectural regression guard: a live worker cancellation only transitions to async
+    // reaping. resetVideo checks workerDone before its sole join, so FRAME/ESC never waits for
+    // a provider HTTP request or native encoder still in flight.
+    const std::string cancelVideoAsync = extractFunctionBody(
+        media, "void MediaManager::cancelVideo()");
+    const std::string resetVideo = extractFunctionBody(
+        media, "void MediaManager::resetVideo()");
+    CHECK(cancelVideoAsync.find("VIDEO_CANCEL_ASYNC_REAP") != std::string::npos);
+    CHECK(cancelVideoAsync.find("VideoJob::CANCELLING") != std::string::npos);
+    CHECK(resetVideo.find("if (!_video->workerDone->load())") != std::string::npos);
+    CHECK(resetVideo.find("_video->worker.join()") != std::string::npos);
+    CHECK(resetVideo.find("workerDone->load())") <
+          resetVideo.find("_video->worker.join()"));
+    CHECK(setup.find("class VideoEscapeCancelHandler") != std::string::npos);
+    CHECK(setup.find("VideoUiRequest::Cancel") != std::string::npos);
 
     const std::string videoPoll = extractFunctionBody(
         media, "void VeoVideoProvider::poll(");

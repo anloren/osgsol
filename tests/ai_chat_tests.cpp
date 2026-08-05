@@ -960,6 +960,7 @@ int main(int, char**)
             CHECK(video.motion == earthai::CINEMATIC_MOTION_AERIAL_TOUR);
             CHECK(video.visualStyle == earthai::CINEMATIC_STYLE_ULTRA_REAL);
             CHECK(video.includeGeneratedAudio);
+            video.userPrompt = "make the scene more dramatic";
             earthai::CinematicGenerationRequest videoRequest;
             CHECK(earthai::makeCinematicGenerationRequest(
                 capture, video, videoRequest));
@@ -973,6 +974,16 @@ int main(int, char**)
             CHECK(videoPrompt.find("no edit point") != std::string::npos);
             CHECK(videoPrompt.find("[AUDIO]") != std::string::npos);
             CHECK(videoPrompt.find("ambient sound") != std::string::npos);
+            const size_t userIntentPos = videoPrompt.find("[USER INTENT]");
+            const size_t finalBoundaryPos = videoPrompt.find(
+                "[FINAL NON-OVERRIDABLE SCIENTIFIC/ERA BOUNDARY]");
+            CHECK(userIntentPos != std::string::npos);
+            CHECK(finalBoundaryPos != std::string::npos);
+            CHECK(finalBoundaryPos > userIntentPos);
+            CHECK(videoPrompt.find("cannot weaken the locked camera geometry") !=
+                  std::string::npos);
+            CHECK(videoPrompt.find("unsupported historical or scientific facts") !=
+                  std::string::npos);
             const earthai::CinematicVideoOutputOptions videoOutput =
                 earthai::cinematicVideoOutputOptions(videoRequest);
             CHECK(videoOutput.aspectRatio == "16:9");

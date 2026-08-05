@@ -42,6 +42,28 @@ static earthai::Tool makeSummaryTool(const std::string& name, const std::string&
     return t;
 }
 
+// Esc is installed independently of ImGui. Deterministic local capture intentionally hides all
+// UI for clean frames, but the owner queue remains reachable and handles cancellation next FRAME.
+class VideoEscapeCancelHandler : public osgGA::GUIEventHandler
+{
+public:
+    explicit VideoEscapeCancelHandler(earthai::MediaManager* media) : _media(media) {}
+    bool handle(const osgGA::GUIEventAdapter& event,
+                osgGA::GUIActionAdapter&) override
+    {
+        if (!_media || event.getEventType() != osgGA::GUIEventAdapter::KEYDOWN ||
+            event.getKey() != osgGA::GUIEventAdapter::KEY_Escape ||
+            _media->videoPhase() == earthai::VIDEO_IDLE)
+            return false;
+        earthai::VideoUiRequest request;
+        request.kind = earthai::VideoUiRequest::Cancel;
+        _media->enqueueVideoRequest(request);
+        return true;
+    }
+private:
+    earthai::MediaManager* _media;
+};
+
 // FRAME drain（工具必须主线程执行；与降水层 FRAME handler 同模式）。
 // 同时承担 EARTH_AI_AUTOSUBMIT 的延迟提交：数据类图层（地震/航班）的抓取线程
 // 在另一个线程跑，若开局第 0 帧就 submit，AI 工具可能在 fixture/网络数据落地
@@ -577,6 +599,8 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
     const char* autoSubmit = getenv("EARTH_AI_AUTOSUBMIT");   // headless E2E 用
     const char* delayEnv = getenv("EARTH_AI_AUTOSUBMIT_DELAY_FRAMES");
     int delayFrames = (delayEnv && *delayEnv) ? atoi(delayEnv) : 0;
+    // Must precede the FRAME handler and remains active while local capture suppresses ImGui.
+    if (mediaMgr) viewer.addEventHandler(new VideoEscapeCancelHandler(mediaMgr));
     viewer.addEventHandler(new AIFrameHandler(aiCore, mediaMgr, mani,
         (autoSubmit && *autoSubmit) ? autoSubmit : "", delayFrames));
     runtime.core = aiCore;

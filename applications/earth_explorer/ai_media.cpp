@@ -678,7 +678,8 @@ namespace earthai
             POLLING,            // 已拿到 operation 名字,worker 线程在轮询直到 done
             DOWNLOADING_FAKE,   // EARTH_AI_FAKE_MP4 路径的"模拟延迟"阶段(见 update() 里的 tick 判断)
             CAPTURING_ORBIT,    // 应用控制同一台相机逐帧走完整 360° 轨迹
-            ENCODING_ORBIT      // 原生 AVFoundation 把已渲染 PNG 帧编码为 H.264 MP4
+            ENCODING_ORBIT,     // 原生 AVFoundation 把已渲染 PNG 帧编码为 H.264 MP4
+            CANCELLING          // worker 已收到取消请求；FRAME 只等终态后再 reap
             // review:曾有 DONE_HANDLED 收尾态,但 phase 从未被赋成它——DONE/FAILED/超时
             // 三条路径都是"处理完直接 resetVideo() 回 IDLE"(见 POLLING 分支与
             // DOWNLOADING_FAKE 分支),不存在"下一帧再回 IDLE"这一步,枚举值和对应分支都是
@@ -705,6 +706,10 @@ namespace earthai
 
         std::thread worker;
         bool workerJoinable = false;
+        std::shared_ptr<std::atomic<bool>> workerDone =
+            std::make_shared<std::atomic<bool>>(true);
+        std::shared_ptr<std::atomic<bool>> cancelRequested =
+            std::make_shared<std::atomic<bool>>(false);
 
         int waitSnapshotTicks = 0;   // WAIT_A/CAPTURING_B 等待快照稳定的计数,超时判定复用 kWaitSnapshotTimeoutTicks
         int fakeDelayTicks = 0;      // DOWNLOADING_FAKE 阶段的模拟延迟计数(约 100 ticks,见 spec)
@@ -779,6 +784,11 @@ namespace earthai
             _viewer->getCamera()->getViewMatrix(),
             _viewer->getCamera()->getProjectionMatrix(),
             viewportWidth, viewportHeight);
+    }
+
+    PhotoCameraContext MediaManager::cinematicCameraContext() const
+    {
+        return currentPhotoCameraContext();
     }
 
     bool MediaManager::rebuildPhotoCaptureContract()
@@ -991,6 +1001,12 @@ namespace earthai
                 cancelVideo();
                 result.succeeded = true;
             }
+            else if (request.kind == VideoUiRequest::DismissStatus)
+            {
+                _videoStatusBanner = reduceVideoStatusBanner(
+                    _videoStatusBanner, VIDEO_STATUS_DISMISS);
+                result.succeeded = true;
+            }
             _videoCommandError = reduceVideoCommandError(_videoCommandError, result);
         }
 
@@ -1023,7 +1039,11 @@ namespace earthai
                 if (_chatCore)
                     _chatCore->addErrorNote(u8"时空影像请求失败：" + error);
             }
-            else _videoCommandError.clear();
+            else
+            {
+                _videoCommandError.clear();
+                clearVideoStatusBanner();
+            }
         }
 
         // 快门期间每 tick 重申补光(对抗"真实时间太阳"每帧重写,见 hudHide 注释)
@@ -1035,6 +1055,7 @@ namespace earthai
         snapshot.phase = videoPhase();
         snapshot.pending = pendingVideoInfo();
         snapshot.commandError = _videoCommandError;
+        snapshot.statusBanner = _videoStatusBanner;
         {
             std::lock_guard<std::mutex> lock(_videoSnapshotMutex);
             _videoSnapshot = snapshot;
@@ -1261,6 +1282,21 @@ namespace earthai
     void MediaManager::applyVideoOwnerCommandResult(bool succeeded)
     {
         _videoCommandError = reduceVideoOwnerCommandError(_videoCommandError, succeeded);
+        if (succeeded) clearVideoStatusBanner();
+    }
+
+    void MediaManager::publishVideoFailure(const std::string& message)
+    {
+        _videoStatusBanner = reduceVideoStatusBanner(
+            _videoStatusBanner, VIDEO_STATUS_FAILURE, message);
+        if (_chatCore) _chatCore->addErrorNote(u8"视频生成失败：" + message);
+        OSG_WARN << "[AIChat] video failure: " << message << std::endl;
+    }
+
+    void MediaManager::clearVideoStatusBanner()
+    {
+        _videoStatusBanner = reduceVideoStatusBanner(
+            _videoStatusBanner, VIDEO_STATUS_SUCCESS);
     }
 
     VideoPhaseKindPublic MediaManager::videoPhase() const
@@ -1438,6 +1474,8 @@ namespace earthai
         info.cinematic = _video->cinematic;
         info.singleAnchor = _video->singleAnchor;
         info.settings = _video->cinematicSettings;
+        info.anchorCapture = _video->anchorCapture;
+        info.endCapture = _video->endCapture;
         if (info.cinematic)
         {
             // 工作台面向用户报告的是画面中心的地理锚点，而不是相机眼点经纬度；
@@ -1601,15 +1639,23 @@ namespace earthai
             // 短路)。
             std::string fakeImg; bool hasFakeImg = fakeImgPath(fakeImg);
 
-            if (_video->workerJoinable && _video->worker.joinable()) _video->worker.join();
+            if (_video->workerJoinable && _video->worker.joinable() &&
+                _video->workerDone->load()) _video->worker.join();
+            _video->workerDone = std::make_shared<std::atomic<bool>>(false);
+            _video->cancelRequested = std::make_shared<std::atomic<bool>>(false);
+            std::shared_ptr<std::atomic<bool>> doneFlag = _video->workerDone;
+            std::shared_ptr<std::atomic<bool>> cancelFlag = _video->cancelRequested;
             _video->worker = std::thread([snapA, snapB, videoPrompt,
                                           photoPromptA, photoPromptB,
                                           outputA, outputB, videoOutput,
                                           apiKey, model,
                                           jobId, jobsPtr, useOmni,
                                           hasEndFrame, mp4Path, dir, frameEpoch,
-                                          hasFakeImg, fakeImg]()
+                                          hasFakeImg, fakeImg, doneFlag, cancelFlag]()
             {
+                struct DoneSetter { std::shared_ptr<std::atomic<bool>> flag;
+                    ~DoneSetter() { flag->store(true); } } done{doneFlag};
+                if (cancelFlag->load()) return;
                 std::string actualA = capturedPath(snapA), actualB = capturedPath(snapB);
                 std::string rawA, rawB;
                 if (!readFileBytes(actualA, rawA) || rawA.empty()
@@ -1655,6 +1701,7 @@ namespace earthai
                     jobsPtr->update(jobId, AIJob::FAILED, 1.0f, "", "banana photo A failed: " + errA);
                     return;
                 }
+                if (cancelFlag->load()) return;
                 jobsPtr->creepProgress(jobId, 0.25f);   // 0.25 after banana(A);SUBMITTING 阶段其余进度沿用旧的爬升逻辑
 
                 std::string photoB, errB;
@@ -1667,6 +1714,7 @@ namespace earthai
                         jobsPtr->update(jobId, AIJob::FAILED, 1.0f, "", "banana photo B failed: " + errB);
                         return;
                     }
+                    if (cancelFlag->load()) return;
                 }
 
                 // ---- Step 2:把生成的照片(而非原始截图)喂给视频 provider ----
@@ -1685,6 +1733,7 @@ namespace earthai
                             photoA, videoPrompt, videoOutput, mp4Bytes, err);
                     }
                     catch (const std::exception& e) { err = std::string("provider exception: ") + e.what(); }
+                    if (cancelFlag->load()) return;
                     if (!ok || mp4Bytes.empty())
                     {
                         jobsPtr->update(jobId, AIJob::FAILED, 1.0f, "",
@@ -1702,6 +1751,7 @@ namespace earthai
 
                 VeoVideoProvider provider(apiKey, model);
                 std::string err, opName;
+                if (cancelFlag->load()) return;
                 try { opName = provider.submit(photoA, photoB, videoPrompt, err); }
                 catch (const std::exception& e) { err = std::string("provider exception: ") + e.what(); }
 
@@ -1743,21 +1793,37 @@ namespace earthai
         else if (_video->phase == VideoJob::WAIT_A ||
                  _video->phase == VideoJob::CAPTURING_B)
             hudRestore();
-        // 取消发生在"确认之前"(WAIT_A/WAIT_B/CAPTURING_B/AWAIT_CONFIRM),此时还没建 Job、
-        // 没花任何网络请求成本,直接清零状态即可,无需处理 job(它此时还不存在)——
-        // resetVideo() 仍会先检查 worker 是否 joinable(理论上不会,防御一下)。
-        // 若未来允许在 SUBMITTING/POLLING 阶段取消(已花钱的请求),需要额外处理 job 收尾——
-        // 当前 UI 设计(见 ai_ui.cpp)确认后按钮直接消失,不提供"生成中取消"入口,故不实现。
+        const bool workerLive = _video->workerJoinable &&
+            _video->worker.joinable() && !_video->workerDone->load();
+        if (classifyVideoCancellation(workerLive) == VIDEO_CANCEL_ASYNC_REAP)
+        {
+            // Provider billing may already have started after submit; this prevents additional
+            // local work/polls but never pretends to revoke a remote provider charge.
+            _video->cancelRequested->store(true);
+            _video->phase = VideoJob::CANCELLING;
+            if (_video->jobId > 0)
+                _jobs.update(_video->jobId, AIJob::RUNNING, 1.0f, "", "cancelling");
+            return;
+        }
         resetVideo();
     }
 
     // std::thread 的 move 赋值要求目标对象此刻不 joinable,否则直接 std::terminate——
-    // 所有"重置视频状态回 VideoJob() 初值"的地方统一走这个函数,先 join 掉可能还
-    // joinable 的 worker(正常路径上各调用点在此之前已经 join 过,这里是最后一道防线,
-    // 尤其是 SUBMITTING/POLLING 里"job 不存在"这类理论上不会发生的防御分支)。
+    // FRAME 永远不得 join 活 worker。若有未终态 worker，转换为 CANCELLING，由后续
+    // FRAME tick 在 workerDone 发布后收割；这让 Esc/按钮取消始终即时。
     void MediaManager::resetVideo()
     {
-        if (_video->workerJoinable && _video->worker.joinable()) _video->worker.join();
+        if (_video->workerJoinable && _video->worker.joinable())
+        {
+            if (!_video->workerDone->load())
+            {
+                _video->cancelRequested->store(true);
+                _video->phase = VideoJob::CANCELLING;
+                return;
+            }
+            _video->worker.join();
+            _video->workerJoinable = false;
+        }
         for (std::size_t index = 0; index < _video->orbitFramePaths.size(); ++index)
             std::remove(_video->orbitFramePaths[index].c_str());
 #if !defined(_WIN32)
@@ -1772,6 +1838,16 @@ namespace earthai
     {
         VideoJob& v = *_video;
 
+        if (v.phase == VideoJob::CANCELLING)
+        {
+            if (!v.workerDone->load()) return;
+            if (v.workerJoinable && v.worker.joinable()) v.worker.join();
+            v.workerJoinable = false;
+            if (v.jobId > 0 && _cards) _cards->removeJob(v.jobId);
+            resetVideo();
+            return;
+        }
+
         if (v.phase == VideoJob::WAIT_A)
         {
             if (!_videoGrabber.ready(v.snapPathA))
@@ -1779,7 +1855,7 @@ namespace earthai
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore();   // 超时:HUD 必须复原,不能永久隐藏
-                    OSG_WARN << "[AIChat] video A-point snapshot timeout" << std::endl;
+                    publishVideoFailure("A-point snapshot timeout");
                     resetVideo();
                 }
                 return;
@@ -1789,8 +1865,7 @@ namespace earthai
             const PhotoCameraContext completedFrameCamera = currentPhotoCameraContext();
             if (v.cinematic && !completedFrameCamera.viewTargetValid)
             {
-                OSG_WARN << "[AIChat] cinematic A capture has no visible target"
-                         << std::endl;
+                publishVideoFailure("cinematic A capture has no visible target");
                 resetVideo();
                 return;
             }
@@ -1801,8 +1876,7 @@ namespace earthai
                 if (!rebuildCinematicVideoCapture(
                         v.anchorCapture, completedFrameCamera, rebuilt))
                 {
-                    OSG_WARN << "[AIChat] cinematic A capture lost its visible target"
-                             << std::endl;
+                    publishVideoFailure("cinematic A capture lost its visible target");
                     resetVideo();
                     return;
                 }
@@ -1823,8 +1897,7 @@ namespace earthai
                             v.anchorCapture,
                             v.cinematicSettings.durationSeconds, v.orbitPlan))
                     {
-                        OSG_WARN << "[AIChat] accepted orbit capture cannot form a plan"
-                                 << std::endl;
+                        publishVideoFailure("accepted orbit capture cannot form a plan");
                         resetVideo();
                         return;
                     }
@@ -1860,7 +1933,7 @@ namespace earthai
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore();   // 超时:HUD 必须复原,不能永久隐藏
-                    OSG_WARN << "[AIChat] video B-point snapshot timeout" << std::endl;
+                    publishVideoFailure("B-point snapshot timeout");
                     resetVideo();
                 }
                 return;
@@ -1870,8 +1943,7 @@ namespace earthai
             const PhotoCameraContext completedFrameCamera = currentPhotoCameraContext();
             if (v.cinematic && !completedFrameCamera.viewTargetValid)
             {
-                OSG_WARN << "[AIChat] cinematic B capture has no visible target"
-                         << std::endl;
+                publishVideoFailure("cinematic B capture has no visible target");
                 resetVideo();
                 return;
             }
@@ -1882,8 +1954,7 @@ namespace earthai
                 if (!rebuildCinematicVideoCapture(
                         v.endCapture, completedFrameCamera, rebuilt))
                 {
-                    OSG_WARN << "[AIChat] cinematic B capture lost its visible target"
-                             << std::endl;
+                    publishVideoFailure("cinematic B capture lost its visible target");
                     resetVideo();
                     return;
                 }
@@ -1921,8 +1992,7 @@ namespace earthai
                 _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "",
                              "deterministic orbit frame state is inconsistent");
                 if (_cards) _cards->removeJob(v.jobId);
-                if (_chatCore) _chatCore->addErrorNote(
-                    u8"环拍失败：逐帧状态不一致");
+                publishVideoFailure(u8"环拍失败：逐帧状态不一致");
                 resetVideo();
                 return;
             }
@@ -1940,8 +2010,7 @@ namespace earthai
                     _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "",
                                  "deterministic orbit frame capture timeout");
                     if (_cards) _cards->removeJob(v.jobId);
-                    if (_chatCore) _chatCore->addErrorNote(
-                        u8"环拍失败：逐帧截图超时");
+                    publishVideoFailure(u8"环拍失败：逐帧截图超时");
                     resetVideo();
                 }
                 return;
@@ -1973,11 +2042,19 @@ namespace earthai
             const std::string output = v.mp4Path;
             const int jobId = v.jobId;
             JobManager* jobs = &_jobs;
-            if (v.workerJoinable && v.worker.joinable()) v.worker.join();
-            v.worker = std::thread([frames, fps, output, jobId, jobs]()
+            if (v.workerJoinable && v.worker.joinable() && v.workerDone->load())
+                v.worker.join();
+            v.workerDone = std::make_shared<std::atomic<bool>>(false);
+            v.cancelRequested = std::make_shared<std::atomic<bool>>(false);
+            std::shared_ptr<std::atomic<bool>> doneFlag = v.workerDone;
+            std::shared_ptr<std::atomic<bool>> cancelFlag = v.cancelRequested;
+            v.worker = std::thread([frames, fps, output, jobId, jobs, doneFlag, cancelFlag]()
             {
+                struct DoneSetter { std::shared_ptr<std::atomic<bool>> flag;
+                    ~DoneSetter() { flag->store(true); } } done{doneFlag};
                 std::string error;
-                if (!encodePngSequenceToH264Mp4(frames, fps, output, error))
+                if (!encodePngSequenceToH264Mp4(
+                        frames, fps, output, error, cancelFlag.get()))
                 {
                     jobs->update(jobId, AIJob::FAILED, 1.0f, "",
                         error.empty() ? "native orbit encoder failed" : error);
@@ -2002,6 +2079,7 @@ namespace earthai
                     std::min(0.97f, snap.progress + 0.0008f));
                 return;
             }
+            if (!v.workerDone->load()) return;
             if (v.workerJoinable && v.worker.joinable()) v.worker.join();
             v.workerJoinable = false;
             if (_cards) _cards->removeJob(v.jobId);
@@ -2014,10 +2092,7 @@ namespace earthai
             }
             else
             {
-                if (_chatCore) _chatCore->addErrorNote(
-                    u8"环拍编码失败：" + snap.error);
-                OSG_WARN << "[AIChat] deterministic orbit encoding failed: "
-                         << snap.error << std::endl;
+                publishVideoFailure(u8"环拍编码失败：" + snap.error);
             }
             resetVideo();
             return;
@@ -2038,8 +2113,7 @@ namespace earthai
             {
                 _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "", "EARTH_AI_FAKE_MP4 unreadable: " + fakeMp4);
                 if (_cards) _cards->removeJob(v.jobId);
-                if (_chatCore) _chatCore->addErrorNote(u8"视频生成失败：EARTH_AI_FAKE_MP4 unreadable: " + fakeMp4);
-                OSG_WARN << "[AIChat] video job " << v.jobId << " failed: cannot read " << fakeMp4 << std::endl;
+                publishVideoFailure("EARTH_AI_FAKE_MP4 unreadable: " + fakeMp4);
                 resetVideo();
                 return;
             }
@@ -2047,8 +2121,7 @@ namespace earthai
             {
                 _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "", "failed to write " + v.mp4Path);
                 if (_cards) _cards->removeJob(v.jobId);
-                if (_chatCore) _chatCore->addErrorNote(u8"视频生成失败：failed to write " + v.mp4Path);
-                OSG_WARN << "[AIChat] video job " << v.jobId << " failed: cannot write " << v.mp4Path << std::endl;
+                publishVideoFailure("failed to write " + v.mp4Path);
                 resetVideo();
                 return;
             }
@@ -2066,6 +2139,7 @@ namespace earthai
             // Omni 同步路径:worker 一步到位直接置 DONE(mp4 已写盘),这里收尾。
             if (snap.status == AIJob::DONE)
             {
+                if (!v.workerDone->load()) return;
                 if (v.workerJoinable && v.worker.joinable()) v.worker.join();
                 v.workerJoinable = false;
                 if (_cards) { _cards->removeJob(v.jobId); _cards->pushPhoto(snap.resultPath, u8"巡航视频", true); }
@@ -2078,10 +2152,10 @@ namespace earthai
             _jobs.creepProgress(v.jobId, std::min(0.85f, snap.progress + 0.0008f));
             if (snap.status == AIJob::FAILED)
             {
+                if (!v.workerDone->load()) return;
                 if (v.workerJoinable && v.worker.joinable()) v.worker.join();
                 if (_cards) _cards->removeJob(v.jobId);
-                if (_chatCore) _chatCore->addErrorNote(u8"视频生成失败：" + snap.error);
-                OSG_WARN << "[AIChat] video job " << v.jobId << " submit failed: " << snap.error << std::endl;
+                publishVideoFailure(snap.error);
                 resetVideo();
                 return;
             }
@@ -2089,6 +2163,7 @@ namespace earthai
             {
                 // worker 已把 operationName 写进 resultPath(见 confirmVideo 里的注释),
                 // 提交阶段的 worker 线程本身已经跑完(返回了),可以安全 join 回收。
+                if (!v.workerDone->load()) return;
                 if (v.workerJoinable && v.worker.joinable()) v.worker.join();
                 v.workerJoinable = false;
                 v.operationName = snap.resultPath;
@@ -2115,6 +2190,7 @@ namespace earthai
                 if (!_jobs.get(v.jobId, snap)) { resetVideo(); return; }
                 if (snap.status == AIJob::DONE)
                 {
+                    if (!v.workerDone->load()) return;
                     if (v.workerJoinable && v.worker.joinable()) v.worker.join();
                     v.workerJoinable = false; v.pollInFlight = false;
                     if (_cards) { _cards->removeJob(v.jobId); _cards->pushPhoto(snap.resultPath, u8"巡航视频", true); }
@@ -2124,11 +2200,11 @@ namespace earthai
                 }
                 if (snap.status == AIJob::FAILED)
                 {
+                    if (!v.workerDone->load()) return;
                     if (v.workerJoinable && v.worker.joinable()) v.worker.join();
                     v.workerJoinable = false; v.pollInFlight = false;
                     if (_cards) _cards->removeJob(v.jobId);
-                    if (_chatCore) _chatCore->addErrorNote(u8"视频生成失败：" + snap.error);
-                    OSG_WARN << "[AIChat] video job " << v.jobId << " poll failed: " << snap.error << std::endl;
+                    publishVideoFailure(snap.error);
                     resetVideo();
                     return;
                 }
@@ -2182,17 +2258,10 @@ namespace earthai
 
             if (v.pollTicks > kPollTimeoutTicks)
             {
-                // review:这里的 join() 有可能阻塞主线程——但最多只会阻塞"一个 HTTP 往返"
-                // 的时长(worker 里单次 poll() 顶多是一次 30s 轮询 GET 或一次 60s 下载 GET,
-                // 见 VeoVideoProvider::poll() 的实现),不是无界等待。10 分钟超时本身极小
-                // 概率触发(正常任务远早于此完成),这里为了状态机简单直接同步 join,
-                // 权衡后可接受,不做成异步收尾。
-                if (v.workerJoinable && v.worker.joinable()) v.worker.join();
                 _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "", "polling timeout (10min)");
-                if (_cards) _cards->removeJob(v.jobId);
-                if (_chatCore) _chatCore->addErrorNote(u8"视频生成失败：polling timeout (10min)");
-                OSG_WARN << "[AIChat] video job " << v.jobId << " polling timeout" << std::endl;
-                resetVideo();
+                publishVideoFailure("polling timeout (10min)");
+                v.cancelRequested->store(true);
+                v.phase = VideoJob::CANCELLING;
                 return;
             }
 
@@ -2201,7 +2270,8 @@ namespace earthai
             // 到达轮询间隔且没有上一次轮询还在飞行中:起一个一次性 worker 线程做本次
             // GET(不阻塞主线程),结果写回 job(DONE/FAILED);"仍在跑"(done:false)则
             // 不触碰 job 状态,只是让 worker 自然返回,下一轮再发起。
-            if (v.workerJoinable && v.worker.joinable()) v.worker.join();
+            if (v.workerJoinable && v.worker.joinable() && v.workerDone->load())
+                v.worker.join();
             v.ticksSinceLastPoll = 0;
             v.pollInFlight = true;
             // 新开一轮轮询就换一个新的 pollDone(而不是复用/清零旧对象):shared_ptr 本身
@@ -2209,6 +2279,8 @@ namespace earthai
             // flag 还有其它持有者在读,也不会跟这一轮混淆。当前 worker lambda 结束时把它
             // 置 true 就是本节点新增的"worker 已返回"信号(见上面 POLLING 分支里的用法)。
             v.pollDone = std::make_shared<std::atomic<bool>>(false);
+            v.workerDone = v.pollDone;
+            v.cancelRequested = std::make_shared<std::atomic<bool>>(false);
             std::string apiKey = _apiKey;
             std::string model = videoModel();
             std::string opName = v.operationName;
@@ -2216,7 +2288,8 @@ namespace earthai
             int jobId = v.jobId;
             JobManager* jobsPtr = &_jobs;
             std::shared_ptr<std::atomic<bool>> doneFlag = v.pollDone;
-            v.worker = std::thread([apiKey, model, opName, mp4Path, jobId, jobsPtr, doneFlag]()
+            std::shared_ptr<std::atomic<bool>> cancelFlag = v.cancelRequested;
+            v.worker = std::thread([apiKey, model, opName, mp4Path, jobId, jobsPtr, doneFlag, cancelFlag]()
             {
                 // RAII 收尾:无论下面哪条分支 return,都保证最后一步是把 doneFlag 置位——
                 // 这是主线程判断"这次轮询 worker 已经跑完、可以安全 join"的唯一依据
@@ -2228,10 +2301,13 @@ namespace earthai
                     ~DoneSetter() { flag->store(true); }
                 } doneSetter{doneFlag};
 
+                if (cancelFlag->load()) return;
                 VeoVideoProvider provider(apiKey, model);
                 bool done = false; std::string mp4Bytes, err;
                 try { provider.poll(opName, done, mp4Bytes, err); }
                 catch (const std::exception& e) { done = true; err = std::string("provider exception: ") + e.what(); }
+
+                if (cancelFlag->load()) return;
 
                 if (!done) return;   // 仍在跑,job 状态不变,下次轮询再试
                 if (mp4Bytes.empty())

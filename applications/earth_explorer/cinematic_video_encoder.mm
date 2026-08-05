@@ -107,7 +107,8 @@ namespace earthai
         const std::vector<std::string>& pngPaths,
         int framesPerSecond,
         const std::string& outputPath,
-        std::string& error)
+        std::string& error,
+        const std::atomic<bool>* cancelRequested)
     {
         error.clear();
         if (pngPaths.size() < 2)
@@ -198,8 +199,24 @@ namespace earthai
 
             for (std::size_t index = 0; index < pngPaths.size(); ++index)
             {
+                if (cancelRequested && cancelRequested->load())
+                {
+                    error = "H.264 orbit encoding cancelled";
+                    [input markAsFinished];
+                    [writer cancelWriting];
+                    std::remove(outputPath.c_str());
+                    return false;
+                }
                 while (![input isReadyForMoreMediaData])
                 {
+                    if (cancelRequested && cancelRequested->load())
+                    {
+                        error = "H.264 orbit encoding cancelled";
+                        [input markAsFinished];
+                        [writer cancelWriting];
+                        std::remove(outputPath.c_str());
+                        return false;
+                    }
                     if ([writer status] == AVAssetWriterStatusFailed)
                     {
                         error = nsErrorText([writer error], "H.264 writer failed");

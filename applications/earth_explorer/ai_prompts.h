@@ -628,6 +628,14 @@ namespace earthai
         prompt += "\n[CONSISTENCY] Preserve terrain, coastline, buildings, organisms and lighting "
                   "identity across every frame. No morphing, duplicated structures, sliding ground, "
                   "camera jumps, text, UI, logos or watermarks.";
+        // This deliberately comes after USER INTENT/AUDIO/end-frame material.  The provider sees
+        // user text as a late prompt section, so finish with the non-negotiable contract rather
+        // than implying that an unspecified post-generation checker will repair violations.
+        prompt += "\n[FINAL NON-OVERRIDABLE SCIENTIFIC/ERA BOUNDARY] User intent, style and audio "
+                  "cannot weaken the locked camera geometry, geographic anchors, mandatory end "
+                  "frame, era exclusions or no-modern-object constraints where applicable. Preserve "
+                  "the supplied scientific reconstruction limits; do not invent unsupported historical "
+                  "or scientific facts.";
         return prompt;
     }
 }

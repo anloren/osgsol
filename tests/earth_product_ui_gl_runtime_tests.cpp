@@ -60,6 +60,11 @@ MediaManager::VideoUiSnapshot MediaManager::videoUiSnapshot() const
 {
     return VideoUiSnapshot();
 }
+
+PhotoCameraContext MediaManager::cinematicCameraContext() const
+{
+    return PhotoCameraContext();
+}
 }
 
 #if defined(__APPLE__)
@@ -1820,6 +1825,44 @@ int main()
         command.auditActionMask() & AIChatUI::AUDIT_ACTION_VIDEO_CANCEL,
         "real video modal Cancel click did not publish cancel");
     command.auditSetVideoConfirm(false);
+    // Media workbench regression matrix: the same real button/modal paths must fit the three
+    // product viewport classes. This target is intentionally compile-only in CI for this task;
+    // when run manually it verifies image workbench entry, provider video confirmation and the
+    // visible stop/cancel affordance without network or a packaged app.
+    for (const auto& viewport : viewports)
+    {
+        expect(gl.resize(viewport[0], viewport[1]),
+               "could not resize GL target for media viewport audit");
+        io.DisplaySize = ImVec2(static_cast<float>(viewport[0]),
+                                static_cast<float>(viewport[1]));
+        command.auditSetVideoState(AIChatUI::AUDIT_VIDEO_IDLE);
+        for (int frame = 0; frame < 3; ++frame) renderAuditFrame();
+        ImGuiWindow* commandWindow = ImGui::FindWindowByName(u8"AI 对话条");
+        expectRectInside(command.auditSnapshot().photoButton, commandWindow,
+                         "media image action");
+        expectRectInside(command.auditSnapshot().videoButton, commandWindow,
+                         "media provider/local entry");
+        clickAuditRect(command.auditSnapshot().photoButton);
+        renderAuditFrame();
+        ImGuiWindow* studio = ImGui::FindWindowByName(u8"时空影像工作台");
+        expect(studio != nullptr && studio->ScrollMax.y > 0.0f,
+               "media studio must scroll at every viewport");
+        expectRectInside(command.auditSnapshot().cinematicSubmitButton, studio,
+                         "paid image submit");
+        ImGui::SetScrollY(studio, studio->ScrollMax.y);
+        renderAuditFrame();
+        clickAuditRect(command.auditSnapshot().cinematicCancelButton);
+        renderAuditFrame();
+        command.auditSetVideoConfirm(true);
+        renderAuditFrame();
+        ImGuiWindow* confirm = ImGui::FindWindowByName(u8"确认生成巡航视频");
+        expectRectInside(command.auditSnapshot().videoConfirmButton, confirm,
+                         "paid provider confirm");
+        expectRectInside(command.auditSnapshot().videoModalCancelButton, confirm,
+                         "provider cancel");
+        clickAuditRect(command.auditSnapshot().videoModalCancelButton);
+        command.auditSetVideoConfirm(false);
+    }
     command.auditSetMediaControlsEnabled(false);
 
     ImGui_ImplOpenGL3_Shutdown();

@@ -1,6 +1,7 @@
 #ifndef EARTH_CINEMATIC_VIDEO_ENCODER_H
 #define EARTH_CINEMATIC_VIDEO_ENCODER_H
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -13,7 +14,8 @@ namespace earthai
         const std::vector<std::string>& pngPaths,
         int framesPerSecond,
         const std::string& outputPath,
-        std::string& error);
+        std::string& error,
+        const std::atomic<bool>* cancelRequested = nullptr);
 }
 
 #endif

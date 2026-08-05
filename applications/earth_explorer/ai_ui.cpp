@@ -553,6 +553,18 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
             // A/B 两点都就绪 -> 打开确认 Modal（本帧只判断是否需要 OpenPopup，实际弹窗内容
             // 在下面统一画,避免 OpenPopup 调用点分散）。
             if (vphase == earthai::VIDEO_AWAIT_CONFIRM) openVideoModal = true;
+            if (vphase == earthai::VIDEO_RUNNING)
+            {
+                ImGui::SameLine();
+                if (ImGui::SmallButton(u8"停止视频") && media)
+                {
+                    earthai::VideoUiRequest request;
+                    request.kind = earthai::VideoUiRequest::Cancel;
+                    media->enqueueVideoRequest(request);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(u8"立即停止本地工作或后续轮询；远端已提交的 provider 费用可能无法撤销。");
+            }
         }
 
         // 📷 走对话代理循环（而不是直接调用 MediaManager）：保持"一切能力皆工具"的架构,
@@ -567,6 +579,20 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         }
     }
     ImGui::End();
+
+    if (video.statusBanner.visible)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kDanger);
+        ImGui::TextWrapped(u8"视频状态：%s", video.statusBanner.message.c_str());
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::SmallButton(u8"关闭提示") && media)
+        {
+            earthai::VideoUiRequest request;
+            request.kind = earthai::VideoUiRequest::DismissStatus;
+            media->enqueueVideoRequest(request);
+        }
+    }
 
     ImGui::PopStyleColor(5);
     ImGui::PopStyleVar(4);
@@ -659,10 +685,10 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kTextDim);
         ImGui::TextWrapped(
             _cinematicMediaKind == earthai::CINEMATIC_IMAGE
-                ? u8"默认引擎：Nano Banana 2 · 2K · 自动匹配当前视口比例"
+                ? u8"付费 provider：Nano Banana 2 · 2K · 预计数十秒 · 参考约 US$0.04/张（非实时保证；以 provider 当前账单为准）。"
                 : (localDeterministicOrbit
-                    ? u8"本地渲染当前 osgSol 场景；不调用 Nano Banana、Omni 或 Veo。"
-                    : u8"默认链路：Nano Banana 2 生成本次首帧 · Omni/Veo 执行连续运镜"));
+                    ? u8"本地 360° 渲染当前 osgSol 场景：零 AI 费用、零网络请求；不调用 Nano Banana、Omni 或 Veo。录制时按 Esc 可立即停止。"
+                    : u8"付费 provider 视频：Nano Banana 2 首帧 + 当前 Omni/Veo 模型 · 默认 8 秒 · 预计数十秒至数分钟 · 参考约 US$1–6（非实时保证；以 provider 当前账单为准）。确认前取消不会发请求；提交后费用可能无法撤销。"));
         ImGui::PopStyleColor();
 
         ImGui::BeginChild(
@@ -672,10 +698,17 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         ImGui::SeparatorText(u8"当前视角");
         if (mani)
         {
-            const osg::Vec3d eye = mani->computeEyeLatLonHeight();
-            ImGui::Text(u8"相机  %.4f°  %.4f°  ·  高度 %.2f km",
-                        osg::RadiansToDegrees(eye[0]),
-                        osg::RadiansToDegrees(eye[1]), eye[2] / 1000.0);
+            const earthai::PhotoCameraContext camera = media
+                ? media->cinematicCameraContext() : earthai::PhotoCameraContext();
+            const osg::Vec3d eye = camera.cameraEyeLla;
+            ImGui::Text(u8"目标中心 %.4f°  %.4f° · 相机 %.4f°  %.4f° · 高度 %.2f km",
+                        osg::RadiansToDegrees(camera.viewTargetLla[0]),
+                        osg::RadiansToDegrees(camera.viewTargetLla[1]),
+                        osg::RadiansToDegrees(eye[0]), osg::RadiansToDegrees(eye[1]),
+                        eye[2] / 1000.0);
+            ImGui::Text(u8"航向 %.1f° · 离天底 %.1f° · 垂直 FOV %.1f° · 比例 %.3f",
+                        camera.headingDeg, camera.offNadirDeg, camera.verticalFovDeg,
+                        camera.aspectRatio);
             ImGui::PushStyleColor(ImGuiCol_Text, earthui::design::kSuccess);
             ImGui::TextWrapped(
                 u8"提交时冻结中心、方向、俯仰、视场与比例；不会移动地球。");
@@ -911,7 +944,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
         if (!canGenerate) ImGui::BeginDisabled();
         const char* submitLabel =
             _cinematicMediaKind == earthai::CINEMATIC_IMAGE
-                ? u8"从当前视角生成图像"
+                ? u8"付费提交 2K 图像（参考 US$0.04）"
                 : (localDeterministicOrbit
                     ? u8"开始本地录制"
                     : (_cinematicMotion == earthai::CINEMATIC_MOTION_POINT_TO_POINT
@@ -1034,6 +1067,31 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 if (info.cinematic)
                 {
                     ImGui::Spacing();
+                    const earthai::PhotoCameraContext& anchorCamera =
+                        info.anchorCapture.camera;
+                    ImGui::TextWrapped(
+                        u8"冻结 A 几何：中心 %.4f° %.4f° · 眼点 %.4f° %.4f° %.1fm · 航向 %.1f° · 离天底 %.1f° · FOV %.1f° · 比例 %.3f",
+                        osg::RadiansToDegrees(info.anchorCapture.targetLla[0]),
+                        osg::RadiansToDegrees(info.anchorCapture.targetLla[1]),
+                        osg::RadiansToDegrees(anchorCamera.cameraEyeLla[0]),
+                        osg::RadiansToDegrees(anchorCamera.cameraEyeLla[1]),
+                        anchorCamera.cameraEyeLla[2], anchorCamera.headingDeg,
+                        anchorCamera.offNadirDeg, anchorCamera.verticalFovDeg,
+                        anchorCamera.aspectRatio);
+                    if (!singleAnchor)
+                    {
+                        const earthai::PhotoCameraContext& endCamera =
+                            info.endCapture.camera;
+                        ImGui::TextWrapped(
+                            u8"冻结 B 几何：中心 %.4f° %.4f° · 眼点 %.4f° %.4f° %.1fm · 航向 %.1f° · 离天底 %.1f° · FOV %.1f° · 比例 %.3f",
+                            osg::RadiansToDegrees(info.endCapture.targetLla[0]),
+                            osg::RadiansToDegrees(info.endCapture.targetLla[1]),
+                            osg::RadiansToDegrees(endCamera.cameraEyeLla[0]),
+                            osg::RadiansToDegrees(endCamera.cameraEyeLla[1]),
+                            endCamera.cameraEyeLla[2], endCamera.headingDeg,
+                            endCamera.offNadirDeg, endCamera.verticalFovDeg,
+                            endCamera.aspectRatio);
+                    }
                     ImGui::TextWrapped(
                         u8"运镜：%s    时代：%s    时间：%s    风格：%s",
                         earthai::cinematicMotionLabel(info.settings.motion),
@@ -1048,7 +1106,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                             info.settings.era ==
                                 earthai::CINEMATIC_ERA_CAMBRIAN_CHENGJIANG
                                 ? u8"科学重建，不是直接观测；现代地理仅作为本次镜头锚点。"
-                                : u8"历史重建，不是发现的档案影像；会执行时代错置检查。");
+                                : u8"历史重建，不是发现的档案影像；提示词会约束时代排除项，发布或分析前仍需专家对照史料核验。 ");
                         ImGui::PopStyleColor();
                     }
                 }
@@ -1075,8 +1133,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 else
                 {
                     ImGui::TextWrapped(
-                        u8"将提交 Nano Banana 2 首帧与当前视频生成 provider。"
-                        u8"视频生成会产生费用；确认后才发出网络请求。");
+                        u8"付费提交：Nano Banana 2 首帧 + 当前视频 provider/model（%s）· 默认 8 秒 · 预计数十秒至数分钟 · 参考约 US$1–6（非实时保证；provider 当前账单为准）。确认前取消不会发请求；远端提交后取消可能无法逆转费用。",
+                        media ? media->videoModelLabel().c_str() : "provider model");
                 }
                 ImGui::PopStyleColor();
 
@@ -1128,7 +1186,7 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                     ImGuiCol_Text, earthui::design::kCarbon);
                 if (!canConfirmVideo) ImGui::BeginDisabled();
                 if (ImGui::Button(
-                        localDeterministicOrbit ? u8"开始本地录制" : u8"确认生成",
+                        localDeterministicOrbit ? u8"开始本地录制" : u8"付费确认生成",
                         ImVec2(actionWidth, 0.0f)))
                 {
                     if (media)
