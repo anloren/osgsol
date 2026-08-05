@@ -2164,33 +2164,14 @@ int main(int argc, char** argv)
     const char* autoCap = getenv("EARTH_AUTOCAP");
     if (autoCap && autoCap[0])
     {
-        // offscreen 模式不走 ScreenCaptureHandler(它读"当前默认帧缓冲"):曾试过不可见
-        // 窗口方案,macOS GL-on-Metal 对完全离屏窗口 surface 的读回存在**不定期整帧上下
-        // 翻转**(实测同命令 ~1/4 概率倒置,翻转在 Apple shim 层,GL 侧无法探测/纠正);
-        // 现在的 CGL 无头上下文则根本没有窗口帧缓冲。统一改为把 finalCamera(cameras[3],
-        // 地球+海洋合成的最终 HUD 面)重定向到 FBO 并 attach osg::Image 每帧读回——纯 GL
-        // 纹理读回,方向确定。代价:ImGui 面板不在截图里(它是 finalCamera 的 POST_DRAW
-        // 回调,晚于 RenderStage 的 image 读回)——对回归截图反而更干净(纯地球画面,无 UI
-        // 噪声);UI 逻辑验证走日志断言(如 EARTH_PRESET)。
-        // 非 offscreen(开窗)路径的 ScreenCaptureHandler 行为保持原样,零变化。
-        osg::ref_ptr<osg::Image> capImage;
-        osg::ref_ptr<osgViewer::ScreenCaptureHandler> capturer;
-        if (offscreenOk)
-        {
-            capImage = new osg::Image;
-            capImage->allocateImage(w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE);
-            cameras[3]->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
-            cameras[3]->attach(osg::Camera::COLOR_BUFFER0, capImage.get());
-        }
-        else
-        {
-            osg::ref_ptr<osgViewer::ScreenCaptureHandler::WriteToFile> writer =
-                new osgViewer::ScreenCaptureHandler::WriteToFile(
-                    "/tmp/earth_capture", "png",
-                    osgViewer::ScreenCaptureHandler::WriteToFile::OVERWRITE);
-            capturer = new osgViewer::ScreenCaptureHandler(writer.get(), 1);
-            viewer.addEventHandler(capturer.get());
-        }
+        // Use the final composition camera's FBO image readback in both windowed and offscreen
+        // modes. This never changes its final-draw callback slot, so it cannot race the stable
+        // AI snapshot dispatcher. ImGui is POST_DRAW and therefore intentionally absent from
+        // this regression image, leaving a deterministic Earth-only composition.
+        osg::ref_ptr<osg::Image> capImage = new osg::Image;
+        capImage->allocateImage(w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE);
+        cameras[3]->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
+        cameras[3]->attach(osg::Camera::COLOR_BUFFER0, capImage.get());
 
         int total = atoi(autoCap); if (total < 100) total = 600;
         // Optional: aim the sun at the camera-facing hemisphere so the day side
@@ -2229,25 +2210,24 @@ int main(int argc, char** argv)
                 earthRenderingUtils.commonUniforms["WorldSunDir"]->set(sunAzElDir);
             viewer.frame();
             if (frameSleepMs > 0) OpenThreads::Thread::microSleep((unsigned int)frameSleepMs * 1000);
-            if (i == total - 5 && capturer.valid()) capturer->captureNextFrame(viewer);
         }
-        viewer.frame();  // flush the pending capture
-        if (capImage.valid())  // offscreen:落盘 FBO 读回的最终合成帧(路径与旧约定一致)
+        viewer.frame();  // present one final FBO-backed composition frame
+        if (capImage.valid())  // 落盘 FBO 读回的最终合成帧(路径与旧约定一致)
         {
             // 假绿灯防线:probe() 过但 realize 失败时 viewer 未 realize、帧全空转,
             // capImage 是未初始化内存——宁可不落盘让下游断言"文件不存在"而失败。
             // 注意:OSG_WARN/OSG_NOTICE 是带 if 的宏,分支必须用大括号,否则 else 被吞。
             if (!viewer.isRealized())
             {
-                OSG_WARN << "[Earth] offscreen viewer never realized, capture skipped" << std::endl;
+                OSG_WARN << "[Earth] autocap viewer never realized, capture skipped" << std::endl;
             }
             else if (osgDB::writeImageFile(*capImage, "/tmp/earth_capture_0.png"))
             {
-                OSG_NOTICE << "[Earth] offscreen capture saved to /tmp/earth_capture_0.png" << std::endl;
+                OSG_NOTICE << "[Earth] autocap saved to /tmp/earth_capture_0.png" << std::endl;
             }
             else
             {
-                OSG_WARN << "[Earth] offscreen capture failed to write /tmp/earth_capture_0.png" << std::endl;
+                OSG_WARN << "[Earth] autocap failed to write /tmp/earth_capture_0.png" << std::endl;
             }
         }
 #if OSGSOL_BUILD_RMLUI_PRODUCT_UI

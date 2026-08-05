@@ -395,6 +395,17 @@ int main()
           std::string::npos);
     CHECK(snapshotConstructor.find("_dispatcherInstalled = true") != std::string::npos);
     CHECK(snapshotConstructor.find("_viewer->getCamera") == std::string::npos);
+    // An unknown existing final callback can mutate its own slot. Do not chain/wrap it: leave
+    // the camera untouched and fail media capture closed at the initialization boundary.
+    size_t occupiedFinalCallback =
+        snapshotConstructor.find("if (_captureCamera->getFinalDrawCallback())");
+    size_t dispatcherInstall =
+        snapshotConstructor.find("_captureCamera->setFinalDrawCallback(_dispatcher.get())");
+    CHECK(occupiedFinalCallback != std::string::npos);
+    CHECK(dispatcherInstall != std::string::npos);
+    CHECK(occupiedFinalCallback < dispatcherInstall);
+    CHECK(snapshotConstructor.find("snapshot dispatcher disabled") != std::string::npos);
+    CHECK(media.find("_previousCallback") == std::string::npos);
     CHECK(snapshotRetire.find("_dispatcher->revoke(_activeGeneration)") !=
           std::string::npos);
     CHECK(snapshotRetire.find("removeCallbackFromViewer") == std::string::npos);
@@ -459,10 +470,6 @@ int main()
           std::string::npos);
     CHECK(dispatcherDraw.find("std::atomic_load_explicit(&_generation") !=
           std::string::npos);
-    size_t chainedFinalCallback = dispatcherDraw.find("_previousCallback");
-    size_t generationLoad = dispatcherDraw.find("std::atomic_load_explicit(&_generation");
-    CHECK(chainedFinalCallback != std::string::npos);
-    CHECK(chainedFinalCallback < generationLoad);
     CHECK(dispatcherDraw.find("getFinalDrawCallback") == std::string::npos);
     CHECK(dispatcherDraw.find("setFinalDrawCallback") == std::string::npos);
 
@@ -594,6 +601,22 @@ int main()
     CHECK(configureAI < viewerRun);
     CHECK(setup.find("deps.captureCamera") != std::string::npos);
     CHECK(earthMain.find("aiDeps.captureCamera = cameras[3]") != std::string::npos);
+    // EARTH_AUTOCAP must use the final composition camera's FBO image in every mode. A window
+    // capture event handler would replace the same final callback slot at runtime.
+    size_t autoCaptureBegin = earthMain.find("const char* autoCap = getenv(\"EARTH_AUTOCAP\")");
+    size_t autoCaptureEnd = earthMain.find("#if OSGSOL_BUILD_RMLUI_PRODUCT_UI", autoCaptureBegin);
+    CHECK(autoCaptureBegin != std::string::npos && autoCaptureEnd != std::string::npos);
+    const std::string autoCaptureBlock = earthMain.substr(
+        autoCaptureBegin, autoCaptureEnd - autoCaptureBegin);
+    CHECK(autoCaptureBlock.find("cameras[3]->setRenderTargetImplementation") !=
+          std::string::npos);
+    CHECK(autoCaptureBlock.find("cameras[3]->attach(osg::Camera::COLOR_BUFFER0") !=
+          std::string::npos);
+    CHECK(autoCaptureBlock.find("ScreenCaptureHandler") == std::string::npos);
+    CHECK(autoCaptureBlock.find("captureNextFrame") == std::string::npos);
+    CHECK(autoCaptureBlock.find("addEventHandler") == std::string::npos);
+    CHECK(earthMain.find("ScreenCaptureHandler") == std::string::npos);
+    CHECK(earthMain.find("captureNextFrame") == std::string::npos);
     CHECK(beginVideo.find("_video->artifactId") != std::string::npos);
     CHECK(beginVideo.find("++_cinematicRequestSerial") != std::string::npos);
     CHECK(confirmVideo.find("generatedFramePathA") != std::string::npos);

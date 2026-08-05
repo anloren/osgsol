@@ -173,15 +173,8 @@ namespace earthai
     // or revoke immutable shared generations through the C++14 shared_ptr atomic operations.
     struct SnapshotGrabber::GenerationDispatcher : public osg::Camera::DrawCallback
     {
-        explicit GenerationDispatcher(osg::Camera::DrawCallback* previousCallback)
-            : _previousCallback(previousCallback) {}
-
         virtual void operator()(osg::RenderInfo& renderInfo) const
         {
-            // The final callback we replaced at the initialization boundary remains part of
-            // the final composition. It must run before readback so the generation sees the
-            // same completed framebuffer it would have seen without the dispatcher.
-            if (_previousCallback.valid()) (*_previousCallback)(renderInfo);
             const std::shared_ptr<CaptureGeneration> generation =
                 std::atomic_load_explicit(&_generation, std::memory_order_acquire);
             if (generation) generation->invoke(renderInfo);
@@ -201,7 +194,6 @@ namespace earthai
         }
 
     private:
-        osg::ref_ptr<osg::Camera::DrawCallback> _previousCallback;
         mutable std::shared_ptr<CaptureGeneration> _generation;
     };
 
@@ -212,15 +204,22 @@ namespace earthai
         // MediaManager before registering FRAME handlers, and is called before viewer.run().
         // This is the sole Camera callback mutation boundary; runtime paths only publish or
         // revoke a generation through the dispatcher atomic shared_ptr.
-        if (_captureCamera.valid())
+        if (!_captureCamera.valid())
         {
-            _dispatcher = new GenerationDispatcher(
-                _captureCamera->getFinalDrawCallback());
-            _captureCamera->setFinalDrawCallback(_dispatcher.get());
-            _dispatcherInstalled = true;
-        }
-        else
             OSG_WARN << "[AIChat] cannot install stable snapshot dispatcher" << std::endl;
+            return;
+        }
+        // A pre-existing callback may clear or replace Camera::_finalDrawCallback itself.
+        // Do not wrap an unknown lifecycle: fail closed so the camera slot remains untouched.
+        if (_captureCamera->getFinalDrawCallback())
+        {
+            OSG_WARN << "[AIChat] final camera callback already occupied; "
+                     << "snapshot dispatcher disabled" << std::endl;
+            return;
+        }
+        _dispatcher = new GenerationDispatcher;
+        _captureCamera->setFinalDrawCallback(_dispatcher.get());
+        _dispatcherInstalled = true;
     }
 
     SnapshotGrabber::~SnapshotGrabber() {}
