@@ -104,17 +104,34 @@ namespace earthai
             if (!_controller ||
                 _controller->beginCallback() == SNAPSHOT_CAPTURE_SKIP_CANCELLED)
                 return;
-            struct TerminalSetter
+            try
             {
-                std::shared_ptr<SnapshotCaptureController> controller;
-                ~TerminalSetter() { controller->completeCallback(); }
-            } terminal { _controller };
-            (*_delegate)(image, contextId);
+                (*_delegate)(image, contextId);
+                _controller->completeCallback(true);
+            }
+            catch (...)
+            {
+                _controller->completeCallback(false);
+                throw;
+            }
         }
 
     private:
         osg::ref_ptr<osgViewer::ScreenCaptureHandler::WriteToFile> _delegate;
         std::shared_ptr<SnapshotCaptureController> _controller;
+    };
+
+    class RetirableScreenCaptureHandler : public osgViewer::ScreenCaptureHandler
+    {
+    public:
+        RetirableScreenCaptureHandler(CaptureOperation* operation, int frames)
+            : osgViewer::ScreenCaptureHandler(operation, frames) {}
+
+        void retirePending(osgViewer::ViewerBase& viewer)
+        {
+            setFramesToCapture(0);
+            removeCallbackFromViewer(viewer);
+        }
     };
 
     static bool writeFileBytes(const std::string& path, const std::string& bytes)
@@ -138,7 +155,7 @@ namespace earthai
         osg::ref_ptr<osgViewer::ScreenCaptureHandler::WriteToFile> writer =
             new osgViewer::ScreenCaptureHandler::WriteToFile(
                 "", "png", osgViewer::ScreenCaptureHandler::WriteToFile::OVERWRITE);
-        _capturer = new osgViewer::ScreenCaptureHandler(writer.get(), 1);
+        _capturer = new RetirableScreenCaptureHandler(writer.get(), 1);
         // ScreenCaptureHandler 默认响应键盘 'c' 触发截屏(见 handle() 里 _keyEventTakeScreenShot);
         // 这会导致用户在 AI 拍照流程之外按一次 'c' 就写出一份意料之外的文件(用当前 WriteToFile
         // 前缀,即最近一次 grab() 的目标)。setKeyEventTakeScreenShot(0) 存在于此版本 OSG
@@ -179,11 +196,22 @@ namespace earthai
         return token;
     }
 
+    void SnapshotGrabber::retire(
+        const std::shared_ptr<SnapshotCaptureController>& capture)
+    {
+        if (!capture) return;
+        if (!capture->retireIfNotStarted()) return;
+        RetirableScreenCaptureHandler* handler =
+            static_cast<RetirableScreenCaptureHandler*>(_capturer.get());
+        if (handler && _viewer) handler->retirePending(*_viewer);
+    }
+
     bool SnapshotGrabber::ready(
         const std::shared_ptr<SnapshotCaptureController>& capture,
         const std::string& pngPath)
     {
-        if (!capture || capture->requestedPath() != pngPath) return false;
+        if (!capture || capture->requestedPath() != pngPath ||
+            !capture->completedSuccessfully()) return false;
         // WriteToFile 用 "_0" 后缀(单 GraphicsContext、OVERWRITE 策略)拼实际文件名,
         // 统一经 capturedPath() 计算,与提交侧读取路径保持一致。
         std::string actual = capturedPath(pngPath);
@@ -735,7 +763,9 @@ namespace earthai
         std::string snapPathA, snapPathB;   // 传给 SnapshotGrabber::grab() 的路径(不含 "_0" 后缀)
         std::string style;                  // generate_video 工具的可选风格描述(UI 按钮路径为空串)
         std::string motionPrompt;           // Modal 预览用:buildVideoPrompt 输出(见 updateVideoInternal)
+        std::string artifactId;             // timestamp + monotonic request serial, never epoch-only
         std::string mp4Path;                // 最终保存路径(worker 完成后写入)
+        std::string generatedFramePathA, generatedFramePathB;
         std::string operationName;          // Veo predictLongRunning 返回的 operation 名字
         bool cinematic = false;
         bool singleAnchor = false;
@@ -949,7 +979,7 @@ namespace earthai
             return picojson::value(err);
         }
 
-        long long epoch = (long long)time(nullptr);
+        const long long epoch = (long long)time(nullptr);
         std::string dir = outDir();
         _jobId = _jobs.create("photo", u8"生成实景照片");
         // 秒级时间戳不足以区分快速完成的连续任务（离线/缓存命中时可在同一秒启动第二张）。
@@ -1182,7 +1212,7 @@ namespace earthai
                 if (++_waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore();   // 超时收尾:即便快照没成功,HUD 也必须复原,不能永久隐藏
-                    if (_photoCaptureToken) _photoCaptureToken->cancel();
+                    _grabber.retire(_photoCaptureToken);
                     _jobs.update(_jobId, AIJob::FAILED, 1.0f, "", "snapshot timeout");
                     if (_cards) _cards->removeJob(_jobId);
                     if (_chatCore) _chatCore->addErrorNote(u8"照片生成失败：snapshot timeout");
@@ -1411,7 +1441,10 @@ namespace earthai
             return false;
         }
 
-        long long epoch = (long long)time(nullptr);
+        const long long epoch = (long long)time(nullptr);
+        // This is deliberately independent from the wall clock: two requests can start in
+        // the same second, and their snapshots/provider artifacts must never alias.
+        const long long captureSerial = ++_cinematicRequestSerial;
         std::string dir = outDir();
         _video->llaA = llaA;
         _video->style = style;
@@ -1425,9 +1458,11 @@ namespace earthai
             _video->anchorCapture = makePhotoCaptureRequest(
                 input, currentPhotoCameraContext(),
                 static_cast<long long>(time(NULL)) * 100000LL +
-                    (++_cinematicRequestSerial % 100000LL));
+                    (captureSerial % 100000LL));
         }
-        _video->snapPathA = dir + "/tourA_" + std::to_string(epoch) + ".png";
+        _video->artifactId = std::to_string(epoch) + "_" +
+            std::to_string(captureSerial);
+        _video->snapPathA = dir + "/tourA_" + _video->artifactId + ".png";
         // 用户反馈 1:视频 A 点抓帧同样要隐藏 HUD——hudRestore() 在 updateVideoInternal()
         // 的 WAIT_A 分支里,该点快照 ready()/超时判定出结果的那一刻立即调用。
         hudHide();
@@ -1532,7 +1567,6 @@ namespace earthai
             return false;
         }
 
-        long long epoch = (long long)time(nullptr);
         std::string dir = outDir();
         _video->llaB = llaB;
         if (_video->cinematic)
@@ -1550,7 +1584,7 @@ namespace earthai
                 input, camera, static_cast<long long>(time(NULL)) * 100000LL +
                     (++_cinematicRequestSerial % 100000LL));
         }
-        _video->snapPathB = dir + "/tourB_" + std::to_string(epoch) + ".png";
+        _video->snapPathB = dir + "/tourB_" + _video->artifactId + ".png";
         // 用户反馈 1:B 点抓帧同样要隐藏 HUD——hudRestore() 在 updateVideoInternal() 的
         // CAPTURING_B 分支里,该点快照 ready()/超时判定出结果的那一刻立即调用。
         hudHide();
@@ -1637,17 +1671,16 @@ namespace earthai
         std::string fakeMp4;
         const bool hasFake = fakeMp4Path(fakeMp4);
 
-        long long epoch = (long long)time(nullptr);
-        _video->mp4Path = outDir() + "/tour_" + std::to_string(epoch) + ".mp4";
         _video->jobId = _jobs.create("video", u8"生成巡航视频");
+        _video->mp4Path = outDir() + "/tour_" + _video->artifactId + "_" +
+            std::to_string(_video->jobId) + ".mp4";
         _jobs.update(_video->jobId, AIJob::RUNNING, 0.2f, "", "");
         if (_cards) _cards->pushJob(&_jobs, _video->jobId, u8"生成巡航视频");
 
         if (deterministicOrbit)
         {
             _video->orbitCaptureDir = outDir() + "/orbit_frames_" +
-                std::to_string(epoch) + "_" +
-                std::to_string(_video->anchorCapture.requestId);
+                _video->artifactId + "_" + std::to_string(_video->jobId);
             if (!osgDB::makeDirectory(_video->orbitCaptureDir))
             {
                 _jobs.update(_video->jobId, AIJob::FAILED, 1.0f, "",
@@ -1706,7 +1739,7 @@ namespace earthai
             // 作为视频起始帧"。worker 线程内先跑 banana 生图步骤——
             //   Omni 路径:只生成 A 点照片(banana photo A)→ OmniVideoProvider::generate(照片A, ...)
             //   Veo  路径:A/B 两点各生成一张照片(banana photo A、B)→ VeoVideoProvider::submit(照片A, 照片B, ...)
-            // 生成的照片落盘为 frameA_/frameB_<epoch>.png(artifact,便于人工核验/复用),
+            // 生成的照片落盘为本请求唯一的 frameA_/frameB_ artifact（便于人工核验/复用）。
             // 再喂给视频 provider——不再直接把原始渲染截图(snapA/snapB)传给视频模型。
             // 提示词也换用 buildVideoPrompt(ai_prompts.h):geo 上下文 + A->B 轨迹 + 电影运镜语言,
             // 取代旧的纯 buildMotionPrompt(motionPrompt 仍保留用于 Modal 预览,见 pendingVideoInfo)。
@@ -1750,8 +1783,14 @@ namespace earthai
                 _routeCapabilities.videoProvider;
             int jobId = _video->jobId;
             JobManager* jobsPtr = &_jobs;
-            std::string dir = outDir();
-            long long frameEpoch = epoch;
+            _video->generatedFramePathA = outDir() + "/frameA_" +
+                _video->artifactId + "_" + std::to_string(jobId) + ".png";
+            _video->generatedFramePathB = hasEndFrame
+                ? outDir() + "/frameB_" + _video->artifactId + "_" +
+                    std::to_string(jobId) + ".png"
+                : std::string();
+            const std::string framePathA = _video->generatedFramePathA;
+            const std::string framePathB = _video->generatedFramePathB;
 
             const bool useOmni = providerKind == CINEMATIC_VIDEO_PROVIDER_OMNI;
             std::string mp4Path = _video->mp4Path;
@@ -1774,7 +1813,7 @@ namespace earthai
                                           outputA, outputB, videoOutput,
                                           apiKey, model,
                                           jobId, jobsPtr, useOmni,
-                                          hasEndFrame, mp4Path, dir, frameEpoch,
+                                          hasEndFrame, mp4Path, framePathA, framePathB,
                                           hasFakeImg, fakeImg, doneFlag, cancelFlag]()
             {
                 struct DoneSetter { std::shared_ptr<std::atomic<bool>> flag;
@@ -1818,7 +1857,6 @@ namespace earthai
                 };
 
                 std::string photoA, errA;
-                std::string framePathA = dir + "/frameA_" + std::to_string(frameEpoch) + ".png";
                 if (!genPhoto(rawA, photoPromptA, outputA,
                               framePathA, photoA, errA))
                 {
@@ -1831,7 +1869,6 @@ namespace earthai
                 std::string photoB, errB;
                 if (!useOmni && hasEndFrame)
                 {
-                    std::string framePathB = dir + "/frameB_" + std::to_string(frameEpoch) + ".png";
                     if (!genPhoto(rawB, photoPromptB, outputB,
                                   framePathB, photoB, errB))
                     {
@@ -1954,9 +1991,11 @@ namespace earthai
             cleanup.capture = v.snapCaptureTokenB;
         else
             cleanup.capture = v.snapCaptureTokenA;
-        if (cleanup.capture) cleanup.capture->cancel();
+        _grabber.retire(cleanup.capture);
         if (!v.snapPathA.empty()) cleanup.paths.push_back(capturedPath(v.snapPathA));
         if (!v.snapPathB.empty()) cleanup.paths.push_back(capturedPath(v.snapPathB));
+        if (!v.generatedFramePathA.empty()) cleanup.paths.push_back(v.generatedFramePathA);
+        if (!v.generatedFramePathB.empty()) cleanup.paths.push_back(v.generatedFramePathB);
         if (!v.mp4Path.empty()) cleanup.paths.push_back(v.mp4Path);
         cleanup.paths.insert(cleanup.paths.end(), v.orbitFramePaths.begin(),
                              v.orbitFramePaths.end());
@@ -2032,6 +2071,20 @@ namespace earthai
             if (!_video->orbitCaptureDir.empty())
                 ::rmdir(_video->orbitCaptureDir.c_str());
 #endif
+            // A failed/timeout job may have written one generated provider frame or a
+            // partial MP4 before the worker reported failure. Successful artifacts remain
+            // available to the user; every non-DONE job is removed here.
+            AIJob existing;
+            const bool succeeded = _video->jobId > 0 &&
+                _jobs.get(_video->jobId, existing) && existing.status == AIJob::DONE;
+            if (!succeeded)
+            {
+                if (!_video->generatedFramePathA.empty())
+                    std::remove(_video->generatedFramePathA.c_str());
+                if (!_video->generatedFramePathB.empty())
+                    std::remove(_video->generatedFramePathB.c_str());
+                if (!_video->mp4Path.empty()) std::remove(_video->mp4Path.c_str());
+            }
         }
         *_video = VideoJob();
     }
@@ -2057,6 +2110,7 @@ namespace earthai
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore(); v.hudHidden = false; // 超时:HUD 必须复原
+                    _grabber.retire(v.snapCaptureTokenA);
                     publishVideoFailure("A-point snapshot timeout");
                     resetVideo();
                 }
@@ -2142,6 +2196,7 @@ namespace earthai
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore(); v.hudHidden = false; // 超时:HUD 必须复原
+                    _grabber.retire(v.snapCaptureTokenB);
                     publishVideoFailure("B-point snapshot timeout");
                     resetVideo();
                 }
@@ -2223,6 +2278,7 @@ namespace earthai
                 if (++v.waitSnapshotTicks > kWaitSnapshotTimeoutTicks)
                 {
                     hudRestore(false); v.hudHidden = false;
+                    _grabber.retire(v.orbitCaptureToken);
                     _jobs.update(v.jobId, AIJob::FAILED, 1.0f, "",
                                  "deterministic orbit frame capture timeout");
                     if (_cards) _cards->removeJob(v.jobId);

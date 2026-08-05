@@ -111,6 +111,14 @@ namespace earthai
         const std::atomic<bool>* cancelRequested)
     {
         error.clear();
+        if (outputPath.empty())
+        {
+            error = "output path is empty";
+            return false;
+        }
+        // Do not leave a stale/partial movie behind on any validation, writer, cancellation,
+        // or finalization failure below. A completed movie is the only successful outcome.
+        std::remove(outputPath.c_str());
         if (pngPaths.size() < 2)
         {
             error = "at least two orbit frames are required";
@@ -121,12 +129,6 @@ namespace earthai
             error = "frame rate must be between 1 and 120 fps";
             return false;
         }
-        if (outputPath.empty())
-        {
-            error = "output path is empty";
-            return false;
-        }
-
         @autoreleasepool
         {
             CGImageRef first = readPng(pngPaths.front(), error);
@@ -141,7 +143,6 @@ namespace earthai
                 return false;
             }
 
-            std::remove(outputPath.c_str());
             NSString* outputString = [NSString stringWithUTF8String:outputPath.c_str()];
             if (!outputString)
             {
@@ -187,12 +188,14 @@ namespace earthai
             if (![writer canAddInput:input])
             {
                 error = "AVAssetWriter rejected the H.264 video input";
+                std::remove(outputPath.c_str());
                 return false;
             }
             [writer addInput:input];
             if (![writer startWriting])
             {
                 error = nsErrorText([writer error], "failed to start H.264 writer");
+                std::remove(outputPath.c_str());
                 return false;
             }
             [writer startSessionAtSourceTime:kCMTimeZero];
@@ -222,6 +225,7 @@ namespace earthai
                         error = nsErrorText([writer error], "H.264 writer failed");
                         [input markAsFinished];
                         [writer cancelWriting];
+                        std::remove(outputPath.c_str());
                         return false;
                     }
                     [NSThread sleepForTimeInterval:0.001];
@@ -232,6 +236,7 @@ namespace earthai
                 {
                     [input markAsFinished];
                     [writer cancelWriting];
+                    std::remove(outputPath.c_str());
                     return false;
                 }
                 CVPixelBufferRef pixel = makePixelBuffer(
@@ -241,6 +246,7 @@ namespace earthai
                 {
                     [input markAsFinished];
                     [writer cancelWriting];
+                    std::remove(outputPath.c_str());
                     return false;
                 }
                 const CMTime timestamp = CMTimeMake(
@@ -253,6 +259,7 @@ namespace earthai
                     error = nsErrorText([writer error], "failed to append orbit frame");
                     [input markAsFinished];
                     [writer cancelWriting];
+                    std::remove(outputPath.c_str());
                     return false;
                 }
             }
@@ -269,11 +276,13 @@ namespace earthai
             {
                 [writer cancelWriting];
                 error = "timed out finalizing H.264 MP4";
+                std::remove(outputPath.c_str());
                 return false;
             }
             if ([writer status] != AVAssetWriterStatusCompleted)
             {
                 error = nsErrorText([writer error], "H.264 MP4 did not complete");
+                std::remove(outputPath.c_str());
                 return false;
             }
             return true;

@@ -53,6 +53,19 @@ namespace earthai
         bool cancelled() const { return _cancelled.load(); }
         bool delegateStarted() const { return _delegateStarted.load(); }
         bool terminal() const { return _terminal.load(); }
+        bool completedSuccessfully() const { return _completedSuccessfully.load(); }
+
+        // Timeout retirement wins only before the render callback has claimed this token. In
+        // that case a later callback is a harmless no-op and the shared slot can admit a new
+        // request immediately. If false, the callback owns completion and remains nonblocking.
+        bool retireIfNotStarted()
+        {
+            _cancelled.store(true);
+            bool expected = false;
+            if (!_callbackClaimed.compare_exchange_strong(expected, true)) return false;
+            _terminal.store(true);
+            return true;
+        }
 
         // Called only by the FRAME owner through SnapshotGrabber::ready(). The render callback
         // never observes this history, so each request can retain its own two-tick file-size
@@ -73,6 +86,9 @@ namespace earthai
 
         SnapshotCaptureCallbackResult beginCallback()
         {
+            bool expected = false;
+            if (!_callbackClaimed.compare_exchange_strong(expected, true))
+                return SNAPSHOT_CAPTURE_SKIP_CANCELLED;
             if (_cancelled.load())
             {
                 _terminal.store(true);
@@ -84,13 +100,19 @@ namespace earthai
             return SNAPSHOT_CAPTURE_WRITE_DELEGATE;
         }
 
-        void completeCallback() { _terminal.store(true); }
+        void completeCallback(bool succeeded)
+        {
+            _completedSuccessfully.store(succeeded);
+            _terminal.store(true);
+        }
 
     private:
         std::string _requestedPath;
         std::atomic<bool> _cancelled { false };
+        std::atomic<bool> _callbackClaimed { false };
         std::atomic<bool> _delegateStarted { false };
         std::atomic<bool> _terminal { false };
+        std::atomic<bool> _completedSuccessfully { false };
         std::streamsize _lastObservedSize = 0;
     };
 
@@ -132,6 +154,9 @@ namespace earthai
         // terminal state. Callers retain their own token and must never cancel the grabber's
         // current slot on behalf of an older request.
         std::shared_ptr<SnapshotCaptureController> grab(const std::string& pngPath);
+        // Remove a never-started draw callback synchronously; otherwise leave the in-flight
+        // callback to publish its terminal state. This never waits for rendering.
+        void retire(const std::shared_ptr<SnapshotCaptureController>& capture);
 
         // 真正的跨帧稳定性判断:调用方(MediaManager::update())每帧调一次 ready()。
         // 本次看到的文件大小与"上一次调用 ready() 时"记录的大小相比——只有连续两次不同的

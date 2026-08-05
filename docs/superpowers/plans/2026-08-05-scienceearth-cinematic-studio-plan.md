@@ -108,3 +108,9 @@
 
 - 共享协调器的稳定性历史不再保存在 `SnapshotGrabber` 全局字段。每个 token 保存自己的上次文件大小；`ready(token, path)` 先验证 token 与请求路径一致，再只更新该 token。
 - 因此已终态的 A 帧可以继续完成两次跨 tick 稳定性观察，同时 B/照片/环拍帧被预约，不会因新请求重置或借用对方大小。无窗口测试覆盖交错异尺寸、相同首尺寸、各自第二次稳定和路径不匹配拒绝。
+
+### Task 6B timeout/artifact hardening correction (2026-08-06)
+
+- 快照超时若回调尚未开始，会原子退休该 token 并从 OSG 最终绘制回调移除；共享槽随即可接收下一请求。若回调已拥有写入权，则不会替换它，延迟回收仍等其终态，避免迟到回调写入未追踪路径。`ready(token, path)` 还要求该 token 的写入已成功完成，旧文件或仅路径/尺寸碰撞不能伪造完成。
+- 所有视频工件使用 `timestamp + monotonic request serial + job ID` 命名：A/B 快照、provider 生成的首/尾帧、环拍目录和 MP4 不再只依赖秒级时间。provider 帧路径保存在 `VideoJob`，取消走同一延迟清理队列；失败、超时和编码器取消会删除已写的 provider 帧或局部 MP4。
+- 确认弹窗改为展示实际解析后的图像模型和视频 provider/model，避免把环境覆盖后的图像模型误标为固定的 Nano Banana 2。非 macOS encoder stub 与 macOS 实现均保持 cancellation-aware 的五参数 ABI；纯测试锁定该合同和所有失败路径的 MP4 删除守卫。

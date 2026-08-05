@@ -1,9 +1,11 @@
 #include <applications/earth_explorer/ai_media.h>
+#include <applications/earth_explorer/cinematic_video_encoder.h>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <type_traits>
 
 #define CHECK(x) do { if (!(x)) { \
     std::cerr << "CHECK failed at " << __FILE__ << ":" << __LINE__ << ": " #x << "\n"; \
@@ -86,6 +88,12 @@ static earthai::VideoUiDispatchResult dispatchResult(
 int main()
 {
     using namespace earthai;
+    typedef bool (*OrbitEncoderSignature)(
+        const std::vector<std::string>&, int, const std::string&, std::string&,
+        const std::atomic<bool>*);
+    static_assert(std::is_same<decltype(&encodePngSequenceToH264Mp4),
+                  OrbitEncoderSignature>::value,
+                  "orbit encoder declaration must retain its cancellation argument");
 
     CHECK(classifyVideoPollHttp(false, 0) == VIDEO_POLL_RETRY);
     CHECK(classifyVideoPollHttp(true, 429) == VIDEO_POLL_RETRY);
@@ -112,13 +120,13 @@ int main()
     CHECK(cancelledDuringWrite.delegateStarted());
     cancelledDuringWrite.cancel();
     CHECK(!cancelledDuringWrite.terminal());
-    cancelledDuringWrite.completeCallback();
+    cancelledDuringWrite.completeCallback(true);
     CHECK(cancelledDuringWrite.terminal());
     CHECK(cancelledDuringWrite.cancelled());
 
     SnapshotCaptureController accepted("accepted.png");
     CHECK(accepted.beginCallback() == SNAPSHOT_CAPTURE_WRITE_DELEGATE);
-    accepted.completeCallback();
+    accepted.completeCallback(true);
     CHECK(accepted.terminal());
     CHECK(!accepted.cancelled());
 
@@ -155,12 +163,30 @@ int main()
     std::shared_ptr<SnapshotCaptureController> terminalVideoToken =
         terminalVideoThenPhotoSlot.active();
     CHECK(terminalVideoToken->beginCallback() == SNAPSHOT_CAPTURE_WRITE_DELEGATE);
-    terminalVideoToken->completeCallback();
+    terminalVideoToken->completeCallback(true);
     CHECK(terminalVideoThenPhotoSlot.begin("newer-photo.png"));
     std::shared_ptr<SnapshotCaptureController> newerPhotoToken =
         terminalVideoThenPhotoSlot.active();
     terminalVideoToken->cancel();
     CHECK(!newerPhotoToken->cancelled());
+
+    // A timeout can retire a never-started callback without wedging the shared slot. Its late
+    // callback must still be a no-op, while the newly admitted route keeps its own token.
+    SnapshotCaptureSlot timeoutSlot;
+    CHECK(timeoutSlot.begin("timed-out-video.png"));
+    std::shared_ptr<SnapshotCaptureController> timedOutVideo = timeoutSlot.active();
+    CHECK(timedOutVideo->retireIfNotStarted());
+    CHECK(timedOutVideo->terminal());
+    CHECK(!timedOutVideo->completedSuccessfully());
+    CHECK(timeoutSlot.begin("photo-after-timeout.png"));
+    std::shared_ptr<SnapshotCaptureController> photoAfterTimeout = timeoutSlot.active();
+    CHECK(timedOutVideo->beginCallback() == SNAPSHOT_CAPTURE_SKIP_CANCELLED);
+    CHECK(!photoAfterTimeout->cancelled());
+
+    SnapshotCaptureController captureSuccess("successful.png");
+    CHECK(captureSuccess.beginCallback() == SNAPSHOT_CAPTURE_WRITE_DELEGATE);
+    captureSuccess.completeCallback(true);
+    CHECK(captureSuccess.completedSuccessfully());
 
     // File-size stability is token-local. Interleaving A/B observations must neither borrow
     // the other's size nor declare either request stable on its first observation.
@@ -293,11 +319,30 @@ int main()
     const std::string uiHeader = readSourceFile("applications/earth_explorer/ai_ui.h");
     const std::string media = readSourceFile("applications/earth_explorer/ai_media.cpp");
     const std::string mediaHeader = readSourceFile("applications/earth_explorer/ai_media.h");
+    const std::string encoderHeader = readSourceFile(
+        "applications/earth_explorer/cinematic_video_encoder.h");
+    const std::string encoderStub = readSourceFile(
+        "applications/earth_explorer/cinematic_video_encoder.cpp");
+    const std::string encoderMac = readSourceFile(
+        "applications/earth_explorer/cinematic_video_encoder.mm");
     const std::string setup = readSourceFile("applications/earth_explorer/ai_setup.cpp");
     const std::string earthMain = readSourceFile(
         "applications/earth_explorer/earth_main.cpp");
     CHECK(!ui.empty() && !uiHeader.empty() && !media.empty() && !mediaHeader.empty());
     CHECK(!setup.empty() && !earthMain.empty());
+    CHECK(!encoderHeader.empty() && !encoderStub.empty() && !encoderMac.empty());
+
+    // Header, non-mac fallback, and macOS implementation must all expose the same
+    // cancellation-aware five-argument encoder ABI.
+    CHECK(encoderHeader.find("const std::atomic<bool>* cancelRequested") !=
+          std::string::npos);
+    CHECK(encoderStub.find("const std::atomic<bool>* cancelRequested") !=
+          std::string::npos);
+    CHECK(encoderMac.find("const std::atomic<bool>* cancelRequested") !=
+          std::string::npos);
+    CHECK(encoderStub.find("deterministic H.264 orbit encoding cancelled") !=
+          std::string::npos);
+    CHECK(encoderMac.find("std::remove(outputPath.c_str());") != std::string::npos);
 
     // The final draw callback is shared by photo and video. MediaManager therefore owns one
     // SnapshotGrabber/ScreenCaptureHandler coordinator, rather than two independently safe-
@@ -305,12 +350,22 @@ int main()
     CHECK(countOccurrences(mediaHeader, "SnapshotGrabber _grabber;") == 1);
     CHECK(mediaHeader.find("_videoGrabber") == std::string::npos);
     CHECK(countOccurrences(media, "_grabber(viewer)") == 1);
-    CHECK(countOccurrences(media, "new osgViewer::ScreenCaptureHandler(") == 1);
+    CHECK(countOccurrences(media, "new RetirableScreenCaptureHandler(") == 1);
     CHECK(media.find("snapCaptureTokenA") != std::string::npos);
     CHECK(media.find("snapCaptureTokenB") != std::string::npos);
     CHECK(media.find("orbitCaptureToken") != std::string::npos);
     CHECK(mediaHeader.find("_lastSize") == std::string::npos);
     CHECK(mediaHeader.find("observeFileSize") != std::string::npos);
+    const std::string snapshotReady = extractFunctionBody(
+        media, "bool SnapshotGrabber::ready(");
+    const std::string snapshotRetire = extractFunctionBody(
+        media, "void SnapshotGrabber::retire(");
+    CHECK(snapshotReady.find("capture->completedSuccessfully()") !=
+          std::string::npos);
+    CHECK(snapshotReady.find("capture->requestedPath() != pngPath") !=
+          std::string::npos);
+    CHECK(snapshotRetire.find("capture->retireIfNotStarted()") !=
+          std::string::npos);
 
     // Architectural regression guard: a live worker cancellation only transitions to async
     // reaping. resetVideo checks workerDone before its sole join, so FRAME/ESC never waits for
@@ -338,7 +393,9 @@ int main()
     CHECK(mediaHeader.find("resolvedCinematicImageModel") != std::string::npos);
     CHECK(media.find("const std::string& kImageModel = resolvedCinematicImageModel()") !=
           std::string::npos);
-    CHECK(ui.find("media->imageModelLabel()") != std::string::npos);
+    CHECK(countOccurrences(ui, "media->imageModelLabel()") >= 2);
+    CHECK(ui.find(u8"付费提交：图像首帧模型") != std::string::npos);
+    CHECK(ui.find(u8"Nano Banana 2 首帧") == std::string::npos);
     CHECK(ui.find("AUDIT_VIDEO_RUNNING") != std::string::npos);
     CHECK(ui.find("AUDIT_VIDEO_FAILURE") != std::string::npos);
     CHECK(ui.find("AUDIT_ACTION_VIDEO_STOP") != std::string::npos);
@@ -356,6 +413,14 @@ int main()
     CHECK(finalizer.find("resetVideo(false)") != std::string::npos);
     CHECK(deferredReaper.find("!cleanup.capture->terminal()") != std::string::npos);
     CHECK(deferredReaper.find("cancelled capture cleanup failed: ") != std::string::npos);
+    CHECK(finalizer.find("generatedFramePathA") == std::string::npos);
+    const std::string deferredCleanup = extractFunctionBody(
+        media, "void MediaManager::deferCancelledVideoCaptureCleanup()");
+    CHECK(deferredCleanup.find("generatedFramePathA") != std::string::npos);
+    CHECK(deferredCleanup.find("generatedFramePathB") != std::string::npos);
+    CHECK(resetVideo.find("existing.status == AIJob::DONE") != std::string::npos);
+    CHECK(resetVideo.find("generatedFramePathA") != std::string::npos);
+    CHECK(resetVideo.find("_video->mp4Path") != std::string::npos);
 
     const std::string videoPoll = extractFunctionBody(
         media, "void VeoVideoProvider::poll(");
@@ -416,6 +481,10 @@ int main()
     CHECK(!beginVideo.empty() && !captureEnd.empty() && !confirmVideo.empty());
     CHECK(!cancelVideo.empty() && !updateVideo.empty() && !ownerResult.empty());
     CHECK(!frameHandle.empty() && !viewerFrame.empty());
+    CHECK(beginVideo.find("_video->artifactId") != std::string::npos);
+    CHECK(beginVideo.find("++_cinematicRequestSerial") != std::string::npos);
+    CHECK(confirmVideo.find("generatedFramePathA") != std::string::npos);
+    CHECK(confirmVideo.find("generatedFramePathB") != std::string::npos);
 
     // Runtime structure: request dispatch and both state machines reach exactly one publication
     // epilogue, which copies the FRAME-owned persistent command error.

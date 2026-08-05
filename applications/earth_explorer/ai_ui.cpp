@@ -1210,7 +1210,8 @@ void AIChatUI::draw(earthai::AIChatCore* core, earthai::MediaManager* media,
                 else
                 {
                     ImGui::TextWrapped(
-                        u8"付费提交：Nano Banana 2 首帧 + 当前视频 provider/model（%s）· 默认 8 秒 · 预计数十秒至数分钟 · 参考约 US$1–6（非实时保证；provider 当前账单为准）。确认前取消不会发请求；远端提交后取消可能无法逆转费用。",
+                        u8"付费提交：图像首帧模型（%s）+ 当前视频 provider/model（%s）· 默认 8 秒 · 预计数十秒至数分钟 · 参考约 US$1–6（非实时保证；provider 当前账单为准）。确认前取消不会发请求；远端提交后取消可能无法逆转费用。",
+                        media ? media->imageModelLabel().c_str() : "image model",
                         media ? media->videoModelLabel().c_str() : "provider model");
                 }
                 ImGui::PopStyleColor();
