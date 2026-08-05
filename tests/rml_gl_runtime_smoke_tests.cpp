@@ -68,6 +68,11 @@ MediaManager::VideoUiSnapshot MediaManager::videoUiSnapshot() const
 {
     return VideoUiSnapshot();
 }
+
+PhotoCameraContext MediaManager::cinematicCameraContext() const
+{
+    return PhotoCameraContext();
+}
 }
 
 void AICardPanel::pushChart(const picojson::value&) {}
