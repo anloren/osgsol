@@ -1,0 +1,19 @@
+name: Public source privacy
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  privacy-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject private paths, local identities, and credentials
+        run: python3 scripts/public_source_privacy_audit.py
