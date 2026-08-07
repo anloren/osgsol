@@ -593,14 +593,7 @@ def register_handler():
                 'message': 'Missing name or code for registering'
             }), 400
 
-        namespace = {
-            'register': lambda f: register_user_handler(handler_name, f),
-            'json': json, '__builtins__': __builtins__
-        }
         return jsonify({'status': 'error', 'type': 'register', 'message': 'Dynamic handler registration is disabled'}), 403
-        if 'handler' in namespace:
-            register_user_handler(handler_name, namespace['handler'])
-        return jsonify({'status': 'success', 'type': 'register'}), 200
 
     except Exception as e:
         return jsonify({
