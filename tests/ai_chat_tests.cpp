@@ -562,7 +562,7 @@ int main(int, char**)
             CHECK(t.text.empty());
             CHECK(t.calls.empty());
         }
-        // e) thoughtSignature 保留(gemini-3.5-flash function calling 新要求):
+        // e) thoughtSignature 保留(Gemini 3.x function calling 要求):
         //    与 functionCall 平级的 thoughtSignature(Gemini REST camelCase 实际形态)
         //    必须原样落进 FunctionCall.rawPartJson,后续回发历史时不得丢失,
         //    否则真实 API 400 "Function call is missing a thought_signature"。
@@ -668,6 +668,7 @@ int main(int, char**)
 
     // ---- GeminiProvider 可构造、不联网也不崩 ----
     {
+        CHECK(std::string(defaultGeminiModel()) == "gemini-3.7-flash");
         GeminiProvider gp("dummy-key-not-real", "gemini-2.5-flash");
         gp.setSystemPrompt(u8"你是地球助手");
         (void)gp; // 仅验证可构造/可设置系统提示;真实网络请求见 smoke test(见 REPORT)

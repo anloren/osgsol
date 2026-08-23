@@ -8,9 +8,12 @@
 
 namespace earthai
 {
+    // 正式对话模型的单一默认值；EARTH_AI_MODEL 仍可按需覆盖。
+    const char* defaultGeminiModel();
+
     // 一轮模型输出:要么纯文本,要么一批函数调用。
     // rawPartJson:模型返回的整个 functionCall part 的原样序列化(含 thoughtSignature 等
-    // 未建模字段)。gemini-3.5-flash 起,把含 functionCall 的历史发回去时必须原样带上
+    // 未建模字段)。Gemini 3.x 把含 functionCall 的历史发回去时必须原样带上
     // thought_signature,否则 400 "Function call is missing a thought_signature"。
     // 该字段可能在 functionCall 里也可能与其平级——不做假设,整个 part 原文保留。
     // FakeProvider 路径不产生此字段(为空),序列化时走重建分支。

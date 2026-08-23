@@ -12,6 +12,11 @@
 
 namespace earthai
 {
+    const char* defaultGeminiModel()
+    {
+        return "gemini-3.7-flash";
+    }
+
     // 错误摘要截断:截到 200 字符——原文可能很长(base64/大段文本),错误提示没必要塞爆日志/UI。
     // drainMainThread(工具异常兜底)与 GeminiProvider(响应错误摘要)共用。
     static std::string truncate200(const std::string& s)
@@ -125,7 +130,7 @@ namespace earthai
             {
                 entry["role"] = picojson::value("model");
                 // 有原样 part(真 Gemini 响应解析而来)→ 原文回发,保住 thoughtSignature 等
-                // 未建模字段(gemini-3.5-flash 缺它会 400)。parse 失败或非对象则回退重建。
+                // 未建模字段(Gemini 3.x 缺它会 400)。parse 失败或非对象则回退重建。
                 if (!h.rawPartJson.empty())
                 {
                     picojson::value rv; std::string rerr = picojson::parse(rv, h.rawPartJson);

@@ -569,7 +569,7 @@ AIChatRuntime configureAIChat(const AIChatDeps& deps)
     {
         const char* m = getenv("EARTH_AI_MODEL");
         earthai::GeminiProvider* gp = new earthai::GeminiProvider(
-            aiKey, (m && *m) ? m : "gemini-3.5-flash");
+            aiKey, (m && *m) ? m : earthai::defaultGeminiModel());
         gp->setSystemPrompt(earthai::buildEarthAssistantSystemPrompt());
         aiCore = new earthai::AIChatCore(gp, aiRegistry);
         // 启动信号(不打 key 值,只打长度):证明 AI key 从环境变量或磁盘 keys.env 读到。
